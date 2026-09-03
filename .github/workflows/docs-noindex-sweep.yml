@@ -11,7 +11,7 @@
 # The event decides whether anything is written:
 #   pull_request touching the indexing rules → dry run, reporting how many archived pages
 #     the sweep would rewrite without mutating gh-pages
-#   workflow_dispatch                        → patches gh-pages and pushes
+#   workflow_dispatch with confirm=BACKFILL  → patches gh-pages and pushes
 
 name: Docs noindex Sweep
 
@@ -23,6 +23,11 @@ on:
       - "docs/root-static/robots.txt"
       - "docs/root-static/mike-redirect.html"
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type BACKFILL to rewrite archived pages on gh-pages"
+        required: true
+        default: ""
 
 concurrency:
   # This sweep and Build and Publish Docs both write gh-pages. Keep one writer at a
@@ -40,6 +45,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # A dispatched run rewrites hundreds of published pages, so it takes a typed
+      # confirmation. Failing here keeps a mistyped dispatch from reaching the checkout.
+      - name: 🔍 Validate confirmation
+        if: github.event_name == 'workflow_dispatch' && inputs.confirm != 'BACKFILL'
+        run: |
+          echo "::error::Dispatch requires confirm=BACKFILL; got '${{ inputs.confirm }}'."
+          exit 1
+
       - name: 📥 Checkout gh-pages
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
