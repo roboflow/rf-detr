@@ -5,12 +5,23 @@
 # that no future build touches, so ~25 archives keep a self-canonical and keep competing
 # with /latest/ in search results. This job rewrites them in place.
 #
-# Manual, idempotent, and safe to re-run: files that already carry a robots meta tag are
-# skipped, and `latest/` is never touched.
+# Idempotent and safe to re-run: files that already carry a robots meta tag are skipped,
+# and `latest/` is never touched.
+#
+# Triggers:
+#   pull_request touching the indexing rules → always a dry run, so a PR shows how many
+#     archived pages the sweep would rewrite without mutating gh-pages
+#   workflow_dispatch                       → dry run by default; only dry_run=false commits
 
 name: Docs noindex Sweep
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/docs-noindex-sweep.yml"
+      - "docs/theme/main.html"
+      - "docs/root-static/robots.txt"
+      - "docs/root-static/mike-redirect.html"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -20,11 +31,11 @@ on:
         default: true
 
 concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: write # Required for committing to gh-pages
+  contents: write # Required for committing to gh-pages on a dispatched non-dry run
 
 jobs:
   sweep:
@@ -45,7 +56,9 @@ jobs:
 
       - name: 🏷️ Inject noindex
         env:
-          DRY_RUN: ${{ inputs.dry_run }}
+          # Anything other than an explicit dispatched dry_run=false stays a dry run, so a
+          # pull_request run can never commit to gh-pages.
+          DRY_RUN: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run == false) }}
         run: |
           set -euo pipefail
           META='<meta name="robots" content="noindex, follow">'
@@ -82,9 +95,9 @@ jobs:
             echo "Nothing to do."
             exit 0
           fi
-          if [ "$DRY_RUN" = "true" ]; then
+          if [ "$DRY_RUN" != "false" ]; then
             git diff --stat
-            echo "::notice::Dry run - $PATCHED files would be patched. Re-run with dry_run=false to commit."
+            echo "::notice::Dry run - $PATCHED files would be patched. Dispatch this workflow with dry_run=false to commit."
             exit 0
           fi
           git add -u
