@@ -5,9 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for the gh-pages sweep workflow that backfills archived doc versions.
 
-The sweep is dispatched by hand against published documentation, so a mistake in it is
-only visible after it has rewritten hundreds of live pages. These tests pin the wiring
-that a dry run cannot prove on its own.
+The sweep is dispatched by hand against published documentation, so a mistake in it is only visible after it has
+rewritten hundreds of live pages. These tests pin the wiring that a dry run cannot prove on its own.
 """
 
 from pathlib import Path

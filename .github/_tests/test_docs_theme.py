@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for the outdated-version banner the docs theme renders.
 
-The wording lives in two places that must not drift: the theme block mkdocs renders for
-every fresh build, and the backfill script that patches trees mike can no longer rebuild.
+The wording lives in two places that must not drift: the theme block mkdocs renders for every fresh build, and the
+backfill script that patches trees mike can no longer rebuild.
 """
 
 import re
