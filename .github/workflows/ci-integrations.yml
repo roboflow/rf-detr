@@ -197,7 +197,7 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages (tensorrt + onnx extras)
-        timeout-minutes: 8
+        timeout-minutes: 10
         # [tensorrt] provides tensorrt/polygraphy for the engine build; [onnx] provides the ONNX
         # export toolchain (the e2e exports RFDETRNano to ONNX first). --group ci-gpu-pin matches the GPU
         # runner's CUDA driver (torch<2.11), same as ci-tests-gpu.yml.
