@@ -201,6 +201,7 @@ tests = [
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
   "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
+  "pyyaml",  # imported by .github/_tests to parse the workflows they assert on
   "tomli>=2.0; python_version < '3.11'",
 ]
 

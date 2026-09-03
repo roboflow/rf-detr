@@ -12,12 +12,7 @@ import pytest
 
 # The script is a standalone CI entry point under .github/, not an installed module, so
 # it is loaded by path rather than imported.
-_SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2]
-    / ".github"
-    / "scripts"
-    / "inject_outdated_banner.py"
-)
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / ".github" / "scripts" / "inject_outdated_banner.py"
 _SPEC = importlib.util.spec_from_file_location("inject_outdated_banner", _SCRIPT_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 banner = importlib.util.module_from_spec(_SPEC)
@@ -91,9 +86,7 @@ def test_rerun_does_not_stack_banners(gh_pages: Path) -> None:
 
 def test_genuine_rebuild_is_left_alone(gh_pages: Path) -> None:
     page = gh_pages / "1.3.0" / "index.html"
-    rebuilt = EMPTY_PAGE.replace(
-        "hidden></div>", 'hidden><aside class="md-banner">built</aside></div>'
-    )
+    rebuilt = EMPTY_PAGE.replace("hidden></div>", 'hidden><aside class="md-banner">built</aside></div>')
     page.write_text(rebuilt, encoding="utf-8")
     banner.patch_tree(gh_pages)
     assert page.read_text(encoding="utf-8") == rebuilt
@@ -101,26 +94,20 @@ def test_genuine_rebuild_is_left_alone(gh_pages: Path) -> None:
 
 def test_archived_stylesheet_gets_banner_rules(gh_pages: Path) -> None:
     banner.patch_stylesheets(gh_pages)
-    stylesheet = (gh_pages / "1.3.0" / "stylesheets" / "rf.css").read_text(
-        encoding="utf-8"
-    )
+    stylesheet = (gh_pages / "1.3.0" / "stylesheets" / "rf.css").read_text(encoding="utf-8")
     assert "--rf-banner-height" in stylesheet
 
 
 def test_rerun_replaces_stylesheet_block(gh_pages: Path) -> None:
     banner.patch_stylesheets(gh_pages)
     banner.patch_stylesheets(gh_pages)
-    stylesheet = (gh_pages / "1.3.0" / "stylesheets" / "rf.css").read_text(
-        encoding="utf-8"
-    )
+    stylesheet = (gh_pages / "1.3.0" / "stylesheets" / "rf.css").read_text(encoding="utf-8")
     assert stylesheet.count("rf:outdated-banner:start") == 1
 
 
 def test_stylesheet_keeps_existing_rules(gh_pages: Path) -> None:
     banner.patch_stylesheets(gh_pages)
-    stylesheet = (gh_pages / "1.3.0" / "stylesheets" / "rf.css").read_text(
-        encoding="utf-8"
-    )
+    stylesheet = (gh_pages / "1.3.0" / "stylesheets" / "rf.css").read_text(encoding="utf-8")
     assert "color: red;" in stylesheet
 
 
