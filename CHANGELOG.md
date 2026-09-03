@@ -22,6 +22,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `RFDETR.predict()` now avoids recursively reassigning `training` on every registered module when the complete module tree is already in eval mode. It still scans the mode flags and calls `eval()` if any module is training, including a directly toggled child or the replacement module returned by `train()`, so the existing inference-mode behavior is preserved; that path pays the same recursive `eval()` cost as before plus the scan, so it does not get faster. On an RTX 4060 laptop, the read-only scan cost 0.18-0.22 ms for Nano/Small versus 0.61-0.72 ms for the unconditional `eval()` call, saving 0.43-0.51 ms of host work on each prediction that finds the tree already in eval mode — the common case in repeated inference. Optimized inference still returns before this check, and detections remained checksum-identical in every measured run.
+
+    Public `predict()` on one real COCO image at `develop@ffc69fd`, with counterbalanced baseline/patched fresh processes and 60 timed calls after 30 warm-ups in each process:
+
+    | hardware | model | batch | processes |               base (ms) |            patched (ms) |      delta |
+    | -------- | ----- | ----: | --------: | ----------------------: | ----------------------: | ---------: |
+    | RTX 4060 | Nano  |     1 |         3 |    8.812 [8.766, 8.916] |    8.387 [8.383, 8.558] | **-4.82%** |
+    | RTX 4060 | Nano  |     4 |         3 | 24.812 [24.711, 24.913] | 24.562 [24.555, 24.600] | **-1.01%** |
+    | RTX 4060 | Small |     1 |         3 | 14.176 [14.053, 14.246] | 13.800 [13.627, 13.913] | **-2.65%** |
+    | L4       | Nano  |     1 |         5 | 19.996 [19.794, 20.176] | 19.128 [18.650, 19.429] | **-4.34%** |
+    | L4       | Nano  |     4 |         5 | 25.641 [25.473, 25.836] | 24.334 [23.653, 24.952] | **-5.10%** |
+    | L4       | Small |     1 |         5 | 22.283 [21.857, 22.984] | 21.018 [20.943, 21.208] | **-5.68%** |
+
+    Every process envelope is disjoint and detections are checksum-identical across arms. The RTX 4060 is a laptop GPU on torch 2.13.0+cu130; the L4 used torch 2.9.1+cu129. The isolated scan and assignment costs were measured only on the RTX 4060. Their share of total latency varies with host speed and with the amount of GPU work in the call.
+
 - Optimizer parameter groups are now one per distinct learning-rate/weight-decay combination instead of one per parameter. `get_param_dict` built a separate group for every trainable tensor, so `torch.optim`'s foreach and fused AdamW kernels — which batch a group's parameters into one multi-tensor launch — degenerated to one single-tensor launch per parameter, plus one Python iteration of the optimizer's per-group loop. `rfdetr-nano` went from 465 groups to 28. Layer-wise backbone LR decay and per-parameter weight decay are unchanged: parameters are bucketed by the hyperparameters they were already assigned, so each keeps exactly the learning rate and weight decay it had, and the resulting AdamW steps are bit-identical (verified fused and foreach). Checkpoints written with the previous layout still resume: `on_load_checkpoint` regroups their optimizer and LR-scheduler state onto the merged groups (including a `SequentialLR` warmup wrapper's own nested scheduler state), which `Optimizer.load_state_dict` would otherwise reject as a different number of parameter groups. An explicit `lr_scheduler` whose `lr_scheduler_kwargs` pass a list sized to a specific parameter-group count (e.g. `LambdaLR`'s per-group `lr_lambda`) needs that list resized to the new group count.
 
 - `RFDETR.predict()` now converts PIL and uint8 NumPy inputs from HWC byte storage to contiguous CHW floating-point storage with one dtype/layout allocation and in-place scaling. The default source-image path reuses its already-materialized PIL array, while non-uint8 NumPy inputs retain torchvision's conversion path. The `[0, 1]` range-scan skip for those same two input types is unaffected: the fused conversion divides `uint8` storage by 255 and carries the same guarantee `to_tensor` did.
