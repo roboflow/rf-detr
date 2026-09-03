@@ -904,12 +904,41 @@ class TestPredictUint8Conversion:
         assert scale.equal(torch.tensor(255, dtype=torch.get_default_dtype()))
 
     def test_uint8_images_cross_the_device_boundary_unwidened(self) -> None:
-        """Only the 1-byte-per-channel storage is transferred; the widening runs after the copy."""
+        """The uint8 CHW view is pinned, then that distinct buffer crosses the CUDA boundary."""
         model = _DummyRFDETR()
         model.model.device = torch.device("cuda", 0)
         real_to = torch.Tensor.to
         real_tensor = torch.tensor
+        real_converter = detr_module._uint8_image_to_chw_view
+        chw_views: list[torch.Tensor] = []
+        pinned_sources: list[torch.Tensor] = []
+        pinned_tensors: list[torch.Tensor] = []
+        transfer_sources: list[torch.Tensor] = []
+        transfer_non_blocking: list[bool] = []
         transferred_dtypes: list[torch.dtype] = []
+
+        def converter_spy(image: np.ndarray[Any, Any]) -> torch.Tensor:
+            """Capture the uint8 CHW view that ``predict()`` prepares for transfer.
+
+            Examples:
+                This test-local closure requires its enclosing capture list.
+                >>> converter_spy(np.zeros((1, 1, 3), dtype=np.uint8))  # doctest: +SKIP
+            """
+            chw_view = real_converter(image)
+            chw_views.append(chw_view)
+            return chw_view
+
+        def pin_memory_spy(self: torch.Tensor) -> torch.Tensor:
+            """Return a distinct CPU buffer, simulating ``pin_memory()`` without CUDA hardware.
+
+            Examples:
+                This test-local closure requires its enclosing capture list.
+                >>> pin_memory_spy(torch.zeros(3))  # doctest: +SKIP
+            """
+            pinned_sources.append(self)
+            pinned_tensor = self.clone()
+            pinned_tensors.append(pinned_tensor)
+            return pinned_tensor
 
         def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
             """Record the dtype of each simulated CUDA transfer and keep the result on CPU.
@@ -919,6 +948,8 @@ class TestPredictUint8Conversion:
                 >>> to_spy(torch.zeros(3), torch.device("cuda"))  # doctest: +SKIP
             """
             if args and isinstance(args[0], torch.device) and args[0].type == "cuda":
+                transfer_sources.append(self)
+                transfer_non_blocking.append(bool(kwargs.get("non_blocking", False)))
                 transferred_dtypes.append(self.dtype)
                 return self
             return real_to(self, *args, **kwargs)
@@ -936,12 +967,22 @@ class TestPredictUint8Conversion:
             return real_tensor(data, **kwargs)
 
         with (
-            patch.object(torch.Tensor, "pin_memory", lambda self: self),
+            patch("rfdetr.detr._uint8_image_to_chw_view", converter_spy),
+            patch.object(torch.Tensor, "pin_memory", pin_memory_spy),
             patch.object(torch.Tensor, "to", to_spy),
             patch.object(torch, "tensor", tensor_spy),
         ):
             model.predict(np.full((17, 29, 3), 127, dtype=np.uint8))
 
+        assert len(chw_views) == 1
+        assert chw_views[0].dtype == torch.uint8
+        assert len(pinned_sources) == 1
+        assert pinned_sources[0] is chw_views[0]
+        assert len(pinned_tensors) == 1
+        assert pinned_tensors[0] is not chw_views[0]
+        assert len(transfer_sources) == 1
+        assert transfer_sources[0] is pinned_tensors[0]
+        assert transfer_non_blocking == [True]
         assert transferred_dtypes == [torch.uint8]
 
     def test_predict_keeps_torchvision_fallback_for_float_numpy(self) -> None:
