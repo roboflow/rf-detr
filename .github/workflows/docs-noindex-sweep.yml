@@ -23,7 +23,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || 'dispatch' }}
+  # This sweep and Build and Publish Docs both write gh-pages, so a dispatched run joins that
+  # shared non-cancelling queue: a rewrite must never race a mike deploy, whose generated pages
+  # a retry cannot safely rebase. PR dry runs push nothing, so they get their own cancellable
+  # per-ref group rather than queueing a real backfill behind CI.
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || 'gh-pages-writer' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

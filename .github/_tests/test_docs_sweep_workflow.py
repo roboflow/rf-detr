@@ -114,6 +114,16 @@ def test_push_is_gated_on_dispatch(core_workflow: dict[str, Any], sweep_steps: l
     assert step_named(sweep_steps, "Commit and push")["if"] == "github.event_name == 'workflow_dispatch'"
 
 
+def test_dispatch_runs_join_the_shared_gh_pages_writer_queue(core_workflow: dict[str, Any]) -> None:
+    # publish-docs.yml writes gh-pages from the same queue; a dispatched sweep that leaves it
+    # can race a mike deploy, and a retry cannot safely rebase generated pages.
+    assert "gh-pages-writer" in core_workflow["concurrency"]["group"]
+
+
+def test_only_dry_runs_are_cancellable(core_workflow: dict[str, Any]) -> None:
+    assert core_workflow["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
+
+
 def test_dry_run_covers_the_injector(core_workflow: dict[str, Any]) -> None:
     triggers = core_workflow[True] if True in core_workflow else core_workflow["on"]
     assert ".github/scripts/inject_outdated_banner.py" in triggers["pull_request"]["paths"]

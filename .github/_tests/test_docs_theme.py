@@ -11,10 +11,49 @@ backfill script that patches trees mike can no longer rebuild.
 
 import re
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from jinja2 import DictLoader, Environment
+
+
+def render_outdated(template: str, site_url: str | None) -> str:
+    """Render the theme's `outdated` block as mkdocs would for one deployed version.
+
+    Args:
+        template: Contents of docs/theme/main.html.
+        site_url: The site_url mike writes for that version, or None for an unversioned build.
+
+    Returns:
+        The rendered block, with surrounding whitespace stripped.
+
+    Examples:
+        >>> render_outdated("{% block outdated %}{{ config.site_url }}{% endblock %}", "x")
+        'x'
+    """
+    environment = Environment(
+        loader=DictLoader({"base.html": "{% block outdated %}{% endblock %}", "main.html": template})
+    )
+    return environment.get_template("main.html").render(config=SimpleNamespace(site_url=site_url)).strip()
+
+
+def collapse(text: str) -> str:
+    """Collapse every run of whitespace to a single space.
+
+    The theme indents its banner markup and the script embeds newlines at different points;
+    only the wording itself has to match, not the layout each side happens to emit.
+
+    Args:
+        text: Markup to normalize.
+
+    Returns:
+        The text with whitespace runs collapsed and the ends stripped.
+
+    Examples:
+        >>> collapse("a  b\\n  c")
+        'a b c'
+    """
+    return re.sub(r"\s+", " ", text).strip()
 
 
 @pytest.fixture
@@ -65,9 +104,20 @@ def test_latest_and_unversioned_builds_render_no_outdated_banner(repo_root: Path
     assert rendered == ""
 
 
-def test_theme_wording_matches_the_backfill_script(outdated_block: str, repo_root: Path) -> None:
-    script = (repo_root / ".github" / "scripts" / "inject_outdated_banner.py").read_text(encoding="utf-8")
-    assert "unreleased development version" in script and "older version of RF-DETR" in script
+def test_develop_wording_matches_the_backfill_script(injector: ModuleType, repo_root: Path) -> None:
+    template = (repo_root / "docs" / "theme" / "main.html").read_text(encoding="utf-8")
+
+    rendered = render_outdated(template, "https://rfdetr.roboflow.com/develop/")
+
+    assert collapse(rendered) == collapse(injector.DEVELOP_TEXT)
+
+
+def test_archived_wording_matches_the_backfill_script(injector: ModuleType, repo_root: Path) -> None:
+    template = (repo_root / "docs" / "theme" / "main.html").read_text(encoding="utf-8")
+
+    rendered = render_outdated(template, "https://rfdetr.roboflow.com/1.9.4/")
+
+    assert collapse(rendered) == collapse(injector.ARCHIVED_TEXT)
 
 
 def test_banner_script_is_registered(repo_root: Path) -> None:
