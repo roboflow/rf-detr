@@ -33,7 +33,7 @@ O365_REQUIRED_PIPELINE_OPTIONS = tuple(
 )
 
 
-def training_namespace(model_config: ModelConfig, dataset_dir: str = "/fake/dataset") -> types.SimpleNamespace:
+def _training_namespace(model_config: ModelConfig, dataset_dir: str = "/fake/dataset") -> types.SimpleNamespace:
     """Build the merged model/train namespace passed to dataset builders.
 
     Args:
@@ -44,14 +44,28 @@ def training_namespace(model_config: ModelConfig, dataset_dir: str = "/fake/data
         Namespace carrying the fields consumed by dataset builders.
 
     Examples:
-        >>> namespace = training_namespace(RFDETRSmallConfig())
+        >>> namespace = _training_namespace(RFDETRSmallConfig())
         >>> (namespace.multi_scale, namespace.num_windows, namespace.square_resize_div_64)
         (True, 2, True)
     """
     return _namespace_from_configs(model_config, TrainConfig(dataset_dir=dataset_dir))
 
 
-def call_coco_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
+@patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock())
+@patch("rfdetr.datasets.coco.make_coco_transforms")
+@patch("rfdetr.datasets.coco.make_coco_transforms_square_div_64")
+@patch("rfdetr.datasets.coco.logger")
+@patch("rfdetr.datasets.coco.Path")
+def _call_coco_builder(
+    args: Any,
+    mock_path: MagicMock,
+    _mock_logger: MagicMock,
+    mock_square: MagicMock,
+    mock_plain: MagicMock,
+    mock_dataset: MagicMock,
+    *,
+    resolution: int = 512,
+) -> dict[str, Any]:
     """Run the standard COCO builder with external dataset operations mocked.
 
     Args:
@@ -62,20 +76,13 @@ def call_coco_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
         Captured transform and dataset arguments.
 
     Examples:
-        >>> captured = call_coco_builder(training_namespace(RFDETRSmallConfig()))
+        >>> captured = _call_coco_builder(_training_namespace(RFDETRSmallConfig()))
         >>> captured["transform_kwargs"]["num_windows"]
         2
     """
-    with (
-        patch("rfdetr.datasets.coco.Path") as mock_path,
-        patch("rfdetr.datasets.coco.logger"),
-        patch("rfdetr.datasets.coco.make_coco_transforms_square_div_64") as mock_square,
-        patch("rfdetr.datasets.coco.make_coco_transforms") as mock_plain,
-        patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()) as mock_dataset,
-    ):
-        mock_path.return_value.exists.return_value = True
-        mock_square.return_value = mock_plain.return_value = MagicMock()
-        build_coco("train", args, resolution=resolution)
+    mock_path.return_value.exists.return_value = True
+    mock_square.return_value = mock_plain.return_value = MagicMock()
+    build_coco("train", args, resolution=resolution)
 
     used = mock_square if mock_square.called else mock_plain
     return {
@@ -85,7 +92,21 @@ def call_coco_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
     }
 
 
-def call_roboflow_coco_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
+@patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock())
+@patch("rfdetr.datasets.coco.make_coco_transforms")
+@patch("rfdetr.datasets.coco.make_coco_transforms_square_div_64")
+@patch("rfdetr.datasets.coco.logger")
+@patch("rfdetr.datasets.coco.Path")
+def _call_roboflow_coco_builder(
+    args: Any,
+    mock_path: MagicMock,
+    _mock_logger: MagicMock,
+    mock_square: MagicMock,
+    mock_plain: MagicMock,
+    mock_dataset: MagicMock,
+    *,
+    resolution: int = 512,
+) -> dict[str, Any]:
     """Run the Roboflow COCO builder with external dataset operations mocked.
 
     Args:
@@ -96,20 +117,13 @@ def call_roboflow_coco_builder(args: Any, resolution: int = 512) -> dict[str, An
         Captured transform and dataset arguments.
 
     Examples:
-        >>> captured = call_roboflow_coco_builder(training_namespace(RFDETRSmallConfig()))
+        >>> captured = _call_roboflow_coco_builder(_training_namespace(RFDETRSmallConfig()))
         >>> captured["transform_kwargs"]["multi_scale"]
         True
     """
-    with (
-        patch("rfdetr.datasets.coco.Path") as mock_path,
-        patch("rfdetr.datasets.coco.logger"),
-        patch("rfdetr.datasets.coco.make_coco_transforms_square_div_64") as mock_square,
-        patch("rfdetr.datasets.coco.make_coco_transforms") as mock_plain,
-        patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()) as mock_dataset,
-    ):
-        mock_path.return_value.exists.return_value = True
-        mock_square.return_value = mock_plain.return_value = MagicMock()
-        build_roboflow_from_coco("train", args, resolution=resolution)
+    mock_path.return_value.exists.return_value = True
+    mock_square.return_value = mock_plain.return_value = MagicMock()
+    build_roboflow_from_coco("train", args, resolution=resolution)
 
     used = mock_square if mock_square.called else mock_plain
     return {
@@ -119,7 +133,21 @@ def call_roboflow_coco_builder(args: Any, resolution: int = 512) -> dict[str, An
     }
 
 
-def call_yolo_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
+@patch("rfdetr.datasets.yolo.YoloDetection", return_value=MagicMock())
+@patch("rfdetr.datasets.yolo.make_coco_transforms")
+@patch("rfdetr.datasets.yolo.make_coco_transforms_square_div_64")
+@patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs")
+@patch("rfdetr.datasets.yolo.Path")
+def _call_yolo_builder(
+    args: Any,
+    mock_path: MagicMock,
+    mock_resolve_split_dirs: MagicMock,
+    mock_square: MagicMock,
+    mock_plain: MagicMock,
+    mock_dataset: MagicMock,
+    *,
+    resolution: int = 512,
+) -> dict[str, Any]:
     """Run the YOLO builder with filesystem and dataset operations mocked.
 
     Args:
@@ -130,21 +158,14 @@ def call_yolo_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
         Captured transform and dataset arguments.
 
     Examples:
-        >>> captured = call_yolo_builder(training_namespace(RFDETRSmallConfig()))
+        >>> captured = _call_yolo_builder(_training_namespace(RFDETRSmallConfig()))
         >>> captured["transform_kwargs"]["expanded_scales"]
         True
     """
-    fake_dirs = (MagicMock(), MagicMock())
-    with (
-        patch("rfdetr.datasets.yolo.Path") as mock_path,
-        patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs", return_value=fake_dirs),
-        patch("rfdetr.datasets.yolo.make_coco_transforms_square_div_64") as mock_square,
-        patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_plain,
-        patch("rfdetr.datasets.yolo.YoloDetection", return_value=MagicMock()) as mock_dataset,
-    ):
-        mock_path.return_value.exists.return_value = True
-        mock_square.return_value = mock_plain.return_value = MagicMock()
-        build_roboflow_from_yolo("train", args, resolution=resolution)
+    mock_path.return_value.exists.return_value = True
+    mock_resolve_split_dirs.return_value = (MagicMock(), MagicMock())
+    mock_square.return_value = mock_plain.return_value = MagicMock()
+    build_roboflow_from_yolo("train", args, resolution=resolution)
 
     used = mock_square if mock_square.called else mock_plain
     return {
@@ -154,7 +175,17 @@ def call_yolo_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
     }
 
 
-def call_o365_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
+@patch("rfdetr.datasets.o365.CocoDetection", return_value=MagicMock())
+@patch("rfdetr.datasets.o365.make_coco_transforms")
+@patch("rfdetr.datasets.o365.make_coco_transforms_square_div_64")
+def _call_o365_builder(
+    args: Any,
+    mock_square: MagicMock,
+    mock_plain: MagicMock,
+    mock_dataset: MagicMock,
+    *,
+    resolution: int = 512,
+) -> dict[str, Any]:
     """Run the Object365 builder with dataset and transform operations mocked.
 
     Args:
@@ -165,17 +196,12 @@ def call_o365_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
         Captured transform and dataset arguments.
 
     Examples:
-        >>> captured = call_o365_builder(training_namespace(RFDETRSmallConfig()))
+        >>> captured = _call_o365_builder(_training_namespace(RFDETRSmallConfig()))
         >>> captured["transform_kwargs"]["multi_scale"]
         True
     """
-    with (
-        patch("rfdetr.datasets.o365.make_coco_transforms_square_div_64") as mock_square,
-        patch("rfdetr.datasets.o365.make_coco_transforms") as mock_plain,
-        patch("rfdetr.datasets.o365.CocoDetection", return_value=MagicMock()) as mock_dataset,
-    ):
-        mock_square.return_value = mock_plain.return_value = MagicMock()
-        build_o365_raw("train", args, resolution=resolution)
+    mock_square.return_value = mock_plain.return_value = MagicMock()
+    build_o365_raw("train", args, resolution=resolution)
 
     used = mock_square if mock_square.called else mock_plain
     return {
@@ -185,12 +211,12 @@ def call_o365_builder(args: Any, resolution: int = 512) -> dict[str, Any]:
     }
 
 
-BuilderCall = Callable[[Any, int], dict[str, Any]]
+BuilderCall = Callable[..., dict[str, Any]]
 BUILDER_CONTRACTS: tuple[tuple[str, BuilderCall, tuple[str, ...]], ...] = (
-    ("coco", call_coco_builder, ALL_REQUIRED_PIPELINE_OPTIONS),
-    ("roboflow-coco", call_roboflow_coco_builder, ALL_REQUIRED_PIPELINE_OPTIONS),
-    ("yolo", call_yolo_builder, ALL_REQUIRED_PIPELINE_OPTIONS),
-    ("o365", call_o365_builder, O365_REQUIRED_PIPELINE_OPTIONS),
+    ("coco", _call_coco_builder, ALL_REQUIRED_PIPELINE_OPTIONS),
+    ("roboflow-coco", _call_roboflow_coco_builder, ALL_REQUIRED_PIPELINE_OPTIONS),
+    ("yolo", _call_yolo_builder, ALL_REQUIRED_PIPELINE_OPTIONS),
+    ("o365", _call_o365_builder, O365_REQUIRED_PIPELINE_OPTIONS),
 )
 MISSING_OPTION_CASES = tuple(
     pytest.param(builder, option, id=f"{name}-{option}")
@@ -210,7 +236,7 @@ class TestPipelineOptionsHaveNoSilentFallback:
             Pytest fixture functions cannot be called directly outside fixture injection.
             >>> TestPipelineOptionsHaveNoSilentFallback().complete_namespace(Path("."))  # doctest: +SKIP
         """
-        return training_namespace(RFDETRSmallConfig(), dataset_dir=str(tmp_path))
+        return _training_namespace(RFDETRSmallConfig(), dataset_dir=str(tmp_path))
 
     @pytest.mark.parametrize("builder,missing_option", MISSING_OPTION_CASES)
     def test_builder_raises_for_each_missing_required_option(
@@ -223,7 +249,7 @@ class TestPipelineOptionsHaveNoSilentFallback:
         delattr(complete_namespace, missing_option)
 
         with pytest.raises(AttributeError, match=missing_option):
-            builder(complete_namespace, 512)
+            builder(complete_namespace, resolution=512)
 
 
 class TestConfigValuesReachTheTransformPipeline:
@@ -232,10 +258,10 @@ class TestConfigValuesReachTheTransformPipeline:
     @pytest.mark.parametrize(
         "builder",
         [
-            pytest.param(call_coco_builder, id="coco"),
-            pytest.param(call_roboflow_coco_builder, id="roboflow-coco"),
-            pytest.param(call_yolo_builder, id="yolo"),
-            pytest.param(call_o365_builder, id="o365"),
+            pytest.param(_call_coco_builder, id="coco"),
+            pytest.param(_call_roboflow_coco_builder, id="roboflow-coco"),
+            pytest.param(_call_yolo_builder, id="yolo"),
+            pytest.param(_call_o365_builder, id="o365"),
         ],
     )
     @pytest.mark.parametrize("square_resize_div_64", [True, False])
@@ -245,20 +271,20 @@ class TestConfigValuesReachTheTransformPipeline:
         square_resize_div_64: bool,
     ) -> None:
         """The configured square-resize flag must select the matching branch."""
-        namespace = training_namespace(RFDETRSmallConfig())
+        namespace = _training_namespace(RFDETRSmallConfig())
         namespace.square_resize_div_64 = square_resize_div_64
 
-        captured = builder(namespace, 512)
+        captured = builder(namespace, resolution=512)
 
         assert captured["square_resize_used"] is square_resize_div_64
 
     @pytest.mark.parametrize(
         "builder",
         [
-            pytest.param(call_coco_builder, id="coco"),
-            pytest.param(call_roboflow_coco_builder, id="roboflow-coco"),
-            pytest.param(call_yolo_builder, id="yolo"),
-            pytest.param(call_o365_builder, id="o365"),
+            pytest.param(_call_coco_builder, id="coco"),
+            pytest.param(_call_roboflow_coco_builder, id="roboflow-coco"),
+            pytest.param(_call_yolo_builder, id="yolo"),
+            pytest.param(_call_o365_builder, id="o365"),
         ],
     )
     @pytest.mark.parametrize(
@@ -285,32 +311,32 @@ class TestConfigValuesReachTheTransformPipeline:
         square_resize_div_64: bool,
     ) -> None:
         """Each configured geometry value must reach the transform unchanged or intentionally inverted."""
-        namespace = training_namespace(RFDETRSmallConfig())
+        namespace = _training_namespace(RFDETRSmallConfig())
         namespace.square_resize_div_64 = square_resize_div_64
         setattr(namespace, namespace_option, configured_value)
 
-        captured = builder(namespace, 512)
+        captured = builder(namespace, resolution=512)
 
         assert captured["transform_kwargs"][transform_option] == expected_value
 
     def test_o365_does_not_consume_segmentation_option(self) -> None:
         """Object365's documented detection-only builder must not require or forward mask configuration."""
-        namespace = training_namespace(RFDETRSegSmallConfig())
+        namespace = _training_namespace(RFDETRSegSmallConfig())
         del namespace.segmentation_head
 
-        captured = call_o365_builder(namespace)
+        captured = _call_o365_builder(namespace)
 
         assert "include_masks" not in captured["dataset_kwargs"]
 
     @pytest.mark.parametrize(
         "builder",
         [
-            pytest.param(call_coco_builder, id="coco"),
-            pytest.param(call_roboflow_coco_builder, id="roboflow-coco"),
-            pytest.param(call_yolo_builder, id="yolo"),
+            pytest.param(_call_coco_builder, id="coco"),
+            pytest.param(_call_roboflow_coco_builder, id="roboflow-coco"),
+            pytest.param(_call_yolo_builder, id="yolo"),
         ],
     )
     def test_segmentation_builders_forward_masks(self, builder: BuilderCall) -> None:
         """Every segmentation-capable builder must enable masks for a segmentation model."""
-        captured = builder(training_namespace(RFDETRSegSmallConfig()), 512)
+        captured = builder(_training_namespace(RFDETRSegSmallConfig()), resolution=512)
         assert captured["dataset_kwargs"]["include_masks"] is True
