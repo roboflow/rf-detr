@@ -2355,6 +2355,80 @@
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>RFDETR.predict()</code> now avoids recursively reassigning <code>training</code> on every registered module when the complete module tree is already in eval mode. It still scans the mode flags and calls <code>eval()</code> if any module is training, including a directly toggled child or the replacement module returned by <code>train()</code>, so the existing inference-mode behavior is preserved; that path pays the same recursive <code>eval()</code> cost as before plus the scan, so it does not get faster. On an RTX 4060 laptop, the read-only scan cost 0.18-0.22 ms for Nano/Small versus 0.61-0.72 ms for the unconditional <code>eval()</code> call, saving 0.43-0.51 ms of host work on each prediction that finds the tree already in eval mode — the common case in repeated inference. Optimized inference still returns before this check, and detections remained checksum-identical in every measured run.</p>
+<p>Public <code>predict()</code> on one real COCO image at <code>develop@ffc69fd</code>, with counterbalanced baseline/patched fresh processes and 60 timed calls after 30 warm-ups in each process:</p>
+<table>
+<thead>
+<tr>
+<th>hardware</th>
+<th>model</th>
+<th style="text-align: right;">batch</th>
+<th style="text-align: right;">processes</th>
+<th style="text-align: right;">base (ms)</th>
+<th style="text-align: right;">patched (ms)</th>
+<th style="text-align: right;">delta</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RTX 4060</td>
+<td>Nano</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">8.812 [8.766, 8.916]</td>
+<td style="text-align: right;">8.387 [8.383, 8.558]</td>
+<td style="text-align: right;"><strong>-4.82%</strong></td>
+</tr>
+<tr>
+<td>RTX 4060</td>
+<td>Nano</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">24.812 [24.711, 24.913]</td>
+<td style="text-align: right;">24.562 [24.555, 24.600]</td>
+<td style="text-align: right;"><strong>-1.01%</strong></td>
+</tr>
+<tr>
+<td>RTX 4060</td>
+<td>Small</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">14.176 [14.053, 14.246]</td>
+<td style="text-align: right;">13.800 [13.627, 13.913]</td>
+<td style="text-align: right;"><strong>-2.65%</strong></td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Nano</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">19.996 [19.794, 20.176]</td>
+<td style="text-align: right;">19.128 [18.650, 19.429]</td>
+<td style="text-align: right;"><strong>-4.34%</strong></td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Nano</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">25.641 [25.473, 25.836]</td>
+<td style="text-align: right;">24.334 [23.653, 24.952]</td>
+<td style="text-align: right;"><strong>-5.10%</strong></td>
+</tr>
+<tr>
+<td>L4</td>
+<td>Small</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">22.283 [21.857, 22.984]</td>
+<td style="text-align: right;">21.018 [20.943, 21.208]</td>
+<td style="text-align: right;"><strong>-5.68%</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Every process envelope is disjoint and detections are checksum-identical across arms. The RTX 4060 is a laptop GPU on torch 2.13.0+cu130; the L4 used torch 2.9.1+cu129. The isolated scan and assignment costs were measured only on the RTX 4060. Their share of total latency varies with host speed and with the amount of GPU work in the call.</p>
+</li>
+<li>
 <p><code>RFDETR.predict()</code> now carries PIL and uint8 NumPy inputs across the host-to-device boundary in their original one-byte-per-channel storage and widens them to the default floating-point dtype on the model's device, instead of widening on the host and transferring four times the bytes. The dtype/layout fusion itself is unchanged — only where it runs — so a CPU model behaves exactly as before. The divisor is now a 0-dim tensor rather than the Python <code>int</code> <code>255</code>, because CUDA evaluates <code>Tensor.div_(255)</code> as a multiplication by the scalar's reciprocal and would otherwise land 1 ULP away from the host result for just under half of all byte values (126 of 256); with a tensor divisor the produced pixels stay byte-for-byte identical to <code>torchvision.transforms.functional.to_tensor</code>'s output on every device this change was verified on (CPU and CUDA). This is the host-to-device counterpart of the byte transfer the CUDA source-image path already performs.</p>
 </li>
 <li>
