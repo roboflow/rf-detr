@@ -74,6 +74,13 @@ augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
     "kornia>=0.7,<1",                  # optional GPU-side augmentation
 ]
+webdataset = [
+    # Streaming tar-shard training input (dataset_file="webdataset"). Only the reader needs it: shards are packed
+    # with the standard library's tarfile, so `python -m rfdetr.datasets.webdataset_io` runs without this extra.
+    # Floored at 1.0, the series whose WebDataset(...) signature this integrates against: the loader
+    # passes workersplitter, nodesplitter, empty_check and seed explicitly.
+    "webdataset>=1.0,<2",
+]
 onnx = [
     "onnx>=1.16.0,<2.0",
     "onnxsim>=0.7.0",  # 0.7.0 ships wheels for cp310/311/312-abi3 (3.10-3.13) on linux x86_64+aarch64, win_amd64 and macOS arm64. The old <0.6.0 pin resolved to 0.5.0, which lacks cp311/cp313/aarch64 wheels, so pip built onnxsim's bundled onnxruntime/onnx from source and the install hung (#749).
@@ -447,6 +454,7 @@ overrides = [
     "coremltools", "coremltools.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
+    "webdataset", "webdataset.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the

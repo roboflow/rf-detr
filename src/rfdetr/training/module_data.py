@@ -19,6 +19,11 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.webdataset_io import (
+    WebDatasetDetection,
+    WebDatasetSplitUnavailableError,
+    build_webdataset_loader,
+)
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
@@ -288,6 +293,10 @@ class RFDETRDataModule(LightningDataModule):
         the name "test".  A ``roboflow`` export in COCO format still has to ship ``test/_annotations.coco.json``:
         its absence raises a plain ``FileNotFoundError`` from the COCO builder, which this fallback does not catch.
 
+        ``webdataset`` uses a packed ``test`` split when the shard directory has one, and falls back to ``val`` with a
+        log line when it does not — a split is only present there if someone packed it deliberately, so evaluating
+        ``val`` under the name "test" without saying so would be the same silent substitution.
+
         ``coco`` falls back to ``val`` because its ``test`` split is unlabelled COCO test-dev and cannot be scored
         locally.  ``o365`` also falls back because its dataset builder exposes only ``train`` and ``val`` splits.
 
@@ -299,6 +308,14 @@ class RFDETRDataModule(LightningDataModule):
             The dataset to evaluate during the ``test`` stage.
         """
         dataset_file = self.train_config.dataset_file
+        if dataset_file == "webdataset":
+            try:
+                return build_dataset("test", ns, resolution)
+            except WebDatasetSplitUnavailableError:
+                logger.warning(
+                    "No 'test' shard index in %s; evaluating the 'val' split instead.",
+                    self.train_config.dataset_dir,
+                )
         if dataset_file in ("roboflow", "yolo"):
             try:
                 return build_dataset("test", ns, resolution)
@@ -353,6 +370,44 @@ class RFDETRDataModule(LightningDataModule):
             raise RuntimeError(f"{split} dataset was not built; call setup({split!r}) before requesting a dataloader.")
         return dataset
 
+    def _webdataset_loader(
+        self, dataset: WebDatasetDetection, *, batch_size: int, fixed_epoch: bool
+    ) -> DataLoader[Any]:
+        """Return the streaming loader for a WebDataset-backed split.
+
+        A shard-streaming dataset carries its own shard-to-worker split, so it takes no sampler and no
+        :class:`GradAccumAlignedDataset` wrapper; the fixed-length epoch that ``fixed_epoch`` requests is what plays
+        the alignment role there — floored to a whole number of *accumulation windows* (``batch_size *
+        grad_accum_steps``) for training, so PTL never fires the optimizer on a partial one
+        (https://github.com/Lightning-AI/pytorch-lightning/issues/19987), the same guarantee
+        :class:`GradAccumAlignedDataset` gives the map-style path. Collation, ``pin_memory`` and the worker knobs
+        stay the ones configured for every other loader, so the batch reaching ``on_after_batch_transfer`` is
+        indistinguishable from a map-style one.
+
+        Args:
+            dataset: The streaming dataset to wrap.
+            batch_size: Per-rank micro-batch size.
+            fixed_epoch: Plan a fixed-length epoch and drop partial batches (training), rather than passing over
+                every sample exactly once (evaluation).
+
+        Returns:
+            The streaming DataLoader.
+        """
+        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
+        return build_webdataset_loader(
+            dataset,
+            batch_size=batch_size,
+            collate_fn=self._collate_fn,
+            num_workers=self._num_workers,
+            pin_memory=self._pin_memory,
+            persistent_workers=self._persistent_workers,
+            prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
+            fixed_epoch=fixed_epoch,
+            world_size=world_size,
+            grad_accum_steps=self.train_config.grad_accum_steps if fixed_epoch else 1,
+        )
+
     def train_dataloader(self) -> DataLoader[Any]:
         """Return the training DataLoader.
 
@@ -368,6 +423,8 @@ class RFDETRDataModule(LightningDataModule):
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
         batch_size = self._resolve_batch_size()
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=batch_size, fixed_epoch=True)
         effective_batch_size = batch_size * self.train_config.grad_accum_steps
         num_workers = self._num_workers
 
@@ -423,6 +480,8 @@ class RFDETRDataModule(LightningDataModule):
             (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "validate")
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=self._resolve_eval_batch_size(), fixed_epoch=False)
         return DataLoader(
             dataset,
             batch_size=self._resolve_eval_batch_size(),
@@ -444,6 +503,8 @@ class RFDETRDataModule(LightningDataModule):
             default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_test, "test")
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=self._resolve_eval_batch_size(), fixed_epoch=False)
         return DataLoader(
             dataset,
             batch_size=self._resolve_eval_batch_size(),
@@ -465,6 +526,8 @@ class RFDETRDataModule(LightningDataModule):
             (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "predict")
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=self._resolve_eval_batch_size(), fixed_epoch=False)
         return DataLoader(
             dataset,
             batch_size=self._resolve_eval_batch_size(),
@@ -536,6 +599,12 @@ class RFDETRDataModule(LightningDataModule):
         dataset = self._get_dataset_for_visualization(split)
         if dataset is None:
             raise RuntimeError(f"Could not build dataset split {split!r} for visualization.")
+        if isinstance(dataset, WebDatasetDetection):
+            # The grid indexes the dataset directly, which a shard stream cannot serve.
+            raise TypeError(
+                "Sample grids need a map-style dataset, and dataset_file='webdataset' streams shards instead. "
+                "Point dataset_dir at the loose files the shards were packed from to visualize this split."
+            )
 
         inv_normalize = T.Normalize(
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
@@ -776,6 +845,11 @@ class RFDETRDataModule(LightningDataModule):
         for dataset in (self._dataset_train, self._dataset_val, self._dataset_test):
             if dataset is None:
                 continue
+            # A dataset that carries its own label-indexed names (a shard stream reads them from its index)
+            # answers directly; the COCO-object path below stays the route for every map-style dataset.
+            own_names = getattr(dataset, "class_names", None)
+            if isinstance(own_names, list) and own_names:
+                return own_names
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
                 label2cat = getattr(dataset, "label2cat", None)

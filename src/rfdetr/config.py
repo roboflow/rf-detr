@@ -1057,7 +1057,9 @@ class TrainConfig(BaseConfig):
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
     keypoint_oks_sigmas: list[float] | None = None
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
+    # "webdataset" streams pre-packed tar shards instead of loose image files; see
+    # rfdetr.datasets.webdataset_io for the packer and the sizing contract it imposes on the loaders.
+    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "webdataset"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
