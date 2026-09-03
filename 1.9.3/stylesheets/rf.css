@@ -268,3 +268,40 @@ body[data-md-url$="/cookbooks/"] .md-content {
 .md-search {
   flex-grow: 0;
 }
+
+/* rf:outdated-banner:start */
+[data-md-component="outdated"] .md-banner,
+[data-md-component="outdated"] .md-banner--warning {
+  background-color: rgb(243, 238, 255);
+  color: rgb(29, 29, 31);
+  border-bottom: 1px solid rgb(229, 231, 235);
+}
+
+[data-md-component="outdated"] .md-banner__inner {
+  max-width: 1600px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+[data-md-component="outdated"] {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.md-header {
+  top: var(--rf-banner-height, 0px);
+}
+
+[data-md-component="outdated"] .md-banner code {
+  background: white;
+  color: var(--md-primary-fg-color);
+}
+
+[data-md-component="outdated"] .md-banner a,
+[data-md-component="outdated"] .md-banner a:focus,
+[data-md-component="outdated"] .md-banner a:hover {
+  color: var(--md-primary-fg-color);
+  text-decoration: underline;
+}
+/* rf:outdated-banner:end */

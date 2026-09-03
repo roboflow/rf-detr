@@ -178,7 +178,15 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
-        
+        <!-- rf:outdated-banner:start -->
+        <aside class="md-banner md-banner--warning">
+          <div class="md-banner__inner md-grid md-typeset">
+You are reading the unreleased development version of the documentation, built from the <code>develop</code> branch.<br>
+APIs described here may change or may never ship in a release, so use the <a href="https://rfdetr.roboflow.com/latest/"><strong>latest stable release</strong></a> instead.
+          </div>
+          <script>var el=document.querySelector("[data-md-component=outdated]");el&&(el.hidden=!1)</script>
+        </aside>
+        <!-- rf:outdated-banner:end -->
       </div>
     
     

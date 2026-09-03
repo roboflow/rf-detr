@@ -2,6 +2,7 @@
 <!doctype html>
 <html lang="en" class="no-js">
   <head>
+    <meta name="robots" content="noindex, follow">
     
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -180,7 +181,15 @@
     </div>
     
       <div data-md-color-scheme="default" data-md-component="outdated" hidden>
-        
+        <!-- rf:outdated-banner:start -->
+        <aside class="md-banner md-banner--warning">
+          <div class="md-banner__inner md-grid md-typeset">
+You are reading the documentation for an older version of RF-DETR, kept online for reference.<br>
+APIs described here may have changed or been removed, so use the <a href="https://rfdetr.roboflow.com/latest/"><strong>latest stable release</strong></a> instead.
+          </div>
+          <script>var el=document.querySelector("[data-md-component=outdated]");el&&(el.hidden=!1)</script>
+        </aside>
+        <!-- rf:outdated-banner:end -->
       </div>
     
     
@@ -3684,5 +3693,6 @@
       <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
-  </body>
+      <script src="../../../javascripts/version-banner.js"></script>
+</body>
 </html>
