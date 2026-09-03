@@ -34,9 +34,10 @@ def gh_pages(tmp_path: Path) -> Path:
         page = tmp_path / relative
         page.parent.mkdir(parents=True, exist_ok=True)
         page.write_text(EMPTY_PAGE, encoding="utf-8")
-    stylesheet = tmp_path / "1.3.0" / "stylesheets" / "rf.css"
-    stylesheet.parent.mkdir(parents=True, exist_ok=True)
-    stylesheet.write_text("body {\n  color: red;\n}\n", encoding="utf-8")
+    for version in ("1.3.0", "develop"):
+        stylesheet = tmp_path / version / "stylesheets" / "rf.css"
+        stylesheet.parent.mkdir(parents=True, exist_ok=True)
+        stylesheet.write_text("body {\n  color: red;\n}\n", encoding="utf-8")
     return tmp_path
 
 
@@ -108,8 +109,16 @@ def test_native_banner_stylesheet_is_left_unchanged(injector: ModuleType, gh_pag
     native_stylesheet = f"{injector.BANNER_CSS}\n"
     stylesheet.write_text(native_stylesheet, encoding="utf-8")
 
-    assert injector.patch_stylesheets(gh_pages) == []
+    injector.patch_stylesheets(gh_pages)
+
     assert stylesheet.read_text(encoding="utf-8") == native_stylesheet
+
+
+def test_native_banner_stylesheet_is_not_reported_as_changed(injector: ModuleType, gh_pages: Path) -> None:
+    stylesheet = gh_pages / "1.3.0" / "stylesheets" / "rf.css"
+    stylesheet.write_text(f"{injector.BANNER_CSS}\n", encoding="utf-8")
+
+    assert stylesheet not in injector.patch_stylesheets(gh_pages)
 
 
 def test_injected_banner_rules_are_scoped_to_the_outdated_component(injector: ModuleType) -> None:
@@ -117,9 +126,12 @@ def test_injected_banner_rules_are_scoped_to_the_outdated_component(injector: Mo
     assert '[data-md-component="outdated"] .md-banner' in injector.BANNER_CSS
 
 
-def test_develop_stylesheet_is_not_created(injector: ModuleType, gh_pages: Path) -> None:
+def test_develop_stylesheet_gets_banner_rules(injector: ModuleType, gh_pages: Path) -> None:
+    # develop is rebuilt on every push, but its published tree carries no banner rules until
+    # that next deploy - without them the injected banner renders in Material's default yellow.
     injector.patch_stylesheets(gh_pages)
-    assert not (gh_pages / "develop" / "stylesheets" / "rf.css").exists()
+    stylesheet = (gh_pages / "develop" / "stylesheets" / "rf.css").read_text(encoding="utf-8")
+    assert "--rf-banner-height" in stylesheet
 
 
 def test_archived_version_gets_offset_script(injector: ModuleType, gh_pages: Path) -> None:
@@ -140,9 +152,20 @@ def test_root_page_references_script_without_prefix(injector: ModuleType, gh_pag
     assert '<script src="javascripts/version-banner.js"></script>' in page
 
 
-def test_develop_does_not_get_the_offset_script(injector: ModuleType, gh_pages: Path) -> None:
+def test_develop_gets_the_offset_script(injector: ModuleType, gh_pages: Path) -> None:
     injector.patch_scripts(gh_pages)
-    assert not (gh_pages / "develop" / "javascripts").exists()
+    script = gh_pages / "develop" / "javascripts" / "version-banner.js"
+    assert script.read_text(encoding="utf-8") == injector.VERSION_BANNER_JS
+
+
+def test_rebuilt_tree_keeps_its_native_script_reference(injector: ModuleType, gh_pages: Path) -> None:
+    # A rebuilt develop already lists the script; patching again must not add a second tag.
+    page = gh_pages / "develop" / "index.html"
+    page.write_text(EMPTY_PAGE.replace("</body>", '<script src="javascripts/version-banner.js"></script></body>'))
+
+    injector.patch_scripts(gh_pages)
+
+    assert page.read_text(encoding="utf-8").count("version-banner.js") == 1
 
 
 def test_non_version_directories_are_ignored(injector: ModuleType, gh_pages: Path) -> None:

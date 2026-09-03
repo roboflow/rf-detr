@@ -17,11 +17,12 @@ Scope:
     ``mike`` never rebuilds an archived version tree, and the pinned dependencies a
     given tag was built with may not resolve today, so regenerating those trees is not
     an option. This patches the static HTML, CSS, and JS directly instead, the same way
-    ``.github/workflows/docs-noindex-sweep.yml`` patches the robots meta tag. The banner
-    div is patched under ``develop`` too (a harmless no-op once that tree carries a real
-    build); the styling and script are only patched under numeric version directories,
-    since each ships its own frozen ``stylesheets/rf.css`` and ``extra_javascript`` list
-    while ``develop`` rebuilds on every push and already carries both natively.
+    ``.github/workflows/docs-noindex-sweep.yml`` patches the robots meta tag. ``develop`` is
+    patched alongside the numeric versions: it does rebuild on every push and then carries the
+    styling natively, but until that next deploy its published ``stylesheets/rf.css`` has no
+    banner rules and its ``extra_javascript`` list no ``version-banner.js``, so an injected
+    banner would render in Material's default yellow, left-aligned, with the header
+    overlapping it. Once a tree is rebuilt both patches detect the native content and skip.
     ``latest`` is never touched.
 Usage:
     Run ``python .github/scripts/inject_outdated_banner.py <gh-pages checkout root>``.
@@ -233,7 +234,10 @@ def patch_tree(root: Path) -> list[Path]:
 
 
 def patch_stylesheets(root: Path) -> list[Path]:
-    """Give the banner its purple/centered/sticky styling in each archived rf.css.
+    """Give the banner its purple/centered/sticky styling in each version's rf.css.
+
+    A stylesheet already carrying the native rules is left alone, so this becomes a no-op for
+    `develop` as soon as that tree is rebuilt from the theme.
 
     Args:
         root: Root of the gh-pages checkout.
@@ -252,7 +256,7 @@ def patch_stylesheets(root: Path) -> list[Path]:
     """
     changed: list[Path] = []
     block = f"{_CSS_MARKER_START}\n{BANNER_CSS}\n{_CSS_MARKER_END}"
-    for version_dir in _archived_version_dirs(root):
+    for version_dir in _version_dirs(root):
         css_file = version_dir / "stylesheets" / "rf.css"
         if not css_file.is_file():
             continue
@@ -290,7 +294,7 @@ def _relative_prefix(html_file: Path, version_dir: Path) -> str:
 
 
 def patch_scripts(root: Path) -> list[Path]:
-    """Copy version-banner.js into each archived version, referenced from every page.
+    """Copy version-banner.js into each version tree, referenced from every page.
 
     Without it the banner still sticks (pure CSS), but the header can briefly overlap it
     before a reader scrolls, since nothing offsets the header below it.
@@ -311,7 +315,7 @@ def patch_scripts(root: Path) -> list[Path]:
         2
     """
     changed: list[Path] = []
-    for version_dir in _archived_version_dirs(root):
+    for version_dir in _version_dirs(root):
         js_file = version_dir / "javascripts" / "version-banner.js"
         if not js_file.is_file() or js_file.read_text(encoding="utf-8") != VERSION_BANNER_JS:
             js_file.parent.mkdir(parents=True, exist_ok=True)
