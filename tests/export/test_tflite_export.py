@@ -1467,8 +1467,11 @@ class TestInterpreterScriptsOnPath:
 
     @pytest.mark.parametrize(
         ("original_path", "expected_path"),
-        [("/usr/bin", "/usr/bin"), ("", ""), (None, None)],
-        ids=["nonempty", "explicit-empty", "unset"],
+        [
+            pytest.param("/usr/bin", "/usr/bin", id="nonempty"),
+            pytest.param("", "", id="explicit-empty"),
+            pytest.param(None, None, id="unset"),
+        ],
     )
     def test_restores_path_on_exception(
         self,
@@ -1513,7 +1516,10 @@ class TestInterpreterScriptsOnPath:
         assert entries[: len(preferred)] == preferred
         assert entries[len(preferred) :] == [unrelated, unrelated]
 
-    @pytest.mark.parametrize("executable", ["", "python"], ids=["empty", "relative"])
+    @pytest.mark.parametrize(
+        "executable",
+        [pytest.param("", id="empty"), pytest.param("python", id="relative")],
+    )
     def test_skips_empty_or_relative_executable(self, monkeypatch: pytest.MonkeyPatch, executable: str) -> None:
         """Invalid executable paths do not add the current directory to PATH."""
         monkeypatch.setattr("rfdetr.export._tflite.converter.sys.executable", executable)

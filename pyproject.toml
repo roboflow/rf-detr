@@ -217,6 +217,9 @@ tests = [
 typing = [
     # Keep this pin aligned with the local mypy hook in .pre-commit-config.yaml.
     "mypy==1.19.1",
+    # Match the Torch annotations checked by the typing pre-commit hook and CI.
+    "torch==2.14.0",
+    "torchvision==0.29.0",
     # mypy 1.19.x can crash while processing NumPy 2.4 symbols in strict mode.
     "numpy<2.4",
     "types-PyYAML",
@@ -278,7 +281,38 @@ conflicts = [
         { extra = "executorch" },
         { extra = "xla" },
     ],
+    # The typing group pins the Torch annotations checked by mypy and cannot
+    # share an environment with configurations that require older Torch releases.
+    [
+        { group = "typing" },
+        { extra = "coreml" },
+    ],
+    [
+        { group = "typing" },
+        { extra = "executorch" },
+    ],
+    [
+        { group = "typing" },
+        { extra = "xla" },
+    ],
+    [
+        { group = "typing" },
+        { group = "ci-gpu-pin" },
+    ],
+    [
+        { group = "typing" },
+        { group = "ci-executorch-pin" },
+    ],
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", group = "typing" }]
+torchvision = [{ index = "pytorch-cpu", group = "typing" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 
 [tool.setuptools.packages.find]
@@ -425,8 +459,4 @@ overrides = [
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
   # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
-  # Modules with pre-existing type errors — ignored until incrementally fixed.
-  { module = [
-    "rfdetr.datasets.coco",
-  ], ignore_errors = true },
 ]

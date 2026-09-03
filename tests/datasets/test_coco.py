@@ -31,6 +31,7 @@ from rfdetr.datasets.coco import (
     scale_coco_annotation,
 )
 from rfdetr.detr import RFDETR
+from rfdetr.utilities import PackedTargets, pack_targets
 
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
@@ -86,6 +87,26 @@ class TestConvertCocoWithMapping:
         _, target = converter(_IMAGE, _make_target())
         # category_id 1 → 0, category_id 7 → 3
         assert target["labels"].tolist() == [0, 3]
+
+
+class TestConvertCocoPlainDetectionDtypeParity:
+    """Outside keypoint mode, integer-valued ``area`` annotations must still pack."""
+
+    def test_empty_and_populated_targets_pack_with_integer_area(self) -> None:
+        """Integer-area populated targets and float-area empty targets must keep matching dtypes."""
+        converter = ConvertCoco(cat2label=None)
+
+        _, empty_target = converter(_IMAGE, {"image_id": 1, "annotations": []})
+        _, populated_target = converter(_IMAGE, _make_target())
+
+        assert empty_target["area"].dtype == populated_target["area"].dtype
+        assert empty_target["area"].dtype == torch.float32
+        assert empty_target["iscrowd"].dtype == populated_target["iscrowd"].dtype
+        assert empty_target["iscrowd"].dtype == torch.int64
+        packed = pack_targets((empty_target, populated_target))
+        assert isinstance(packed, PackedTargets)
+        assert [target["area"].dtype for target in packed] == [torch.float32, torch.float32]
+        assert [target["iscrowd"].dtype for target in packed] == [torch.int64, torch.int64]
 
     def test_all_labels_within_num_classes(self):
         converter = ConvertCoco(cat2label=_CAT2LABEL)
@@ -223,6 +244,39 @@ def _write_roboflow_keypoint_coco(path: Path, *, category_id: int = 0) -> None:
         ],
     }
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _pipeline_args(dataset_dir: object, **overrides: object) -> types.SimpleNamespace:
+    """Build a builder namespace carrying the image-pipeline options the dataset builders require.
+
+    The builders read these options directly, with no literal fallback, so a namespace handed to one must spell
+    them out. The values here reproduce the pipeline the removed ``getattr`` fallbacks used to produce, which
+    keeps tests that only care about label space or backend resolution behaviourally unchanged. Tests asserting
+    that the *configured* values reach the pipeline live in ``tests/datasets/test_builder_options.py``.
+
+    Args:
+        dataset_dir: Dataset root recorded on the namespace.
+        **overrides: Extra fields to add, or pipeline options to replace.
+
+    Returns:
+        Namespace accepted by the Roboflow COCO and YOLO builders.
+
+    Examples:
+        >>> _pipeline_args("/tmp/ds", augmentation_backend="gpu").multi_scale
+        False
+    """
+    options = {
+        "dataset_dir": str(dataset_dir),
+        "square_resize_div_64": False,
+        "segmentation_head": False,
+        "multi_scale": False,
+        "expanded_scales": False,
+        "do_random_resize_via_padding": False,
+        "patch_size": 16,
+        "num_windows": 4,
+    }
+    options.update(overrides)
+    return types.SimpleNamespace(**options)
 
 
 class TestLoadClassesHierarchy:
@@ -453,6 +507,9 @@ class TestBuildO365RawGpuBackend:
             self.square_resize_div_64 = square_resize_div_64
             self.multi_scale = False
             self.expanded_scales = False
+            self.do_random_resize_via_padding = False
+            self.patch_size = 16
+            self.num_windows = 4
             self.dataset_dir = "/nonexistent/o365"
             self.coco_path = "/nonexistent/o365"
 
@@ -608,7 +665,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
 
         from rfdetr.datasets.coco import build_roboflow_from_coco
 
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        args = _pipeline_args(tmp_path, augmentation_backend="gpu")
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
             pytest.raises(RuntimeError, match="CUDA"),
@@ -622,7 +679,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
         from rfdetr.config import AugmentationBackend
         from rfdetr.datasets.coco import build_roboflow_from_coco
 
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        args = _pipeline_args(tmp_path, augmentation_backend="gpu")
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
             patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
@@ -1003,6 +1060,27 @@ def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) ->
 
 class TestConvertCocoKeypoints:
     """ConvertCoco keypoint-mode coverage."""
+
+    def test_empty_and_populated_targets_pack_without_dtype_fallback(self) -> None:
+        """Empty and populated keypoint targets must keep matching integer dtypes for lossless packing."""
+        converter = ConvertCoco(
+            include_masks=False,
+            include_keypoints=True,
+            cat2label=None,
+            num_keypoints_per_class=[17],
+        )
+
+        _, empty_target = converter(_IMAGE, {"image_id": 1, "annotations": []})
+        _, populated_target = converter(
+            _IMAGE,
+            {"image_id": 2, "annotations": [_make_keypoint_annotation()]},
+        )
+
+        assert empty_target["iscrowd"].dtype == populated_target["iscrowd"].dtype
+        assert empty_target["iscrowd"].dtype == torch.int64
+        packed = pack_targets((empty_target, populated_target))
+        assert isinstance(packed, PackedTargets)
+        assert [target["iscrowd"].dtype for target in packed] == [torch.int64, torch.int64]
 
     def test_keypoint_target_includes_keypoints(self) -> None:
         """Keypoint-enabled conversion should emit keypoints in ``[N, K, 3]`` format."""
@@ -1726,7 +1804,7 @@ class TestCrossSplitLabelSpace:
         """A grouping category annotated in train only keeps its train label slot in val instead of shifting it."""
         _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
         _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path))
+        args = _pipeline_args(tmp_path)
 
         train_dataset = build_roboflow_from_coco("train", args, resolution=64)
         val_dataset = build_roboflow_from_coco("val", args, resolution=64)
@@ -1737,7 +1815,7 @@ class TestCrossSplitLabelSpace:
         """Val targets carry the label index training assigned, not the one val's own coverage would produce."""
         _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
         _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path))
+        args = _pipeline_args(tmp_path)
 
         val_dataset = build_roboflow_from_coco("val", args, resolution=64)
         _, target = val_dataset[0]
