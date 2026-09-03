@@ -1031,15 +1031,20 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         image_set: Dataset split to load. One of ``"train"``, ``"val"``, or
             ``"test"``.
         args: Argument namespace. The following attributes are consumed:
-            ``dataset_dir``, ``square_resize_div_64``, ``aug_config``, ``scale_jitter``, ``segmentation_head``,
-            ``multi_scale``, ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, ``num_windows``.
-            ``aug_config`` is forwarded to the transform builder; when ``None`` the builder uses torchvision-native
-            defaults. ``scale_jitter`` independently controls the resize-crop branch (Option B) and defaults to
-            ``True`` when absent.
+            ``dataset_dir``, ``square_resize_div_64``, ``segmentation_head``,
+            ``multi_scale``, ``expanded_scales``, ``do_random_resize_via_padding``,
+            ``patch_size``, and ``num_windows`` are required. ``aug_config``,
+            ``scale_jitter``, keypoint fields, and ``augmentation_backend`` are
+            optional and retain documented safe defaults.
         resolution: Target square resolution in pixels.
 
     Returns:
         A :class:`YoloDetection` dataset instance ready for use with a DataLoader.
+
+    Raises:
+        AttributeError: If a required dataset or transform option is absent.
+        FileNotFoundError: If the configured dataset root does not exist.
+        ValueError: If keypoint training lacks a valid keypoint schema.
     """
     root = Path(args.dataset_dir)
     if not root.exists():
@@ -1051,8 +1056,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     img_folder, lb_folder = _resolve_yolo_split_dirs(root, data_file, split_key)
     if split_key == "test":
         _validate_yolo_test_split(img_folder, lb_folder)
-    # Pipeline options are read directly, never via getattr with a literal default;
-    # see build_roboflow_from_coco in rfdetr/datasets/coco.py for why.
+    # Model-dependent pipeline options are mandatory for direct builder calls.
     square_resize_div_64 = args.square_resize_div_64
     include_masks = args.segmentation_head
     multi_scale = args.multi_scale

@@ -507,6 +507,9 @@ class TestBuildO365RawGpuBackend:
             self.square_resize_div_64 = square_resize_div_64
             self.multi_scale = False
             self.expanded_scales = False
+            self.do_random_resize_via_padding = False
+            self.patch_size = 16
+            self.num_windows = 4
             self.dataset_dir = "/nonexistent/o365"
             self.coco_path = "/nonexistent/o365"
 
