@@ -10,6 +10,13 @@
 
 {% block extrahead %}
   {{ super() }}
+  {# Index consolidation: only the /latest/ deploy may be indexed. mike rewrites site_url
+     per deployed version, so /develop/ and every /X.Y.Z/ archive - which mkdocs-material
+     otherwise gives a self-canonical - is marked noindex; "follow" keeps their links live.
+     Un-versioned builds (local, CI artifact) also match and stay out of any index. #}
+  {% if not (config.site_url or "").rstrip("/").endswith("/latest") %}
+  <meta name="robots" content="noindex, follow">
+  {% endif %}
   {% set ga4_measurement_id = "G-5M220DKLMB" %}
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id={{ ga4_measurement_id }}"></script>
