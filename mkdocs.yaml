@@ -173,4 +173,5 @@ markdown_extensions:
 extra_css:
   - stylesheets/rf.css
 
-extra_javascript: []
+extra_javascript:
+  - javascripts/version-banner.js
