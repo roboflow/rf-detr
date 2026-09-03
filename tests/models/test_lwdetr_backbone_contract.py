@@ -14,7 +14,7 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 def test_lwdetr_default_detection_forward_after_backbone_change() -> None:
-    """LWDETR should accept the updated 3-tuple backbone output in non-keypoint mode."""
+    """LWDETR should accept the backbone tuple and wrap a 4-D input as unpadded."""
     batch_size = 2
     num_queries = 3
     hidden_dim = 4
@@ -54,7 +54,12 @@ def test_lwdetr_default_detection_forward_after_backbone_change() -> None:
         bbox_reparam=False,
     )
 
-    outputs = model(torch.ones(batch_size, 3, 8, 8))
+    images = torch.ones(batch_size, 3, 8, 8)
+    outputs = model(images)
 
     assert outputs["pred_logits"].shape == (batch_size, num_queries, num_classes)
     assert outputs["pred_boxes"].shape == (batch_size, num_queries, 4)
+    nested = backbone.call_args.args[0]
+    assert isinstance(nested, NestedTensor)
+    assert nested.no_padding is True
+    assert nested.tensors is images
