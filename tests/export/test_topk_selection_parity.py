@@ -111,7 +111,10 @@ class TestTopkSelectionParity:
             expected_idx[expected_keep],
         )
 
-    @pytest.mark.parametrize("dtype", [np.float16, np.float64], ids=["float16", "float64"])
+    @pytest.mark.parametrize(
+        "dtype",
+        [pytest.param(np.float16, id="float16"), pytest.param(np.float64, id="float64")],
+    )
     def test_non_float32_fallback_preserves_exact_order(self, dtype: type[np.floating]) -> None:
         """Other floating dtypes retain the complete lexicographic fallback."""
         scores_all = np.array([[0.5, 0.5, 0.25], [0.75, np.nan, -0.0]], dtype=dtype)
@@ -202,7 +205,7 @@ class TestTopkSelectionParity:
         assert got_scores.shape[0] == num_select
         assert list(got_scores) == sorted(got_scores, reverse=True)
 
-    @pytest.mark.parametrize("num_select", [100, 200], ids=["seg-nano-small", "seg-medium-large"])
+    @pytest.mark.parametrize("num_select", [100, 200])
     def test_model_selection_caps_are_preserved(self, num_select: int) -> None:
         """Export decoding retains the configured cap used by shipped segmentation variants."""
         scores_all = np.full((250, 1), 0.9, dtype=np.float32)

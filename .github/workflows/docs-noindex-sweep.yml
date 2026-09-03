@@ -1,0 +1,110 @@
+# Patch already-published doc versions on gh-pages with `<meta name="robots" content="noindex, follow">`.
+#
+# Why this exists: /latest/ is the only indexable version, enforced at build time in
+# docs/theme/main.html. Version directories published before that change are frozen HTML
+# that no future build touches, so ~25 archives keep a self-canonical and keep competing
+# with /latest/ in search results. This job rewrites them in place.
+#
+# Idempotent and safe to re-run: files that already carry a robots meta tag are skipped,
+# and `latest/` is never touched.
+#
+# The event decides whether anything is written:
+#   pull_request touching the indexing rules → dry run, reporting how many archived pages
+#     the sweep would rewrite without mutating gh-pages
+#   workflow_dispatch with confirm=BACKFILL  → patches gh-pages and pushes
+
+name: Docs noindex Sweep
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/docs-noindex-sweep.yml"
+      - "docs/theme/main.html"
+      - "docs/root-static/robots.txt"
+      - "docs/root-static/mike-redirect.html"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type BACKFILL to rewrite archived pages on gh-pages"
+        required: true
+        default: ""
+
+concurrency:
+  # This sweep and Build and Publish Docs both write gh-pages. Keep one writer at a
+  # time: a retry cannot safely rebase generated pages that another deployment replaced.
+  group: gh-pages-writer
+  queue: max
+  cancel-in-progress: false
+
+permissions:
+  contents: write # Required for committing to gh-pages on a dispatched run
+
+jobs:
+  sweep:
+    name: Inject noindex into archived doc versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # A dispatched run rewrites hundreds of published pages, so it takes a typed
+      # confirmation. Failing here keeps a mistyped dispatch from reaching the checkout.
+      - name: 🔍 Validate confirmation
+        if: github.event_name == 'workflow_dispatch' && inputs.confirm != 'BACKFILL'
+        run: |
+          echo "::error::Dispatch requires confirm=BACKFILL; got '${{ inputs.confirm }}'."
+          exit 1
+
+      - name: 📥 Checkout gh-pages
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: gh-pages
+          fetch-depth: 1
+
+      - name: 🏷️ Inject noindex
+        run: |
+          set -euo pipefail
+          META='<meta name="robots" content="noindex, follow">'
+          PATCHED=0
+          SKIPPED=0
+          # Every version directory except latest/: mike keeps one directory per deployed
+          # version at the gh-pages root, so anything holding an index.html qualifies.
+          for dir in */; do
+            VERSION="${dir%/}"
+            # `[ ... ] && continue` would abort the whole step under `set -e` whenever the
+            # test is false, so both guards are written as explicit conditionals.
+            if [ "$VERSION" = "latest" ]; then
+              continue
+            fi
+            if [ ! -f "$VERSION/index.html" ]; then
+              continue
+            fi
+            while IFS= read -r -d '' page; do
+              if grep -qi 'name="robots"' "$page"; then
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+              # Only the first `<head>` is rewritten, so a docs page quoting `<head>`
+              # inside a code sample keeps its visible content untouched.
+              awk -v meta="    $META" \
+                'done_ins == 0 && /<head>/ { sub(/<head>/, "<head>\n" meta); done_ins = 1 } { print }' \
+                "$page" > "$page.tmp"
+              mv "$page.tmp" "$page"
+              PATCHED=$((PATCHED + 1))
+            done < <(find "$VERSION" -name '*.html' -print0)
+          done
+          echo "patched=$PATCHED skipped=$SKIPPED"
+          git diff --stat
+
+      - name: 📤 Commit and push
+        # A pull_request run never matches, so it stops after the report above.
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(docs): noindex archived doc versions"
+          git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)

@@ -8,6 +8,7 @@
 Covers:
 - ``_bilinear_grid_sample`` parity (manual gather path vs ``F.grid_sample``).
 - ``nested_tensor_from_tensor_list`` with ``block_size`` (backbone-aware batch rounding).
+- ``NestedTensor.no_padding`` propagation and the unpadded-batch fast path.
 - ``make_collate_fn`` factory.
 - ``pack_targets``/``PackedTargets`` round-trip fidelity.
 """
@@ -23,6 +24,7 @@ import torch.testing
 from torch.utils.data import DataLoader
 
 from rfdetr.utilities.tensors import (
+    NestedTensor,
     PackedTargets,
     _bilinear_grid_sample,
     make_collate_fn,
@@ -577,6 +579,131 @@ class TestNestedTensorBlockSize:
         assert (h, w) == expected
 
 
+class TestNestedTensorNoPadding:
+    """``no_padding`` records, from Python-side shapes only, that the mask is all-False.
+
+    Consumers use it to skip mask-derived work without reading device memory, so it must be True exactly when every
+    image already fills the padded extent, and the tensors/mask it returns must match the padding path element for
+    element.
+    """
+
+    @staticmethod
+    def _image(c: int, h: int, w: int, fill: float = 1.0) -> torch.Tensor:
+        """Return a ``(C, H, W)`` float32 tensor filled with the given value.
+
+        Examples:
+            >>> TestNestedTensorNoPadding._image(3, 2, 2).shape
+            torch.Size([3, 2, 2])
+        """
+        return torch.full((c, h, w), fill, dtype=torch.float32)
+
+    def test_defaults_to_false(self) -> None:
+        """A directly constructed NestedTensor makes no claim about its mask."""
+        nested = NestedTensor(torch.zeros(1, 3, 4, 4), torch.zeros(1, 4, 4, dtype=torch.bool))
+        assert nested.no_padding is False
+
+    def test_uniform_list_batch_is_flagged(self) -> None:
+        """Same-sized images need no padding, so the mask is all-False."""
+        images = [self._image(3, 32, 32, 1.0), self._image(3, 32, 32, 2.0)]
+        nested = nested_tensor_from_tensor_list(images)
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+        torch.testing.assert_close(nested.tensors, torch.stack(images), rtol=0, atol=0)
+
+    def test_ragged_list_batch_is_not_flagged(self) -> None:
+        """A smaller image forces real padding, so the flag must stay False."""
+        images = [self._image(3, 32, 32), self._image(3, 16, 32)]
+        nested = nested_tensor_from_tensor_list(images)
+        assert nested.no_padding is False
+        assert nested.mask[1, 16:, :].all().item() is True
+
+    def test_block_size_round_up_is_not_flagged(self) -> None:
+        """Divisor rounding adds padding even when every image is the same size."""
+        images = [self._image(3, 100, 100)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        assert nested.no_padding is False
+        assert nested.mask[0, 100:, :].all().item() is True
+
+    def test_block_size_already_aligned_is_flagged(self) -> None:
+        """Rounding that changes nothing leaves the batch unpadded."""
+        images = [self._image(3, 128, 256)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+
+    def test_batched_tensor_input_is_not_copied(self) -> None:
+        """A 4-D batch already *is* the padded batch; the copy is skipped, values unchanged."""
+        batch = torch.rand(2, 3, 24, 24)
+        nested = nested_tensor_from_tensor_list(batch)
+        assert nested.no_padding is True
+        assert nested.tensors is batch
+        assert nested.mask.shape == (2, 24, 24)
+        assert nested.mask.any().item() is False
+
+    def test_batched_tensor_matches_padding_path_values(self) -> None:
+        """The fast path returns exactly what the allocate-and-copy path produced."""
+        batch = torch.rand(2, 3, 24, 24)
+        fast = nested_tensor_from_tensor_list(batch)
+        slow = nested_tensor_from_tensor_list([batch[0], batch[1].clone(), self._image(3, 24, 32)])
+        torch.testing.assert_close(fast.tensors, slow.tensors[:2, :, :24, :24], rtol=0, atol=0)
+        assert slow.no_padding is False
+
+    def test_noncontiguous_batched_tensor_input_is_copied(self) -> None:
+        """A non-contiguous 4-D batch cannot alias the caller's storage without also inheriting its layout.
+
+        The contiguous fast path (``test_batched_tensor_input_is_not_copied``) is safe to alias because its layout
+        matches what the allocate-and-copy path would have produced. A non-contiguous batch would instead leak the
+        caller's stride and let a later in-place write on the caller's tensor silently corrupt the NestedTensor, so it
+        must fall through to an independent, contiguous copy like every other input shape.
+        """
+        batch = torch.rand(2, 24, 24, 3).permute(0, 3, 1, 2)
+        assert not batch.is_contiguous()
+        nested = nested_tensor_from_tensor_list(batch)
+        assert nested.no_padding is True
+        assert nested.tensors is not batch
+        assert nested.tensors.is_contiguous()
+        torch.testing.assert_close(nested.tensors, batch, rtol=0, atol=0)
+
+        batch.fill_(1000.0)
+        assert nested.tensors.eq(1000.0).any().item() is False
+
+    def test_to_preserves_flag(self) -> None:
+        """``to`` moves the batch without losing the structural claim."""
+        nested = nested_tensor_from_tensor_list(torch.rand(1, 3, 8, 8))
+        assert nested.to(torch.device("cpu")).no_padding is True
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_pin_memory_preserves_flag(self) -> None:
+        """``pin_memory`` likewise keeps the flag attached to the batch."""
+        nested = nested_tensor_from_tensor_list(torch.rand(1, 3, 8, 8))
+        assert nested.pin_memory().no_padding is True
+
+    def test_flag_survives_inplace_batch_uniform_resize(self) -> None:
+        """The default training config reaches ``no_padding=True`` and mutates the batch in place afterwards.
+
+        With the defaults (``square_resize_div_64=True``, ``multi_scale=True``, ``do_random_resize_via_padding=False``),
+        every sample is resized to one fixed square scale before collate, so ``nested_tensor_from_tensor_list`` flags
+        the batch. ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly to a randomly
+        chosen scale via the same two in-place ``F.interpolate`` calls reproduced below, without touching
+        ``no_padding``. Nearest-neighbour resampling of an all-False mask stays all-False at any output size, so the
+        flag must still describe the mutated mask truthfully afterwards.
+        """
+        images = [torch.rand(3, 512, 512) for _ in range(4)]
+        nested = nested_tensor_from_tensor_list(images, block_size=64)
+        assert nested.no_padding is True
+
+        with torch.no_grad():
+            nested.tensors = F.interpolate(nested.tensors, size=(640, 640), mode="bilinear", align_corners=False)
+            nested.mask = (
+                F.interpolate(nested.mask.unsqueeze(1).float(), size=(640, 640), mode="nearest").squeeze(1).bool()
+            )
+
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+        assert nested.mask.shape == (4, 640, 640)
+
+
 class TestMakeCollateFn:
     """``make_collate_fn`` returns a picklable collate callable with block_size rounding baked in."""
 
@@ -867,6 +994,121 @@ class TestPackedTargets:
         assert torch.equal(packed.fields["labels"], torch.tensor([3, 7, 5]))
         assert packed.fields["boxes"][0].item() == 1.0
         assert torch.equal(packed.as_list()[0]["labels"], torch.tensor([3, 7]))
+
+    def test_to_list_matches_the_unpacked_batch_for_every_sample(self) -> None:
+        """Direct materialisation preserves every sample's complete tensor contract.
+
+        This catches a reconstruction that drops the empty sample, skips a field, reshapes scalar metadata, or silently
+        changes a dtype while still passing the ownership-only regression below.
+        """
+        batch = self._batch()
+        packed = pack_targets(batch)
+        assert isinstance(packed, PackedTargets)
+
+        materialised = packed.to_list(torch.device("cpu"))
+
+        assert len(materialised) == len(batch)
+        for original, rebuilt in zip(batch, materialised, strict=True):
+            assert rebuilt.keys() == original.keys()
+            for key, value in original.items():
+                assert rebuilt[key].device.type == "cpu"
+                assert rebuilt[key].dtype == value.dtype
+                assert rebuilt[key].shape == value.shape
+                assert torch.equal(rebuilt[key], value)
+
+    def test_to_list_same_device_does_not_alias_packed_storage(self) -> None:
+        """Direct materialisation must preserve the unpacked path's independent tensor ownership on CPU."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        materialised = packed.to_list(torch.device("cpu"))
+        materialised[0]["labels"][0] = 999
+        materialised[0]["boxes"][0, 0] = 999.0
+
+        assert torch.equal(packed.fields["labels"], torch.tensor([3, 7, 5]))
+        assert packed.fields["boxes"][0].item() == 1.0
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_list_transfers_pinned_views_directly_to_cuda(self) -> None:
+        """Direct materialisation must preserve values and ownership across a non-blocking CUDA transfer."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+        pinned = packed.pin_memory()
+
+        materialised = pinned.to_list(torch.device("cuda"), non_blocking=True)
+        torch.cuda.synchronize()
+
+        assert materialised[0]["labels"].device.type == "cuda"
+        assert torch.equal(materialised[0]["labels"].cpu(), torch.tensor([3, 7]))
+        materialised[0]["labels"][0] = 999
+        assert torch.equal(pinned.fields["labels"], torch.tensor([3, 7, 5]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_list_bounds_the_transient_cuda_peak_for_a_mask_field(self) -> None:
+        """``to_list``'s docstring claims the avoided duplicate "can be large for segmentation masks" -- pin that claim
+        on the actual CUDA peak with a mask field, not just on values or ownership."""
+        pinned = pack_targets(
+            [
+                {"labels": torch.tensor([3, 7]), "masks": torch.ones((2, 256, 256), dtype=torch.bool)},
+                {"labels": torch.tensor([5]), "masks": torch.ones((1, 256, 256), dtype=torch.bool)},
+            ]
+        ).pin_memory()
+        mask_bytes = pinned.fields["masks"].numel()
+
+        def peak_extra(
+            materialise: collections.abc.Callable[[], list[dict[str, torch.Tensor]]],
+        ) -> int:
+            """Return transient CUDA bytes beyond memory retained by the result.
+
+            Examples:
+                This helper requires CUDA and state from the enclosing test.
+
+                >>> peak_extra(lambda: pinned.to_list("cuda"))  # doctest: +SKIP
+                0
+            """
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            out = materialise()
+            torch.cuda.synchronize()
+            extra = torch.cuda.max_memory_allocated() - torch.cuda.memory_allocated()
+            del out
+            return extra
+
+        old_extra = peak_extra(lambda: pinned.to(torch.device("cuda"), non_blocking=True).as_list())
+        new_extra = peak_extra(lambda: pinned.to_list(torch.device("cuda"), non_blocking=True))
+
+        assert old_extra >= mask_bytes
+        assert new_extra < mask_bytes // 2
+
+    def test_to_returns_self_when_already_on_the_target_device(self) -> None:
+        """``to()`` keeps the batch packed instead of materialising it, unlike ``to_list()``.
+
+        Losing its only caller in ``transfer_batch_to_device`` (replaced by ``to_list()``) must not leave it untested: a
+        no-op device request has to return the same instance, matching every no-op ``Tensor.to()`` call underneath it.
+        """
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        same_device = packed.to(torch.device("cpu"))
+
+        assert same_device is packed
+        assert torch.equal(same_device.fields["labels"], torch.tensor([3, 7, 5]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_moves_every_field_and_keeps_the_batch_packed_on_cuda(self) -> None:
+        """A genuine device change must move every field and return a new packed batch, not a materialised list."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        moved = packed.to(torch.device("cuda"))
+
+        assert isinstance(moved, PackedTargets)
+        assert moved is not packed
+        assert all(tensor.device.type == "cuda" for tensor in moved.fields.values())
+        assert torch.equal(moved.fields["labels"].cpu(), torch.tensor([3, 7, 5]))
 
     def test_collate_packs_only_when_asked(self) -> None:
         """The collate contract only changes for callers that opt in."""
