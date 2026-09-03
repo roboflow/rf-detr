@@ -1129,6 +1129,14 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
+    eval_backend: Literal["hotcoco", "faster_coco_eval"] = Field(
+        default="hotcoco",
+        description=(
+            "COCO evaluation backend used for validation and test mAP. Both ship with 'rfdetr[train]' and produce "
+            "identical metrics; 'hotcoco' is several times faster to compute. Set 'faster_coco_eval' to fall back "
+            "to the previous evaluator."
+        ),
+    )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
     # validation/test, returning them at the mask head's native (lower) resolution instead —
     # cheaper, but ground-truth masks must then be compared at that same lower resolution

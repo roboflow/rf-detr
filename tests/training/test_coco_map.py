@@ -67,7 +67,11 @@ def test_class_metrics_use_one_coco_evaluator() -> None:
     metric.update(predictions, targets)
     evaluator_factory = MagicMock(side_effect=metric._coco_backend.cocoeval)
 
-    with patch.object(CocoBackend, "cocoeval", new_callable=PropertyMock, return_value=evaluator_factory):
+    # Patched on the metric's own backend type rather than on CocoBackend: the hotcoco backend overrides the
+    # property, so a patch applied to the base class would not be reached on the default path.
+    with patch.object(
+        type(metric._coco_backend), "cocoeval", new_callable=PropertyMock, return_value=evaluator_factory
+    ):
         result = metric.compute()
 
     assert evaluator_factory.call_count == 1
@@ -232,7 +236,11 @@ def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data()
 
 
 class TestHoistedDetectionScores:
-    """Prediction COCO datasets built with per-image score conversion instead of TorchMetrics' per-annotation read."""
+    """Prediction COCO datasets built with per-image score conversion instead of TorchMetrics' per-annotation read.
+
+    Pinned to ``faster_coco_eval``: box-only evaluation on the default hotcoco backend loads detections from an array
+    instead of building annotation dicts, so the hoist these tests describe only runs here and on the mask-only path.
+    """
 
     predictions = [
         {
@@ -259,7 +267,7 @@ class TestHoistedDetectionScores:
             >>> [scores.numel() for scores in metric.detection_scores]
             [2, 1]
         """
-        metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
+        metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", class_metrics=True)
         metric.update(self.predictions, self.targets)
         return metric
 
@@ -285,7 +293,7 @@ class TestHoistedDetectionScores:
             average=metric.average,
         )
 
-        actual_preds, actual_target = metric._coco_datasets(metric._observed_classes())
+        actual_preds, actual_target, _ = metric._coco_datasets(metric._observed_classes())
 
         assert actual_preds.dataset == expected_preds.dataset
         assert actual_target.dataset == expected_target.dataset
@@ -346,7 +354,7 @@ class TestHoistedDetectionScores:
         """
         mask = torch.zeros(1, 8, 8, dtype=torch.bool)
         mask[:, 1:5, 1:5] = True
-        metric = OnePassCocoMeanAveragePrecision(iou_type="segm", class_metrics=True)
+        metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", iou_type="segm", class_metrics=True)
         metric.update(
             [{"masks": mask.clone(), "scores": torch.tensor([0.9]), "labels": torch.tensor([7])}],
             [{"masks": mask.clone(), "labels": torch.tensor([7])}],
@@ -354,7 +362,7 @@ class TestHoistedDetectionScores:
         recorded = MagicMock(side_effect=metric._coco_backend._get_coco_datasets)
 
         with patch.object(CocoBackend, "_get_coco_datasets", recorded):
-            coco_preds, _ = metric._coco_datasets(metric._observed_classes())
+            coco_preds, _, _ = metric._coco_datasets(metric._observed_classes())
 
         assert recorded.call_count == 1
         assert [annotation["score"] for annotation in coco_preds.dataset["annotations"]] == pytest.approx([0.9])
@@ -421,9 +429,15 @@ def test_prediction_only_class_preserves_negative_sentinel() -> None:
     assert torch.equal(result["mar_100_per_class"].reshape(-1), torch.tensor([-1.0]))
 
 
-def test_empty_predictions_and_targets_return_compact_empty_class_result() -> None:
-    """An updated image with no predictions or ground truth must finish with aggregate sentinels and no class IDs."""
-    metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
+@pytest.mark.parametrize("backend", ["faster_coco_eval", "hotcoco"])
+def test_empty_predictions_and_targets_return_compact_empty_class_result(backend: str) -> None:
+    """An updated image with no predictions or ground truth must finish with aggregate sentinels and no class IDs.
+
+    Both backends are covered because this is the one path that hands the COCO constructor a dataset with no annotations
+    at all, and hotcoco builds its index there rather than in a later ``createIndex()`` call.
+    """
+    pytest.importorskip(backend)
+    metric = OnePassCocoMeanAveragePrecision(backend=backend, class_metrics=True)
     metric.update(
         [{"boxes": torch.empty((0, 4)), "scores": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)}],
         [{"boxes": torch.empty((0, 4)), "labels": torch.empty(0, dtype=torch.long)}],
@@ -464,7 +478,7 @@ def test_adapter_rejects_non_callable_coco_backend_factory() -> None:
         patch.object(CocoBackend, "coco", new=object()),
         pytest.raises(RuntimeError, match=r"missing backend methods: \['coco'\]"),
     ):
-        OnePassCocoMeanAveragePrecision()
+        OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
 
 
 def test_adapter_rejects_backend_method_missing_a_relied_on_parameter() -> None:
@@ -481,7 +495,22 @@ def test_adapter_rejects_backend_method_missing_a_relied_on_parameter() -> None:
         ),
         pytest.raises(RuntimeError, match="incompatible signature"),
     ):
-        OnePassCocoMeanAveragePrecision()
+        OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
+
+
+def test_hotcoco_contract_ignores_the_helper_it_never_calls() -> None:
+    """A rename in ``_get_coco_datasets`` must not block the backend that never calls it.
+
+    hotcoco builds its index in the COCO constructor, so this adapter assembles the dataset dictionaries itself and
+    never reaches that helper. Guarding it for hotcoco would fail construction over an upstream change that cannot
+    affect the metrics it produces — while the same rename must still fail loudly on faster-coco-eval.
+    """
+    stale_contract = {"_get_coco_datasets": ("not_a_real_parameter",), "_coco_stats_to_tensor_dict": ()}
+
+    with patch("rfdetr.training.coco_map._BACKEND_METHOD_PARAMS", stale_contract):
+        OnePassCocoMeanAveragePrecision(backend="hotcoco")
+        with pytest.raises(RuntimeError, match="incompatible signature"):
+            OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
 
 
 class TestMismatchedBackendSignatures:
@@ -699,3 +728,228 @@ def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path) -> N
     init_file = tmp_path / "coco-map-gloo-init"
 
     mp.spawn(_distributed_empty_rank_worker, args=(2, str(init_file)), nprocs=2, join=True)
+
+
+def multiclass_detection_state() -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
+    """Return predictions and targets spanning three images and three non-contiguous classes.
+
+    The fixture mixes a perfect match, a partial-overlap match, a missed detection and a false positive so that
+    per-class AP and AR are genuinely fractional. Backend parity checks need that: a fixture whose every value
+    collapses to 1.0/0.0/-1.0 would agree between two backends even if one of them reduced the wrong axis.
+
+    Returns:
+        The prediction and target lists in TorchMetrics detection format.
+
+    Examples:
+        >>> predictions, targets = multiclass_detection_state()
+        >>> [len(predictions), len(targets), int(predictions[0]["labels"][0])]
+        [3, 3, 3]
+    """
+    predictions = [
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 28.0, 28.0]]),
+            "scores": torch.tensor([0.9, 0.8]),
+            "labels": torch.tensor([3, 17]),
+        },
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+            "scores": torch.tensor([0.95]),
+            "labels": torch.tensor([42]),
+        },
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [50.0, 50.0, 60.0, 60.0]]),
+            "scores": torch.tensor([0.6, 0.4]),
+            "labels": torch.tensor([17, 17]),
+        },
+    ]
+    targets = [
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0], [20.0, 20.0, 30.0, 30.0]]),
+            "labels": torch.tensor([3, 17]),
+        },
+        {"boxes": torch.tensor([[5.0, 5.0, 15.0, 15.0]]), "labels": torch.tensor([3])},
+        {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([17])},
+    ]
+    return predictions, targets
+
+
+def test_hotcoco_backend_matches_faster_coco_eval() -> None:
+    """The optional hotcoco backend must return the same metrics as the default faster-coco-eval backend."""
+    pytest.importorskip("hotcoco")
+    predictions, targets = multiclass_detection_state()
+    kwargs: dict[str, Any] = {"class_metrics": True, "sync_on_compute": False}
+    expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
+    actual_metric = OnePassCocoMeanAveragePrecision(backend="hotcoco", **kwargs)
+    expected_metric.update(predictions, targets)
+    actual_metric.update(predictions, targets)
+
+    expected = expected_metric.compute()
+    actual = actual_metric.compute()
+
+    assert actual.keys() == expected.keys()
+    assert set(expected["map_per_class"].tolist()) - {-1.0, 0.0, 1.0}, (
+        "fixture produced only degenerate per-class values; strengthen it before trusting this parity check"
+    )
+    for key in actual:
+        if key == "classes":
+            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
+        else:
+            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
+
+
+def test_hotcoco_backend_matches_faster_coco_eval_for_segmentation() -> None:
+    """Mask metrics must match across backends, including the per-IoU-type area swap.
+
+    Segmentation is where the two backends diverge structurally: hotcoco returns a copy from its ``dataset``
+    getter, so the ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs cannot reach its evaluator
+    unless the prediction dataset is rebuilt, and its RLE counts have to reach the constructor as text.
+    """
+    pytest.importorskip("hotcoco")
+    mask = torch.zeros(2, 16, 16, dtype=torch.bool)
+    mask[0, 2:10, 2:10] = True
+    mask[1, 11:15, 11:15] = True
+    predicted_mask = mask.clone()
+    predicted_mask[0, 2:4, 2:10] = False
+    predictions = [
+        {
+            "boxes": torch.tensor([[2.0, 2.0, 10.0, 10.0], [11.0, 11.0, 15.0, 15.0]]),
+            "masks": predicted_mask,
+            "scores": torch.tensor([0.9, 0.6]),
+            "labels": torch.tensor([3, 17]),
+        }
+    ]
+    targets = [
+        {
+            "boxes": torch.tensor([[2.0, 2.0, 10.0, 10.0], [11.0, 11.0, 15.0, 15.0]]),
+            "masks": mask,
+            "labels": torch.tensor([3, 17]),
+        }
+    ]
+    kwargs: dict[str, Any] = {"iou_type": ("bbox", "segm"), "class_metrics": True, "sync_on_compute": False}
+    expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
+    actual_metric = OnePassCocoMeanAveragePrecision(backend="hotcoco", **kwargs)
+    expected_metric.update(predictions, targets)
+    actual_metric.update(predictions, targets)
+
+    expected = expected_metric.compute()
+    actual = actual_metric.compute()
+
+    assert actual.keys() == expected.keys()
+    # A mask AP that silently collapses to 0.0 is the failure this fixture exists to catch, so the fixture itself
+    # has to produce a non-zero one first.
+    assert expected["segm_map"].item() > 0.0
+    for key in actual:
+        if key == "classes":
+            assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1))
+        else:
+            torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("backend", ["faster_coco_eval", "hotcoco"])
+def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
+    """A configured maximum-detection threshold must change the metric it is supposed to change.
+
+    hotcoco's ``params`` getter returns a copy, so writing a field through it changes nothing and raises nothing.
+    Without this test the adapter could keep evaluating at COCO's default 100 detections while RF-DETR asked for
+    ``eval_max_dets``, and every metric would still look plausible.
+    """
+    pytest.importorskip(backend)
+    boxes = torch.tensor([[float(index), 0.0, float(index) + 8.0, 8.0] for index in range(0, 60, 6)])
+    predictions = [
+        {
+            "boxes": boxes,
+            "scores": torch.linspace(0.9, 0.1, boxes.shape[0]),
+            "labels": torch.zeros(boxes.shape[0], dtype=torch.long),
+        }
+    ]
+    targets = [{"boxes": boxes, "labels": torch.zeros(boxes.shape[0], dtype=torch.long)}]
+
+    def recall_at(max_detections: int) -> float:
+        metric = OnePassCocoMeanAveragePrecision(
+            backend=backend, max_detection_thresholds=[1, 10, max_detections], sync_on_compute=False
+        )
+        metric.update(predictions, targets)
+        return float(metric.compute()[f"mar_{max_detections}"])
+
+    assert recall_at(2) < recall_at(500)
+
+
+def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
+    """Selecting hotcoco must not add backend chatter to a training run's console output.
+
+    hotcoco prints from Rust straight to the output file descriptors, so Python-level redirection does not reach
+    it: a COCO summary table plus one warning per overridden evaluator parameter would land on the console on
+    every validation epoch of every run.
+    """
+    pytest.importorskip("hotcoco")
+    predictions, targets = multiclass_detection_state()
+    metric = OnePassCocoMeanAveragePrecision(
+        backend="hotcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
+    )
+    metric.update(predictions, targets)
+    capfd.readouterr()
+
+    metric.compute()
+
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Selecting hotcoco without it installed must say how to install it.
+
+    The private-contract check that runs right after backend construction resolves the evaluator inside an ``except
+    ImportError``, so an import failure deferred until then is reported as a torchmetrics incompatibility — the one
+    message that tells a user nothing about the missing extra.
+    """
+
+    def missing_dependency() -> Any:
+        raise ImportError("hotcoco requires the optional dependency; install it with: pip install 'rfdetr[hotcoco]'")
+
+    monkeypatch.setattr("rfdetr.training.coco_map._hotcoco", missing_dependency)
+
+    with pytest.raises(ImportError, match=r"rfdetr\[hotcoco\]"):
+        OnePassCocoMeanAveragePrecision(backend="hotcoco")
+
+
+@pytest.mark.parametrize("backend", ["faster_coco_eval", "hotcoco"])
+def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
+    """Each IoU type of a joint evaluation must bucket detections by that type's own area.
+
+    TorchMetrics emits ``area_bbox`` and ``area_segm`` per annotation and the active ``area`` has to be switched between
+    passes, because COCO's small/medium/large split reads that one field. The switch is invisible unless a detection's
+    box and mask land in different buckets, so this fixture gives a false positive a 25x25 box (small) and a 60x60 mask
+    (medium) and scores it above the true positive — an unmatched, top-ranked detection is the only kind whose area
+    moves a reported number. Without the switch the segmentation area leaks into the box pass and ``bbox_map_small``
+    doubles.
+    """
+    masks = torch.zeros(2, 128, 128, dtype=torch.bool)
+    masks[0, 0:20, 0:20] = True
+    masks[1, 40:100, 40:100] = True
+    predicted = masks.clone()
+    predicted[0, 0:25, 0:25] = True
+    metric = OnePassCocoMeanAveragePrecision(
+        backend=backend, iou_type=("bbox", "segm"), class_metrics=True, sync_on_compute=False
+    )
+    metric.update(
+        [
+            {
+                "boxes": torch.tensor([[0.0, 0.0, 20.0, 20.0], [40.0, 40.0, 65.0, 65.0]]),
+                "masks": predicted,
+                "scores": torch.tensor([0.5, 0.95]),
+                "labels": torch.tensor([1, 1]),
+            }
+        ],
+        [{"boxes": torch.tensor([[0.0, 0.0, 20.0, 20.0]]), "masks": masks[:1], "labels": torch.tensor([1])}],
+    )
+
+    result = metric.compute()
+
+    # Box pass: the false positive's 25x25 box is "small" too and outranks the true positive, so precision at full
+    # recall is 1/2. Let the segmentation area leak in and the 60x60 mask makes it "medium", the false positive
+    # drops out of the bucket, and this reads 1.0 instead.
+    assert float(result["bbox_map_small"]) == pytest.approx(0.5)
+    # Mask pass: only the true positive is "small", and its 25x25 prediction over a 20x20 target is IoU 0.64 —
+    # matched at 3 of the 10 COCO thresholds.
+    assert float(result["segm_map_small"]) == pytest.approx(0.3)

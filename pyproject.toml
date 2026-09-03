@@ -54,6 +54,16 @@ train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
     "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract; re-verify _validate_private_contract() (src/rfdetr/training/coco_map.py) against 1.9+ before widening this pin
+    # Default COCO evaluation backend (MIT, numpy-only runtime dependency, cp39-abi3 wheels for manylinux2014
+    # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
+    # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
+    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. Keep the floor at 0.5;
+    # earlier releases were never checked against the adapter's parity tests. The ceiling is deliberate: three of
+    # the hotcoco behaviors the adapter works around fail silently rather than loudly (copy-on-read `params` and
+    # `dataset`, bytes RLE counts), so a pre-1.0 minor must be re-verified against the parity tests before it is
+    # allowed in, which is what the tight ceiling forces. Installing it also puts a generically-named `coco`
+    # console script on PATH.
+    "hotcoco>=0.5,<0.6",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
