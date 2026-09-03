@@ -17,17 +17,15 @@ import yaml
 
 
 @pytest.fixture
-def sweep_steps(repo_root: Path) -> list[dict[str, Any]]:
-    """Steps of the sweep job, in file order.
+def core_workflow(repo_root: Path) -> dict[str, Any]:
+    """Parse the docs sweep workflow."""
+    return yaml.safe_load((repo_root / ".github" / "workflows" / "docs-noindex-sweep.yml").read_text(encoding="utf-8"))
 
-    Examples:
-        >>> sweep_steps  # doctest: +SKIP
-        pytest fixture; parses .github/workflows/docs-noindex-sweep.yml.
-    """
-    workflow = yaml.safe_load(
-        (repo_root / ".github" / "workflows" / "docs-noindex-sweep.yml").read_text(encoding="utf-8")
-    )
-    return workflow["jobs"]["sweep"]["steps"]
+
+@pytest.fixture
+def sweep_steps(core_workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the sweep job steps in file order."""
+    return core_workflow["jobs"]["sweep"]["steps"]
 
 
 def step_named(steps: list[dict[str, Any]], fragment: str) -> dict[str, Any]:
@@ -104,14 +102,18 @@ def test_commit_never_stages_the_working_directory(sweep_steps: list[dict[str, A
     assert "git add ." not in command_lines(step_named(sweep_steps, "Commit and push")["run"])
 
 
-def test_push_is_gated_on_dispatch(sweep_steps: list[dict[str, Any]]) -> None:
+def test_one_sweep_job_handles_both_triggers(core_workflow: dict[str, Any]) -> None:
+    triggers = core_workflow[True] if True in core_workflow else core_workflow["on"]
+    assert set(core_workflow["jobs"]) == {"sweep"}
+    assert "pull_request" in triggers
+    assert "workflow_dispatch" in triggers
+
+
+def test_push_is_gated_on_dispatch(core_workflow: dict[str, Any], sweep_steps: list[dict[str, Any]]) -> None:
+    assert core_workflow["permissions"] == {"contents": "write"}
     assert step_named(sweep_steps, "Commit and push")["if"] == "github.event_name == 'workflow_dispatch'"
 
 
-def test_dry_run_covers_the_injector(repo_root: Path) -> None:
-    workflow = yaml.safe_load(
-        (repo_root / ".github" / "workflows" / "docs-noindex-sweep.yml").read_text(encoding="utf-8")
-    )
-    # `on` parses as the boolean True in YAML 1.1, which PyYAML implements.
-    triggers = workflow[True] if True in workflow else workflow["on"]
+def test_dry_run_covers_the_injector(core_workflow: dict[str, Any]) -> None:
+    triggers = core_workflow[True] if True in core_workflow else core_workflow["on"]
     assert ".github/scripts/inject_outdated_banner.py" in triggers["pull_request"]["paths"]

@@ -11,8 +11,10 @@ backfill script that patches trees mike can no longer rebuild.
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from jinja2 import DictLoader, Environment
 
 
 @pytest.fixture
@@ -49,6 +51,18 @@ def test_version_comes_from_site_url(outdated_block: str) -> None:
 def test_numeric_versions_use_a_digit_test(outdated_block: str) -> None:
     # `in "0123456789"` would match the empty string and leak the banner into local builds.
     assert "[:1].isdigit()" in outdated_block
+
+
+@pytest.mark.parametrize("site_url", ["https://rfdetr.roboflow.com/latest", None])
+def test_latest_and_unversioned_builds_render_no_outdated_banner(repo_root: Path, site_url: str | None) -> None:
+    template = (repo_root / "docs" / "theme" / "main.html").read_text(encoding="utf-8")
+    environment = Environment(
+        loader=DictLoader({"base.html": "{% block outdated %}{% endblock %}", "main.html": template})
+    )
+
+    rendered = environment.get_template("main.html").render(config=SimpleNamespace(site_url=site_url))
+
+    assert rendered == ""
 
 
 def test_theme_wording_matches_the_backfill_script(outdated_block: str, repo_root: Path) -> None:

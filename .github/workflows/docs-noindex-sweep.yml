@@ -1,24 +1,15 @@
-# Patch already-published doc versions on gh-pages: `<meta name="robots" content="noindex,
-# follow">` plus the outdated-version banner.
-#
-# Why this exists: /latest/ is the only indexable version, and every other tree carries a
-# banner pointing readers at it - both enforced at build time in docs/theme/main.html.
-# Version directories published before those changes are frozen HTML that no future build
-# touches, so ~25 archives keep a self-canonical, keep competing with /latest/ in search
-# results, and show no banner. Rebuilding them is not an option: an archived tag may not
-# resolve against today's dependencies. This job rewrites them in place instead.
-#
-# Idempotent and safe to re-run: files that already carry a robots meta tag are skipped,
-# injected banner content is replaced rather than stacked, and `latest/` is never touched.
-#
-# The event decides whether anything is written:
-#   pull_request touching the indexing rules → dry run, reporting how many archived pages
-#     the sweep would rewrite without mutating gh-pages
-#   workflow_dispatch with confirm=BACKFILL  → patches gh-pages and pushes
-
+# Patch already-published archive pages with noindex metadata and the current outdated banner.
+# A pull request performs the complete rewrite as a dry run; a typed manual dispatch commits
+# the resulting gh-pages diff. This mirrors the one-workflow docs-backfill convention.
 name: Docs noindex Sweep
 
 on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type BACKFILL to rewrite archived pages on gh-pages"
+        required: true
+        default: ""
   pull_request:
     paths:
       - ".github/workflows/docs-noindex-sweep.yml"
@@ -27,22 +18,13 @@ on:
       - "docs/theme/main.html"
       - "docs/root-static/robots.txt"
       - "docs/root-static/mike-redirect.html"
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: "Type BACKFILL to rewrite archived pages on gh-pages"
-        required: true
-        default: ""
-
-concurrency:
-  # This sweep and Build and Publish Docs both write gh-pages. Keep one writer at a
-  # time: a retry cannot safely rebase generated pages that another deployment replaced.
-  group: gh-pages-writer
-  queue: max
-  cancel-in-progress: false
 
 permissions:
-  contents: write # Required for committing to gh-pages on a dispatched run
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || 'dispatch' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sweep:
@@ -50,13 +32,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # A dispatched run rewrites hundreds of published pages, so it takes a typed
-      # confirmation. Failing here keeps a mistyped dispatch from reaching the checkout.
-      - name: 🔍 Validate confirmation
-        if: github.event_name == 'workflow_dispatch' && inputs.confirm != 'BACKFILL'
+      - name: Validate confirmation
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          echo "::error::Dispatch requires confirm=BACKFILL; got '${{ inputs.confirm }}'."
-          exit 1
+          if [[ "${{ inputs.confirm }}" != "BACKFILL" ]]; then
+            echo "::error::Backfill requires confirm=BACKFILL."
+            exit 1
+          fi
 
       - name: 📥 Checkout gh-pages
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -70,12 +52,9 @@ jobs:
           META='<meta name="robots" content="noindex, follow">'
           PATCHED=0
           SKIPPED=0
-          # Every version directory except latest/: mike keeps one directory per deployed
-          # version at the gh-pages root, so anything holding an index.html qualifies.
           for dir in */; do
             VERSION="${dir%/}"
-            # `[ ... ] && continue` would abort the whole step under `set -e` whenever the
-            # test is false, so both guards are written as explicit conditionals.
+            # Use explicit guards because a false short-circuit command exits under set -e.
             if [ "$VERSION" = "latest" ]; then
               continue
             fi
@@ -87,8 +66,7 @@ jobs:
                 SKIPPED=$((SKIPPED + 1))
                 continue
               fi
-              # Only the first `<head>` is rewritten, so a docs page quoting `<head>`
-              # inside a code sample keeps its visible content untouched.
+              # Rewrite only the first head tag so code samples cannot be altered.
               awk -v meta="    $META" \
                 'done_ins == 0 && /<head>/ { sub(/<head>/, "<head>\n" meta); done_ins = 1 } { print }' \
                 "$page" > "$page.tmp"
@@ -99,9 +77,7 @@ jobs:
           echo "patched=$PATCHED skipped=$SKIPPED"
           git diff --stat
 
-      # A second checkout, into a subdirectory so it does not clobber the gh-pages tree:
-      # the injector and the script it copies live in the source tree, not on gh-pages.
-      # It lands after the noindex step, whose `for dir in */` loop must not see it.
+      # The injector belongs to the source revision, not the published gh-pages tree.
       - name: 📥 Checkout banner injector
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -110,29 +86,22 @@ jobs:
             .github/scripts/inject_outdated_banner.py
             docs/javascripts/version-banner.js
           sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: 🏷️ Inject outdated-version banner, styling, and offset script
         run: |
           set -euo pipefail
-          # docs/theme/main.html renders this banner, docs/stylesheets/rf.css styles it,
-          # and docs/javascripts/version-banner.js offsets the header below it - but only
-          # for trees mike rebuilds. Patch the empty banner div every archived page
-          # already carries, its frozen per-version stylesheet, and its script list.
           python3 "$GITHUB_WORKSPACE/_source/.github/scripts/inject_outdated_banner.py" .
           git diff --stat
 
       - name: 📤 Commit and push
-        # A pull_request run never matches, so it stops after the report above.
         if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -u
-          # `git add -u` stages tracked files only, and the injector creates one file per
-          # archived version; without this the committed HTML would reference a script
-          # that never landed. Named by pathspec rather than `git add -A`, which would
-          # also sweep in the _source checkout above.
+          # The injector creates version scripts, so stage that narrow untracked path too.
           git add -- '[0-9]*/javascripts/version-banner.js'
           if git diff --cached --quiet; then
             echo "Nothing to commit."

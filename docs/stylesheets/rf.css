@@ -277,14 +277,14 @@ body[data-md-url$="/cookbooks/"] .md-content {
    content scrolls behind it. The banner wrapper is hardcoded to
    data-md-color-scheme="default" in Material's base template, so it always renders in
    light colors and needs no dark variant. */
-.md-banner,
-.md-banner--warning {
+[data-md-component="outdated"] .md-banner,
+[data-md-component="outdated"] .md-banner--warning {
   background-color: rgb(243, 238, 255);
   color: rgb(29, 29, 31);
   border-bottom: 1px solid rgb(229, 231, 235);
 }
 
-.md-banner__inner {
+[data-md-component="outdated"] .md-banner__inner {
   max-width: 1600px;
   line-height: 1.6;
   text-align: center;
@@ -304,14 +304,14 @@ body[data-md-url$="/cookbooks/"] .md-content {
 }
 
 /* White chip so `develop` stays readable on the tinted banner. */
-.md-banner code {
+[data-md-component="outdated"] .md-banner code {
   background: white;
   color: var(--md-primary-fg-color);
 }
 
-.md-banner a,
-.md-banner a:focus,
-.md-banner a:hover {
+[data-md-component="outdated"] .md-banner a,
+[data-md-component="outdated"] .md-banner a:focus,
+[data-md-component="outdated"] .md-banner a:hover {
   color: var(--md-primary-fg-color);
   text-decoration: underline;
 }

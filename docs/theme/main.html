@@ -15,16 +15,14 @@
    segment names the tree being built. Leaving the block empty makes Material skip the
    aside entirely, which keeps the warning off /latest/ and off unversioned local builds.
    The link is hardcoded because site_url points at the current version, never latest. #}
-{% block outdated %}
-  {% set doc_version = (config.site_url or "").rstrip("/").split("/") | last %}
-  {% if doc_version == "develop" %}
-  You are reading the unreleased development version of the documentation, built from the <code>develop</code> branch.<br>
-  APIs described here may change or may never ship in a release, so use the <a href="https://rfdetr.roboflow.com/latest/"><strong>latest stable release</strong></a> instead.
-  {% elif doc_version[:1].isdigit() %}
-  You are reading the documentation for an older version of RF-DETR, kept online for reference.<br>
-  APIs described here may have changed or been removed, so use the <a href="https://rfdetr.roboflow.com/latest/"><strong>latest stable release</strong></a> instead.
-  {% endif %}
-{% endblock %}
+{% block outdated %}{%- set doc_version = (config.site_url or "").rstrip("/").split("/") | last -%}
+{%- if doc_version == "develop" -%}
+You are reading the unreleased development version of the documentation, built from the <code>develop</code> branch.<br>
+APIs described here may change or may never ship in a release, so use the <a href="https://rfdetr.roboflow.com/latest/"><strong>latest stable release</strong></a> instead.
+{%- elif doc_version[:1].isdigit() -%}
+You are reading the documentation for an older version of RF-DETR, kept online for reference.<br>
+APIs described here may have changed or been removed, so use the <a href="https://rfdetr.roboflow.com/latest/"><strong>latest stable release</strong></a> instead.
+{%- endif -%}{% endblock %}
 
 {% block extrahead %}
   {{ super() }}

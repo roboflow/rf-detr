@@ -112,14 +112,14 @@ CSS_BLOCK_RE = re.compile(re.escape(_CSS_MARKER_START) + r".*?" + re.escape(_CSS
 # tint, centered text, and sticky positioning archived pages never got built with.
 # Hardcoded rather than read from that file at run time, the same tradeoff as
 # DEVELOP_TEXT/ARCHIVED_TEXT above - keep in sync if that section changes.
-BANNER_CSS = """.md-banner,
-.md-banner--warning {
+BANNER_CSS = """[data-md-component="outdated"] .md-banner,
+[data-md-component="outdated"] .md-banner--warning {
   background-color: rgb(243, 238, 255);
   color: rgb(29, 29, 31);
   border-bottom: 1px solid rgb(229, 231, 235);
 }
 
-.md-banner__inner {
+[data-md-component="outdated"] .md-banner__inner {
   max-width: 1600px;
   line-height: 1.6;
   text-align: center;
@@ -135,14 +135,14 @@ BANNER_CSS = """.md-banner,
   top: var(--rf-banner-height, 0px);
 }
 
-.md-banner code {
+[data-md-component="outdated"] .md-banner code {
   background: white;
   color: var(--md-primary-fg-color);
 }
 
-.md-banner a,
-.md-banner a:focus,
-.md-banner a:hover {
+[data-md-component="outdated"] .md-banner a,
+[data-md-component="outdated"] .md-banner a:focus,
+[data-md-component="outdated"] .md-banner a:hover {
   color: var(--md-primary-fg-color);
   text-decoration: underline;
 }"""
@@ -259,6 +259,10 @@ def patch_stylesheets(root: Path) -> list[Path]:
         original = css_file.read_text(encoding="utf-8")
         if _CSS_MARKER_START in original:
             patched = CSS_BLOCK_RE.sub(lambda _m: block, original)
+        elif "--rf-banner-height" in original:
+            # A rebuilt stylesheet already has the native banner rules; only our marker
+            # identifies an older injection that should be refreshed in place.
+            continue
         else:
             patched = f"{original.rstrip()}\n\n{block}\n"
         if patched != original:

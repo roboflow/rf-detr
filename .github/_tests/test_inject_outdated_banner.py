@@ -111,6 +111,20 @@ def test_stylesheet_keeps_existing_rules(gh_pages: Path) -> None:
     assert "color: red;" in stylesheet
 
 
+def test_native_banner_stylesheet_is_left_unchanged(gh_pages: Path) -> None:
+    stylesheet = gh_pages / "1.3.0" / "stylesheets" / "rf.css"
+    native_stylesheet = f"{banner.BANNER_CSS}\n"
+    stylesheet.write_text(native_stylesheet, encoding="utf-8")
+
+    assert banner.patch_stylesheets(gh_pages) == []
+    assert stylesheet.read_text(encoding="utf-8") == native_stylesheet
+
+
+def test_injected_banner_rules_are_scoped_to_the_outdated_component() -> None:
+    assert "\n.md-banner" not in banner.BANNER_CSS
+    assert '[data-md-component="outdated"] .md-banner' in banner.BANNER_CSS
+
+
 def test_develop_stylesheet_is_not_created(gh_pages: Path) -> None:
     banner.patch_stylesheets(gh_pages)
     assert not (gh_pages / "develop" / "stylesheets" / "rf.css").exists()
