@@ -33,10 +33,12 @@ on:
         required: true
         default: "release/latest"
 
-# Ensure only one concurrent deployment
+# Every deployment and Docs noindex Sweep can write gh-pages. They must share one
+# non-cancelling queue, because generated-page retries cannot safely rebase each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || github.event_name == 'workflow_dispatch' && inputs.target || github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
-  cancel-in-progress: true
+  group: gh-pages-writer
+  queue: max
+  cancel-in-progress: false
 
 # Restrict permissions by default
 permissions:
@@ -66,11 +68,39 @@ jobs:
             exit 1
           fi
 
+      # Numeric tag dispatches intentionally build historical docs, but their old theme
+      # and robots.txt would undo the current site's noindex policy. Keep the policy from
+      # develop, the canonical source branch, and restore it before mike deploys the archive.
+      - name: 📥 Checkout current indexing policy
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.target != 'develop' &&
+          inputs.target != 'release/latest'
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: develop
+          path: .docs-index-policy
+          sparse-checkout: |
+            docs/theme/main.html
+            docs/root-static/robots.txt
+          sparse-checkout-cone-mode: false
+
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          # Preserve the separately checked-out current policy files below.
+          clean: false
           fetch-depth: 0
           ref: ${{ inputs.target || github.ref }}
+
+      - name: ♻️ Restore current indexing policy
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.target != 'develop' &&
+          inputs.target != 'release/latest'
+        run: |
+          cp .docs-index-policy/docs/theme/main.html docs/theme/main.html
+          cp .docs-index-policy/docs/root-static/robots.txt docs/root-static/robots.txt
 
       - name: 🐍 Install uv and set Python
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0

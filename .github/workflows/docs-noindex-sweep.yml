@@ -25,8 +25,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # This sweep and Build and Publish Docs both write gh-pages. Keep one writer at a
+  # time: a retry cannot safely rebase generated pages that another deployment replaced.
+  group: gh-pages-writer
+  queue: max
+  cancel-in-progress: false
 
 permissions:
   contents: write # Required for committing to gh-pages on a dispatched run
