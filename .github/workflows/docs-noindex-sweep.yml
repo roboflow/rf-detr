@@ -1,12 +1,15 @@
-# Patch already-published doc versions on gh-pages with `<meta name="robots" content="noindex, follow">`.
+# Patch already-published doc versions on gh-pages: `<meta name="robots" content="noindex,
+# follow">` plus the outdated-version banner.
 #
-# Why this exists: /latest/ is the only indexable version, enforced at build time in
-# docs/theme/main.html. Version directories published before that change are frozen HTML
-# that no future build touches, so ~25 archives keep a self-canonical and keep competing
-# with /latest/ in search results. This job rewrites them in place.
+# Why this exists: /latest/ is the only indexable version, and every other tree carries a
+# banner pointing readers at it - both enforced at build time in docs/theme/main.html.
+# Version directories published before those changes are frozen HTML that no future build
+# touches, so ~25 archives keep a self-canonical, keep competing with /latest/ in search
+# results, and show no banner. Rebuilding them is not an option: an archived tag may not
+# resolve against today's dependencies. This job rewrites them in place instead.
 #
 # Idempotent and safe to re-run: files that already carry a robots meta tag are skipped,
-# and `latest/` is never touched.
+# injected banner content is replaced rather than stacked, and `latest/` is never touched.
 #
 # The event decides whether anything is written:
 #   pull_request touching the indexing rules → dry run, reporting how many archived pages
@@ -19,6 +22,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/docs-noindex-sweep.yml"
+      - ".github/scripts/inject_outdated_banner.py"
+      - "docs/javascripts/version-banner.js"
       - "docs/theme/main.html"
       - "docs/root-static/robots.txt"
       - "docs/root-static/mike-redirect.html"
@@ -94,6 +99,28 @@ jobs:
           echo "patched=$PATCHED skipped=$SKIPPED"
           git diff --stat
 
+      # A second checkout, into a subdirectory so it does not clobber the gh-pages tree:
+      # the injector and the script it copies live in the source tree, not on gh-pages.
+      # It lands after the noindex step, whose `for dir in */` loop must not see it.
+      - name: 📥 Checkout banner injector
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          path: _source
+          sparse-checkout: |
+            .github/scripts/inject_outdated_banner.py
+            docs/javascripts/version-banner.js
+          sparse-checkout-cone-mode: false
+
+      - name: 🏷️ Inject outdated-version banner, styling, and offset script
+        run: |
+          set -euo pipefail
+          # docs/theme/main.html renders this banner, docs/stylesheets/rf.css styles it,
+          # and docs/javascripts/version-banner.js offsets the header below it - but only
+          # for trees mike rebuilds. Patch the empty banner div every archived page
+          # already carries, its frozen per-version stylesheet, and its script list.
+          python3 "$GITHUB_WORKSPACE/_source/.github/scripts/inject_outdated_banner.py" .
+          git diff --stat
+
       - name: 📤 Commit and push
         # A pull_request run never matches, so it stops after the report above.
         if: github.event_name == 'workflow_dispatch'
@@ -102,9 +129,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -u
+          # `git add -u` stages tracked files only, and the injector creates one file per
+          # archived version; without this the committed HTML would reference a script
+          # that never landed. Named by pathspec rather than `git add -A`, which would
+          # also sweep in the _source checkout above.
+          git add -- '[0-9]*/javascripts/version-banner.js'
           if git diff --cached --quiet; then
             echo "Nothing to commit."
             exit 0
           fi
-          git commit -m "chore(docs): noindex archived doc versions"
+          git commit -m "chore(docs): noindex and banner archived doc versions"
           git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
