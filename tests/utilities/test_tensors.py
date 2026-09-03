@@ -8,6 +8,7 @@
 Covers:
 - ``_bilinear_grid_sample`` parity (manual gather path vs ``F.grid_sample``).
 - ``nested_tensor_from_tensor_list`` with ``block_size`` (backbone-aware batch rounding).
+- ``NestedTensor.no_padding`` propagation and the unpadded-batch fast path.
 - ``make_collate_fn`` factory.
 - ``pack_targets``/``PackedTargets`` round-trip fidelity.
 """
@@ -23,6 +24,7 @@ import torch.testing
 from torch.utils.data import DataLoader
 
 from rfdetr.utilities.tensors import (
+    NestedTensor,
     PackedTargets,
     _bilinear_grid_sample,
     make_collate_fn,
@@ -575,6 +577,131 @@ class TestNestedTensorBlockSize:
         nested = nested_tensor_from_tensor_list(images, block_size=block_size)
         _, _, h, w = nested.tensors.shape
         assert (h, w) == expected
+
+
+class TestNestedTensorNoPadding:
+    """``no_padding`` records, from Python-side shapes only, that the mask is all-False.
+
+    Consumers use it to skip mask-derived work without reading device memory, so it must be True exactly when every
+    image already fills the padded extent, and the tensors/mask it returns must match the padding path element for
+    element.
+    """
+
+    @staticmethod
+    def _image(c: int, h: int, w: int, fill: float = 1.0) -> torch.Tensor:
+        """Return a ``(C, H, W)`` float32 tensor filled with the given value.
+
+        Examples:
+            >>> TestNestedTensorNoPadding._image(3, 2, 2).shape
+            torch.Size([3, 2, 2])
+        """
+        return torch.full((c, h, w), fill, dtype=torch.float32)
+
+    def test_defaults_to_false(self) -> None:
+        """A directly constructed NestedTensor makes no claim about its mask."""
+        nested = NestedTensor(torch.zeros(1, 3, 4, 4), torch.zeros(1, 4, 4, dtype=torch.bool))
+        assert nested.no_padding is False
+
+    def test_uniform_list_batch_is_flagged(self) -> None:
+        """Same-sized images need no padding, so the mask is all-False."""
+        images = [self._image(3, 32, 32, 1.0), self._image(3, 32, 32, 2.0)]
+        nested = nested_tensor_from_tensor_list(images)
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+        torch.testing.assert_close(nested.tensors, torch.stack(images), rtol=0, atol=0)
+
+    def test_ragged_list_batch_is_not_flagged(self) -> None:
+        """A smaller image forces real padding, so the flag must stay False."""
+        images = [self._image(3, 32, 32), self._image(3, 16, 32)]
+        nested = nested_tensor_from_tensor_list(images)
+        assert nested.no_padding is False
+        assert nested.mask[1, 16:, :].all().item() is True
+
+    def test_block_size_round_up_is_not_flagged(self) -> None:
+        """Divisor rounding adds padding even when every image is the same size."""
+        images = [self._image(3, 100, 100)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        assert nested.no_padding is False
+        assert nested.mask[0, 100:, :].all().item() is True
+
+    def test_block_size_already_aligned_is_flagged(self) -> None:
+        """Rounding that changes nothing leaves the batch unpadded."""
+        images = [self._image(3, 128, 256)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+
+    def test_batched_tensor_input_is_not_copied(self) -> None:
+        """A 4-D batch already *is* the padded batch; the copy is skipped, values unchanged."""
+        batch = torch.rand(2, 3, 24, 24)
+        nested = nested_tensor_from_tensor_list(batch)
+        assert nested.no_padding is True
+        assert nested.tensors is batch
+        assert nested.mask.shape == (2, 24, 24)
+        assert nested.mask.any().item() is False
+
+    def test_batched_tensor_matches_padding_path_values(self) -> None:
+        """The fast path returns exactly what the allocate-and-copy path produced."""
+        batch = torch.rand(2, 3, 24, 24)
+        fast = nested_tensor_from_tensor_list(batch)
+        slow = nested_tensor_from_tensor_list([batch[0], batch[1].clone(), self._image(3, 24, 32)])
+        torch.testing.assert_close(fast.tensors, slow.tensors[:2, :, :24, :24], rtol=0, atol=0)
+        assert slow.no_padding is False
+
+    def test_noncontiguous_batched_tensor_input_is_copied(self) -> None:
+        """A non-contiguous 4-D batch cannot alias the caller's storage without also inheriting its layout.
+
+        The contiguous fast path (``test_batched_tensor_input_is_not_copied``) is safe to alias because its layout
+        matches what the allocate-and-copy path would have produced. A non-contiguous batch would instead leak the
+        caller's stride and let a later in-place write on the caller's tensor silently corrupt the NestedTensor, so it
+        must fall through to an independent, contiguous copy like every other input shape.
+        """
+        batch = torch.rand(2, 24, 24, 3).permute(0, 3, 1, 2)
+        assert not batch.is_contiguous()
+        nested = nested_tensor_from_tensor_list(batch)
+        assert nested.no_padding is True
+        assert nested.tensors is not batch
+        assert nested.tensors.is_contiguous()
+        torch.testing.assert_close(nested.tensors, batch, rtol=0, atol=0)
+
+        batch.fill_(1000.0)
+        assert nested.tensors.eq(1000.0).any().item() is False
+
+    def test_to_preserves_flag(self) -> None:
+        """``to`` moves the batch without losing the structural claim."""
+        nested = nested_tensor_from_tensor_list(torch.rand(1, 3, 8, 8))
+        assert nested.to(torch.device("cpu")).no_padding is True
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_pin_memory_preserves_flag(self) -> None:
+        """``pin_memory`` likewise keeps the flag attached to the batch."""
+        nested = nested_tensor_from_tensor_list(torch.rand(1, 3, 8, 8))
+        assert nested.pin_memory().no_padding is True
+
+    def test_flag_survives_inplace_batch_uniform_resize(self) -> None:
+        """The default training config reaches ``no_padding=True`` and mutates the batch in place afterwards.
+
+        With the defaults (``square_resize_div_64=True``, ``multi_scale=True``, ``do_random_resize_via_padding=False``),
+        every sample is resized to one fixed square scale before collate, so ``nested_tensor_from_tensor_list`` flags
+        the batch. ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly to a randomly
+        chosen scale via the same two in-place ``F.interpolate`` calls reproduced below, without touching
+        ``no_padding``. Nearest-neighbour resampling of an all-False mask stays all-False at any output size, so the
+        flag must still describe the mutated mask truthfully afterwards.
+        """
+        images = [torch.rand(3, 512, 512) for _ in range(4)]
+        nested = nested_tensor_from_tensor_list(images, block_size=64)
+        assert nested.no_padding is True
+
+        with torch.no_grad():
+            nested.tensors = F.interpolate(nested.tensors, size=(640, 640), mode="bilinear", align_corners=False)
+            nested.mask = (
+                F.interpolate(nested.mask.unsqueeze(1).float(), size=(640, 640), mode="nearest").squeeze(1).bool()
+            )
+
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+        assert nested.mask.shape == (4, 640, 640)
 
 
 class TestMakeCollateFn:
