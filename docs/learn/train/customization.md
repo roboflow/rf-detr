@@ -57,7 +57,7 @@ module = RFDETRModelModule(model_config, train_config)
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `on_fit_start`             | Seeds RNGs when `train_config.seed` is set.                                                                                                                                                                                     |
 | `on_train_batch_start`     | Applies multi-scale random resize when `train_config.multi_scale=True`.                                                                                                                                                         |
-| `transfer_batch_to_device` | Moves `NestedTensor` batches to the target device.                                                                                                                                                                              |
+| `transfer_batch_to_device` | Moves `NestedTensor` batches and targets to the target device. With the default `TrainConfig.pack_targets=True`, it materializes `PackedTargets` into a plain per-sample dict list.                                             |
 | `training_step`            | Computes loss and logs `train/loss` plus per-term losses. Keypoint models use manual optimization with box-normalized accumulation across microbatches; detection and segmentation use Lightning's automatic optimization path. |
 | `validation_step`          | Runs forward pass and postprocessing; returns `{results, targets}` for `COCOEvalCallback`.                                                                                                                                      |
 | `test_step`                | Same as `validation_step`, logs under `test/`.                                                                                                                                                                                  |
@@ -103,6 +103,8 @@ See [Training parameters — optimizer](training-parameters.md) for the full par
 
     If you need SAM or Lookahead, override `configure_optimizers` and set `self.automatic_optimization = False` in `RFDETRModelModule.__init__`. For standard use, pick a `torch.optim` optimizer by name or a drop-in `pytorch-optimizer` optimizer by import path (e.g. `"pytorch_optimizer.Lion"`).
 
+`batch_size="auto"` models the built-in AdamW optimizer's state memory only; with a different optimizer (as configured above) the probe's batch-size estimate may be too conservative or too permissive — see the runtime warning for details.
+
 ### Custom LR scheduler
 
 `TrainConfig.lr_scheduler` accepts either a **preset name / import path** (a string) or a **callable** (a class or `functools.partial`), mirroring `optimizer`, and selects the scheduler built in `configure_optimizers`.
@@ -126,7 +128,7 @@ train_config = TrainConfig(
 train_config = TrainConfig(..., lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, step_size=30))
 ```
 
-With `warmup_epochs > 0`, an explicit scheduler is automatically prepended with a linear warmup ramp via `SequentialLR` (managed presets bake warmup into their own schedule). `ReduceLROnPlateau` is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by `lr_scheduler_monitor` (default `"val/loss"`). Use `lr_scheduler_interval="epoch"` to step other explicit schedulers per epoch instead of per optimizer step.
+With `warmup_epochs > 0`, an explicit scheduler is automatically prepended with a linear warmup ramp via `SequentialLR` (managed presets bake warmup into their own schedule). `ReduceLROnPlateau` is special: it cannot be warmup-wrapped, always steps once per epoch, and reads the metric named by `lr_scheduler_monitor` (default `"val/loss"`). The default `compute_val_loss="auto"` preserves `val/loss` when that monitor is used. Use `lr_scheduler_interval="epoch"` to step other explicit schedulers per epoch instead of per optimizer step.
 
 See [Training parameters — scheduler](training-parameters.md#scheduler-and-regularization) for the full parameter reference.
 
@@ -264,7 +266,9 @@ trainer.fit(module, datamodule, ckpt_path="new_checkpoint.ckpt")
 trainer.validate(module, datamodule)
 ```
 
-Runs one full validation pass and logs `val/mAP_50_95`, `val/mAP_50`, `val/F1`, and per-class AP metrics to all active loggers.
+Runs one full validation pass and logs `val/mAP_50_95`, `val/mAP_50`, and `val/F1` to all active loggers. Set `log_per_class_metrics=True` to include per-class AP metrics.
+
+A bare `trainer.validate(module, datamodule)` call like this configures no optimizers, so with `TrainConfig.compute_val_loss` at its default `"auto"` no `ReduceLROnPlateau`/`val/loss`-monitoring callback is present to trigger it — `val/loss` is absent from the returned metrics dict. Passing a callback that monitors `val/loss` (e.g. `ModelCheckpoint(monitor="val/loss")`) still causes `val/loss` to be computed and logged, since `"auto"` reacts to the configured callbacks, not just the optimizer.
 
 ### Inference with the data pipeline
 
@@ -414,25 +418,31 @@ All logged keys (`train/loss`, `val/mAP_50_95`, `val/keypoint_map_50_95`, `val/F
 
 ## Logged metrics reference
 
-| Key                      | When logged            | Description                                               |
-| ------------------------ | ---------------------- | --------------------------------------------------------- |
-| `train/loss`             | Every step / epoch     | Total weighted training loss                              |
-| `train/<term>`           | Every step / epoch     | Individual loss terms (e.g. `train/loss_bbox`)            |
-| `val/loss`               | Each epoch             | Validation loss (if `train_config.compute_val_loss=True`) |
-| `val/mAP_50_95`          | Each eval epoch        | COCO box mAP@[.50:.05:.95]                                |
-| `val/mAP_50`             | Each eval epoch        | COCO box mAP@.50                                          |
-| `val/mAP_75`             | Each eval epoch        | COCO box mAP@.75                                          |
-| `val/mAR`                | Each eval epoch        | COCO mean average recall                                  |
-| `val/ema_mAP_50_95`      | Each eval epoch        | EMA-model mAP@[.50:.05:.95] (if EMA active)               |
-| `val/F1`                 | Each eval epoch        | Macro F1 at best confidence threshold                     |
-| `val/precision`          | Each eval epoch        | Precision at best F1 threshold                            |
-| `val/recall`             | Each eval epoch        | Recall at best F1 threshold                               |
-| `val/AP/<class>`         | Each eval epoch        | Per-class AP (if `log_per_class_metrics=True`)            |
-| `val/segm_mAP_50_95`     | Each eval epoch        | Segmentation mAP (segmentation models only)               |
-| `val/segm_mAP_50`        | Each eval epoch        | Segmentation mAP@.50 (segmentation models only)           |
-| `val/keypoint_map_50_95` | Each eval epoch        | COCO keypoint AP@[.50:.05:.95] (keypoint preview only)    |
-| `val/keypoint_map_50`    | Each eval epoch        | COCO keypoint AP@.50 (keypoint preview only)              |
-| `test/*`                 | After `trainer.test()` | Mirror of `val/*` keys                                    |
+| Key                      | When logged                                         | Description                                                                                                                                                                                                          |
+| ------------------------ | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `train/loss`             | Epoch; also each step when `train_log_on_step=True` | Total weighted training loss                                                                                                                                                                                         |
+| `train/<term>`           | Each epoch                                          | Base-loss metric (e.g. `train/loss_bbox`)                                                                                                                                                                            |
+| `train/<term>_aux`       | Each epoch                                          | Sum of decoder and encoder auxiliary terms for that loss                                                                                                                                                             |
+| `train/lr`               | Each optimizer step                                 | First optimizer parameter group's learning rate                                                                                                                                                                      |
+| `train/lr_min`           | Each optimizer step                                 | Minimum learning rate across optimizer parameter groups                                                                                                                                                              |
+| `train/lr_max`           | Each optimizer step                                 | Maximum learning rate across optimizer parameter groups                                                                                                                                                              |
+| `val/loss`               | Each epoch when required                            | Validation loss (if `compute_val_loss=True` or an automatic consumer monitors it)                                                                                                                                    |
+| `val/mAP_50_95`          | Each eval epoch                                     | COCO box mAP@[.50:.05:.95]                                                                                                                                                                                           |
+| `val/mAP_50`             | Each eval epoch                                     | COCO box mAP@.50                                                                                                                                                                                                     |
+| `val/mAP_75`             | Each eval epoch                                     | COCO box mAP@.75                                                                                                                                                                                                     |
+| `val/mAR`                | Each eval epoch                                     | COCO mean average recall                                                                                                                                                                                             |
+| `val/ema_mAP_50_95`      | Each eval epoch                                     | EMA-model mAP@[.50:.05:.95] (if EMA active)                                                                                                                                                                          |
+| `val/F1`                 | Each eval epoch                                     | Macro F1 at best confidence threshold                                                                                                                                                                                |
+| `val/precision`          | Each eval epoch                                     | Precision at best F1 threshold                                                                                                                                                                                       |
+| `val/recall`             | Each eval epoch                                     | Recall at best F1 threshold                                                                                                                                                                                          |
+| `val/AP/<class>`         | Each eval epoch                                     | Per-class AP (if `log_per_class_metrics=True`; aggregate mAP/mAR/F1 remain available otherwise)                                                                                                                      |
+| `val/segm_mAP_50_95`     | Each eval epoch                                     | Segmentation mAP (segmentation models only)                                                                                                                                                                          |
+| `val/segm_mAP_50`        | Each eval epoch                                     | Segmentation mAP@.50 (segmentation models only)                                                                                                                                                                      |
+| `val/keypoint_map_50_95` | Each eval epoch                                     | COCO keypoint AP@[.50:.05:.95] (keypoint preview only)                                                                                                                                                               |
+| `val/keypoint_map_50`    | Each eval epoch                                     | COCO keypoint AP@.50 (keypoint preview only)                                                                                                                                                                         |
+| `test/*`                 | After `trainer.test()`                              | Mirror of `val/*` keys, except `test/loss`: `compute_test_loss` defaults to `True` unconditionally (unlike `compute_val_loss`'s `"auto"` default), so a default run emits `test/loss` even when `val/loss` is absent |
+
+With gradient accumulation, learning-rate metrics are emitted only when an optimizer update occurs, including a partial final accumulation window. Layer-specific auxiliary loss keys (such as `train/loss_bbox_0` and `train/loss_bbox_enc`) are replaced by their compact `train/loss_bbox_aux` aggregate.
 
 ---
 

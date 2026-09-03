@@ -15,13 +15,14 @@ from __future__ import annotations
 import contextlib
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
+from rfdetr.export._class_layout import _exclude_background_class
 from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.export._topk import _select_topk_multiclass
 from rfdetr.utilities.logger import get_logger
@@ -30,6 +31,7 @@ logger = get_logger()
 
 _IMAGENET_MEAN: list[float] = [0.485, 0.456, 0.406]
 _IMAGENET_STD: list[float] = [0.229, 0.224, 0.225]
+_RANK4_OUTPUT_KINDS: tuple[str, ...] = ("masks", "keypoints")
 
 
 def _create_interpreter(model_path: str | Path) -> Any:
@@ -178,6 +180,8 @@ def _run_inference(
     image_path: str | Path,
     threshold: float = 0.3,
     num_select: int | None = None,
+    background_class_id: int | None = -1,
+    rank4_output: Literal["masks", "keypoints"] | None = None,
 ) -> tuple[Detections, PILImage.Image]:
     """Preprocess one image, run TFLite inference, and decode detections.
 
@@ -192,11 +196,28 @@ def _run_inference(
         threshold: Confidence threshold; detections below this are discarded.
         num_select: Maximum query/class pairs selected before thresholding. ``None`` uses the exported model's query
             count, matching shipped RF-DETR configurations; pass an explicit value for custom exports.
+        background_class_id: Exported class slot to exclude before selection. The default ``-1`` preserves the common
+            final-slot background convention. Pass ``None`` for sparse COCO checkpoints, whose final slot is class 90,
+            or ``0`` for legacy background-first keypoint checkpoints.
+        rank4_output: What a rank-4 output holds when no output names itself ``masks``. Segmentation and keypoint
+            exports each add exactly one rank-4 tensor, and RF-DETR's own TFLite files reach the interpreter with
+            the ONNX output names replaced by ``StatefulPartitionedCall:N``, so the kind is usually not readable
+            from the graph. The default ``None`` decodes a mask only from an output that names itself. Pass
+            ``"masks"`` for a name-stripped segmentation export or ``"keypoints"`` to suppress anonymous-mask
+            decoding for a keypoint export.
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes (and ``mask`` for
         segmentation models) and ``pil_img`` is the original PIL image at its original resolution.
+
+    Raises:
+        ValueError: If *rank4_output* is neither ``None`` nor one of ``"masks"``/``"keypoints"``, if the model's
+            input tensor is not ``float32``, or if the ``dets``/``labels`` outputs cannot be matched by name or
+            shape.
     """
+    if rank4_output is not None and rank4_output not in _RANK4_OUTPUT_KINDS:
+        raise ValueError(f"rank4_output must be one of {_RANK4_OUTPUT_KINDS} or None; got {rank4_output!r}")
+
     inp_det = interp.get_input_details()
     out_det = interp.get_output_details()
     _, height, width, channels = inp_det[0]["shape"]
@@ -267,9 +288,8 @@ def _run_inference(
         boxes_idx, logits_idx = logits_idx, boxes_idx
         boxes_cwh = interp.get_tensor(out_det[boxes_idx]["index"])[0]
 
-    # Drop last logit column: RF-DETR adds +1 to num_classes (no-object slot, criterion.py:323).
-    # Keeping it causes class_id == len(class_names) → IndexError at display time.
-    logits = interp.get_tensor(out_det[logits_idx]["index"])[0, :, :-1]  # (Q, num_classes)
+    # Background placement is checkpoint-dependent and cannot be inferred from the tensor width alone.
+    logits = interp.get_tensor(out_det[logits_idx]["index"])[0]
 
     # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
     if logits.size:
@@ -284,12 +304,14 @@ def _run_inference(
         logger.debug("Logits stats: empty shape=%s", logits.shape)
     one = np.asarray(1, dtype=logits.dtype)
     scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
+    scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
     # Flatten (Q, C) to Q*C query/class pairs and take the top-scoring ones before thresholding —
     # mirrors PostProcess._select_topk. A per-query argmax (the previous approach) keeps at most
     # one class per query, silently dropping legitimate detections whenever a query scores above
     # threshold on more than one class; see _topk.py for why that happens routinely here.
     selection_cap = logits.shape[0] if num_select is None else num_select
     scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold, num_select=selection_cap)
+    cls = class_ids[cls]
     if scores_all.size:
         logger.debug(
             "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
@@ -306,12 +328,20 @@ def _run_inference(
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
     xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
 
-    # Segmentation exports add a rank-4 mask output; decode it when present.
+    # Segmentation exports add a rank-4 mask output; decode it when present. Keypoint exports add a rank-4
+    # output too (pred_keypoints), and the ONNX output names rarely survive the conversion, so an anonymous
+    # rank-4 tensor is only taken for a mask when the caller declares the export a segmentation one.
     mask_idx = next((i for i, od in enumerate(out_det) if "masks" in str(od.get("name", ""))), None)
-    if mask_idx is None:
-        rank4_candidates = [i for i, od in enumerate(out_det) if len(od["shape"]) == 4]
+    if mask_idx is None and rank4_output == "masks":
+        rank4_candidates = [
+            i for i, od in enumerate(out_det) if len(od["shape"]) == 4 and "keypoints" not in str(od.get("name", ""))
+        ]
         if len(rank4_candidates) == 1:
             mask_idx = rank4_candidates[0]
+            logger.debug(
+                "Rank-4 output %s carries no kind in its name; decoding it as a caller-declared segmentation mask.",
+                str(out_det[mask_idx].get("name", "<unnamed>")),
+            )
         elif len(rank4_candidates) >= 2:
             logger.warning(
                 "Ambiguous rank-4 outputs (%d candidates); skipping mask decode. "

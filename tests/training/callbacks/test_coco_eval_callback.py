@@ -15,6 +15,7 @@ import torch
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -96,6 +97,8 @@ class TestSetup:
         """Detection mode uses iou_type='bbox'."""
         cb = COCOEvalCallback(max_dets=300, segmentation=False)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert isinstance(cb.map_metric, OnePassCocoMeanAveragePrecision)
+        assert isinstance(cb.map_metric_train, OnePassCocoMeanAveragePrecision)
         assert "bbox" in cb.map_metric.iou_type
         assert "segm" not in cb.map_metric.iou_type
 
@@ -157,12 +160,21 @@ class TestSetup:
         """The EMA metric mirrors the per-class computation flag."""
         cb = COCOEvalCallback(log_per_class_metrics=False)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        module = _make_pl_module()
-        module.device = torch.device("cpu")
         with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
-            cb._prepare_ema_metric(_make_trainer(), module)
+            cb._prepare_ema_metric(_make_trainer())
         assert cb.map_metric_ema is not None
         assert cb.map_metric_ema.class_metrics is False
+
+    def test_ema_metric_stays_on_cpu_when_module_uses_an_accelerator(self) -> None:
+        """The EMA metric itself remains on CPU because its accumulated state is CPU-only."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer())
+
+        assert cb.map_metric_ema is not None
+        assert cb.map_metric_ema.device.type == "cpu"
 
     def test_keypoint_mode_does_not_enable_torchmetrics_keypoint_iou(self) -> None:
         """Keypoint mode must keep torchmetrics on bbox-only iou_type."""
@@ -260,6 +272,20 @@ class TestBatchEndCommon:
 
         assert cb.map_metric.update.call_count == 1
 
+    def test_map_metric_update_receives_normalized_inputs(self, hook, stage) -> None:
+        """The callback must pass normalized detection inputs to the adapter that owns CPU-state conversion."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+
+        getattr(cb, hook)(_make_trainer(), _make_pl_module(), outputs, None, 0)
+
+        called_preds, called_targets = cb.map_metric.update.call_args.args
+        assert called_preds[0].keys() == {"boxes", "scores", "labels"}
+        assert called_targets[0].keys() == {"boxes", "labels"}
+        assert "orig_size" not in called_targets[0]
+
     def test_f1_accumulator_grows_across_batches(self, hook, stage) -> None:
         """Calling the batch-end hook twice accumulates more GT in F1 state."""
         cb = COCOEvalCallback()
@@ -316,6 +342,53 @@ class TestOnTestBatchEnd:
         cb.on_test_batch_end(_make_trainer(), _make_pl_module(), outputs, None, 0, dataloader_idx=0)
 
 
+class TestValidationBatchEndDeviceRouting:
+    """Device split between the CPU-resident mAP metric state and the GPU-original F1/keypoint inputs."""
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_build_matching_data_still_receives_cuda_tensors_while_map_metric_state_is_cpu(self) -> None:
+        """build_matching_data must keep receiving the original CUDA tensors while map_metric's stored state is CPU-
+        resident — no CPU-only test can encode this device split.
+
+        A future refactor that passes the CPU-converted ``metric_preds``/``metric_targets`` into ``build_matching_data``
+        instead of the GPU originals would silently move ``[N, H, W]`` mask/box IoU onto the accelerator's slower CPU
+        sibling, a regression far larger than this PR's sync-removal win, with green CPU-only tests and zero numerical
+        change.
+        """
+        cb = COCOEvalCallback()
+        trainer = _make_trainer()
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+
+        outputs = {
+            "results": [
+                {
+                    "boxes": torch.zeros(1, 4, device="cuda"),
+                    "scores": torch.zeros(1, device="cuda"),
+                    "labels": torch.zeros(1, dtype=torch.long, device="cuda"),
+                }
+            ],
+            "targets": [
+                {
+                    "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]], device="cuda"),
+                    "labels": torch.tensor([1], device="cuda"),
+                    "orig_size": torch.tensor([100, 200]),
+                }
+            ],
+        }
+
+        with patch(
+            "rfdetr.training.callbacks.coco_eval.build_matching_data", wraps=build_matching_data
+        ) as matching_spy:
+            cb.on_validation_batch_end(trainer, module, outputs, None, 0)
+
+        matching_spy.assert_called_once()
+        matching_preds, matching_targets = matching_spy.call_args[0][:2]
+        assert all(value.is_cuda for item in matching_preds + matching_targets for value in item.values())
+        assert all(t.device.type == "cpu" for t in cb.map_metric.detection_box)
+
+
 class TestOnTrainBatchEnd:
     """Train-loop-specific behaviour for optional train mAP logging."""
 
@@ -331,6 +404,21 @@ class TestOnTrainBatchEnd:
         cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
 
         cb.map_metric_train.update.assert_called_once()
+
+    def test_train_batch_end_delegates_normalized_inputs_to_adapter(self) -> None:
+        """Train accumulation must delegate normalized predictions and targets to the adapter exactly once."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        called_preds, called_targets = cb.map_metric_train.update.call_args.args
+        assert called_preds[0].keys() == {"boxes", "scores", "labels"}
+        assert called_targets[0].keys() == {"boxes", "labels"}
 
     def test_train_metrics_do_not_use_test_hook(self) -> None:
         """Train mAP must be logged under train/* via the train epoch hook, not through test/* hooks."""
@@ -352,7 +440,7 @@ class TestOnTrainBatchEnd:
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric_train = MagicMock(name="map_metric_train")
-        cb.map_metric_train._update_count = 0
+        cb.map_metric_train.has_updates = False
         module = _make_pl_module()
         module.train_config = SimpleNamespace(compute_train_metrics=True)
 
@@ -419,6 +507,43 @@ class TestOnTrainBatchEnd:
         outputs = {"results": [], "targets": _detection_targets()}
 
         cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_called_once()
+
+    def test_train_batch_end_skips_accumulation_on_non_matching_epoch(self) -> None:
+        """With eval_interval>1, batches on non-interval epochs must not pay accumulation cost.
+
+        Regression guard: previously every train batch ran the CPU-syncing accumulation block even
+        on epochs whose accumulated state on_train_epoch_end discards unread, wasting a blocking
+        .cpu() sync (and matching-data work) on every skipped epoch.
+        """
+        cb = COCOEvalCallback(eval_interval=3)
+        trainer = _make_trainer()
+        trainer.current_epoch = 0  # epoch 1 (1-based) is not divisible by 3
+        trainer.max_epochs = 10
+        cb.setup(trainer, _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(trainer, module, outputs, None, 0)
+
+        cb.map_metric_train.update.assert_not_called()
+
+    def test_train_batch_end_accumulates_on_matching_epoch(self) -> None:
+        """With eval_interval>1, batches on interval-aligned epochs still accumulate normally."""
+        cb = COCOEvalCallback(eval_interval=3)
+        trainer = _make_trainer()
+        trainer.current_epoch = 2  # epoch 3 (1-based) is divisible by 3
+        trainer.max_epochs = 10
+        cb.setup(trainer, _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(trainer, module, outputs, None, 0)
 
         cb.map_metric_train.update.assert_called_once()
 
@@ -947,20 +1072,21 @@ class TestOnValidationEpochEnd:
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert "val/ema_mAP_50_95" in logged_keys
         assert "val/ema_mAP_50" in logged_keys
+        assert "val/ema_mAP_75" in logged_keys
         assert "val/ema_mAR" in logged_keys
         cb.map_metric_ema.reset.assert_called_once()
 
-    def test_eval_ema_only_still_logs_ema_metrics_when_base_metric_is_empty(self) -> None:
-        """Regression for #1285: under eval_ema_only, on_validation_batch_end routes every prediction to map_metric_ema
-        and map_metric never accumulates a single update this epoch.
+    def test_still_logs_ema_metrics_when_base_metric_is_empty(self) -> None:
+        """Regression for #1285: with the base model not evaluated, on_validation_batch_end routes every prediction to
+        map_metric_ema and map_metric never accumulates a single update this epoch.
 
         The empty-state guard in _compute_and_log must not also suppress the EMA metrics — before the fix it returned
-        before ever reaching the EMA compute block, so eval_ema_only runs logged no validation output at all.
+        before ever reaching the EMA compute block, so such runs logged no validation output at all.
         """
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
@@ -973,22 +1099,78 @@ class TestOnValidationEpochEnd:
         assert "val/ema_mAP_50_95" in logged_keys
         assert "val/ema_mAP_50" in logged_keys
         assert "val/ema_mAR" in logged_keys
-        assert not any(k in {"val/mAP_50_95", "val/mAP_50", "val/mAP_75", "val/mAR"} for k in logged_keys)
         cb.map_metric_ema.reset.assert_called_once()
         cb.map_metric.reset.assert_called_once()
 
-    def test_eval_ema_only_computes_f1_from_accumulated_matches_when_base_metric_is_empty(self) -> None:
+    def test_ema_score_is_mirrored_onto_the_primary_keys_when_base_metric_is_empty(self) -> None:
+        """The EMA score must also reach val/mAP_50_95 when the base model was not evaluated this epoch.
+
+        Leaving the primary key unpopulated — what the deprecated eval_ema_only flag did — is safe for an opt-in
+        but not for a default: every scheduler, early-stopping hook, checkpoint monitor and dashboard watching
+        val/mAP_50_95 would silently see nothing. The mirrored value must be the EMA one, not a stale or zero
+        reading, so BestModelCallback's EMA track and external monitors agree on the epoch's score.
+        """
+        cb = COCOEvalCallback(max_dets=500)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema.compute.return_value = _minimal_metrics()
+        cb._ema_has_updates = True
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}  # the mirror republishes whatever the EMA block wrote here
+        module = _make_pl_module()
+
+        cb.on_validation_epoch_end(trainer, module)
+
+        logged = {c.args[0]: c.args[1] for c in module.log.call_args_list}
+        assert logged["val/mAP_50_95"] == logged["val/ema_mAP_50_95"]
+        assert trainer.callback_metrics["val/mAP_50_95"] == trainer.callback_metrics["val/ema_mAP_50_95"]
+        assert logged["val/mAP_75"] == logged["val/ema_mAP_75"]
+        assert logged["val/mAR"] == logged["val/ema_mAR"]
+
+    def test_per_class_ap_is_mirrored_onto_the_primary_keys(self) -> None:
+        """EMA-only validation publishes per-class AP under both EMA and primary metric namespaces.
+
+        Per-class AP is logged through pl_module.log alone, so the primary alias must be emitted explicitly alongside
+        the EMA row when no base model was evaluated.
+        """
+        cb = COCOEvalCallback(max_dets=500)
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb._class_names = ["cat"]
+        cb._cat_id_to_name = {0: "cat"}
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        ema_metrics = _minimal_metrics()
+        ema_metrics["map_per_class"] = torch.tensor([0.5])
+        ema_metrics["mar_500_per_class"] = torch.tensor([0.6])
+        ema_metrics["classes"] = torch.tensor([0])
+        cb.map_metric_ema.compute.return_value = ema_metrics
+        cb._ema_has_updates = True
+        module = _make_pl_module()
+
+        cb.on_validation_epoch_end(_make_trainer(), module)
+
+        logged_keys = {c.args[0] for c in module.log.call_args_list}
+        assert "val/ema_AP/cat" in logged_keys
+        assert "val/AP/cat" in logged_keys
+
+        logged = {c.args[0]: c.args[1] for c in module.log.call_args_list}
+        assert logged["val/AP/cat"] == logged["val/ema_AP/cat"]
+
+    def test_computes_f1_from_accumulated_matches_when_base_metric_is_empty(self) -> None:
         """Regression for #1285: on_validation_batch_end merges matching data into f1_local unconditionally (outside the
         used_ema_forward branch), independent of which mAP track a batch's predictions were routed to.
 
-        Under eval_ema_only, map_metric never accumulates, so the empty-state guard in _compute_and_log used to discard
-        f1_local via _reset_f1_local before ever computing val/F1 — silently dropping it even though real matching data
-        (from the EMA-quality predictions) had been collected.
+        With the base model not evaluated, map_metric never accumulates, so the empty-state guard in _compute_and_log
+        used to discard f1_local via _reset_f1_local before ever computing val/F1 — silently dropping it even though
+        real matching data (from the EMA-quality predictions) had been collected.
         """
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
@@ -1010,21 +1192,21 @@ class TestOnValidationEpochEnd:
         f1_call = next(c for c in module.log.call_args_list if c.args[0] == "val/F1")
         assert f1_call.args[1] == pytest.approx(1.0)
 
-    def test_eval_ema_only_prints_summary_table_when_base_metric_is_empty(self) -> None:
+    def test_prints_summary_table_when_base_metric_is_empty(self) -> None:
         """Regression for #1285: the console summary table is also part of "validation output".
 
         Before this fix, ``_print_metrics_tables`` was only ever called from the branch that reads the base ``metric`` —
-        which never has data under ``eval_ema_only`` — so no table was ever printed for the entire run, even after the
-        scalar/F1 logging gaps were closed. Per-class AP must be logged under ``ema_``-prefixed keys, mirroring
+        which never has data when the base model is not evaluated — so no table was ever printed for the run, even after
+        the scalar/F1 logging gaps were closed. Per-class AP must be logged under ``ema_``-prefixed keys, mirroring
         ``val/ema_mAP_50_95`` staying separate from ``val/mAP_50_95`` elsewhere, so it never collides with a base-track
         key.
         """
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb._class_names = ["cat", "dog"]
         cb._cat_id_to_name = {0: "cat", 1: "dog"}
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         ema_metrics = _minimal_metrics()
         ema_metrics["map_per_class"] = torch.tensor([0.5, 0.4])
@@ -1046,17 +1228,17 @@ class TestOnValidationEpochEnd:
         logged_keys = {c.args[0] for c in module.log.call_args_list}
         assert "val/ema_AP/cat" in logged_keys
         assert "val/ema_AP/dog" in logged_keys
-        assert "val/AP/cat" not in logged_keys
-        assert "val/AP/dog" not in logged_keys
+        assert "val/AP/cat" in logged_keys
+        assert "val/AP/dog" in logged_keys
 
-    def test_eval_ema_only_resets_val_ema_keypoints_when_ema_not_yet_warmed_up(self) -> None:
-        """Regression for #1289 review: under eval_ema_only, when the base metric is empty AND the EMA metric has not
-        accumulated any updates this epoch (e.g. EMA not yet warmed up), _should_compute_ema returns False and the
-        early-return branch must fall back to resetting the val_ema keypoint split instead of computing it."""
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+    def test_resets_val_ema_keypoints_when_ema_not_yet_warmed_up(self) -> None:
+        """Regression for #1289 review: when the base metric is empty AND the EMA metric has not accumulated any updates
+        this epoch (e.g. EMA not yet warmed up), _should_compute_ema returns False and the early-return branch must fall
+        back to resetting the val_ema keypoint split instead of computing it."""
+        cb = COCOEvalCallback(max_dets=500)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         cb._ema_has_updates = False  # EMA metric also has no updates this epoch
         module = _make_pl_module()
@@ -1071,15 +1253,15 @@ class TestOnValidationEpochEnd:
         assert call("val_ema") in reset_keypoint_split.call_args_list
         cb.map_metric_ema.compute.assert_not_called()
 
-    def test_eval_ema_only_summary_table_includes_segm_metrics(self) -> None:
+    def test_summary_table_includes_segm_metrics(self) -> None:
         """Regression for #1289 review: _print_ema_only_summary must include segm mAP entries in the overall table when
         segmentation metrics are enabled, mirroring the base-metric path's segm handling."""
-        cb = COCOEvalCallback(max_dets=500, segmentation=True, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500, segmentation=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         cb._class_names = ["cat"]
         cb._cat_id_to_name = {0: "cat"}
         cb.map_metric = MagicMock(name="map_metric")
-        cb.map_metric._update_count = 0  # genuinely empty: eval_ema_only never routes here
+        cb.map_metric.has_updates = False  # genuinely empty: the default policy never routes here
         cb.map_metric_ema = MagicMock(name="map_metric_ema")
         ema_metrics = _minimal_metrics(pfx="bbox_")
         ema_metrics["map_per_class"] = torch.tensor([0.5])
@@ -1342,9 +1524,12 @@ class TestOnTestEpochEnd:
         assert not any(k.startswith("val/") for k in logged_keys)
 
 
-class TestValidationBatchEndEvalEmaOnly:
-    """eval_ema_only=True must skip the duplicate EMA forward pass in on_validation_batch_end — validation_step already
-    forwarded through the EMA model directly (regression for #416)."""
+class TestValidationBatchEndEvalPolicy:
+    """Validation evaluates one model by default, so on_validation_batch_end must skip the duplicate EMA forward pass —
+    validation_step already forwarded through the EMA model directly (regression for #416).
+
+    eval_base_model=True opts back in to the two-forward base+EMA comparison.
+    """
 
     @staticmethod
     def _ema_callback_with_underlying(ema_underlying: MagicMock) -> MagicMock:
@@ -1354,12 +1539,12 @@ class TestValidationBatchEndEvalEmaOnly:
         ema_cb._average_model = SimpleNamespace(module=SimpleNamespace(model=ema_underlying))
         return ema_cb
 
-    def test_eval_ema_only_true_skips_duplicate_ema_forward(self) -> None:
-        """eval_ema_only=True must never call the EMA model's forward a second time, and must route the single forward's
+    def test_skips_duplicate_ema_forward_by_default(self) -> None:
+        """The default policy must never call the EMA model's forward a second time, and must route the single forward's
         predictions to the EMA metric/checkpoint track (not the regular one, which never ran a base-model forward this
         batch — regression for the val/mAP_50_95 metric/checkpoint-weights mismatch)."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=True)
+        cb = COCOEvalCallback()
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1375,11 +1560,11 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.map_metric.update.assert_not_called()
         assert cb._ema_has_updates is True
 
-    def test_eval_ema_only_true_falls_back_to_regular_track_when_ema_not_warmed_up(self) -> None:
-        """eval_ema_only=True with no averaged EMA model yet available must route predictions to the regular map_metric,
-        mirroring RFDETRModelModule._resolve_eval_model's own base-model fallback — otherwise the EMA track would record
-        an update that never actually came from an EMA forward pass."""
-        cb = COCOEvalCallback(eval_ema_only=True)
+    def test_falls_back_to_regular_track_when_ema_not_warmed_up(self) -> None:
+        """No averaged EMA model yet available must route predictions to the regular map_metric, mirroring
+        RFDETRModelModule._resolve_eval_model's own base-model fallback — otherwise the EMA track would record an update
+        that never actually came from an EMA forward pass."""
+        cb = COCOEvalCallback()
         ema_cb = MagicMock(name="ema_callback")
         ema_cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
         ema_cb._average_model = None
@@ -1397,10 +1582,10 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.map_metric_ema.update.assert_not_called()
         assert cb._ema_has_updates is False
 
-    def test_eval_ema_only_false_still_runs_duplicate_ema_forward(self) -> None:
-        """eval_ema_only=False (default) must preserve the existing independent base+EMA forward behaviour."""
+    def test_eval_base_model_still_runs_duplicate_ema_forward(self) -> None:
+        """eval_base_model=True must restore the independent base+EMA forward behaviour that used to be the default."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=False)
+        cb = COCOEvalCallback(eval_base_model=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1412,6 +1597,40 @@ class TestValidationBatchEndEvalEmaOnly:
         cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
 
         ema_underlying.assert_called_once()
+        cb.map_metric_ema.update.assert_called_once()
+
+    def test_routes_normalized_inputs_to_ema_track(self) -> None:
+        """The used-EMA route must delegate normalized inputs only to the EMA adapter."""
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback()
+        trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+        batch = (torch.zeros(1), None)
+        cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
+
+        cb.map_metric.update.assert_not_called()
+        called_preds, called_targets = cb.map_metric_ema.update.call_args.args
+        assert called_preds[0].keys() == {"boxes", "scores", "labels"}
+        assert called_targets[0].keys() == {"boxes", "labels"}
+
+    def test_eval_base_model_routes_each_forward_to_its_metric_adapter(self) -> None:
+        """Independent base and EMA forwards must each update their corresponding adapter once."""
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback(eval_base_model=True)
+        trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+        batch = (torch.zeros(1), None)
+        cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
+
+        cb.map_metric.update.assert_called_once()
         cb.map_metric_ema.update.assert_called_once()
 
     def test_on_validation_batch_end_resizes_native_gt_directly_to_prediction_grid(self) -> None:
@@ -1457,7 +1676,7 @@ class TestValidationBatchEndEvalEmaOnly:
     def test_ema_validation_resizes_gt_to_ema_prediction_grid(self) -> None:
         """EMA segmentation metrics must use the EMA predictions' grid, not the base model's grid."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(segmentation=True)
+        cb = COCOEvalCallback(segmentation=True, eval_base_model=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1502,12 +1721,12 @@ class TestValidationBatchEndEvalEmaOnly:
         called_targets = cb.map_metric_ema.update.call_args[0][1]
         assert torch.equal(called_targets[0]["masks"], expected_masks)
 
-    def test_eval_ema_only_and_native_resolution_masks_combined(self) -> None:
-        """eval_ema_only=True and native-resolution mask predictions active together (the #416 commenter's actual
+    def test_ema_only_eval_and_native_resolution_masks_combined(self) -> None:
+        """EMA-only evaluation and native-resolution mask predictions active together (the #416 commenter's actual
         workaround) must route to map_metric_ema with GT masks aligned to the native pred resolution — neither flag's
         handling should interfere with the other."""
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
-        cb = COCOEvalCallback(eval_ema_only=True, segmentation=True)
+        cb = COCOEvalCallback(segmentation=True)
         trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
@@ -1544,10 +1763,99 @@ class TestValidationBatchEndEvalEmaOnly:
         assert called_targets[0]["masks"].shape[-2:] == (4, 4)
 
 
-class TestEvalEmaOnlyBatchToEpochEndToEnd:
-    """Full batch -> epoch pipeline for eval_ema_only, with real (non-mocked) accumulators (#1285).
+class TestValidationBatchEndTargetConversion:
+    """Independent base and EMA updates convert ``outputs["targets"]`` once when both conversions must agree."""
 
-    TestValidationBatchEndEvalEmaOnly and TestOnValidationEpochEnd each replace map_metric / map_metric_ema with
+    @staticmethod
+    def _trainer_with_ema(ema_underlying: MagicMock) -> MagicMock:
+        """Return a trainer whose EMA callback exposes ``ema_underlying`` as the averaged model.
+
+        Examples:
+            >>> underlying = MagicMock(name="ema_underlying_model")
+            >>> trainer = TestValidationBatchEndTargetConversion._trainer_with_ema(underlying)
+            >>> trainer.callbacks[0]._average_model.module.model is underlying
+            True
+        """
+        ema_cb = MagicMock(name="ema_callback")
+        ema_cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
+        ema_cb._average_model = SimpleNamespace(module=SimpleNamespace(model=ema_underlying))
+        return _make_trainer(callbacks=[ema_cb])
+
+    def test_detection_hands_one_converted_target_list_to_both_metrics(self) -> None:
+        """Detection validation converts the batch's targets once and reuses that list for the EMA update.
+
+        Both call sites pass ``preds=None`` outside segmentation, so the second conversion recomputed a
+        byte-identical result: the same box rescale and the same ``orig_size`` host transfer, per validation batch,
+        on every epoch that evaluates both models. Reuse is safe because the accumulators store detached CPU copies
+        of what they are handed rather than the caller's tensors.
+        """
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback(eval_base_model=True)
+        trainer = self._trainer_with_ema(ema_underlying)
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+
+        with patch.object(cb, "_convert_targets", wraps=cb._convert_targets) as convert_targets:
+            cb.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
+
+        convert_targets.assert_called_once_with(outputs["targets"], None)
+        assert cb.map_metric_ema.update.call_args.args[1] is cb.map_metric.update.call_args.args[1]
+
+    def test_segmentation_converts_targets_separately_for_the_ema_grid(self) -> None:
+        """Segmentation validation must keep converting targets twice, once per prediction grid.
+
+        Target masks are resampled onto the paired prediction's mask resolution, and the base and EMA heads can emit
+        different resolutions for the same image. Sharing the base conversion here would silently score the EMA masks
+        against a grid they were never produced on.
+        """
+        ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
+        cb = COCOEvalCallback(segmentation=True, eval_base_model=True)
+        trainer = self._trainer_with_ema(ema_underlying)
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        module.postprocess.return_value = [
+            {
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([0]),
+                "boxes": torch.zeros(1, 4),
+                "masks": torch.zeros(1, 3, 3, dtype=torch.bool),
+            }
+        ]
+        outputs = {
+            "results": [
+                {
+                    "scores": torch.tensor([0.9]),
+                    "labels": torch.tensor([0]),
+                    "boxes": torch.zeros(1, 4),
+                    "masks": torch.zeros(1, 2, 2, dtype=torch.bool),
+                }
+            ],
+            "targets": [
+                {
+                    "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
+                    "labels": torch.tensor([0]),
+                    "orig_size": torch.tensor([5, 5]),
+                    "masks": torch.zeros(1, 4, 4, dtype=torch.bool),
+                }
+            ],
+        }
+
+        cb.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
+
+        ema_targets = cb.map_metric_ema.update.call_args.args[1]
+        assert ema_targets is not cb.map_metric.update.call_args.args[1]
+        assert ema_targets[0]["masks"].shape[-2:] == (3, 3)
+
+
+class TestEvalEmaOnlyBatchToEpochEndToEnd:
+    """Full batch -> epoch pipeline for the default EMA-only policy, with real (non-mocked) accumulators (#1285).
+
+    TestValidationBatchEndEvalPolicy and TestOnValidationEpochEnd each replace map_metric / map_metric_ema with
     MagicMock and drive a single hook in isolation. Neither would catch a wiring bug between the two (e.g.
     `_ema_has_updates` set by batch-time routing never reaching epoch-end, or `_prepare_ema_metric` creating a
     `map_metric_ema` that batch-time routing never populates). This test keeps the real MeanAveragePrecision instances
@@ -1555,13 +1863,14 @@ class TestEvalEmaOnlyBatchToEpochEndToEnd:
     sequence on the same callback instance.
     """
 
-    def test_eval_ema_only_real_batch_then_epoch_end_logs_ema_metrics(self) -> None:
+    def test_real_batch_then_epoch_end_logs_ema_metrics(self) -> None:
         ema_underlying = MagicMock(name="ema_underlying_model", return_value={"ema": True})
         ema_cb = MagicMock(name="ema_callback")
         ema_cb.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
         ema_cb._average_model = SimpleNamespace(module=SimpleNamespace(model=ema_underlying))
-        cb = COCOEvalCallback(max_dets=500, eval_ema_only=True)
+        cb = COCOEvalCallback(max_dets=500)
         trainer = _make_trainer(callbacks=[ema_cb])
+        trainer.callback_metrics = {}  # the mirror republishes whatever the EMA block wrote here
         module = _cpu_module()
         cb.setup(trainer, module, stage="fit")
         cb.on_validation_epoch_start(trainer, module)  # real map_metric_ema creation (_prepare_ema_metric)
@@ -1570,7 +1879,7 @@ class TestEvalEmaOnlyBatchToEpochEndToEnd:
         batch = (torch.zeros(1), None)
         cb.on_validation_batch_end(trainer, module, outputs, batch, 0)
 
-        ema_underlying.assert_not_called()  # eval_ema_only routes validation_step's own forward, no duplicate
+        ema_underlying.assert_not_called()  # the default policy routes validation_step's own forward, no duplicate
         assert cb._ema_has_updates is True
         assert cb.map_metric._update_count == 0  # regular track never accumulated this epoch
 
@@ -1580,7 +1889,9 @@ class TestEvalEmaOnlyBatchToEpochEndToEnd:
         assert "val/ema_mAP_50_95" in logged_keys
         assert "val/ema_mAP_50" in logged_keys
         assert "val/ema_mAR" in logged_keys
-        assert not any(k in {"val/mAP_50_95", "val/mAP_50", "val/mAP_75", "val/mAR"} for k in logged_keys)
+        # Mirrored onto the primary keys because the base model was never evaluated this epoch.
+        assert "val/mAP_50_95" in logged_keys
+        assert "val/mAR" in logged_keys
 
 
 class TestConvertPreds:
@@ -1733,6 +2044,95 @@ class TestConvertTargets:
         ]
         out = cb._convert_targets(targets)
         assert set(out[0].keys()) == {"boxes", "labels"}
+
+    @pytest.mark.parametrize(
+        ("num_targets", "expected_calls"),
+        [
+            pytest.param(3, [(3, 2)], id="multi-target-batch"),
+            pytest.param(0, [], id="empty-targets"),
+        ],
+    )
+    def test_orig_size_is_read_once_per_batch(self, num_targets: int, expected_calls: list[tuple[int, ...]]) -> None:
+        """A non-empty target batch reads every orig_size together in one device-to-host synchronization instead of one
+        ``tolist()`` call per target inside the loop."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4),
+                "labels": torch.tensor([0]),
+                "orig_size": torch.tensor([10, 10]),
+            }
+            for _ in range(num_targets)
+        ]
+        calls: list[tuple[int, ...]] = []
+        original_tolist = torch.Tensor.tolist
+
+        def tracked_tolist(tensor: torch.Tensor) -> object:
+            """Record the tensor shape passed to ``tolist`` before delegating to PyTorch."""
+            calls.append(tuple(tensor.shape))
+            return original_tolist(tensor)
+
+        with patch.object(torch.Tensor, "tolist", tracked_tolist):
+            cb._convert_targets(targets)
+
+        assert calls == expected_calls
+
+    def test_batch_pairs_non_square_orig_sizes_with_their_target_rows(self) -> None:
+        """Each target's box uses its own non-square orig_size after batched size conversion.
+
+        This prevents swapped ``orig_size.tolist()`` rows and height/width transposition from assigning a sibling
+        image's scale to the wrong target.
+        """
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.25, 0.5, 0.2, 0.4]]),
+                "labels": torch.tensor([3]),
+                "orig_size": torch.tensor([100, 300]),  # H=100, W=300
+            },
+            {
+                "boxes": torch.tensor([[0.5, 0.25, 0.4, 0.2]]),
+                "labels": torch.tensor([7]),
+                "orig_size": torch.tensor([240, 80]),  # H=240, W=80
+            },
+        ]
+
+        out = cb._convert_targets(targets)
+
+        assert out[0]["boxes"].shape == (1, 4)
+        assert out[1]["boxes"].shape == (1, 4)
+        assert out[0]["labels"].item() == 3
+        assert out[1]["labels"].item() == 7
+        torch.testing.assert_close(out[0]["boxes"], torch.tensor([[45.0, 30.0, 105.0, 70.0]]))
+        torch.testing.assert_close(out[1]["boxes"], torch.tensor([[24.0, 36.0, 56.0, 84.0]]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_orig_size_is_read_once_per_batch_cuda(self) -> None:
+        """Same call-count guarantee as ``test_orig_size_is_read_once_per_batch`` above, with every target tensor on
+        CUDA — the actual site of the device-to-host synchronization this PR collapses from one per target to one per
+        batch."""
+        cb = COCOEvalCallback()
+        targets = [
+            {
+                "boxes": torch.zeros(1, 4, device="cuda"),
+                "labels": torch.tensor([0], device="cuda"),
+                "orig_size": torch.tensor([10, 10], device="cuda"),
+            }
+            for _ in range(3)
+        ]
+        calls: list[tuple[int, ...]] = []
+        original_tolist = torch.Tensor.tolist
+
+        def tracked_tolist(tensor: torch.Tensor) -> object:
+            """Record the tensor shape passed to ``tolist`` before delegating to PyTorch."""
+            calls.append(tuple(tensor.shape))
+            return original_tolist(tensor)
+
+        with patch.object(torch.Tensor, "tolist", tracked_tolist):
+            cb._convert_targets(targets)
+
+        assert calls == [(3, 2)]
 
 
 class TestConvertTargetsWithPreds:
@@ -1986,60 +2386,85 @@ class TestEmaCollectiveSymmetry:
         mock_all_reduce.assert_called_once()
 
 
-def _metric_with_state(n: int = 1) -> MagicMock:
-    """Mock MeanAveragePrecision carrying minimal per-image state lists (one entry each)."""
-    metric = MagicMock(name="map_metric")
-    metric.detection_box = [torch.zeros(2, 4) for _ in range(n)]
-    metric.detection_scores = [torch.zeros(2) for _ in range(n)]
-    metric.detection_labels = [torch.zeros(2, dtype=torch.long) for _ in range(n)]
-    metric.detection_mask = [((10, 10), b"rle") for _ in range(n)]
-    metric.groundtruth_box = [torch.zeros(1, 4) for _ in range(n)]
-    metric.groundtruth_labels = [torch.zeros(1, dtype=torch.long) for _ in range(n)]
-    metric.groundtruth_mask = [((10, 10), b"rle") for _ in range(n)]
-    metric.groundtruth_crowds = [torch.zeros(1) for _ in range(n)]
-    metric.groundtruth_area = [torch.zeros(1) for _ in range(n)]
-    metric._update_count = 0
-    return metric
+class TestMapCollectiveSymmetry:
+    """DDP-deadlock fix: the base/train mAP path's has_updates gate must be a collective vote.
 
+    Unlike ``_should_compute_ema``'s unanimous ``all_reduce(MIN)`` (skip whenever any rank is empty), this path votes
+    ``all_reduce(MAX)``: a rank with no local updates must still enter ``merge_distributed_state()`` when a peer has
+    data, or the ranks diverge on which collectives they issue next and deadlock validation.
+    """
 
-class TestMergeMetricStateAcrossRanks:
-    """The DDP-safe replacement for torchmetrics' internal sync (#931/#449)."""
-
-    def test_no_op_when_not_distributed(self) -> None:
-        """Single-process / non-distributed: state is left untouched and no gather happens."""
+    def test_any_rank_has_updates_false_without_distributed(self) -> None:
+        """No distributed group and no local updates: the vote is False."""
         cb = COCOEvalCallback()
-        metric = _metric_with_state(n=1)
-        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
-            cb._merge_metric_state_across_ranks(metric)
-        mock_gather.assert_not_called()
-        assert len(metric.detection_box) == 1  # unchanged
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = False
 
-    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=2)
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is False
+
+    def test_any_rank_has_updates_true_without_distributed(self) -> None:
+        """No distributed group and local updates present: the vote is True."""
+        cb = COCOEvalCallback()
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = True
+
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is True
+
     @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
-    def test_concatenates_each_state_across_ranks(self, _init, _ws) -> None:
-        """Distributed: every state list is gathered once and concatenated across ranks."""
-        cb = COCOEvalCallback()
-        metric = _metric_with_state(n=1)
-        # Simulate a 2-rank gather: this rank's list plus an identical "other rank" list.
-        with patch("rfdetr.training.callbacks.coco_eval.all_gather", side_effect=lambda local: [local, local]) as mg:
-            cb._merge_metric_state_across_ranks(metric)
-        # One gather per state tensor (9 states), each now holding both ranks' entries.
-        assert mg.call_count == 9
-        assert len(metric.detection_box) == 2
-        assert len(metric.detection_scores) == 2
-        assert len(metric.detection_mask) == 2
-        assert len(metric.groundtruth_area) == 2
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_max_vote_true_when_a_peer_has_updates(self, mock_all_reduce, _mock_init) -> None:
+        """A locally-empty rank still votes True when the MAX reduction surfaces a peer's update."""
 
-    @patch("rfdetr.training.callbacks.coco_eval.get_world_size", return_value=1)
-    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
-    def test_no_op_when_world_size_one(self, _init, _ws) -> None:
-        """world_size==1 in an initialised group: state untouched, no gather issued."""
+        def _peer_voted_one(flag, op=None):  # simulate a peer rank with data
+            flag.fill_(1)
+
+        mock_all_reduce.side_effect = _peer_voted_one
         cb = COCOEvalCallback()
-        metric = _metric_with_state(n=1)
-        with patch("rfdetr.training.callbacks.coco_eval.all_gather") as mock_gather:
-            cb._merge_metric_state_across_ranks(metric)
-        mock_gather.assert_not_called()
-        assert len(metric.detection_box) == 1  # unchanged
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = False
+
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is True
+        assert mock_all_reduce.call_args.kwargs["op"] is torch.distributed.ReduceOp.MAX
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_max_vote_false_when_no_rank_has_updates(self, mock_all_reduce, _mock_init) -> None:
+        """When every rank is empty (MAX reduction leaves the vote at 0), the gate returns False."""
+        mock_all_reduce.side_effect = lambda flag, op=None: None  # vote tensor stays [0]
+        cb = COCOEvalCallback()
+        metric = MagicMock(name="map_metric")
+        metric.has_updates = False
+
+        assert cb._any_rank_has_updates(metric, _cpu_module()) is False
+
+    @patch("rfdetr.training.callbacks.coco_eval.is_dist_avail_and_initialized", return_value=True)
+    @patch("rfdetr.training.callbacks.coco_eval.dist.all_reduce")
+    def test_compute_and_log_enters_merge_when_only_a_peer_has_updates(self, mock_all_reduce, _mock_init) -> None:
+        """A locally-empty rank still calls merge_distributed_state(), staying symmetric with its peer.
+
+        Reproduces the deadlock scenario directly at the callback level: rank 0 has no local
+        updates but a peer does. Before the fix, this rank took the early-return path and never
+        issued ``merge_distributed_state()``'s collectives while its peer did — desynchronising the
+        DDP collective sequence. After the fix, the collective vote makes both ranks agree to merge.
+        """
+
+        def _peer_has_map_updates_only(flag, op=None):
+            # A peer has base mAP data (MAX vote → 1) but no EMA data (MIN vote stays at local 0),
+            # isolating the has_updates gate under test from the unrelated EMA collective this
+            # code path also issues for split="val".
+            if op is torch.distributed.ReduceOp.MAX:
+                flag.fill_(1)
+
+        mock_all_reduce.side_effect = _peer_has_map_updates_only
+        cb = COCOEvalCallback(max_dets=500)
+        cb.setup(_make_trainer(), _cpu_module(), stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.has_updates = False
+        cb.map_metric.compute.return_value = _minimal_metrics()
+
+        cb._compute_and_log(_make_trainer(), _cpu_module(), "val")
+
+        cb.map_metric.merge_distributed_state.assert_called_once()
 
 
 class TestOnTestEpochStart:
@@ -2110,9 +2535,9 @@ class TestComputeAndLogEmaResetPath:
 
         cb.map_metric = MagicMock(name="map_metric")
         cb.map_metric.compute.return_value = _minimal_metrics()
+        cb.map_metric.has_updates = True
 
         with (
-            patch.object(cb, "_merge_metric_state_across_ranks"),
             patch.object(cb, "_build_per_class_rows", return_value=[]),
             patch.object(cb, "_print_metrics_tables"),
             patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value={}),
@@ -2135,10 +2560,9 @@ class TestComputeAndLogEmaResetPath:
         cb.map_metric_ema.compute.return_value = _minimal_metrics()
         cb._ema_has_updates = True
 
-        with patch.object(cb, "_merge_metric_state_across_ranks"):
-            should_compute_ema, _ema_metrics = cb._compute_and_log_ema_metrics(
-                _make_trainer(), _make_pl_module(), "val", "", "mar_500"
-            )
+        should_compute_ema, _ema_metrics = cb._compute_and_log_ema_metrics(
+            _make_trainer(), _make_pl_module(), "val", "", "mar_500"
+        )
 
         assert should_compute_ema is True
         assert cb._ema_has_updates is False

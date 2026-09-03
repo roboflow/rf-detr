@@ -248,6 +248,15 @@ def _preserve_csv_history_across_resume(csv_logger: CSVLogger, output_dir: str |
     experiment.metrics_keys = sorted(fieldnames)
 
 
+# TrainConfig.best_model_metric -> (keypoint_key, segmentation_key, detection_key), each
+# relative to "val/" / "val/ema_". See _append_training_callbacks for how they are combined
+# with the task branch (has_keypoints / model_config.segmentation_head).
+_BEST_MODEL_MONITOR_KEYS: dict[str, tuple[str, str, str]] = {
+    "map": ("keypoint_map_50_95", "segm_mAP_50_95", "mAP_50_95"),
+    "mar": ("keypoint_mAR", "mAR", "mAR"),
+}
+
+
 def _append_training_callbacks(
     callbacks: list[Callback],
     loggers: list[Any],
@@ -313,16 +322,24 @@ def _append_training_callbacks(
         )
     )
 
+    # Metric key per task, selected by TrainConfig.best_model_metric. "mar" reuses the box-level
+    # val/mAR for both detection and segmentation (torchmetrics does not expose a separate mask
+    # mAR), and the OKS-based val/keypoint_mAR for the keypoint task.
+    kp_key, segm_key, det_key = _BEST_MODEL_MONITOR_KEYS[tc.best_model_metric]
     if has_keypoints:
-        monitor_regular = "val/keypoint_map_50_95"
-        early_stopping_monitor_ema = "val/ema_keypoint_map_50_95"
+        monitor_regular = f"val/{kp_key}"
+        early_stopping_monitor_ema = f"val/ema_{kp_key}"
     elif model_config.segmentation_head:
-        monitor_regular = "val/segm_mAP_50_95"
-        early_stopping_monitor_ema = "val/ema_segm_mAP_50_95"
+        monitor_regular = f"val/{segm_key}"
+        early_stopping_monitor_ema = f"val/ema_{segm_key}"
     else:
-        monitor_regular = "val/mAP_50_95"
-        early_stopping_monitor_ema = "val/ema_mAP_50_95"
+        monitor_regular = f"val/{det_key}"
+        early_stopping_monitor_ema = f"val/ema_{det_key}"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
+    # Validation evaluates the base model only when explicitly asked for it, or when there is no EMA
+    # model to prefer (see TrainConfig.eval_base_model). Otherwise monitor_regular carries the EMA
+    # score COCOEvalCallback mirrors onto it, and the base-weights checkpoint track must stand down.
+    evaluates_base_model = tc.eval_base_model or not enable_ema
 
     best_model_smooth_alpha = tc.smooth_alpha
 
@@ -337,6 +354,7 @@ def _append_training_callbacks(
             output_dir=str(tc.output_dir),
             monitor_regular=monitor_regular,
             monitor_ema=monitor_ema,
+            evaluates_base_model=evaluates_base_model,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
             smooth_alpha=best_model_smooth_alpha,
@@ -706,7 +724,7 @@ def build_trainer(
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
-            eval_ema_only=tc.eval_ema_only,
+            eval_base_model=tc.eval_base_model,
         )
     )
 
@@ -753,6 +771,7 @@ def build_trainer(
         "log_every_n_steps": 50,
         "deterministic": False,
         "check_val_every_n_epoch": tc.eval_interval,
+        "num_sanity_val_steps": tc.num_sanity_val_steps,
     }
     if not xla_accelerator:
         trainer_config["precision"] = _resolve_precision()

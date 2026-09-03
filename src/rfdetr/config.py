@@ -54,8 +54,19 @@ _LEGACY_AUGMENTATION_BACKEND_ALIASES: Dict[str, str] = {
 }
 
 
+#: Import probe per augmentation backend value — the module whose importability decides that backend's availability.
+_AUGMENTATION_BACKEND_PROBE_MODULES: Dict[str, str] = {
+    "albumentations": "albumentations",
+    "kornia": "kornia.augmentation",
+    "torchvision": "torchvision.transforms.v2",
+}
+
+
+@functools.lru_cache(maxsize=None)
 def _package_importable(module_name: str) -> bool:
     """Return ``True`` when *module_name* can be imported.
+
+    Cached for the process lifetime — package installation state does not change at runtime.
 
     Args:
         module_name: Dotted module path to probe (e.g. ``"kornia.augmentation"``).
@@ -124,11 +135,11 @@ class AugmentationBackend(str, Enum):
         """
         value = _LEGACY_AUGMENTATION_BACKEND_ALIASES.get(value, value)
         if value in ("cpu", "auto"):
-            if value == "auto" and has_cuda and cls._is_kornia_available():
+            if value == "auto" and has_cuda and cls.KORNIA._is_available():
                 return cls.KORNIA
-            if cls._is_albu_available():
+            if cls.ALBU._is_available():
                 return cls.ALBU
-            if cls._is_kornia_available():
+            if cls.KORNIA._is_available():
                 return cls.KORNIA
             return cls.TV
         try:
@@ -139,45 +150,26 @@ class AugmentationBackend(str, Enum):
                 "'albumentations', 'kornia'."
             ) from None
 
-    @classmethod
-    @functools.lru_cache(maxsize=None)
-    def _is_albu_available(cls) -> bool:
-        """Return ``True`` when Albumentations is importable.
+    def _is_available(self) -> bool:
+        """Return ``True`` when this backend's package is importable.
 
-        Cached for the process lifetime — package installation state does not change at runtime.
-        Tests that need to simulate "not installed" should patch this method directly (e.g.
-        ``patch.object(AugmentationBackend, "_is_albu_available", return_value=False)``) rather
-        than blocking the underlying import, since the cache is keyed on this method, not on the
-        import machinery.
+        Every backend is probed lazily, on first call rather than at ``import rfdetr`` time. ``ALBU`` and ``KORNIA``
+        are optional extras (``pip install 'rfdetr[augment]'``); ``TV`` is a required RF-DETR dependency. Probing all
+        three keeps the availability contract consistent and verifies the ``torchvision.transforms.v2`` API RF-DETR
+        uses is importable.
 
-        Returns:
-            ``True`` if ``albumentations`` can be imported.
-        """
-        return _package_importable("albumentations")
+        The underlying probe is cached for the process lifetime (see :func:`_package_importable`). Tests that
+        need to simulate "not installed" must patch **this method**, never ``_package_importable`` or the import
+        machinery beneath it — a real probe result is cached process-wide and would leak into later tests. Patch
+        with a plain function so it still binds and receives the member, which is what makes per-backend
+        simulation possible::
 
-    @classmethod
-    @functools.lru_cache(maxsize=None)
-    def _is_kornia_available(cls) -> bool:
-        """Return ``True`` when Kornia's augmentation module is importable.
-
-        Cached for the process lifetime — see :meth:`_is_albu_available` for the caching and test
-        rationale.
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA)
 
         Returns:
-            ``True`` if ``kornia.augmentation`` can be imported.
+            ``True`` if this backend can be used in the current environment.
         """
-        return _package_importable("kornia.augmentation")
-
-    @classmethod
-    def _is_tv_available(cls) -> bool:
-        """Return ``True`` — torchvision is a hard (non-optional) RF-DETR dependency.
-
-        Not cached: the result is a compile-time constant, not worth the caching machinery.
-
-        Returns:
-            Always ``True``.
-        """
-        return True
+        return _package_importable(_AUGMENTATION_BACKEND_PROBE_MODULES[self.value])
 
 
 class PretrainWeightsCompatibilityWarning(UserWarning):
@@ -209,7 +201,7 @@ def _detect_device() -> str:
                 accel = current_accelerator(check_available=True)
             except TypeError:
                 accel = current_accelerator()
-                if accel is not None and not accelerator.is_available():
+                if accel is not None and accelerator is not None and not accelerator.is_available():
                     accel = None
             if accel is not None:
                 return str(accel)
@@ -854,7 +846,7 @@ class RFDETRLargeConfig(ModelConfig):
     dec_n_points: int = 2
     num_windows: int = 2
     patch_size: int = 16
-    projector_scale: list[Literal["P4",]] = ["P4"]
+    projector_scale: list[Literal["P3", "P4", "P5"]] = ["P4"]
     out_feature_indexes: list[int] = [3, 6, 9, 12]
     num_classes: int = 90
     positional_encoding_size: int = 704 // 16
@@ -1006,14 +998,9 @@ class TrainConfig(BaseConfig):
     """Training hyperparameters and auto-batching configuration.
 
     Notes:
-        * ``auto_batch_target_effective`` is interpreted as the **per-device**
-          effective batch size target, i.e. the number of images seen by a single process in one optimizer step after
-          accounting for ``grad_accum_steps``. In multi-GPU / multi-node runs the global effective batch size is
-          therefore:
-
-            ``global_effective_batch = auto_batch_target_effective * devices * num_nodes``
-
-          This avoids silently changing behavior when scaling from single-GPU to multi-GPU training.
+        * ``auto_batch_target_effective`` is interpreted as the **global**
+          effective batch size target. In multi-GPU / multi-node runs the auto-batch resolver derives a per-device
+          target by dividing this value across ``devices * num_nodes`` before selecting ``grad_accum_steps``.
     """
 
     # extra="forbid" arms BaseConfig.catch_typo_kwargs so typo'd train() kwargs (e.g. ``epoch`` instead of
@@ -1024,8 +1011,27 @@ class TrainConfig(BaseConfig):
     lr: float = 1e-4
     lr_encoder: float = 1.5e-4
     batch_size: int | Literal["auto"] = 4
-    grad_accum_steps: int = 4
-    auto_batch_target_effective: int = 16  # per-device effective batch size target (before devices * num_nodes)
+    # Gradient accumulation is an explicit opt-in, not a silent default: max out batch_size for the GPU first
+    # and raise this only when memory forces a smaller physical batch. Defaulting to 1 (was 4) drops the
+    # default effective batch from 16 to 4 — a training-semantics change, see CHANGELOG. Runs with
+    # batch_size="auto" are unaffected: the auto-batch probe overwrites this field (see RFDETR.train).
+    grad_accum_steps: int = 1
+    # Batch size for the validation, test and predict dataloaders. None (the default) inherits the resolved
+    # train batch size, i.e. exactly the pre-existing behavior. Evaluation runs under no_grad, so it avoids
+    # autograd activation storage, but in-fit validation still shares device memory with the model and optimizer
+    # state and needs memory for its own forward outputs. A train batch_size lowered to fit an optimizer step can
+    # therefore still unnecessarily shrink eval batches. The `eval_` prefix (not `val_`) matches the other
+    # evaluation-side knobs here (eval_ema_only, eval_max_dets, eval_interval, eval_masks_head_resolution)
+    # and reflects that this governs all three eval loaders, not validation alone. Unlike batch_size it
+    # accepts no "auto": it is never probed, and an explicit value stays usable even when batch_size="auto"
+    # has not been resolved.
+    eval_batch_size: int | None = None
+    # Global effective batch size target, divided across devices and nodes. This is a floor, not a cap: the probe
+    # only raises grad_accum_steps to *reach* it (see recommend_grad_accum_steps), and never shrinks the micro-batch
+    # to hold it. Once the probed micro-batch already meets or exceeds this value, grad_accum_steps stays at 1 and
+    # the effective batch is simply whatever fit in memory — so it grows with VRAM while lr stays put. Pin
+    # batch_size to a concrete integer when training semantics must match across GPUs of different sizes.
+    auto_batch_target_effective: int = 16
     # Auto-batch probe: worst-case assumptions when batch_size="auto".
     auto_batch_max_targets_per_image: int = 100
     auto_batch_ema_headroom: float = 0.7  # scale safe batch by this when use_ema=True (EMA uses extra memory)
@@ -1062,19 +1068,28 @@ class TrainConfig(BaseConfig):
     do_random_resize_via_padding: bool = False
     use_ema: bool = True
     ema_update_interval: int = 1
-    # Validation-only: forward through the EMA model instead of the base model, and skip the
-    # duplicate base-model forward pass COCOEvalCallback would otherwise also run — halves
-    # per-batch validation compute when EMA is enabled. Requires use_ema=True.
-    # Metric-key routing: when active, val/mAP_50_95 (and val/segm_mAP_*) stay unpopulated —
-    # the base model is never evaluated this epoch, so there is nothing real to report under
-    # that key. The real per-epoch score is logged under val/ema_mAP_50_95 (and
-    # val/ema_segm_mAP_*) instead (see COCOEvalCallback._compute_and_log_ema_metrics). Best-
-    # checkpoint tracking follows: the "regular" checkpoint track sees no data this epoch
-    # (safely no-ops, see BestModelCallback) while the EMA checkpoint track (monitor_ema) can
-    # be pointed at val/ema_mAP_50_95 to receive it. val/F1 is not remapped (no parallel
-    # EMA-tracked accumulator) and still reflects EMA-quality predictions under the regular key.
-    # Per-class AP follows the mAP routing: logged under val/ema_AP/<class> instead of
-    # val/AP/<class>, and the printed per-epoch summary table is titled "val (ema)".
+    # Validation-only: also evaluate the base model, on top of the model validation already forwards
+    # through. Validation evaluates exactly ONE model by default — the EMA-averaged weights when
+    # use_ema=True, the base weights otherwise — because the EMA model is the one best-checkpoint
+    # selection ships and the base-model pass is diagnostic. Dropping it removes one full forward pass
+    # over the validation set per epoch (measured ~3-3.5% of epoch time). Set eval_base_model=True to
+    # restore the base+EMA comparison: validation_step then forwards the base model and COCOEvalCallback
+    # runs the EMA model in a second no_grad pass, exactly as it did before this default existed.
+    # Inert when use_ema=False — the base model is the selected model, so it is evaluated either way.
+    # Metric-key routing: val/mAP_50_95 (and val/mAP_50, val/mAR, val/segm_mAP_*) always report the
+    # model that was evaluated first-class — the base model when eval_base_model=True, otherwise the
+    # selected (EMA) model, mirrored from the EMA track by COCOEvalCallback so every scheduler,
+    # early-stopping hook, checkpoint monitor and dashboard watching the primary key keeps receiving a
+    # real number. val/ema_* is always the EMA track and is what the EMA checkpoint monitor reads.
+    # The EMA-only path mirrors aggregate mAP/mAR and per-class AP onto the primary namespace; val/ema_* remains
+    # available for explicit EMA monitors. The printed summary table is titled "val (ema)" when the base model was
+    # not evaluated. val/F1 has no parallel EMA-tracked
+    # accumulator and always follows validation_step's own forward — under the default that is the EMA
+    # model, which now agrees with the mAP under the same key.
+    eval_base_model: bool = False
+    # Deprecated: superseded by eval_base_model (removal in v1.13). Evaluating only the EMA model is now
+    # the default, so this no-op flag remains through the 0.3-cycle deprecation window; setting it emits a
+    # FutureWarning. It still requires use_ema=True and contradicts eval_base_model=True.
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
@@ -1086,6 +1101,16 @@ class TrainConfig(BaseConfig):
             "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
             "'fp16' forces fp16. "
             "Has no effect when model_config.amp=False or when training on CPU."
+        ),
+    )
+    best_model_metric: Literal["map", "mar"] = Field(
+        default="map",
+        description=(
+            "Validation metric that selects the best checkpoint, and (when early_stopping=True) "
+            "that early stopping monitors. 'map' (default) uses the task's mAP@50:95 (keypoint OKS "
+            "AP, segmentation mask AP, or box AP). 'mar' uses box mAR at the configured eval_max_dets "
+            "for detection and segmentation, and keypoint mAR (OKS-based) at fixed COCO maxDets=20. "
+            "Segmentation mAR is box-level because torchmetrics does not expose a separate mask mAR."
         ),
     )
     early_stopping: bool = False
@@ -1103,7 +1128,7 @@ class TrainConfig(BaseConfig):
     run_test: bool = False
     eval_max_dets: int = 500
     eval_interval: int = 1
-    log_per_class_metrics: bool = True
+    log_per_class_metrics: bool = False
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
     # validation/test, returning them at the mask head's native (lower) resolution instead —
     # cheaper, but ground-truth masks must then be compared at that same lower resolution
@@ -1156,7 +1181,7 @@ class TrainConfig(BaseConfig):
             'torchvision'
         """
         if isinstance(value, AugmentationBackend):
-            return value.value
+            return str(value.value)
         return value
 
     notes: Optional[Any] = Field(
@@ -1224,13 +1249,25 @@ class TrainConfig(BaseConfig):
     dont_save_weights: bool = False
     # PTL runtime/perf tuning knobs.
     train_log_sync_dist: bool = False
+    # Component-level train/ metrics honor train_log_on_step for on_step visibility only when
+    # compact_train_metrics=False; when True, components are aggregated and logged on_epoch-only regardless.
     train_log_on_step: bool = False
+    # When True (default), per-decoder/encoder auxiliary loss keys (e.g. loss_ce_0, loss_bbox_enc) are
+    # aggregated into train/<term>_aux and always logged on_epoch-only. When False, every per-layer key is
+    # logged individually, honoring train_log_on_step for those component logs too.
+    compact_train_metrics: bool = True
     compute_train_metrics: bool = False
-    compute_val_loss: bool = True
+    # Restores PTL's pre-training sanity-validation pass (0 = disabled, current default;
+    # increase to re-enable and catch val-path errors before a full epoch runs).
+    num_sanity_val_steps: int = 0
+    compute_val_loss: bool | Literal["auto"] = "auto"
+    # No "auto" here: unlike val/loss, nothing (schedulers, callbacks) monitors test/loss, and
+    # trainer.test() runs once rather than every epoch, so consumer-based auto-detection doesn't apply.
     compute_test_loss: bool = True
     pin_memory: bool | None = None
     persistent_workers: bool | None = None
     prefetch_factor: int | None = None
+    pack_targets: bool = True
 
     @field_validator("batch_size", mode="after")
     @classmethod
@@ -1240,6 +1277,14 @@ class TrainConfig(BaseConfig):
             return v
         if v < 1:
             raise ValueError("batch_size must be >= 1, or 'auto'.")
+        return v
+
+    @field_validator("eval_batch_size", mode="after")
+    @classmethod
+    def validate_eval_batch_size(cls, v: int | None) -> int | None:
+        """Validate eval_batch_size is None (inherit the train batch size) or >= 1."""
+        if v is not None and v < 1:
+            raise ValueError("eval_batch_size must be >= 1 when provided.")
         return v
 
     @field_validator(
@@ -1333,9 +1378,63 @@ class TrainConfig(BaseConfig):
 
     @model_validator(mode="after")
     def validate_eval_ema_only(self) -> "TrainConfig":
-        """``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``."""
+        """``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``, and contradicts ``eval_base_model``.
+
+        The flag is deprecated (see ``_warn_deprecated_eval_ema_only``) but still validated: absorbing a contradictory
+        pair into the no-op alias would leave one of the two settings silently without effect.
+        """
         if self.eval_ema_only and not self.use_ema:
             raise ValueError("eval_ema_only=True requires use_ema=True.")
+        if self.eval_ema_only and self.eval_base_model:
+            raise ValueError(
+                "eval_ema_only=True contradicts eval_base_model=True. Drop the deprecated eval_ema_only: "
+                "evaluating only the selected model is now the default."
+            )
+        return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_deprecated_eval_ema_only(cls, data: Any) -> Any:
+        """Warn that ``eval_ema_only`` is superseded by the default single-model evaluation policy.
+
+        Legacy input that contains ``eval_ema_only`` without the new ``eval_base_model`` field is migrated to the
+        equivalent old base-plus-EMA policy and warns. New dumps contain both fields, so reloading them stays silent.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "eval_ema_only" not in data:
+            return data
+        if "eval_base_model" in data and not data["eval_base_model"]:
+            return data
+        data = dict(data)
+        if "eval_base_model" not in data:
+            data["eval_base_model"] = not bool(data["eval_ema_only"])
+        if data.get("eval_ema_only") is not None:
+            warnings.warn(
+                "eval_ema_only is deprecated. New configurations evaluate only the selected model "
+                "(EMA when use_ema=True) by default; legacy configurations are migrated from this flag. "
+                "Set eval_base_model=True to also evaluate the base model.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
+
+    @model_validator(mode="after")
+    def validate_explicit_val_loss_disable(self) -> "TrainConfig":
+        """Reject disabling validation loss for a configured plateau loss monitor.
+
+        Reconstructable scheduler callables are normalized to their dotted path before this validator runs. Non-
+        reconstructable callables are checked after their concrete scheduler is created by ``RFDETRModelModule``.
+        """
+        if (
+            self.compute_val_loss is False
+            and self.lr_scheduler == "torch.optim.lr_scheduler.ReduceLROnPlateau"
+            and self.lr_scheduler_monitor == "val/loss"
+        ):
+            raise ValueError(
+                "compute_val_loss=False requires a non-val/loss monitor when "
+                "lr_scheduler is ReduceLROnPlateau. Set compute_val_loss=True or 'auto'."
+            )
         return self
 
     @model_validator(mode="after")

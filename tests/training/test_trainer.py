@@ -84,6 +84,30 @@ class TestProgressBarCallbacks:
         assert not any(isinstance(cb, RichProgressBar) for cb in trainer.callbacks)
         assert not any(isinstance(cb, TQDMProgressBar) for cb in trainer.callbacks)
 
+    def test_disables_pre_training_sanity_validation(self, base_model_config, base_train_config):
+        """RF-DETR training should start directly with the first training epoch."""
+        trainer = build_trainer(base_train_config(), base_model_config(), accelerator="cpu")
+
+        assert trainer.num_sanity_val_steps == 0
+
+    def test_num_sanity_val_steps_is_configurable(self, base_model_config, base_train_config):
+        """TrainConfig.num_sanity_val_steps should reach the underlying Trainer unchanged."""
+        tc = base_train_config(num_sanity_val_steps=2)
+        trainer = build_trainer(tc, base_model_config(), accelerator="cpu")
+
+        assert trainer.num_sanity_val_steps == 2
+
+    def test_num_sanity_val_steps_kwarg_overrides_disabled_default(self, base_model_config, base_train_config):
+        """A caller-supplied ``num_sanity_val_steps`` kwarg must survive the trainer_config.update() merge.
+
+        build_trainer() disables sanity validation by default (see the previous test). A caller that explicitly wants
+        sanity validation back must be able to re-enable it via ``**trainer_kwargs``, the same override mechanism used
+        for other PTL-native flags like ``fast_dev_run``.
+        """
+        trainer = build_trainer(base_train_config(), base_model_config(), accelerator="cpu", num_sanity_val_steps=2)
+
+        assert trainer.num_sanity_val_steps == 2
+
 
 # ---------------------------------------------------------------------------
 # TestRichProgressBarLoggerIntegration — the real regression _RedirectAwareStreamHandler

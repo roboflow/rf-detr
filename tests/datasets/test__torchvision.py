@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,6 +17,7 @@ import torch
 from PIL import Image
 
 from rfdetr.datasets._torchvision import (
+    Compose,
     RandomChoice,
     RandomHorizontalFlip,
     RandomResize,
@@ -45,6 +47,52 @@ class TestDefaultTorchvisionTransforms:
 
         assert not any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
         assert not any(isinstance(step, AlbumentationsWrapper) for step in pipeline.transforms)
+
+    @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
+    def test_keypoint_pipeline_without_flip_pairs_disables_default_flip(self, builder: Callable[..., Compose]) -> None:
+        """A keypoint pipeline (list sentinel) with no flip pairs disables the default flip.
+
+        Regression test: RandomHorizontalFlip's default construction previously ran the flip
+        unconditionally whenever keypoint_flip_pairs was falsy, mirroring the mirror-without-
+        relabel it performs internally (see TestRandomHorizontalFlipEdgeCases below) at the
+        pipeline level too — the flip must be dropped entirely, not partially applied, matching
+        AlbumentationsWrapper.from_config's filter_keypoint_hflip_augmentations for the same
+        sentinel (keypoint_flip_pairs is not None and not keypoint_flip_pairs).
+        """
+        pipeline = builder("train", 640, keypoint_flip_pairs=[])
+
+        assert not any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
+
+    @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
+    def test_keypoint_pipeline_without_flip_pairs_warns(self, builder: Callable[..., Compose]) -> None:
+        """Disabling the default flip for an unpaired keypoint pipeline logs a warning.
+
+        The warning must not tell the user to remove the transform "from your augmentation config" — the torchvision-
+        native default path (``aug_config=None``) has no such config object; the only actionable remedy here is
+        providing ``keypoint_flip_pairs``.
+        """
+        with patch("rfdetr.datasets.coco.logger") as mock_logger:
+            builder("train", 640, keypoint_flip_pairs=[])
+
+        mock_logger.warning.assert_called_once()
+        message = str(mock_logger.warning.call_args)
+        assert "RandomHorizontalFlip" in message
+        assert "provide keypoint_flip_pairs" in message.lower()
+        assert "augmentation config" not in message.lower()
+
+    @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
+    def test_keypoint_pipeline_with_flip_pairs_keeps_default_flip(self, builder: Callable[..., Compose]) -> None:
+        """A keypoint pipeline with real flip pairs keeps the default flip (control, no regression)."""
+        pipeline = builder("train", 640, keypoint_flip_pairs=[0, 1])
+
+        assert any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
+
+    @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
+    def test_detection_only_pipeline_keeps_default_flip(self, builder: Callable[..., Compose]) -> None:
+        """A detection-only pipeline (None sentinel) keeps the default flip (control, no regression)."""
+        pipeline = builder("train", 640, keypoint_flip_pairs=None)
+
+        assert any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
 
     @pytest.mark.parametrize("split", ["val", "test", "val_speed"])
     def test_eval_splits_do_not_use_albumentations(self, split: str) -> None:
@@ -335,8 +383,10 @@ class TestEdgeCaseCoverage:
 
     @pytest.mark.parametrize(
         "builder",
-        [make_coco_transforms, make_coco_transforms_square_div_64],
-        ids=["standard", "square"],
+        [
+            pytest.param(make_coco_transforms, id="standard"),
+            pytest.param(make_coco_transforms_square_div_64, id="square"),
+        ],
     )
     def test_unknown_image_set_raises(self, builder) -> None:
         """Unknown image_set raises ValueError."""

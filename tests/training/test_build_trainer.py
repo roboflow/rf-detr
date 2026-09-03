@@ -134,6 +134,12 @@ class TestBuildTrainerCallbacks:
         assert coco_cb._eval_interval == 3
         assert coco_cb._log_per_class_metrics is False
 
+    def test_coco_eval_default_skips_per_class_metrics(self, tmp_path):
+        """The default TrainConfig disables the costly per-class metric path."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._log_per_class_metrics is False
+
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
         sigmas = [0.05] * 25
@@ -143,6 +149,28 @@ class TestBuildTrainerCallbacks:
         )
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._keypoint_oks_sigmas == sigmas
+
+    @pytest.mark.parametrize(
+        "use_ema, eval_base_model, expected",
+        [
+            pytest.param(True, False, False, id="ema_default_evaluates_ema_only"),
+            pytest.param(True, True, True, id="ema_with_opt_in_evaluates_both"),
+            pytest.param(False, False, True, id="no_ema_evaluates_base"),
+        ],
+    )
+    def test_eval_policy_is_wired_to_both_callbacks(self, tmp_path, use_ema, eval_base_model, expected):
+        """The eval policy must reach COCOEvalCallback and BestModelCallback consistently.
+
+        The two callbacks have to agree: whenever the base model is not evaluated, COCOEvalCallback mirrors the
+        EMA score onto the primary key and BestModelCallback must stop checkpointing base weights against it.
+        Wiring only one of the pair reintroduces the metric/weights mismatch this policy exists to avoid.
+        """
+        trainer = build_trainer(_tc(tmp_path, use_ema=use_ema, eval_base_model=eval_base_model), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+
+        assert coco_cb._eval_base_model is eval_base_model
+        assert best_cb._evaluates_base_model is expected
 
     def test_best_model_always_present(self, tmp_path):
         """BestModelCallback is always included."""
@@ -169,6 +197,37 @@ class TestBuildTrainerCallbacks:
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb.monitor == "val/segm_mAP_50_95"
         assert best_cb._monitor_ema == "val/ema_segm_mAP_50_95"
+
+    def test_best_model_metric_mar_monitors_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' should rank detection checkpoints by mAR, not mAP."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema == "val/ema_mAR"
+
+    def test_best_model_metric_mar_without_ema_monitors_only_regular_bbox_mar(self, tmp_path):
+        """Detection mAR ranking must not configure an EMA monitor when EMA is disabled."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, best_model_metric="mar"), _mc())
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema is None
+
+    def test_keypoint_best_model_metric_mar_monitors_keypoint_mar(self, tmp_path):
+        """best_model_metric='mar' should rank keypoint checkpoints by the OKS-based keypoint mAR."""
+        trainer = build_trainer(
+            _kp_tc(tmp_path, use_ema=True, best_model_metric="mar"),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/keypoint_mAR"
+        assert best_cb._monitor_ema == "val/ema_keypoint_mAR"
+
+    def test_segmentation_best_model_metric_mar_falls_back_to_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' has no dedicated mask mAR, so segmentation falls back to bbox mAR."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc(segmentation_head=True))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+        assert best_cb.monitor == "val/mAR"
+        assert best_cb._monitor_ema == "val/ema_mAR"
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -298,6 +357,42 @@ class TestBuildTrainerCallbacks:
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._monitor_regular == "val/segm_mAP_50_95"
         assert early_stop_cb._monitor_ema == "val/ema_segm_mAP_50_95"
+
+    def test_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
+        """best_model_metric='mar' should make detection early stopping watch mAR, not mAP."""
+        trainer = build_trainer(
+            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+            _mc(),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_mAR"
+
+    def test_keypoint_best_model_metric_mar_early_stopping_monitors_keypoint_mar(self, tmp_path):
+        """best_model_metric='mar' should make keypoint early stopping watch the OKS-based keypoint mAR."""
+        trainer = build_trainer(
+            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+            RFDETRKeypointPreviewConfig(pretrain_weights=None),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/keypoint_mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_keypoint_mAR"
+
+    def test_segmentation_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
+        """Segmentation mAR early stopping must use the bbox mAR keys when EMA is enabled."""
+        trainer = build_trainer(
+            _tc(
+                tmp_path,
+                use_ema=True,
+                early_stopping=True,
+                early_stopping_use_ema=True,
+                best_model_metric="mar",
+            ),
+            _mc(segmentation_head=True),
+        )
+        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
+        assert early_stop_cb._monitor_regular == "val/mAR"
+        assert early_stop_cb._monitor_ema == "val/ema_mAR"
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""
@@ -480,7 +575,7 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
 
-    @pytest.mark.parametrize("accelerator", ["xla", "tpu"], ids=["xla", "tpu"])
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
     def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
         """Accelerator='xla'/'tpu' sets an XLAPrecision('bf16-true') plugin, never precision=.
 
@@ -1618,12 +1713,13 @@ class TestEvalIntervalValidationGating:
 
         assert trainer.check_val_every_n_epoch == 3
 
-    @pytest.mark.parametrize("max_epochs", [None, -1], ids=["none", "unlimited"])
+    @pytest.mark.parametrize("max_epochs", [None, -1])
     def test_force_last_epoch_callback_noops_when_max_epochs_not_a_positive_int(self, max_epochs):
         """max_epochs=None/-1 (PTL's not-yet-known / unlimited sentinels) must not force validation.
 
-        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was previously
-        tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to force.
+        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was
+        previously tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to
+        force.
         """
         cb = _ForceLastEpochValidationCallback()
         trainer = MagicMock()

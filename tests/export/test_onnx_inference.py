@@ -91,9 +91,21 @@ class TestRunInferenceBasics:
         dets, _ = _run_inference(session, rgb_image, threshold=0.3)
         assert len(dets) == 0
 
-    def test_empty_class_dimension_returns_no_detections(self, rgb_image: Path) -> None:
-        """A backend output with only the no-object logit decodes to an empty result."""
-        session = _FakeSession(_make_boxes(), np.empty((1, 10, 1), dtype=np.float32))
+    def test_active_first_keypoint_layout_excludes_final_background(self, rgb_image: Path) -> None:
+        """The default excludes a higher final background score while retaining active keypoint slot 0."""
+        logits = np.full((1, 10, 2), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 9.0
+        logits[0, 0, 1] = 10.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, num_select=1)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [0]
+
+    def test_zero_foreground_classes_returns_no_detections(self, rgb_image: Path) -> None:
+        """A raw output with only the no-object logit excludes it, leaving no class dimension to select from."""
+        session = _FakeSession(_make_boxes(), np.zeros((1, 10, 1), dtype=np.float32))
 
         dets, _ = _run_inference(session, rgb_image)
 
@@ -121,6 +133,29 @@ class TestMulticlassSelection:
         assert sorted(dets.class_id.tolist()) == [0, 1, 2]
         assert list(dets.confidence) == sorted(dets.confidence, reverse=True)
         assert dets.class_id[0] == 0  # highest logit (5.0) still ranks first
+
+    def test_final_logit_column_is_decoded_without_background_class(self, rgb_image: Path) -> None:
+        """Passing ``None`` keeps the final slot for sparse COCO checkpoints."""
+        logits = np.full((1, 10, 91), -100.0, dtype=np.float32)
+        logits[0, 0, -1] = 10.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, background_class_id=None)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [90]
+
+    def test_background_first_layout_preserves_foreground_slot_id(self, rgb_image: Path) -> None:
+        """Excluding slot 0 keeps the original foreground class ID instead of shifting it."""
+        logits = np.full((1, 10, 2), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 10.0
+        logits[0, 0, 1] = 9.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, num_select=1, background_class_id=0)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [1]
 
     def test_explicit_num_select_caps_export_decode(self, rgb_image: Path) -> None:
         """An explicit exported-model cap limits query/class pairs before thresholding."""

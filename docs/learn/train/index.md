@@ -52,8 +52,7 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model.train(
         dataset_dir="<DATASET_PATH>",
         epochs=100,
-        batch_size=4,
-        grad_accum_steps=4,
+        batch_size="auto",
         lr=1e-4,
         output_dir="<OUTPUT_PATH>",
     )
@@ -69,8 +68,7 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model.train(
         dataset_dir="<DATASET_PATH>",
         epochs=100,
-        batch_size=4,
-        grad_accum_steps=4,
+        batch_size="auto",
         lr=1e-4,
         output_dir="<OUTPUT_PATH>",
     )
@@ -86,14 +84,13 @@ RF-DETR supports training on datasets in both **COCO** and **YOLO** formats. The
     model.train(
         dataset_dir="<KEYPOINT_DATASET_PATH>",
         epochs=50,
-        batch_size=2,
-        grad_accum_steps=8,
+        batch_size="auto",
         lr=1e-5,
         output_dir="<OUTPUT_PATH>",
     )
     ```
 
-Different GPUs have different VRAM capacities, so adjust batch_size and grad_accum_steps to maintain a total batch size of 16. For example, on a powerful GPU like the A100, use `batch_size=16` and `grad_accum_steps=1`; on smaller GPUs like the T4, use `batch_size=4` and `grad_accum_steps=4`. This gradient accumulation strategy helps train effectively even with limited memory.
+Different models, tasks, resolutions, and GPUs have different memory requirements. On CUDA, the portable starting point is `batch_size="auto"`: the probe sizes the physical batch for the current training setup and recommends accumulation toward its configured target. CPU and MPS training require a concrete integer batch size; if hardware memory limits that physical batch, increase `grad_accum_steps` to recover a nominal effective-batch target. The product is not an optimization-equivalence guarantee: accumulation changes forward/backward microbatch cadence, and a larger physical batch can have different throughput and optimization behavior.
 
 Each model class downloads its COCO-pretrained checkpoint automatically when instantiated. To get started quickly with training an object detection model, please refer to our fine-tuning Google Colab [notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb).
 
@@ -248,7 +245,7 @@ metrics = model.evaluate(dataset_dir="<DATASET_PATH>", split="test")
 print(metrics["test/mAP_50_95"])
 ```
 
-- `split="test"` evaluates the `test/` folder on Roboflow-exported datasets (`dataset_file="roboflow"`, the default). For other dataset formats (COCO, YOLO, Objects365) there is no dedicated test split, so `split="test"` silently evaluates the `valid/` folder instead — the returned metric keys are still prefixed `test/*`, so double-check `dataset_file` before treating `test/mAP_50_95` as held-out-test performance on a non-Roboflow dataset. `split="val"` always evaluates `valid/` directly.
+- `split="test"` evaluates the `test/` folder on Roboflow-exported (`dataset_file="roboflow"`, the default) and YOLO (`dataset_file="yolo"`) datasets. YOLO-format datasets — plain YOLO plus Roboflow exports detected as YOLO — are not required to declare a `test` split; when it can't be resolved, `split="test"` falls back to the `valid/` folder instead and logs a warning — the returned metric keys are still prefixed `test/*`, so double-check the logs before treating `test/mAP_50_95` as held-out-test performance. A Roboflow export detected as COCO format has to ship `test/_annotations.coco.json`; without it `split="test"` raises `FileNotFoundError` rather than falling back. For COCO and Objects365 there is no dedicated test split at all, so `split="test"` silently evaluates the `valid/` folder instead. `split="val"` always evaluates `valid/` directly.
 - The detection head is never adapted to the dataset — the model is evaluated exactly as configured. If the dataset's class count differs from the model's `num_classes`, a warning is emitted and evaluation proceeds unchanged.
 - Evaluation writes no checkpoints or logs to `output_dir`.
 - `evaluate()` accepts the same keyword arguments as `train()` for convenience, but training-only fields (`epochs`, `lr`, `ema`, `early_stopping`, logger flags, etc.) have no effect — evaluation runs through an eval-only trainer that never builds those callbacks.

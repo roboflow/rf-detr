@@ -26,9 +26,12 @@ from rfdetr.datasets.coco import (
     annotated_category_ids,
     build_coco,
     build_roboflow_from_coco,
+    draft_size_for_transforms,
     filter_parent_categories,
+    scale_coco_annotation,
 )
 from rfdetr.detr import RFDETR
+from rfdetr.utilities import PackedTargets, pack_targets
 
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
@@ -84,6 +87,26 @@ class TestConvertCocoWithMapping:
         _, target = converter(_IMAGE, _make_target())
         # category_id 1 → 0, category_id 7 → 3
         assert target["labels"].tolist() == [0, 3]
+
+
+class TestConvertCocoPlainDetectionDtypeParity:
+    """Outside keypoint mode, integer-valued ``area`` annotations must still pack."""
+
+    def test_empty_and_populated_targets_pack_with_integer_area(self) -> None:
+        """Integer-area populated targets and float-area empty targets must keep matching dtypes."""
+        converter = ConvertCoco(cat2label=None)
+
+        _, empty_target = converter(_IMAGE, {"image_id": 1, "annotations": []})
+        _, populated_target = converter(_IMAGE, _make_target())
+
+        assert empty_target["area"].dtype == populated_target["area"].dtype
+        assert empty_target["area"].dtype == torch.float32
+        assert empty_target["iscrowd"].dtype == populated_target["iscrowd"].dtype
+        assert empty_target["iscrowd"].dtype == torch.int64
+        packed = pack_targets((empty_target, populated_target))
+        assert isinstance(packed, PackedTargets)
+        assert [target["area"].dtype for target in packed] == [torch.float32, torch.float32]
+        assert [target["iscrowd"].dtype for target in packed] == [torch.int64, torch.int64]
 
     def test_all_labels_within_num_classes(self):
         converter = ConvertCoco(cat2label=_CAT2LABEL)
@@ -490,7 +513,7 @@ class TestBuildO365RawGpuBackend:
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
+            patch.object(AugmentationBackend, "_is_available", lambda self: True),
             patch("rfdetr.datasets.o365.logger") as mock_logger,
         ):
             self._call_build_o365_raw("auto")
@@ -523,7 +546,7 @@ class TestBuildO365RawGpuBackend:
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=True),
+            patch.object(AugmentationBackend, "_is_available", lambda self: True),
         ):
             _, mock_transform, _ = self._call_build_o365_raw("auto")
         call_kwargs = mock_transform.call_args.kwargs if mock_transform.call_args else {}
@@ -562,7 +585,7 @@ class TestBuildO365RawGpuBackend:
 
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match="rfdetr\\[augment\\]"),
         ):
             self._call_build_o365_raw("gpu")
@@ -623,7 +646,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
         args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
-            patch.object(AugmentationBackend, "_is_kornia_available", return_value=False),
+            patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
             pytest.raises(ImportError, match=r"rfdetr\[augment\]"),
         ):
             build_roboflow_from_coco("train", args, resolution=640)
@@ -1002,6 +1025,27 @@ def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) ->
 class TestConvertCocoKeypoints:
     """ConvertCoco keypoint-mode coverage."""
 
+    def test_empty_and_populated_targets_pack_without_dtype_fallback(self) -> None:
+        """Empty and populated keypoint targets must keep matching integer dtypes for lossless packing."""
+        converter = ConvertCoco(
+            include_masks=False,
+            include_keypoints=True,
+            cat2label=None,
+            num_keypoints_per_class=[17],
+        )
+
+        _, empty_target = converter(_IMAGE, {"image_id": 1, "annotations": []})
+        _, populated_target = converter(
+            _IMAGE,
+            {"image_id": 2, "annotations": [_make_keypoint_annotation()]},
+        )
+
+        assert empty_target["iscrowd"].dtype == populated_target["iscrowd"].dtype
+        assert empty_target["iscrowd"].dtype == torch.int64
+        packed = pack_targets((empty_target, populated_target))
+        assert isinstance(packed, PackedTargets)
+        assert [target["iscrowd"].dtype for target in packed] == [torch.int64, torch.int64]
+
     def test_keypoint_target_includes_keypoints(self) -> None:
         """Keypoint-enabled conversion should emit keypoints in ``[N, K, 3]`` format."""
         converter = ConvertCoco(
@@ -1359,6 +1403,148 @@ class TestCocoDetectionZeroAnnotations:
         _, target = dataset[0]
         assert target["boxes"].shape == torch.Size([0, 4])
         assert target["labels"].shape == torch.Size([0])
+
+
+class TestCocoDetectionDraftDecode:
+    """Draft-decoded JPEG samples retain image/annotation geometry alignment."""
+
+    def test_annotation_scaling_keeps_polygon_axes_and_keypoint_visibility(self) -> None:
+        """Non-square drafting must scale polygon axes without changing keypoint visibility."""
+        annotation = {
+            "bbox": [10.0, 20.0, 30.0, 40.0],
+            "area": 1200.0,
+            "category_id": 1,
+            "segmentation": [[10.0, 20.0, 40.0, 20.0, 40.0, 60.0]],
+            "keypoints": [10.0, 20.0, 2.0, 40.0, 60.0, 0.0],
+        }
+
+        scaled = scale_coco_annotation(annotation, x_scale=0.5, y_scale=0.25)
+
+        assert annotation["segmentation"] == [[10.0, 20.0, 40.0, 20.0, 40.0, 60.0]]
+        assert scaled["bbox"] == [5.0, 5.0, 15.0, 10.0]
+        assert scaled["area"] == 150.0
+        assert scaled["segmentation"] == [[5.0, 5.0, 20.0, 5.0, 20.0, 15.0]]
+        assert scaled["keypoints"] == [5.0, 5.0, 2.0, 20.0, 15.0, 0.0]
+
+    def test_odd_jpeg_scales_each_annotation_axis_to_decoded_image(self, tmp_path: Path) -> None:
+        """Draft decoding an odd JPEG must use its actual x and y scale factors."""
+        original_width, original_height = 1921, 1081
+        image_path = tmp_path / "draft.jpg"
+        Image.new("RGB", (original_width, original_height)).save(image_path, quality=95)
+        annotation_path = tmp_path / "annotations.json"
+        annotation_path.write_text(
+            json.dumps(
+                {
+                    "images": [
+                        {"id": 1, "file_name": image_path.name, "width": original_width, "height": original_height}
+                    ],
+                    "annotations": [
+                        {
+                            "id": 1,
+                            "image_id": 1,
+                            "category_id": 1,
+                            "bbox": [100.0, 200.0, 300.0, 400.0],
+                            "area": 120000.0,
+                            "iscrowd": 0,
+                            "keypoints": [100.0, 200.0, 2.0],
+                        }
+                    ],
+                    "categories": [{"id": 1, "name": "person", "supercategory": "person"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        dataset = CocoDetection(
+            tmp_path,
+            annotation_path,
+            transforms=None,
+            include_keypoints=True,
+            num_keypoints_per_class=[1],
+            draft_size=512,
+        )
+
+        _, target = dataset[0]
+
+        decoded_height, decoded_width = target["orig_size"].tolist()
+        assert (decoded_width, decoded_height) != (original_width, original_height)
+        x_scale = decoded_width / original_width
+        y_scale = decoded_height / original_height
+        torch.testing.assert_close(
+            target["boxes"],
+            torch.tensor([[100.0 * x_scale, 200.0 * y_scale, 400.0 * x_scale, 600.0 * y_scale]]),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        torch.testing.assert_close(
+            target["keypoints"],
+            torch.tensor([[[100.0 * x_scale, 200.0 * y_scale, 2.0]]]),
+            rtol=1e-5,
+            atol=1e-5,
+        )
+        torch.testing.assert_close(target["area"], torch.tensor([120000.0 * x_scale * y_scale]), rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.parametrize(
+        ("image_set", "include_masks"),
+        [
+            pytest.param("val", False, id="validation"),
+            pytest.param("train", True, id="mask-training"),
+        ],
+    )
+    def test_draft_size_skips_full_resolution_contracts(self, image_set: str, include_masks: bool) -> None:
+        """Validation and mask datasets must disable draft decoding even with scale jitter."""
+        assert draft_size_for_transforms(image_set, 512, scale_jitter=True, include_masks=include_masks) is None
+
+    def test_draft_size_uses_scale_jitter_floor(self) -> None:
+        """Scale jitter must preserve the crop branch's 600-pixel source floor."""
+        assert draft_size_for_transforms("train", 512, scale_jitter=True) == 600
+
+    @pytest.mark.parametrize(
+        ("builder_name", "scale_jitter", "expected_draft_size"),
+        [
+            pytest.param("coco", False, 512, id="coco-jitter-disabled"),
+            pytest.param("coco", True, 600, id="coco-jitter-enabled"),
+            pytest.param("roboflow", False, 512, id="roboflow-jitter-disabled"),
+            pytest.param("roboflow", True, 600, id="roboflow-jitter-enabled"),
+        ],
+    )
+    def test_builders_forward_scale_jitter_to_draft_size(
+        self,
+        tmp_path: Path,
+        builder_name: str,
+        scale_jitter: bool,
+        expected_draft_size: int,
+    ) -> None:
+        """Both COCO builders must give the draft decoder the configured jitter floor."""
+        from unittest.mock import MagicMock, patch
+
+        if builder_name == "coco":
+            args = _make_coco_builder_args(tmp_path, use_grouppose_keypoints=False)
+            builder = build_coco
+        else:
+            args = types.SimpleNamespace(
+                dataset_dir=str(tmp_path),
+                augmentation_backend="cpu",
+                square_resize_div_64=False,
+                segmentation_head=False,
+                multi_scale=False,
+                expanded_scales=False,
+                do_random_resize_via_padding=False,
+                patch_size=16,
+                num_windows=4,
+                use_grouppose_keypoints=False,
+                num_keypoints_per_class=[],
+                aug_config={},
+            )
+            builder = build_roboflow_from_coco
+        args.scale_jitter = scale_jitter
+
+        with (
+            patch("rfdetr.datasets.coco.make_coco_transforms", return_value=MagicMock()),
+            patch("rfdetr.datasets.coco.CocoDetection", return_value=MagicMock()) as mock_dataset,
+        ):
+            builder("train", args, resolution=512)
+
+        assert mock_dataset.call_args.kwargs["draft_size"] == expected_draft_size
 
 
 _PHANTOM_ROOT_CATEGORIES = [

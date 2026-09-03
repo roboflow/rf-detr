@@ -6,15 +6,23 @@
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
 import io
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
 import torch
 from torch import nn
 
+from rfdetr.models.math import MLP
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
-from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals, gen_sineembed_for_position
+from rfdetr.models.transformer import (
+    Transformer,
+    TransformerDecoderLayer,
+    gen_encoder_output_proposals,
+    gen_sineembed_for_position,
+)
+from rfdetr.utilities.tensors import _bilinear_grid_sample
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +33,68 @@ def _reset_random_seeds() -> None:
 
 
 _MSDeformInputs = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[tuple[int, int]]]
+
+
+def test_decoder_grouping_reuses_query_tensor_as_key() -> None:
+    """Grouped self-attention should preserve layout while reusing query as key."""
+
+    class _RecordingSelfAttention(nn.Module):
+        """Fake self-attention that records whether ``query`` and ``key`` are the same object."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.query_is_key = False
+            self.query: torch.Tensor | None = None
+            self.key: torch.Tensor | None = None
+            self.value: torch.Tensor | None = None
+
+        def forward(
+            self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, **kwargs: object
+        ) -> tuple[torch.Tensor, None]:
+            """Record attention inputs, then return zeros shaped like ``query``."""
+            self.query_is_key = query is key
+            self.query = query.detach().clone()
+            self.key = key.detach().clone()
+            self.value = value.detach().clone()
+            return torch.zeros_like(query), None
+
+    class _ZeroCrossAttention(nn.Module):
+        """Fake cross-attention that ignores its inputs and returns zeros shaped like ``query``."""
+
+        def forward(self, query: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Return a zero tensor shaped like ``query``."""
+            return torch.zeros_like(query)
+
+    layer = TransformerDecoderLayer(
+        d_model=16,
+        sa_nhead=4,
+        ca_nhead=4,
+        dim_feedforward=32,
+        dropout=0,
+        group_detr=3,
+        num_feature_levels=2,
+    )
+    self_attn = _RecordingSelfAttention()
+    layer.self_attn = self_attn
+    layer.cross_attn = _ZeroCrossAttention()
+
+    tgt = torch.arange(2 * 12 * 16, dtype=torch.float32).reshape(2, 12, 16)
+    memory = torch.zeros(2, 20, 16)
+    query_pos = torch.full_like(tgt, 0.5)
+
+    layer.forward_post(tgt=tgt, memory=memory, query_pos=query_pos)
+
+    assert self_attn.query_is_key
+    assert self_attn.query is not None
+    assert self_attn.key is not None
+    assert self_attn.value is not None
+
+    expected_query = torch.cat((tgt + query_pos).split(4, dim=1), dim=0)
+    expected_value = torch.cat(tgt.split(4, dim=1), dim=0)
+    assert self_attn.query.shape == (6, 4, 16)
+    torch.testing.assert_close(self_attn.query, expected_query)
+    torch.testing.assert_close(self_attn.key, expected_query)
+    torch.testing.assert_close(self_attn.value, expected_value)
 
 
 def _build_ms_deform_inputs(
@@ -93,6 +163,235 @@ def test_gen_encoder_output_proposals_passes_ij_indexing_to_meshgrid(monkeypatch
     )
 
     assert call_count == 1
+
+
+@pytest.mark.parametrize("position_layout", ["real", "strided"])
+def test_transformer_packs_single_level_position_without_redundant_copy(position_layout: str) -> None:
+    """Reuse real contiguous position storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if position_layout == "real":
+        # PositionEmbeddingSine produces contiguous BHWC storage viewed as NCHW. Flattening spatial dimensions and
+        # transposing back to B(HW)C is already contiguous and aliases the original storage.
+        position_storage = torch.randn(batch_size, height, width, hidden_dim)
+        position = position_storage.permute(0, 3, 1, 2)
+    else:
+        position = torch.randn(batch_size, hidden_dim, height, width)
+    position.requires_grad_(True)
+    flattened_position = position.flatten(2).transpose(1, 2)
+    assert flattened_position.is_contiguous() is (position_layout == "real")
+    seen_decoder_positions: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_decoder_positions.append(kwargs["pos"]), with_kwargs=True
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [position],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_positions) == 1
+    assert torch.equal(seen_decoder_positions[0], flattened_position)
+    assert seen_decoder_positions[0].is_contiguous()
+    if position_layout == "real":
+        assert seen_decoder_positions[0].data_ptr() == flattened_position.data_ptr()
+
+    seen_decoder_positions[0].sum().backward()
+    assert position.grad is not None
+
+
+@pytest.mark.parametrize("mask_layout", ["real", "strided"])
+def test_transformer_packs_single_level_mask_without_redundant_copy(mask_layout: str) -> None:
+    """Reuse real padding-mask storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if mask_layout == "real":
+        mask = torch.zeros(batch_size, height, width, dtype=torch.bool)
+    else:
+        mask_storage = torch.zeros(batch_size, height, width * 2, dtype=torch.bool)
+        mask = mask_storage[:, :, ::2]
+    flattened_mask = mask.flatten(1)
+    assert flattened_mask.is_contiguous() is (mask_layout == "real")
+    seen_decoder_masks: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_decoder_masks.append(kwargs["memory_key_padding_mask"]),
+        with_kwargs=True,
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [mask],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_masks) == 1
+    assert torch.equal(seen_decoder_masks[0], flattened_mask)
+    assert seen_decoder_masks[0].is_contiguous()
+    if mask_layout == "real":
+        assert seen_decoder_masks[0].data_ptr() == flattened_mask.data_ptr()
+
+
+@pytest.mark.parametrize("memory_layout", ["real", "strided"])
+def test_transformer_packs_single_level_memory_without_redundant_copy(memory_layout: str) -> None:
+    """Reuse real contiguous projector-feature storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if memory_layout == "real":
+        # MultiScaleProjector's final stage norm is unconditionally the permute-based LayerNorm defined in
+        # projector.py, which leaves contiguous BHWC storage viewed as NCHW. Flattening spatial dimensions and
+        # transposing back to B(HW)C is already contiguous and aliases the original storage.
+        src_storage = torch.randn(batch_size, height, width, hidden_dim)
+        src = src_storage.permute(0, 3, 1, 2)
+    else:
+        src = torch.randn(batch_size, hidden_dim, height, width)
+    src.requires_grad_(True)
+    flattened_src = src.flatten(2).transpose(1, 2)
+    assert flattened_src.is_contiguous() is (memory_layout == "real")
+    seen_decoder_memories: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, args, _kwargs: seen_decoder_memories.append(args[1]), with_kwargs=True
+    )
+    try:
+        transformer(
+            [src],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_decoder_memories) == 1
+    assert torch.equal(seen_decoder_memories[0], flattened_src)
+    assert seen_decoder_memories[0].is_contiguous()
+    if memory_layout == "real":
+        assert seen_decoder_memories[0].data_ptr() == flattened_src.data_ptr()
+
+    seen_decoder_memories[0].sum().backward()
+    assert src.grad is not None
+
+
+@pytest.mark.parametrize("memory_layout", ["real", "strided"])
+def test_transformer_packs_single_level_cross_attn_memory_without_redundant_copy(memory_layout: str) -> None:
+    """Reuse real contiguous dual-projector storage while preserving contiguous output for custom strided input."""
+    torch.manual_seed(0)
+    batch_size, hidden_dim, num_queries, height, width = 1, 16, 3, 4, 4
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+        dual_projector_kp_only=True,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    if memory_layout == "real":
+        cross_src_storage = torch.randn(batch_size, height, width, hidden_dim)
+        cross_src = cross_src_storage.permute(0, 3, 1, 2)
+    else:
+        cross_src = torch.randn(batch_size, hidden_dim, height, width)
+    cross_src.requires_grad_(True)
+    flattened_cross_src = cross_src.flatten(2).transpose(1, 2)
+    assert flattened_cross_src.is_contiguous() is (memory_layout == "real")
+    seen_cross_attn_memories: list[torch.Tensor] = []
+
+    handle = transformer.decoder.register_forward_pre_hook(
+        lambda _module, _args, kwargs: seen_cross_attn_memories.append(kwargs["kp_cross_attn_memory"]),
+        with_kwargs=True,
+    )
+    try:
+        transformer(
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            [torch.zeros(batch_size, height, width, dtype=torch.bool)],
+            [torch.randn(batch_size, hidden_dim, height, width)],
+            torch.rand(num_queries, 4),
+            torch.randn(num_queries, hidden_dim),
+            cross_attn_srcs=[cross_src],
+        )
+    finally:
+        handle.remove()
+
+    assert len(seen_cross_attn_memories) == 1
+    assert torch.equal(seen_cross_attn_memories[0], flattened_cross_src)
+    assert seen_cross_attn_memories[0].is_contiguous()
+    if memory_layout == "real":
+        assert seen_cross_attn_memories[0].data_ptr() == flattened_cross_src.data_ptr()
+
+    seen_cross_attn_memories[0].sum().backward()
+    assert cross_src.grad is not None
 
 
 def test_gen_sineembed_for_position_keeps_box_dimensions_in_sin_cos_order() -> None:
@@ -250,6 +549,105 @@ class TestMSDeformAttnCorePytorch:
         )
 
         assert output.shape[0] == 1
+
+    def test_single_level_skips_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
+    ) -> None:
+        """Single-level attention should reuse its sampled tensor without stacking it."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = single_level_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        stack.assert_not_called()
+
+    def test_single_level_with_tensor_spatial_shapes_skips_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, single_level_inputs: _MSDeformInputs
+    ) -> None:
+        """Single-level packing skip must also apply on the tensor-only fallback (no value_spatial_shapes_hw)."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, _ = single_level_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        output = ms_deform_attn_core_pytorch(value, spatial_shapes_tensor, sampling_locations, attention_weights)
+
+        stack.assert_not_called()
+        bsz, n_heads, head_dim, _ = value.shape
+        len_q = sampling_locations.shape[1]
+        assert output.shape == (bsz, len_q, n_heads * head_dim)
+
+    @pytest.mark.parametrize(
+        "sampling_layout",
+        [pytest.param("rank-6", id="rank-6"), pytest.param("merged-rank-5", id="merged-rank-5")],
+    )
+    def test_single_level_two_points_matches_prechange_sample_packing(self, sampling_layout: str) -> None:
+        """Single-level two-point output must match the former singleton stack-and-flatten packing.
+
+        The direct singleton path avoids allocating a temporary rank-5 tensor, while the pre-change
+        ``torch.stack([single_sample], dim=-2).flatten(-2)`` expression establishes the numerical contract for both
+        eager rank-6 and export rank-5 sampling-location layouts.
+        """
+        value, spatial_shapes, sampling_locations, attention_weights, levels = _build_ms_deform_inputs(
+            npts=2, levels=[(4, 4)]
+        )
+        if sampling_layout == "merged-rank-5":
+            sampling_locations = sampling_locations.flatten(3, 4)
+
+        output = ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        batch_size, n_heads, head_dim, _ = value.shape
+        height, width = levels[0]
+        grid_locations = sampling_locations[:, :, :, 0] if sampling_locations.ndim == 6 else sampling_locations
+        sampling_grid = (2 * grid_locations - 1).transpose(1, 2).flatten(0, 1)
+        single_sample = _bilinear_grid_sample(
+            value.view(batch_size * n_heads, head_dim, height, width),
+            sampling_grid,
+            padding_mode="zeros",
+            align_corners=False,
+        )
+        prechange_sampling_values = torch.stack([single_sample], dim=-2).flatten(-2)
+        len_query = sampling_locations.shape[1]
+        prechange_attention_weights = attention_weights.transpose(1, 2).reshape(batch_size * n_heads, 1, len_query, 2)
+        expected = (
+            (prechange_sampling_values * prechange_attention_weights)
+            .sum(-1)
+            .view(batch_size, n_heads * head_dim, len_query)
+        )
+
+        torch.testing.assert_close(output, expected.transpose(1, 2).contiguous())
+
+    def test_multiple_levels_keep_sample_packing(
+        self, monkeypatch: pytest.MonkeyPatch, make_inputs: _MSDeformInputs
+    ) -> None:
+        """Multi-level attention should still stack one sampled tensor per feature level."""
+        value, spatial_shapes_tensor, sampling_locations, attention_weights, levels = make_inputs
+        stack = Mock(wraps=torch.stack)
+        monkeypatch.setattr(torch, "stack", stack)
+
+        ms_deform_attn_core_pytorch(
+            value,
+            spatial_shapes_tensor,
+            sampling_locations,
+            attention_weights,
+            value_spatial_shapes_hw=levels,
+        )
+
+        stack.assert_called_once()
+        assert len(stack.call_args.args[0]) == len(levels)
+        assert stack.call_args.kwargs.get("dim") == -2
 
 
 class TestMSDeformAttnModule:
@@ -738,6 +1136,52 @@ def test_ms_deform_attn_core_pytorch_export_compatible() -> None:
     assert exported is not None
 
 
+def test_ms_deform_attn_core_pytorch_export_compatible_single_level() -> None:
+    """torch.export.export must succeed with a single feature level (num_levels == 1 packing skip).
+
+    Regression test for the singleton-packing change: the two-level case above already covers the general
+    torch.export path, but the num_levels == 1 branch replaces torch.stack(...).flatten(-2) with a direct index and
+    needs its own FakeTensor trace to confirm that substitution stays export-compatible.
+    """
+    levels: list[tuple[int, int]] = [(4, 4)]
+    bsz, n_heads, head_dim = 1, 2, 4
+    total_hw = sum(ht * wd for ht, wd in levels)
+    len_q, nlvl, npts = 3, len(levels), 1
+
+    class _MinimalDeformAttn(torch.nn.Module):
+        """Minimal wrapper to test torch.export.export on the hw-param code path."""
+
+        def __init__(self, hw: list[tuple[int, int]]) -> None:
+            super().__init__()
+            self.hw = hw
+
+        def forward(
+            self,
+            value: torch.Tensor,
+            spatial_shapes: torch.Tensor,
+            sampling_locations: torch.Tensor,
+            attention_weights: torch.Tensor,
+        ) -> torch.Tensor:
+            """Forward using concrete Python int pairs for export compatibility."""
+            return ms_deform_attn_core_pytorch(
+                value,
+                spatial_shapes,
+                sampling_locations,
+                attention_weights,
+                value_spatial_shapes_hw=self.hw,
+            )
+
+    value = torch.randn(bsz, n_heads, head_dim, total_hw)
+    spatial_shapes = torch.tensor(levels, dtype=torch.long)
+    sampling_locations = torch.rand(bsz, len_q, n_heads, nlvl, npts, 2)
+    attention_weights = torch.softmax(torch.randn(bsz, len_q, n_heads, nlvl * npts), dim=-1)
+
+    module = _MinimalDeformAttn(hw=levels)
+
+    exported = torch.export.export(module, args=(value, spatial_shapes, sampling_locations, attention_weights))
+    assert exported is not None
+
+
 def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> None:
     """torch.export.export must succeed on MSDeformAttn.forward with decoder-style singleton-level refs.
 
@@ -793,6 +1237,59 @@ def test_ms_deform_attn_module_export_compatible_with_singleton_level_dim() -> N
         module,
         args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
     )
+    assert exported is not None
+
+
+def test_ms_deform_attn_module_export_compatible_single_level() -> None:
+    """A one-level exported MSDeformAttn module must trace its rank-5 sampling route.
+
+    Regression: the existing single-level core trace passes rank-6 sampling locations,
+    while ``MSDeformAttn.export()`` creates the rank-5 merged level-and-point layout
+    consumed by the core during an actual module export.
+    """
+    hw_pairs: list[tuple[int, int]] = [(4, 4)]
+    d_model, n_heads, n_points = 32, 4, 2
+    batch_size, num_queries = 1, 3
+
+    class _SingleLevelMSDeformAttnExportWrapper(torch.nn.Module):
+        """Export MSDeformAttn with concrete one-level spatial dimensions."""
+
+        def __init__(self, hw: list[tuple[int, int]]) -> None:
+            super().__init__()
+            self.attn = MSDeformAttn(d_model=d_model, n_levels=1, n_heads=n_heads, n_points=n_points)
+            self.attn.export()
+            self.hw = hw
+
+        def forward(
+            self,
+            query: torch.Tensor,
+            reference_points: torch.Tensor,
+            input_flatten: torch.Tensor,
+            input_spatial_shapes: torch.Tensor,
+            input_level_start_index: torch.Tensor,
+        ) -> torch.Tensor:
+            """Run the one-level export path with concrete spatial dimensions."""
+            return self.attn(
+                query,
+                reference_points,
+                input_flatten,
+                input_spatial_shapes,
+                input_level_start_index,
+                input_spatial_shapes_hw=self.hw,
+            )
+
+    query = torch.randn(batch_size, num_queries, d_model)
+    reference_points = torch.rand(batch_size, num_queries, 1, 4)
+    input_flatten = torch.randn(batch_size, 16, d_model)
+    input_spatial_shapes = torch.tensor(hw_pairs, dtype=torch.long)
+    input_level_start_index = torch.tensor([0], dtype=torch.long)
+    module = _SingleLevelMSDeformAttnExportWrapper(hw=hw_pairs)
+
+    exported = torch.export.export(
+        module,
+        args=(query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index),
+    )
+
     assert exported is not None
 
 
@@ -917,7 +1414,10 @@ def _make_out_of_order_scores(total_hw: int, picks: list[int]) -> torch.Tensor:
     return scores
 
 
-def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode(monkeypatch) -> None:
+@pytest.mark.parametrize("bbox_reparam", [False, True])
+def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode(
+    monkeypatch, bbox_reparam: bool
+) -> None:
     """With group_detr>1 and the module left in its default training mode, every per-group gather index
     must still broadcast via Tensor.expand, and the concatenated memory_ts/boxes_ts must reproduce each
     group's exact top-k rows.
@@ -935,7 +1435,7 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
     spatial_shapes_hw = [(4, 4), (2, 2)]
     total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
 
-    srcs = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    srcs = [torch.randn(1, hidden_dim, ht, wd, requires_grad=True) for ht, wd in spatial_shapes_hw]
     masks = [torch.zeros(1, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
     pos_embeds = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
     refpoint_embed = torch.rand(num_queries * group_detr, 4)
@@ -952,7 +1452,7 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
         return_intermediate_dec=True,
         lite_refpoint_refine=True,
         two_stage=True,
-        bbox_reparam=False,
+        bbox_reparam=bbox_reparam,
         group_detr=group_detr,
     )
     assert transformer.training  # default nn.Module state; group_detr>1 only takes effect while training
@@ -961,7 +1461,9 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
     picks_per_group = [[17, 2, 9], [5, 19, 0], [11, 14, 3]]
     scores_per_group = [_make_out_of_order_scores(total_hw, picks) for picks in picks_per_group]
     transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(scores) for scores in scores_per_group])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4) for _ in range(group_detr)])
+    transformer.enc_out_bbox_embed = nn.ModuleList(
+        [MLP(hidden_dim, hidden_dim, 4, num_layers=3) for _ in range(group_detr)]
+    )
 
     gather_index_calls: list[torch.Tensor] = []
     original_gather = torch.gather
@@ -988,27 +1490,47 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
     memory = torch.cat([src.flatten(2).transpose(1, 2) for src in srcs], 1)
     mask_flatten = torch.cat([m.flatten(1) for m in masks], 1)
     output_memory, output_proposals = gen_encoder_output_proposals(
-        memory, mask_flatten, spatial_shapes_hw, unsigmoid=True
+        memory, mask_flatten, spatial_shapes_hw, unsigmoid=not bbox_reparam
     )
     picks_tensors = [torch.tensor(picks) for picks in picks_per_group]
     output_memory_per_group = [
         transformer.enc_output_norm[g](transformer.enc_output[g](output_memory)) for g in range(group_detr)
     ]
-    coord_unselected_per_group = [
-        transformer.enc_out_bbox_embed[g](output_memory_per_group[g]) + output_proposals for g in range(group_detr)
-    ]
+    if bbox_reparam:
+        coord_unselected_per_group = []
+        for g in range(group_detr):
+            delta = transformer.enc_out_bbox_embed[g](output_memory_per_group[g])
+            coord_unselected_per_group.append(
+                torch.cat(
+                    [
+                        delta[..., :2] * output_proposals[..., 2:] + output_proposals[..., :2],
+                        delta[..., 2:].exp() * output_proposals[..., 2:],
+                    ],
+                    dim=-1,
+                )
+            )
+    else:
+        coord_unselected_per_group = [
+            transformer.enc_out_bbox_embed[g](output_memory_per_group[g]) + output_proposals for g in range(group_detr)
+        ]
 
     expected_memory = torch.cat(
         [output_memory_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0
     ).unsqueeze(0)
-    # forward() returns boxes_ts.sigmoid() when bbox_reparam=False.
-    expected_coord = (
-        torch.cat([coord_unselected_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0)
-        .unsqueeze(0)
-        .sigmoid()
-    )
-    assert torch.equal(memory_ts, expected_memory)
-    assert torch.equal(boxes_ts, expected_coord)
+    # forward() returns boxes_ts.sigmoid() only when bbox_reparam=False.
+    expected_coord = torch.cat(
+        [coord_unselected_per_group[g][0, picks_tensors[g]] for g in range(group_detr)], dim=0
+    ).unsqueeze(0)
+    if not bbox_reparam:
+        expected_coord = expected_coord.sigmoid()
+    torch.testing.assert_close(memory_ts, expected_memory, atol=1e-5, rtol=1e-4)
+    torch.testing.assert_close(boxes_ts, expected_coord, atol=1e-5, rtol=1e-4)
+
+    parameters = [parameter for module in transformer.enc_out_bbox_embed for parameter in module.parameters()]
+    new_gradients = torch.autograd.grad(boxes_ts.sum(), [*srcs, *parameters], retain_graph=True)
+    reference_gradients = torch.autograd.grad(expected_coord.sum(), [*srcs, *parameters])
+    for new_gradient, reference_gradient in zip(new_gradients, reference_gradients, strict=True):
+        torch.testing.assert_close(new_gradient, reference_gradient, atol=1e-5, rtol=1e-4)
 
 
 def test_two_stage_topk_gather_selects_correct_rows_with_bbox_reparam(monkeypatch) -> None:
@@ -1177,3 +1699,218 @@ def test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indice
     cuda_selected = torch.gather(source.cuda(), 1, topk_proposals.cuda().unsqueeze(-1).expand(-1, -1, hidden_dim))
 
     assert torch.equal(cpu_selected, cuda_selected.cpu())
+
+
+def _bbox_from_delta(delta: torch.Tensor, proposals: torch.Tensor, bbox_reparam: bool) -> torch.Tensor:
+    """Reproduce Transformer.forward's two-stage box construction from a bbox-delta MLP output.
+
+    Args:
+        delta: Raw ``enc_out_bbox_embed`` output, shape ``(..., 4)``.
+        proposals: Matching ``output_proposals`` rows, shape ``(..., 4)``.
+        bbox_reparam: Selects the ``bbox_reparam`` branch (cx/cy/w/h reparam vs. plain unsigmoid add).
+
+    Returns:
+        Box tensor, shape ``(..., 4)``.
+
+    Examples:
+        >>> import torch
+        >>> delta = torch.zeros(1, 1, 4)
+        >>> proposals = torch.full((1, 1, 4), 0.5)
+        >>> torch.equal(_bbox_from_delta(delta, proposals, bbox_reparam=False), proposals)
+        True
+    """
+    if bbox_reparam:
+        return torch.cat(
+            [
+                delta[..., :2] * proposals[..., 2:] + proposals[..., :2],
+                delta[..., 2:].exp() * proposals[..., 2:],
+            ],
+            dim=-1,
+        )
+    return delta + proposals
+
+
+@pytest.mark.parametrize("bbox_reparam", [False, True])
+def test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp(
+    bbox_reparam: bool,
+) -> None:
+    """Gathering top-k rows before vs. after the bbox-delta MLP must match in both forward value and
+    gradient, using the real production MLP (``rfdetr.models.math.MLP(d, d, 4, num_layers=3)``,
+    matching ``LWDETR.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)`` in ``lwdetr.py``) -- not the
+    single ``nn.Linear`` stand-in ``test_two_stage_topk_gather_selects_correct_rows_out_of_position_order``
+    and the ``bbox_embed_input_shapes`` test above use, and covering gradient parity, which those
+    two only check indirectly (nonzero/zero row pattern, not old-vs-new equality).
+
+    The bbox MLP has no cross-token mixing (no LayerNorm/attention across the token dimension), so
+    ``d(mlp(x)_i)/dx_j`` is zero for every ``j != i`` -- backward is as row-independent as forward,
+    and gathering before or after the MLP must produce identical gradients w.r.t. the shared input,
+    not just identical box values. Compared with a tolerance, not ``torch.equal``: three chained
+    matmuls (this MLP has 3 layers, unlike the single-``nn.Linear`` sibling tests) is enough for the
+    CPU BLAS backend's reduction order to differ across platforms (confirmed bit-inexact on
+    macOS/Accelerate CI, in the 1e-7-to-1e-5 range for the value; bit-exact on Linux/OpenBLAS) --
+    this is the same floating-point non-associativity documented for the full model scale in the PR
+    body, reproduced here at a much smaller size than expected because the platform's BLAS choice
+    matters more than tensor size for how many layers it takes to diverge.
+    """
+    torch.manual_seed(0)
+    bs, sum_hw, d, num_queries = 2, 20, 16, 3
+    bbox_mlp = MLP(d, d, 4, num_layers=3)
+    output_memory = torch.randn(bs, sum_hw, d, requires_grad=True)
+    output_proposals = torch.rand(bs, sum_hw, 4) * 0.9 + 0.05
+    topk_idx = torch.stack([torch.randperm(sum_hw)[:num_queries] for _ in range(bs)])
+
+    # Old: MLP on every row (bs, sum_hw, d), gather the box afterwards.
+    box_old_full = _bbox_from_delta(bbox_mlp(output_memory), output_proposals, bbox_reparam)
+    box_old = torch.gather(box_old_full, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+    box_old.sum().backward()
+    grad_old = output_memory.grad.clone()
+    output_memory.grad = None
+
+    # New (this fix): gather the selected rows first, run the MLP only on those.
+    tgt_new = torch.gather(output_memory, 1, topk_idx.unsqueeze(-1).expand(-1, -1, d))
+    proposals_g = torch.gather(output_proposals, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+    box_new = _bbox_from_delta(bbox_mlp(tgt_new), proposals_g, bbox_reparam)
+    box_new.sum().backward()
+    grad_new = output_memory.grad.clone()
+
+    torch.testing.assert_close(box_old, box_new, atol=1e-5, rtol=1e-4)
+    torch.testing.assert_close(grad_old, grad_new, atol=1e-5, rtol=1e-4)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize("bbox_reparam", [False, True])
+def test_two_stage_bbox_mlp_gather_order_matches_on_cuda_for_real_three_layer_mlp(bbox_reparam: bool) -> None:
+    """CUDA twin of test_two_stage_bbox_mlp_gather_order_matches_forward_and_gradient_for_real_three_layer_mlp:
+    the same gather-before-vs-after-MLP comparison, but running the real bbox MLP itself on CUDA (not
+    only the bare ``torch.gather`` isolated by
+    test_two_stage_topk_gather_cuda_matches_cpu_for_out_of_position_order_indices).
+
+    Deliberately compares old-order-on-CUDA against new-order-on-CUDA (both on the same device), not
+    CUDA against CPU: CPU/CUDA cuBLAS reduction order already differs for this MLP's matmuls
+    independently of gather order, which would swamp the gather-order comparison this test exists to
+    make. The two paths may use different CUDA kernels and reduction orders, so this test uses a
+    small numerical tolerance without mutating process-wide deterministic-algorithm state or requiring
+    ``CUBLAS_WORKSPACE_CONFIG``.
+    """
+    torch.manual_seed(0)
+    bs, sum_hw, d, num_queries = 2, 20, 16, 3
+    bbox_mlp = MLP(d, d, 4, num_layers=3).cuda()
+    output_memory = torch.randn(bs, sum_hw, d, device="cuda")
+    output_proposals = torch.rand(bs, sum_hw, 4, device="cuda") * 0.9 + 0.05
+    topk_idx = torch.stack([torch.randperm(sum_hw, device="cuda")[:num_queries] for _ in range(bs)])
+
+    box_old_full = _bbox_from_delta(bbox_mlp(output_memory), output_proposals, bbox_reparam)
+    box_old = torch.gather(box_old_full, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+
+    tgt_new = torch.gather(output_memory, 1, topk_idx.unsqueeze(-1).expand(-1, -1, d))
+    proposals_g = torch.gather(output_proposals, 1, topk_idx.unsqueeze(-1).expand(-1, -1, 4))
+    box_new = _bbox_from_delta(bbox_mlp(tgt_new), proposals_g, bbox_reparam)
+
+    torch.testing.assert_close(box_old, box_new, atol=1e-5, rtol=1e-4)
+
+
+class _ShapeRecordingLinear(nn.Module):
+    """Wraps a real ``nn.Linear`` and records the shape of every input it is called with.
+
+    Lets a test assert how many rows the wrapped layer actually processed, independent of the values
+    it produced (already covered by the ``test_two_stage_topk_gather_selects_correct_rows_*`` tests).
+
+    Examples:
+        >>> input_shapes = []
+        >>> layer = _ShapeRecordingLinear(nn.Linear(2, 3), input_shapes)
+        >>> layer(torch.zeros(1, 2)).shape
+        torch.Size([1, 3])
+        >>> input_shapes
+        [torch.Size([1, 2])]
+    """
+
+    def __init__(self, inner: nn.Linear, input_shapes: list[torch.Size]) -> None:
+        """Initialize the recording wrapper around a linear layer.
+
+        Args:
+            inner: Linear layer whose input shapes should be recorded.
+            input_shapes: Mutable list receiving each input shape in call order.
+        """
+        super().__init__()
+        self.inner = inner
+        self._input_shapes = input_shapes
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Record ``x.shape`` then delegate to the wrapped ``nn.Linear``."""
+        self._input_shapes.append(x.shape)
+        return self.inner(x)
+
+
+@pytest.mark.parametrize("group_detr", [1, 3])
+@pytest.mark.parametrize("bbox_reparam", [False, True])
+@pytest.mark.parametrize("num_queries", [3, 20])
+def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory(
+    group_detr: int, bbox_reparam: bool, num_queries: int
+) -> None:
+    """The bbox-delta MLP must only run on the rows torch.topk selects, not on every encoder position.
+
+    ``enc_out_bbox_embed`` is a pointwise MLP with no cross-token mixing, so it only needs the
+    ``num_queries`` rows that survive ``torch.topk`` selection -- every one of the other
+    ``sum(H*W) - num_queries`` encoder positions it used to also run on was discarded by the gather
+    that immediately followed, per group.
+
+    Regression: prior to this fix, Transformer.forward ran ``enc_out_bbox_embed[g_idx]`` on the full
+    ``output_memory_gidx`` (bs, sum_hw, d) for every one of ``group_detr`` groups and only kept the
+    ``num_queries`` gathered rows -- this pins the shape ``enc_out_bbox_embed`` is actually called
+    with to the post-topk size, per group. Row *values* are covered separately by
+    test_two_stage_topk_gather_selects_correct_rows_out_of_position_order and
+    test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mode, which assert
+    ``memory_ts``/``boxes_ts`` are bit-identical to gathering after running the MLP on every row --
+    this test only pins how much work the MLP itself does, not what it produces.
+
+    Parametrized over ``bbox_reparam`` because it is not merely a config toggle here: the fixed
+    (production default per ``ModelConfig.bbox_reparam``, ``config.py``) ``True`` branch runs
+    additional pointwise ops (``.exp()``, multiply, ``torch.concat``) on ``enc_out_bbox_embed``'s
+    *output* that ``False`` does not, so a test pinning only ``False`` would leave the branch that
+    is actually used in production unchecked.
+    """
+    torch.manual_seed(0)
+    hidden_dim = 16
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    total_hw = sum(ht * wd for ht, wd in spatial_shapes_hw)
+    assert total_hw >= num_queries  # also cover the topk == encoder-memory boundary
+
+    srcs = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(1, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(1, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=bbox_reparam,
+        group_detr=group_detr,
+    )
+    assert transformer.training  # default nn.Module state; group_detr>1 only takes effect while training
+
+    num_classes = 5
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, num_classes) for _ in range(group_detr)])
+    bbox_embed_input_shapes: list[torch.Size] = []
+    transformer.enc_out_bbox_embed = nn.ModuleList(
+        [_ShapeRecordingLinear(nn.Linear(hidden_dim, 4), bbox_embed_input_shapes) for _ in range(group_detr)]
+    )
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    assert len(bbox_embed_input_shapes) == group_detr
+    for shape in bbox_embed_input_shapes:
+        assert shape == torch.Size([1, num_queries, hidden_dim]), (
+            "enc_out_bbox_embed must only run on the num_queries rows selected by torch.topk, not the "
+            f"full sum(H*W)={total_hw} encoder positions (Transformer.forward two-stage top-k gather); "
+            f"got input shape {tuple(shape)}"
+        )
