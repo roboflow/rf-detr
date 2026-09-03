@@ -8,10 +8,10 @@
 # Idempotent and safe to re-run: files that already carry a robots meta tag are skipped,
 # and `latest/` is never touched.
 #
-# Triggers:
-#   pull_request touching the indexing rules → always a dry run, so a PR shows how many
-#     archived pages the sweep would rewrite without mutating gh-pages
-#   workflow_dispatch                       → dry run by default; only dry_run=false commits
+# The event decides whether anything is written:
+#   pull_request touching the indexing rules → dry run, reporting how many archived pages
+#     the sweep would rewrite without mutating gh-pages
+#   workflow_dispatch                        → patches gh-pages and pushes
 
 name: Docs noindex Sweep
 
@@ -23,19 +23,13 @@ on:
       - "docs/root-static/robots.txt"
       - "docs/root-static/mike-redirect.html"
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Report the files that would change without committing"
-        type: boolean
-        required: false
-        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: write # Required for committing to gh-pages on a dispatched non-dry run
+  contents: write # Required for committing to gh-pages on a dispatched run
 
 jobs:
   sweep:
@@ -86,7 +80,7 @@ jobs:
 
       - name: 📤 Commit and push
         # A pull_request run never matches, so it stops after the report above.
-        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
