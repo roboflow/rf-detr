@@ -25,9 +25,11 @@ from rfdetr.utilities.reproducibility import seed_all
 from rfdetr.utilities.state_dict import clean_state_dict, strip_checkpoint
 from rfdetr.utilities.tensors import (
     NestedTensor,
+    PackedTargets,
     collate_fn,
     make_collate_fn,
     nested_tensor_from_tensor_list,
+    pack_targets,
 )
 
 __all__ = [
@@ -41,9 +43,11 @@ __all__ = [
     "save_on_master",
     # tensors
     "NestedTensor",
+    "PackedTargets",
     "collate_fn",
     "make_collate_fn",
     "nested_tensor_from_tensor_list",
+    "pack_targets",
     # box_ops (submodule)
     "box_ops",
     # logger

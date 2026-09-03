@@ -10,7 +10,7 @@ Read each section between your current version and your target — every section
 1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10
 ```
 
-You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning` until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning`, while deprecated configuration fields emit a `FutureWarning`, until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
 
 ---
 
@@ -33,6 +33,26 @@ You can apply all changes in one go; working through sections one release at a t
     ```python
     train_config = TrainConfig(compute_val_loss=True)
     ```
+
+!!! warning "Breaking: validation evaluates one model, and `val/mAP_*` follows it"
+
+    Validation now runs **one** forward pass per batch instead of two: through the EMA weights when `use_ema=True` (the default), through the base weights otherwise. `val/mAP_50_95`, `val/mAP_50`, `val/mAP_75`, `val/mAR`, and per-class `val/AP/<class>` therefore report the EMA model on a default run — they used to report the base model — while the matching `val/ema_*` namespace remains available. Best-checkpoint selection is unaffected in substance (it already preferred EMA), but the "regular" track no longer writes `checkpoint_best_regular.pth` on such runs; `checkpoint_best_total.pth` is copied from the EMA checkpoint.
+
+    `val/F1` and `val/loss` (when computed) follow the same single forward, so they now describe the EMA model too — consistent with the mAP under the primary key, but a change of meaning if you monitor `val/loss` with a `ReduceLROnPlateau` scheduler, `ModelCheckpoint`, or early stopping.
+
+    Restore the previous two-forward behavior, both metric namespaces and both checkpoint tracks:
+
+    ```python
+    train_config = TrainConfig(eval_base_model=True)
+    ```
+
+### Deprecated in v1.10 → Remove in v1.13
+
+!!! note "`eval_ema_only` is deprecated"
+
+    Evaluating only the selected model is the default. Explicit legacy `TrainConfig(eval_ema_only=True)` preserves EMA-only evaluation and emits a `FutureWarning`; explicit `eval_ema_only=False` is migrated to the old base-plus-EMA behavior and also warns. Drop the field from new configurations. Use `eval_base_model=True` if you want the base model evaluated as well; `eval_ema_only=True` still requires `use_ema=True` and conflicts with that opt-in.
+
+    One improvement for existing `eval_ema_only` users: `val/mAP_50_95` is now populated (with the EMA score) instead of staying absent, so monitors pointed at it start receiving values again.
 
 ---
 
@@ -170,6 +190,22 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
     # After
     TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
+    ```
+
+### Deprecated in v1.9 → Remove in v1.12
+
+!!! note "`rfdetr.datasets.aug_config` is deprecated"
+
+    The module was renamed to `rfdetr.datasets.aug_configs` (plural) in v1.8.0 — see the "Upgrade 1.7 → 1.8" section below, where it is listed as a breaking change because that rename shipped with no compatibility shim. A shim was added in v1.9.0, so the singular path imports again and emits a `FutureWarning`. It is scheduled for removal in **v1.12.0**; migrate before then.
+
+    The preset constants are unchanged — only the module path moves.
+
+    ```python
+    # Before (deprecated, warns since v1.9.0)
+    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+    # After
+    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
     ```
 
 ---

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.10.0.dev"
+version = "1.10.0.dev1"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -57,8 +57,18 @@ train = [
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
+    # Batched Hungarian solver for the matcher (Apache-2.0). Speeds up the CUDA path only — its
+    # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4; everywhere else it
+    # falls back internally to the same SciPy solve the matcher would have called, so only speed
+    # differs. The >=0.1.0 floor excludes the 0.0.x line, whose sdist compiled against nvcc.
+    # Measurement evidence: .plans/active/plan-native-linear-assignment.md Phase M3 Item 2.
+    # TODO: 0.1.0 is not on PyPI yet, so it comes from a branch archive meanwhile. RELEASE BLOCKER —
+    #   the URL lands verbatim in built metadata as `Requires-Dist`, and PEP 440 has public indexes
+    #   reject direct references, so publish-release.yml fails at the PyPI upload step while this
+    #   entry is a URL and `twine check --strict` does not catch it. Once 0.1.0 ships, replace this
+    #   TODO and the URL — nothing else — with: "torch-linear-assignment>=0.1.0,<0.2.0",
+    "torch-linear-assignment @ https://github.com/Borda/torch-hungarian/archive/refs/heads/refactor/triton.zip",
     "roboflow",
-    "rf100vl",
 ]
 augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
@@ -197,6 +207,9 @@ tests = [
 typing = [
     # Keep this pin aligned with the local mypy hook in .pre-commit-config.yaml.
     "mypy==1.19.1",
+    # Match the Torch annotations checked by the typing pre-commit hook and CI.
+    "torch==2.14.0",
+    "torchvision==0.29.0",
     # mypy 1.19.x can crash while processing NumPy 2.4 symbols in strict mode.
     "numpy<2.4",
     "types-PyYAML",
@@ -258,7 +271,38 @@ conflicts = [
         { extra = "executorch" },
         { extra = "xla" },
     ],
+    # The typing group pins the Torch annotations checked by mypy and cannot
+    # share an environment with configurations that require older Torch releases.
+    [
+        { group = "typing" },
+        { extra = "coreml" },
+    ],
+    [
+        { group = "typing" },
+        { extra = "executorch" },
+    ],
+    [
+        { group = "typing" },
+        { extra = "xla" },
+    ],
+    [
+        { group = "typing" },
+        { group = "ci-gpu-pin" },
+    ],
+    [
+        { group = "typing" },
+        { group = "ci-executorch-pin" },
+    ],
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", group = "typing" }]
+torchvision = [{ index = "pytorch-cpu", group = "typing" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 
 [tool.setuptools.packages.find]
@@ -384,6 +428,7 @@ overrides = [
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
     "kornia", "kornia.*",
+    "albumentations", "albumentations.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
     "onnx_graphsurgeon", "onnx_graphsurgeon.*",
@@ -404,9 +449,4 @@ overrides = [
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
   # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
-  # Modules with pre-existing type errors — ignored until incrementally fixed.
-  { module = [
-    "rfdetr.datasets.coco",
-    "rfdetr.datasets.transforms",
-  ], ignore_errors = true },
 ]

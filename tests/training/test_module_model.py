@@ -1947,12 +1947,13 @@ class TestValidationStep:
         # The validation batch reached postprocess, so the loop ran to completion instead of raising the guard.
         fake_postprocess.assert_called_once()
 
-    def test_eval_ema_only_forwards_through_ema_model_not_base(self, tmp_path):
-        """eval_ema_only=True must forward through the EMA-averaged model, not the base model (regression for #416:
+    def test_forwards_through_ema_model_not_base_by_default(self, tmp_path):
+        """Validation must forward through the EMA-averaged model, not the base model, by default.
 
-        this replaces the duplicate base+EMA forward pass COCOEvalCallback would otherwise run).
+        Regression for #416: this single forward replaces the duplicate base+EMA pair COCOEvalCallback would otherwise
+        run, and is the ~3-3.5%-of-epoch saving behind the eval_base_model default.
         """
-        tc = _base_train_config(tmp_path, eval_ema_only=True, use_ema=True)
+        tc = _base_train_config(tmp_path, use_ema=True)
         module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {"base": True}
@@ -1970,10 +1971,13 @@ class TestValidationStep:
         ema_model.assert_called_once()
         fake_model.assert_not_called()
 
-    def test_eval_ema_only_falls_back_to_base_model_when_ema_not_warmed_up(self, tmp_path):
-        """eval_ema_only=True must fall back to the base model if the EMA callback has no averaged model yet (e.g. very
-        first validation before EMA warm-up)."""
-        tc = _base_train_config(tmp_path, eval_ema_only=True, use_ema=True)
+    def test_falls_back_to_base_model_when_ema_not_warmed_up(self, tmp_path):
+        """Validation must fall back to the base model if the EMA callback has no averaged model yet.
+
+        The very first validation can run before RFDETREMACallback has built its averaged model; forwarding through a
+        missing EMA model would crash instead of degrading to the base weights.
+        """
+        tc = _base_train_config(tmp_path, use_ema=True)
         module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {"base": True}
@@ -1989,21 +1993,25 @@ class TestValidationStep:
 
         fake_model.assert_called_once()
 
-    def test_eval_ema_only_false_does_not_touch_trainer(self, tmp_path):
-        """eval_ema_only=False (default) must not access self.trainer at all — validation_step must stay usable without
-        a Trainer attached, as every other test in this class relies on."""
-        result, _, module = self._run_val_step(tmp_path)
-        assert "results" in result
+    def test_eval_base_model_does_not_touch_trainer(self, tmp_path):
+        """eval_base_model=True must not access self.trainer at all — it returns the base model unconditionally.
 
-    def test_eval_ema_only_falls_back_to_base_model_when_trainer_unattached(self, tmp_path):
-        """eval_ema_only=True must fall back to the base model — not raise — when the module isn't attached to a Trainer
-        at all.
+        validation_step has to stay usable on a module with no Trainer attached, as every other test in this class
+        relies on; the opt-in path must short-circuit before any trainer lookup.
+        """
+        tc = _base_train_config(tmp_path, eval_base_model=True)
+        module, fake_model, _, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+
+        assert module._resolve_eval_model() is fake_model
+
+    def test_falls_back_to_base_model_when_trainer_unattached(self, tmp_path):
+        """Validation must fall back to the base model — not raise — when the module isn't attached to a Trainer at all.
 
         ``LightningModule.trainer`` raises ``RuntimeError`` (not ``None``) when unattached, so a naive
         ``getattr(self.trainer, ...)`` would crash instead of falling back (regression: module never has a Trainer wired
         up in this test module, matching the direct/standalone validation_step-call scenario).
         """
-        tc = _base_train_config(tmp_path, eval_ema_only=True, use_ema=True)
+        tc = _base_train_config(tmp_path, use_ema=True)
         module, fake_model, fake_criterion, _ = _build_module(train_config=tc, tmp_path=tmp_path)
         samples, targets = _make_batch()
         fake_model.return_value = {"base": True}
@@ -2511,6 +2519,33 @@ class TestConfigureOptimizers:
         assert isinstance(scheduler, torch.optim.lr_scheduler.StepLR)
         assert scheduler.step_size == 30
         assert scheduler.gamma == pytest.approx(0.1)
+
+    @patch("rfdetr.training.module_model._build_param_dicts")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_per_parameter_lr_lambda_list_is_collapsed_onto_merged_groups(
+        self, mock_get_param_dict, mock_build_param_dicts, tmp_path
+    ):
+        """A legacy per-parameter lr_lambda list is regrouped to one callback per merged group."""
+
+        def shared_lambda(step: int) -> float:
+            return 1.0
+
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.LambdaLR",
+            lr_scheduler_kwargs={"lr_lambda": [shared_lambda, shared_lambda]},
+        )
+        mock_get_param_dict.return_value = param_dicts
+        lr = module.train_config.lr
+        mock_build_param_dicts.return_value = [
+            {"params": nn.Parameter(torch.randn(2)), "lr": lr},
+            {"params": nn.Parameter(torch.randn(2)), "lr": lr},
+        ]
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert scheduler.lr_lambdas == [shared_lambda]
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_managed_preset_builds_lambda_lr(self, mock_get_param_dict, tmp_path):

@@ -31,16 +31,29 @@ from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
 
 
-def _not_exporting() -> bool:
-    """Fallback for ``torch.compiler.is_exporting`` on torch<2.6 (which lacks it and never runs ExecuTorch export).
+def _tracer_absent() -> bool:
+    """Fallback for ``torch.compiler.is_exporting`` on torch versions that lack it.
 
-    Hoisted to a module-level function so the hot decoder ``forward`` does not allocate a fresh ``lambda`` on every
-    call just to supply this default.
+    ``is_exporting`` was added in torch 2.7. Hoisting this fallback avoids allocating a fresh
+    ``lambda`` in the hot decoder ``forward`` path.
 
     Returns:
-        Always ``False`` — torch<2.6 is never in an export trace.
+        Always ``False``.
     """
     return False
+
+
+def _is_compiling() -> bool:
+    """Return whether the current execution is inside a ``torch.compile`` graph.
+
+    PyTorch 2.3 added the public ``torch.compiler.is_compiling`` predicate. RF-DETR supports
+    PyTorch 2.2, where the equivalent Dynamo predicate remains the compatible fallback.
+
+    Returns:
+        Whether Dynamo is compiling the current code path.
+    """
+    is_compiling = getattr(torch.compiler, "is_compiling", None)
+    return is_compiling() if is_compiling is not None else torch._dynamo.is_compiling()
 
 
 def _safe_multinormalize(dim: int) -> int:
@@ -303,14 +316,28 @@ class Transformer(nn.Module):
                 assert mask_flatten_parts is not None
                 mask_flatten_parts.append(mask)
 
-        memory = torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
+        # MultiScaleProjector ends each stage with its channel LayerNorm, which returns channels-last storage viewed
+        # as NCHW. Its real flattened/transposed output is already contiguous; contiguous() preserves the old layout
+        # contract for custom strided inputs.
+        memory = src_flatten[0].contiguous() if len(src_flatten) == 1 else torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
         mask_flatten: Tensor | None = None
         valid_ratios: Tensor | None = None
         if masks is not None:
             assert mask_flatten_parts is not None
-            mask_flatten = torch.cat(mask_flatten_parts, 1)  # bs, \sum{hxw}
+            # Real padding masks are contiguous after flatten(1), so the single-level contiguous() is a no-op.
+            # It preserves cat's contiguous-layout contract for custom strided masks.
+            mask_flatten = (
+                mask_flatten_parts[0].contiguous() if len(mask_flatten_parts) == 1 else torch.cat(mask_flatten_parts, 1)
+            )  # bs, \sum{hxw}
             valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
-        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten_parts, 1)  # bs, \sum{hxw}, c
+        # PositionEmbeddingSine produces channels-last storage viewed as NCHW, so flatten+transpose above is already
+        # contiguous. Current nondeprecated models use one projector level; contiguous() is then a no-op, while
+        # preserving cat's contiguous-layout contract for custom strided position tensors.
+        lvl_pos_embed_flatten = (
+            lvl_pos_embed_flatten_parts[0].contiguous()
+            if len(lvl_pos_embed_flatten_parts) == 1
+            else torch.cat(lvl_pos_embed_flatten_parts, 1)
+        )  # bs, \sum{hxw}, c
         # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
         # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
         # rejects ("IScatterLayer cannot be used to compute a shape tensor").
@@ -323,10 +350,16 @@ class Transformer(nn.Module):
         # torch.export (ExecuTorch) cannot trace torch._shape_as_tensor — it raises "the tensor has
         # a non-zero number of elements, but its data is not allocated yet". Under that trace build
         # spatial_shapes directly from the concrete Python-int (H, W) pairs instead; ExecuTorch uses
-        # static shapes, so the baked constant is exact. This branch is taken only under
-        # torch.export, leaving the eager and TorchScript-ONNX/TensorRT (#1155) paths untouched.
-        # getattr guards torch<2.6, which lacks is_exporting() and never runs ExecuTorch export.
-        if getattr(torch.compiler, "is_exporting", _not_exporting)():
+        # static shapes, so the baked constant is exact. torch.compile needs the same branch for a
+        # different reason: Dynamo polyfills torch._shape_as_tensor to return a torch.Size, so
+        # torch.stack raises "expected Tensor as element 0 in argument 0, but got torch.Size" and
+        # the compile aborts (suppress_errors=True does not catch it — the TypeError comes from
+        # user code, not from Dynamo). Neither guard is true in eager or under torch.jit.trace, so
+        # the eager and TorchScript-ONNX/TensorRT (#1155) paths keep the _shape_as_tensor form.
+        # ``torch.compiler.is_compiling`` is public from torch 2.3 onward. The compatibility
+        # helper uses the legacy Dynamo predicate for supported torch 2.2 environments, while
+        # ``is_exporting`` remains absent below torch 2.7.
+        if getattr(torch.compiler, "is_exporting", _tracer_absent)() or _is_compiling():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
@@ -346,7 +379,8 @@ class Transformer(nn.Module):
             for cross_src in cross_attn_srcs:
                 tensor = getattr(cross_src, "tensors", cross_src)
                 ca_flatten.append(tensor.flatten(2).transpose(1, 2))
-            cross_attn_memory = torch.cat(ca_flatten, 1)
+            # The dual-projector path uses the same MultiScaleProjector layout as memory above.
+            cross_attn_memory = ca_flatten[0].contiguous() if len(ca_flatten) == 1 else torch.cat(ca_flatten, 1)
 
         if self.two_stage:
             assert self.enc_out_class_embed is not None

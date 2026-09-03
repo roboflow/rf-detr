@@ -150,6 +150,28 @@ class TestBuildTrainerCallbacks:
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._keypoint_oks_sigmas == sigmas
 
+    @pytest.mark.parametrize(
+        "use_ema, eval_base_model, expected",
+        [
+            pytest.param(True, False, False, id="ema_default_evaluates_ema_only"),
+            pytest.param(True, True, True, id="ema_with_opt_in_evaluates_both"),
+            pytest.param(False, False, True, id="no_ema_evaluates_base"),
+        ],
+    )
+    def test_eval_policy_is_wired_to_both_callbacks(self, tmp_path, use_ema, eval_base_model, expected):
+        """The eval policy must reach COCOEvalCallback and BestModelCallback consistently.
+
+        The two callbacks have to agree: whenever the base model is not evaluated, COCOEvalCallback mirrors the
+        EMA score onto the primary key and BestModelCallback must stop checkpointing base weights against it.
+        Wiring only one of the pair reintroduces the metric/weights mismatch this policy exists to avoid.
+        """
+        trainer = build_trainer(_tc(tmp_path, use_ema=use_ema, eval_base_model=eval_base_model), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
+
+        assert coco_cb._eval_base_model is eval_base_model
+        assert best_cb._evaluates_base_model is expected
+
     def test_best_model_always_present(self, tmp_path):
         """BestModelCallback is always included."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
@@ -553,7 +575,7 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured["precision"] == "bf16-mixed"
 
-    @pytest.mark.parametrize("accelerator", ["xla", "tpu"], ids=["xla", "tpu"])
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
     def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
         """Accelerator='xla'/'tpu' sets an XLAPrecision('bf16-true') plugin, never precision=.
 
@@ -1691,12 +1713,13 @@ class TestEvalIntervalValidationGating:
 
         assert trainer.check_val_every_n_epoch == 3
 
-    @pytest.mark.parametrize("max_epochs", [None, -1], ids=["none", "unlimited"])
+    @pytest.mark.parametrize("max_epochs", [None, -1])
     def test_force_last_epoch_callback_noops_when_max_epochs_not_a_positive_int(self, max_epochs):
         """max_epochs=None/-1 (PTL's not-yet-known / unlimited sentinels) must not force validation.
 
-        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was previously
-        tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to force.
+        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was
+        previously tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to
+        force.
         """
         cb = _ForceLastEpochValidationCallback()
         trainer = MagicMock()

@@ -34,7 +34,12 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
-from rfdetr.training.param_groups import get_param_dict
+from rfdetr.training.param_groups import (
+    _build_param_dicts,
+    get_param_dict,
+    regroup_unmerged_optimizer_state,
+    regroup_unmerged_scheduler_kwargs,
+)
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -1026,25 +1031,28 @@ class RFDETRModelModule(LightningModule):
     def _resolve_eval_model(self) -> Any:
         """Return the model to forward through for validation.
 
-        When ``TrainConfig.eval_ema_only`` is set, validation forwards through the EMA-averaged
-        weights directly instead of the base model — this replaces the second, duplicate
-        base+EMA forward pass ``COCOEvalCallback`` would otherwise also run every validation
-        batch (see issue 416). Falls back to the base model when EMA is enabled but not yet
-        warmed up (e.g. the very first validation epoch, before ``RFDETREMACallback.setup``
-        has built its averaged model), or when this module isn't attached to a ``Trainer`` at
-        all (``LightningModule.trainer`` raises ``RuntimeError`` rather than returning ``None``
-        when unattached — e.g. ``validation_step`` called directly outside ``Trainer.fit``/
-        ``Trainer.validate``).
+        Validation evaluates one model by default: the EMA-averaged weights when EMA is available,
+        because those are the weights best-checkpoint selection ships. Forwarding through them here
+        replaces the second, duplicate base+EMA forward pass ``COCOEvalCallback`` would otherwise run
+        every validation batch (see issue 416). ``TrainConfig.eval_base_model`` opts back in to that
+        comparison: the base model is forwarded here and ``COCOEvalCallback`` runs the EMA pass.
+
+        Falls back to the base model when EMA is enabled but not yet warmed up (e.g. the very first
+        validation epoch, before ``RFDETREMACallback.setup`` has built its averaged model), or when
+        this module isn't attached to a ``Trainer`` at all (``LightningModule.trainer`` raises
+        ``RuntimeError`` rather than returning ``None`` when unattached — e.g. ``validation_step``
+        called directly outside ``Trainer.fit``/``Trainer.validate``). The same fallback covers
+        ``use_ema=False``, where no EMA callback exists and the base model is the selected model.
 
         Uses the same ``_get_ema_inner_module`` helper as ``COCOEvalCallback`` (see
         ``coco_eval.py``) so both consumers resolve the EMA-averaged detection net through one
         shared code path instead of independently duck-typing ``RFDETREMACallback``.
 
         Returns:
-            The base model, or the EMA-averaged inner module's underlying detection net when
-            ``eval_ema_only`` is active and available.
+            The EMA-averaged inner module's underlying detection net when it is the selected model and
+            available, else the base model.
         """
-        if not self.train_config.eval_ema_only:
+        if self.train_config.eval_base_model:
             return self.model
         try:
             callbacks = getattr(self.trainer, "callbacks", [])
@@ -1197,7 +1205,6 @@ class RFDETRModelModule(LightningModule):
         # name-prefix mismatches that put the same tensor in multiple groups.
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
-        param_dicts = [param_group for param_group in param_dicts if param_group["params"].requires_grad]
 
         optimizer_cfg = tc.optimizer
         optimizer: torch.optim.Optimizer
@@ -1270,9 +1277,16 @@ class RFDETRModelModule(LightningModule):
             else:
                 # Explicit dotted import path: constructed from lr_scheduler_kwargs only.
                 scheduler_class = _import_scheduler_class(scheduler_cfg)
-                scheduler = _instantiate_explicit_scheduler(
-                    scheduler_class, scheduler_cfg, optimizer, tc.lr_scheduler_kwargs
-                )
+                scheduler_kwargs = tc.lr_scheduler_kwargs
+                # Only a per-parameter lr_lambda list needs the legacy unmerged groups;
+                # regroup_unmerged_scheduler_kwargs returns its input untouched otherwise, so
+                # skip rebuilding the (discarded) unmerged layout for every other scheduler.
+                if isinstance(scheduler_kwargs.get("lr_lambda"), list):
+                    scheduler_kwargs = regroup_unmerged_scheduler_kwargs(
+                        scheduler_kwargs,
+                        _build_param_dicts(ns, model_for_params),
+                    )
+                scheduler = _instantiate_explicit_scheduler(scheduler_class, scheduler_cfg, optimizer, scheduler_kwargs)
             interval = tc.lr_scheduler_interval
             if isinstance(scheduler, ReduceLROnPlateau):
                 monitor = tc.lr_scheduler_monitor
@@ -1469,6 +1483,11 @@ class RFDETRModelModule(LightningModule):
                 checkpoint["state_dict"],
                 self.model_config.positional_encoding_size,
             )
+
+        # Optimizer/scheduler state saved before parameters were grouped by hyperparameters carries
+        # one parameter group per parameter, a layout the optimizer no longer has. Regroup it so
+        # resuming such a run keeps its momentum and LR schedule instead of failing to load.
+        regroup_unmerged_optimizer_state(checkpoint)
 
         # Stash legacy EMA weights for RFDETREMACallback.setup(), which restores
         # them into AveragedModel when resuming from converted legacy checkpoints.

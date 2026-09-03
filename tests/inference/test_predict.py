@@ -4,7 +4,10 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import io
+import warnings
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -13,7 +16,9 @@ import pytest
 import requests
 import supervision as sv
 import torch
+import torchvision.transforms.functional as F  # noqa: N812
 
+import rfdetr.detr as detr_module
 from rfdetr import RFDETRNano, RFDETRSegNano
 from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
@@ -426,6 +431,91 @@ class TestPredictSourceData:
         assert detections.metadata["source_image"].dtype == np.uint8
         assert detections.metadata["source_image"].shape == (48, 64, 3)
 
+    @pytest.mark.gpu
+    @pytest.mark.parametrize(
+        ("dtype", "shape", "expected_transfer_dtype"),
+        [
+            pytest.param(torch.float16, (3, 48, 64), torch.uint8, id="float16"),
+            pytest.param(torch.float32, (3, 48, 64), torch.uint8, id="float32"),
+            pytest.param(torch.float64, (3, 48, 64), torch.uint8, id="float64"),
+            pytest.param(torch.float32, (3, 1, 64), torch.float32, id="degenerate_height"),
+            pytest.param(torch.float32, (3, 48, 1), torch.float32, id="degenerate_width"),
+        ],
+    )
+    def test_cuda_source_image_transfers_exact_bytes(
+        self,
+        dtype: torch.dtype,
+        shape: tuple[int, int, int],
+        expected_transfer_dtype: torch.dtype,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The default public path transfers uint8 storage without changing source metadata."""
+        values = torch.rand(shape, generator=torch.Generator().manual_seed(20260821))
+        boundary_count = min(256, values.numel())
+        values.view(-1)[:boundary_count] = torch.arange(boundary_count, dtype=torch.float32) / 255
+        tensor = values.to(device="cuda", dtype=dtype)
+        expected = (tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        expected_source_shape = (shape[1], shape[2], shape[0])
+        transferred_dtypes: list[torch.dtype] = []
+        original_cpu = torch.Tensor.cpu
+
+        def record_source_transfer(image: torch.Tensor) -> torch.Tensor:
+            """Record the source-image transfer dtype before delegating to PyTorch.
+
+            Examples:
+                This closure requires CUDA and is covered by the enclosing GPU test:
+                >>> record_source_transfer(torch.zeros(3, 48, 64, device="cuda"))  # doctest: +SKIP
+            """
+            if image.device.type == "cuda" and tuple(image.shape) == expected_source_shape:
+                transferred_dtypes.append(image.dtype)
+            return original_cpu(image)
+
+        monkeypatch.setattr(torch.Tensor, "cpu", record_source_transfer)
+
+        detections = _DummyRFDETR().predict(tensor)
+        actual = detections.metadata["source_image"]
+
+        assert transferred_dtypes == [expected_transfer_dtype]
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.strides == expected.strides
+        assert actual.flags.owndata == expected.flags.owndata
+        assert actual.flags.writeable == expected.flags.writeable
+        assert actual.tobytes() == expected.tobytes()
+
+    @pytest.mark.gpu
+    def test_cuda_source_image_transfers_exact_bytes_strided_input(self) -> None:
+        """The fast path matches the previous NumPy path byte-for-byte for a non-contiguous CUDA tensor."""
+        values = torch.rand((3, 96, 128), generator=torch.Generator().manual_seed(20260821))
+        tensor = values.to(device="cuda", dtype=torch.float32)[:, ::2, ::2]
+        assert not tensor.is_contiguous()
+        expected = (tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+
+        detections = _DummyRFDETR().predict(tensor)
+        actual = detections.metadata["source_image"]
+
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.strides == expected.strides
+        assert actual.flags.owndata == expected.flags.owndata
+        assert actual.flags.writeable == expected.flags.writeable
+        assert actual.tobytes() == expected.tobytes()
+
+    @pytest.mark.gpu
+    def test_cuda_source_image_nan_conversion_emits_no_warning(self) -> None:
+        """The on-device cast does not emit NumPy's incidental invalid-cast RuntimeWarning that the old CPU cast did."""
+        tensor = torch.full((3, 4, 5), torch.nan, device="cuda", dtype=torch.float32)
+        expected = np.zeros((4, 5, 3), dtype=np.uint8)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            detections = _DummyRFDETR().predict(tensor)
+        assert caught == []
+        assert "source_image" in detections.metadata
+        actual = detections.metadata["source_image"]
+        assert actual.shape == expected.shape
+        assert actual.dtype == expected.dtype
+        assert actual.tobytes() == expected.tobytes()
+
     def test_tensor_with_negative_values_raises(self) -> None:
         """Tensor with negative pixel values raises ValueError."""
         tensor = torch.full((3, 48, 64), -0.1)
@@ -805,6 +895,145 @@ class TestPredictImagePinning:
         assert not any(captured), "CUDA tensor -> CPU-model transfer must not set non_blocking=True"
 
 
+class TestPredictUint8Conversion:
+    """The fused uint8 path must retain torchvision's exact conversion semantics."""
+
+    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
+    @pytest.mark.parametrize("grayscale", [False, True])
+    def test_converter_is_bit_exact_for_supported_default_dtypes(self, dtype: torch.dtype, grayscale: bool) -> None:
+        """Layout/dtype fusion and in-place division produce the same raw floating-point bits."""
+        rng = np.random.default_rng(20260821)
+        image = rng.integers(0, 256, size=(17, 29, 3), dtype=np.uint8)[:, ::2]
+        if grayscale:
+            image = image[:, :, 0]
+        previous_dtype = torch.get_default_dtype()
+        try:
+            torch.set_default_dtype(dtype)
+            expected = F.to_tensor(image)
+            actual = detr_module._uint8_image_to_tensor(image)
+        finally:
+            torch.set_default_dtype(previous_dtype)
+
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
+        assert actual.stride() == expected.stride()
+        assert actual.contiguous().view(torch.uint8).equal(expected.contiguous().view(torch.uint8))
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            pytest.param(PIL.Image.new("RGB", (29, 17), color=(1, 127, 255)), id="pil_rgb"),
+            pytest.param(np.full((17, 29, 3), 127, dtype=np.uint8), id="numpy_uint8"),
+        ],
+    )
+    @pytest.mark.parametrize("include_source_image", [False, True])
+    def test_predict_uses_fused_path_for_uint8_images(self, image: object, include_source_image: bool) -> None:
+        """PIL and valid uint8 NumPy inputs do not fall back to torchvision's allocating path."""
+        model = _DummyRFDETR()
+        to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
+
+        with patch("rfdetr.detr.F.to_tensor", to_tensor_spy):
+            model.predict(image, include_source_image=include_source_image)
+
+        to_tensor_spy.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            pytest.param(np.full((17, 29), 127, dtype=np.uint8), id="numpy_uint8_grayscale"),
+            pytest.param(np.full((17, 29, 1), 127, dtype=np.uint8), id="numpy_uint8_single_channel_hwc"),
+        ],
+    )
+    def test_predict_uses_fused_path_for_single_channel_uint8_images(self, image: np.ndarray[Any, Any]) -> None:
+        """One-channel uint8 images use the fused converter at the public ``predict()`` boundary."""
+        model = _DummyRFDETR()
+        model.model_config.num_channels = 1
+        model.means = model.means[:1]
+        model.stds = model.stds[:1]
+        to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
+
+        with (
+            patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy,
+            patch("rfdetr.detr.F.to_tensor", to_tensor_spy),
+        ):
+            model.predict(image)
+
+        converter_spy.assert_called_once_with(image)
+        to_tensor_spy.assert_not_called()
+
+    def test_converter_matches_torchvision_for_contiguous_single_channel_hwc(self) -> None:
+        """A freshly-allocated (not sliced) ``(H, W, 1)`` array exercises ``num_channels=1`` models
+        (``ModelConfig.num_channels``, ``config.py``).
+
+        Unlike a channel-sliced view, this array is already C-contiguous on input, which is exactly when torchvision's
+        own ``to_tensor`` leaves the size-1 leading dimension's stride un-normalized -- so equivalence is checked on
+        every dimension that actually has memory-layout meaning (size > 1), plus dtype/shape/contiguity/raw bits.
+        """
+        rng = np.random.default_rng(20260821)
+        image = rng.integers(0, 256, size=(17, 29, 1), dtype=np.uint8)
+
+        expected = F.to_tensor(image)
+        actual = detr_module._uint8_image_to_tensor(image)
+
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
+        assert actual.is_contiguous() == expected.is_contiguous()
+        assert actual.stride()[1:] == expected.stride()[1:]
+        assert actual.contiguous().view(torch.uint8).equal(expected.contiguous().view(torch.uint8))
+
+    def test_predict_reuses_pil_source_array_for_conversion(self) -> None:
+        """Default PIL prediction converts the same NumPy allocation retained as source metadata."""
+        model = _DummyRFDETR()
+        image = PIL.Image.new("RGB", (29, 17), color=(1, 127, 255))
+
+        with patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy:
+            detections = model.predict(image)
+
+        converter_spy.assert_called_once()
+        assert converter_spy.call_args.args[0] is detections.metadata["source_image"]
+
+    def test_predict_keeps_original_readonly_numpy_as_tensor_source(self) -> None:
+        """NumPy conversion retains the caller's storage, so it still triggers ``torch.from_numpy``'s not-writable
+        ``UserWarning`` exactly like ``F.to_tensor`` would on the same array."""
+        model = _DummyRFDETR()
+        image = np.full((17, 29, 3), 127, dtype=np.uint8)
+        image.flags.writeable = False
+
+        with (
+            patch("rfdetr.detr._uint8_image_to_tensor", wraps=detr_module._uint8_image_to_tensor) as converter_spy,
+            pytest.warns(UserWarning, match="not writable"),
+        ):
+            detections = model.predict(image)
+
+        converter_spy.assert_called_once()
+        assert converter_spy.call_args.args[0] is image
+        assert detections.metadata["source_image"] is not image
+        assert detections.metadata["source_image"].flags.writeable
+
+    def test_predict_keeps_torchvision_fallback_for_float_numpy(self) -> None:
+        """Non-uint8 NumPy inputs retain torchvision's no-scaling conversion semantics."""
+        model = _DummyRFDETR()
+        image = np.full((17, 29, 3), 0.5, dtype=np.float32)
+
+        with patch("rfdetr.detr.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy:
+            model.predict(image)
+
+        to_tensor_spy.assert_called_once_with(image)
+
+    def test_predict_keeps_torchvision_fallback_for_invalid_uint8_numpy_rank(self) -> None:
+        """A uint8 NumPy input outside the documented 2-D/3-D shape keeps torchvision's validation error."""
+        model = _DummyRFDETR()
+        image = np.zeros((1, 3, 17, 29), dtype=np.uint8)
+
+        with (
+            patch("rfdetr.detr.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
+            pytest.raises(ValueError, match="2/3 dimensional"),
+        ):
+            model.predict(image)
+
+        to_tensor_spy.assert_called_once_with(image)
+
+
 class TestPredictPixelRangeValidation:
     """``predict()`` must still reject out-of-[0, 1]-range tensor inputs, now that the range check is deferred (see the
     ``pending_checks`` comment in ``detr.py``) instead of raised inline, per image, inside the conversion loop."""
@@ -824,6 +1053,92 @@ class TestPredictPixelRangeValidation:
         img = torch.full((3, 8, 8), 0.5)
 
         model.predict([img, img])  # must not raise
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            pytest.param(PIL.Image.new("F", (8, 8), color=10_000.0), id="pil"),
+            pytest.param(np.full((8, 8, 3), 255, dtype=np.uint8), id="uint8_numpy"),
+        ],
+    )
+    def test_known_valid_converted_image_skips_range_scans(self, image: PIL.Image.Image | np.ndarray[Any, Any]) -> None:
+        """PIL conversion and uint8 NumPy scaling already guarantee values in [0, 1]."""
+        model = _DummyRFDETR()
+
+        # ``torchvision.normalize`` has its own unrelated ``std.any()`` guard, so replace it to isolate the image-range
+        # scans exercised by this test.
+        with (
+            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
+        ):
+            model.predict(image, include_source_image=False)
+
+    def test_known_valid_url_skips_range_scans(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A successful URL fetch becomes a PIL image and must bypass range scans."""
+        model = _DummyRFDETR()
+
+        def fake_get(url: str, **kwargs: object) -> _FakeResponse:
+            """Return a valid image response for the URL conversion boundary.
+
+            Examples:
+                >>> fake_get("https://example.com/image.png").status_code
+                200
+            """
+            return _FakeResponse(content=_png_bytes(), status_code=200)
+
+        monkeypatch.setattr(requests, "get", fake_get)
+        with (
+            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
+        ):
+            model.predict("https://example.com/image.png", include_source_image=False)
+
+    def test_mixed_known_valid_and_float_numpy_images_still_check_each_image(self) -> None:
+        """A known-valid first image must not suppress a later float image's range error."""
+        model = _DummyRFDETR()
+        known_valid = PIL.Image.new("RGB", (8, 8), color=(255, 255, 255))
+        out_of_range = np.full((8, 8, 3), 1.5, dtype=np.float32)
+
+        with pytest.raises(ValueError, match="pixel values above 1"):
+            model.predict([known_valid, out_of_range], include_source_image=False)
+
+    def test_known_valid_file_path_skips_range_scans(self, tmp_path: Path) -> None:
+        """A file-path input is opened into a PIL image before the range check, so it skips the scan too."""
+        img_path = tmp_path / "known_valid.png"
+        PIL.Image.new("RGB", (8, 8), color=(255, 255, 255)).save(str(img_path))
+        model = _DummyRFDETR()
+
+        with (
+            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
+        ):
+            model.predict(str(img_path), include_source_image=False)
+
+    def test_known_valid_image_skips_range_scans_with_source_image_capture(self) -> None:
+        """The scan skip must still apply under ``include_source_image=True``, the public default."""
+        model = _DummyRFDETR()
+        image = PIL.Image.new("RGB", (8, 8), color=(255, 255, 255))
+
+        with (
+            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
+        ):
+            model.predict(image)
+
+    @pytest.mark.parametrize(
+        ("value", "expected_message"),
+        [
+            pytest.param(1.5, "pixel values above 1", id="above_one"),
+            pytest.param(-0.5, "pixel values below 0", id="below_zero"),
+        ],
+    )
+    def test_float_numpy_image_still_checks_range(self, value: float, expected_message: str) -> None:
+        """Floating NumPy input can preserve values outside [0, 1] on either bound, so it still needs validation."""
+        model = _DummyRFDETR()
+        image = np.full((8, 8, 3), value, dtype=np.float32)
+
+        with pytest.raises(ValueError, match=expected_message):
+            model.predict(image, include_source_image=False)
 
     @pytest.mark.parametrize(
         ("first_image_violation", "second_image_violation", "expected_message"),

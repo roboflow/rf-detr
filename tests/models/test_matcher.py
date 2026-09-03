@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import torch
 
+from rfdetr.models import _assignment
 from rfdetr.models import matcher as matcher_module
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import HungarianMatcher, _TargetSideSafety
@@ -1740,16 +1741,16 @@ class TestCompactPathOnCUDA:
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 class TestBatchedDetectionMatchingOnCUDA:
-    """``_match_many``'s entire reason for existing -- one pinned-memory host transfer plus a single
-    ``non_blocking``/stream-synchronize copy shared by every layer -- had zero test coverage under real CUDA kernels;
-    every ``TestBatchedDetectionMatching`` case above uses CPU tensors, which never exercises that transfer at all."""
+    """``_match_many``'s entire reason for existing -- solving every layer of a step together, under one host
+    synchronization -- had zero test coverage under real CUDA kernels; every ``TestBatchedDetectionMatching`` case above
+    uses CPU tensors, which never exercises the device path at all."""
 
     def test_match_many_matches_individual_detection_assignments_on_cuda(self) -> None:
         """Batched CUDA matching must reach the same per-image assignments as matching each layer individually.
 
         Mirrors ``TestBatchedDetectionMatching.test_match_many_matches_individual_detection_assignments`` but with
-        CUDA tensors, so the pinned host transfer and stream sync are exercised under real CUDA kernels rather than
-        assumed to behave like the CPU path.
+        CUDA tensors, so the device-resident cost build and batched solve are exercised under real CUDA kernels rather
+        than assumed to behave like the CPU path.
         """
         matcher = HungarianMatcher()
         outputs, targets = _random_detection_batch(seed=401, sizes=[2, 3])
@@ -1769,11 +1770,11 @@ class TestBatchedDetectionMatchingOnCUDA:
             _assert_same_indices(actual_indices, expected_indices)
 
     def test_match_many_declines_non_finite_pred_boxes_on_cuda(self) -> None:
-        """A CUDA layer with non-finite ``pred_boxes`` must still decline correctly after the pinned host transfer.
+        """A CUDA layer with non-finite ``pred_boxes`` must still decline before anything reaches the solver.
 
-        Proves the per-layer safety-flag row (``(target_safe & pred_safe)``, appended to each layer's cost matrix before
-        the single batched D2H copy) actually survives that copy on CUDA -- not just on CPU, where no pinned memory
-        transfer or stream synchronization is involved at all.
+        Proves the stacked safety reduction (every layer's ``target_safe & pred_safe`` plus cost-finiteness, reduced in
+        one ``bool()``) actually catches an unsafe layer under real CUDA kernels -- not just on CPU, where no device
+        synchronization is involved at all.
         """
         matcher = HungarianMatcher()
         outputs, targets = _random_detection_batch(seed=408, sizes=[2, 3])
@@ -1838,7 +1839,9 @@ class TestCompactPathCriterionEquivalence:
 
         calls = _spy_on_compact_path(monkeypatch)
         compact_losses = criterion(outputs, targets, num_boxes=1.0)
-        assert calls == [1, 1, 1, 1], "main + 2 aux layers + enc must each take the compact path once"
+        # This small batch is far under _STACKED_COST_ELEMENT_LIMIT, so _match_many serves main +
+        # 2 aux layers + enc from one stacked compact-cost pass instead of four per-layer ones.
+        assert calls == [1], "one stacked compact pass must serve main + 2 aux layers + enc"
         assert len(compact_losses) == 17, "main + 2 aux + enc, each with cardinality/class_error/bbox/giou"
         sum(compact_losses.values()).backward()
         compact_grads = [
@@ -2377,8 +2380,8 @@ class TestBatchedDetectionMatching:
     def test_match_many_matches_individual_detection_assignments(self) -> None:
         """Three decoder/encoder-like outputs must produce their usual per-image assignments.
 
-        This prevents a batched host transfer from mixing a layer's cost matrix with a neighboring layer. It fails
-        before the batched matching API exists.
+        This prevents batched solving from mixing a layer's cost matrix with a neighboring layer. It fails before the
+        batched matching API exists.
         """
         matcher = HungarianMatcher()
         outputs, targets = _random_detection_batch(seed=401, sizes=[2, 3])
@@ -2447,6 +2450,20 @@ class TestBatchedDetectionMatching:
 
         assert matcher._match_many([layer1, layer2], targets) is None
 
+    def test_match_many_declines_cross_layer_pred_logits_dtype_mismatch(self) -> None:
+        """Two layers with different logit dtypes must not share one stacked cost construction.
+
+        ``torch.cat`` promotes the logits when stacking, which subtly changes the focal classification cost for the
+        lower-precision layer. Declining preserves the established per-layer calculation instead of accepting an
+        assignment from mixed-precision arithmetic.
+        """
+        matcher = HungarianMatcher()
+        layer1, targets = _random_detection_batch(seed=419, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=420, sizes=[2, 3])
+        layer2["pred_logits"] = layer2["pred_logits"].double()
+
+        assert matcher._match_many([layer1, layer2], targets) is None
+
     def test_match_many_declines_cross_layer_pred_logits_device_mismatch(self) -> None:
         """Two otherwise-compatible layers with different ``pred_logits`` devices must decline batching.
 
@@ -2477,3 +2494,309 @@ class TestBatchedDetectionMatching:
         layer3, _ = _random_detection_batch(seed=414, sizes=[2, 3])
 
         assert matcher._match_many([layer1, layer2, layer3], targets) is None
+
+
+class TestStackedCostConstruction:
+    """``_match_many`` folds compatible layers into one stacked cost-construction pass when the padded per-layer matrix
+    is small enough; the stacked pass must match the per-layer loop numerically, and oversized batches must keep the
+    per-layer loop (stacking regresses compute-bound dense-crowd shapes — plan M2, L4)."""
+
+    def test_stacked_matrices_match_per_layer_numerically(self) -> None:
+        """The stacked pass reproduces every layer's compact cost matrix within floating-point tolerance.
+
+        Stacking changes the leading batch extent of the padded gather/cdist/GIoU operations, so PyTorch may produce
+        last-bit differences even though the resulting costs are numerically equivalent.
+        """
+        matcher = HungarianMatcher()
+        layers = []
+        for seed in (601, 602, 603):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[2, 0, 3])
+            layers.append(layer)
+        _, targets = _random_detection_batch(seed=601, sizes=[2, 0, 3])
+
+        stacked = matcher._compute_stacked_compact_cost_matrices(layers, targets)
+        expected = [
+            matcher._compute_compact_detection_cost_matrix(layer, targets, clamp_target_labels=True) for layer in layers
+        ]
+
+        assert len(stacked) == len(expected)
+        for stacked_matrix, expected_matrix in zip(stacked, expected):
+            torch.testing.assert_close(stacked_matrix, expected_matrix, rtol=1e-4, atol=1e-6)
+
+    def test_match_many_results_unchanged_by_stacking(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``_match_many`` returns identical assignments whether the stacked pass is enabled or disabled.
+
+        Forces both routes on the same inputs by toggling the element limit, so a routing bug cannot hide behind the
+        shared solver.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=611, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=612, sizes=[2, 3])
+        layers = [outputs, layer2]
+
+        stacked_result = matcher._match_many(layers, targets)
+        monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", 0)
+        loop_result = matcher._match_many(layers, targets)
+
+        assert stacked_result is not None and loop_result is not None
+        for stacked_indices, loop_indices in zip(stacked_result, loop_result):
+            _assert_same_indices(stacked_indices, loop_indices)
+
+    @pytest.mark.parametrize(
+        ("limit", "expected_cdist_calls"),
+        [
+            pytest.param(10_000_000, 1, id="under-limit-stacks-once"),
+            pytest.param(0, 2, id="over-limit-per-layer-loop"),
+        ],
+    )
+    def test_element_limit_routes_between_stacked_and_per_layer(
+        self, monkeypatch: pytest.MonkeyPatch, limit: int, expected_cdist_calls: int
+    ) -> None:
+        """The element limit decides between one stacked ``cdist`` and one ``cdist`` per layer.
+
+        Counts 3-D ``torch.cdist`` calls inside ``_match_many``: the stacked pass issues exactly one for all layers, the
+        per-layer loop one per layer. Oversized batches must take the loop because stacking measured 0.79-1.03x on dense
+        compute-bound shapes (plan M2).
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=613, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=614, sizes=[2, 3])
+        monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", limit)
+        calls: list[int] = []
+        original = torch.cdist
+
+        def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+            calls.append(1)
+            return original(x1, x2, *args, **kwargs)
+
+        monkeypatch.setattr(torch, "cdist", spy)
+
+        result = matcher._match_many([outputs, layer2], targets)
+
+        assert result is not None
+        assert len(calls) == expected_cdist_calls
+
+    @pytest.mark.parametrize(
+        ("layer_count", "expected_cdist_calls"),
+        [
+            pytest.param(5, 1, id="total-at-calibrated-limit-stacks-once"),
+            pytest.param(6, 6, id="total-over-calibrated-limit-loops-per-layer"),
+        ],
+    )
+    def test_element_limit_includes_layer_count(
+        self, monkeypatch: pytest.MonkeyPatch, layer_count: int, expected_cdist_calls: int
+    ) -> None:
+        """The stacked gate measures the full layer-folded padded matrix, not one layer.
+
+        Each layer contributes ``2 * 10 * 10 = 200`` padded elements. A 1,000-element calibration
+        therefore permits five layers but must decline six, which would allocate 1,200 elements in
+        the stacked pass. The production 350,000-element limit uses the same calculation.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=617, sizes=[10, 10], num_queries=10)
+        layers = [outputs]
+        for seed in range(618, 617 + layer_count):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[10, 10], num_queries=10)
+            layers.append(layer)
+        monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", 1_000)
+        calls: list[int] = []
+        original = torch.cdist
+
+        def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+            calls.append(1)
+            return original(x1, x2, *args, **kwargs)
+
+        monkeypatch.setattr(torch, "cdist", spy)
+
+        result = matcher._match_many(layers, targets)
+
+        assert result is not None
+        assert len(calls) == expected_cdist_calls
+
+    def test_mismatched_query_counts_fall_back_to_per_layer(self) -> None:
+        """Layers with different query counts cannot stack and must keep the per-layer loop.
+
+        ``_match_many`` never required equal query counts across layers, so the stacked pass must not introduce that
+        requirement as a crash or a wrong-shaped matrix.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=615, sizes=[2, 3], num_queries=6)
+        layer2, _ = _random_detection_batch(seed=616, sizes=[2, 3], num_queries=12)
+        layers = [outputs, layer2]
+
+        actual = matcher._match_many(layers, targets)
+        expected = [matcher(layer, targets) for layer in layers]
+
+        assert actual is not None
+        for actual_indices, expected_indices in zip(actual, expected):
+            _assert_same_indices(actual_indices, expected_indices)
+
+
+class TestGpuAssignmentBucketing:
+    """The bucketed batched solver must reproduce the SciPy per-layer loop exactly.
+
+    ``assign_many_bucketed`` regroups every ``(layer, group, image)`` problem by target count, solves each bucket as one
+    stacked call, then reassembles per-layer/per-image pairs with the group-query offsets applied. That bookkeeping —
+    not the solver — is where a wrong answer would come from, and it is device-independent: the optional dependency's
+    non-CUDA branch is SciPy, the same solver ``_assign_compact_cost_matrix`` calls. So these run on CPU, where CI and
+    developer machines can actually catch a regression, rather than only on GPU hardware.
+    """
+
+    @pytest.mark.parametrize(
+        ("sizes", "group_detr", "num_layers"),
+        [
+            pytest.param([2, 3], 1, 3, id="uniform-single-group"),
+            pytest.param([1, 4, 2], 1, 2, id="mixed-sizes"),
+            pytest.param([0, 2, 3], 1, 3, id="leading-empty-image"),
+            pytest.param([2, 0], 2, 2, id="trailing-empty-image-two-groups"),
+            pytest.param([3, 3], 3, 2, id="three-groups"),
+            pytest.param([2, 2], 2, 1, id="single-layer"),
+        ],
+    )
+    def test_matches_per_layer_scipy_assignment(self, sizes: list[int], group_detr: int, num_layers: int) -> None:
+        """Bucketed batched assignment returns byte-identical indices to solving each layer with SciPy.
+
+        Covers the combinations where the reassembly can go wrong: repeated vs mixed target counts (which decide how
+        problems bucket), images with zero targets (whose empty column slice must still occupy its batch slot), more
+        than one query group (whose row indices need a per-group offset), and a single layer (the degenerate bucket).
+        """
+        torch.manual_seed(900)
+        num_queries = 6 * group_detr
+        cost_matrices = [torch.rand(num_queries, sum(sizes)) for _ in range(num_layers)]
+
+        actual = _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr)
+
+        expected = [
+            HungarianMatcher._assign_compact_cost_matrix(cost_matrix, sizes, group_detr)
+            for cost_matrix in cost_matrices
+        ]
+        assert len(actual) == len(expected)
+        for layer_index, (actual_layer, expected_layer) in enumerate(zip(actual, expected)):
+            assert len(actual_layer) == len(expected_layer), f"layer {layer_index} returned the wrong image count"
+            _assert_same_indices(actual_layer, expected_layer)
+
+    def test_layers_with_different_query_counts_use_their_own_group_width(self) -> None:
+        """Layers whose query counts differ each keep their own group width instead of the first layer's.
+
+        ``_match_many`` has always accepted layers with unequal query counts. Deriving one group width from
+        ``cost_matrices[0]`` silently sliced every other layer at the wrong row offsets — producing a plausible but
+        wrong assignment rather than an error — so this pins the per-layer derivation.
+        """
+        torch.manual_seed(905)
+        sizes = [2, 3]
+        cost_matrices = [torch.rand(4, sum(sizes)), torch.rand(8, sum(sizes))]
+
+        actual = _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr=2)
+
+        expected = [
+            HungarianMatcher._assign_compact_cost_matrix(cost_matrix, sizes, 2) for cost_matrix in cost_matrices
+        ]
+        for actual_layer, expected_layer in zip(actual, expected):
+            _assert_same_indices(actual_layer, expected_layer)
+
+    def test_rejects_group_detr_that_does_not_divide_queries(self) -> None:
+        """An indivisible ``group_detr`` raises instead of silently mis-slicing the query dimension.
+
+        Mirrors ``_assign_compact_cost_matrix``'s existing contract: slicing queries into unequal groups would produce a
+        quietly wrong assignment rather than an error, so the failure has to be loud and it has to happen before any
+        solve work is done.
+        """
+        cost_matrix = torch.rand(7, 4)
+
+        with pytest.raises(ValueError, match="must be divisible by group_detr"):
+            _assignment.assign_many_bucketed([cost_matrix], [2, 2], group_detr=2)
+
+
+class TestGpuAssignmentPreservesEstablishedAssignments:
+    """Routing the solve through the dependency must not change any assignment the matcher already produced.
+
+    ``_match_many`` picks its solver by device: the batched dependency on CUDA, the SciPy loop everywhere else. These
+    run on CPU, so they exercise the SciPy branch and pin that dropping the pinned host buffer left the assignments
+    themselves untouched — the reorganisation must be behaviour-preserving, not merely working.
+    """
+
+    def test_forward_matches_the_full_cartesian_path(self, matcher: HungarianMatcher) -> None:
+        """``forward``'s compact path still agrees with the untouched full-cartesian fallback.
+
+        The full path is the reference implementation this optimization must never diverge from; it never routes through
+        the dependency at all, so agreement here is an end-to-end check that the compact path's result is unchanged.
+        """
+        outputs, targets = _random_detection_batch(seed=901, sizes=[2, 3])
+
+        actual = matcher(outputs, targets)
+
+        _assert_same_indices(actual, _full_path_indices(matcher, outputs, targets))
+
+    def test_match_many_matches_per_layer_forward(self, matcher: HungarianMatcher) -> None:
+        """Batched multi-layer matching still equals matching each layer on its own.
+
+        This is ``_match_many``'s core invariant and it must survive the removal of the pinned host buffer: batching
+        layers together is an optimization, never a change in what each layer matches.
+        """
+        outputs, targets = _random_detection_batch(seed=902, sizes=[2, 3])
+        layer2, _ = _random_detection_batch(seed=903, sizes=[2, 3])
+        layers = [outputs, layer2]
+
+        actual = matcher._match_many(layers, targets)
+
+        assert actual is not None
+        for actual_indices, layer in zip(actual, layers):
+            _assert_same_indices(actual_indices, matcher(layer, targets))
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+class TestGpuAssignmentOnCUDA:
+    """The device solve must agree with the host SciPy solve under real CUDA execution.
+
+    Solver choice is by device, so CUDA is the only place the batched dependency runs at all: every CPU test exercises
+    the SciPy branch instead. That leaves the Triton kernel, the device-side safety reduction, and the index-only
+    device-to-host transfer with no coverage outside this class, and makes these the genuine cross-backend parity checks
+    — CUDA answers from the kernel, CPU answers from SciPy. ``ci-tests-gpu.yml`` selects ``-m gpu``.
+    """
+
+    def test_match_many_matches_the_cpu_solve_on_cuda(self) -> None:
+        """A CUDA batch and its CPU copy produce identical assignments.
+
+        The CUDA batch is solved by the Triton kernel and the CPU copy by SciPy, so this is the exact-parity check that
+        the kernel's answer, the bucketing, and the group offsets all agree with the reference solver — a divergence
+        would otherwise show up only as silently different training targets.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=910, sizes=[2, 3])
+        layers = [outputs]
+        for seed in (911, 912):
+            layer, _ = _random_detection_batch(seed=seed, sizes=[2, 3])
+            layers.append(layer)
+        cuda_layers = [{key: value.cuda() for key, value in layer.items()} for layer in layers]
+        cuda_targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+
+        actual = matcher._match_many(cuda_layers, cuda_targets)
+
+        expected = matcher._match_many(layers, targets)
+        assert actual is not None
+        assert expected is not None
+        for actual_indices, expected_indices in zip(actual, expected):
+            _assert_same_indices(actual_indices, expected_indices)
+
+    def test_match_many_matches_the_cpu_solve_with_an_empty_image_on_cuda(self) -> None:
+        """A batch containing a zero-target image matches the CPU solve exactly on CUDA.
+
+        An empty image contributes a zero-width problem, which the solver short-circuits before reaching its kernel.
+        That branch is otherwise only exercised on CPU, and a crowded batch is exactly where a mishandled empty slot
+        would shift every following image's bucket position.
+        """
+        matcher = HungarianMatcher()
+        outputs, targets = _random_detection_batch(seed=915, sizes=[0, 3, 2])
+        layer2, _ = _random_detection_batch(seed=916, sizes=[0, 3, 2])
+        layers = [outputs, layer2]
+        cuda_layers = [{key: value.cuda() for key, value in layer.items()} for layer in layers]
+        cuda_targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+
+        actual = matcher._match_many(cuda_layers, cuda_targets)
+
+        expected = matcher._match_many(layers, targets)
+        assert actual is not None
+        assert expected is not None
+        for actual_indices, expected_indices in zip(actual, expected):
+            _assert_same_indices(actual_indices, expected_indices)

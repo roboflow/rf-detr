@@ -58,6 +58,66 @@ logger = get_logger()
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
+
+def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
+    """Convert a normalized CHW tensor into the uint8 HWC source-image representation.
+
+    For a CUDA tensor in ``float16``/``float32``/``float64`` with every dimension greater than one, the
+    multiply-then-truncate cast runs on-device before the (now ``uint8``) transfer; every other input,
+    including CPU tensors and CUDA tensors of another dtype such as ``bfloat16``, keeps the previous
+    NumPy-side conversion. NaN pixels convert successfully on both paths, but only the NumPy-side path
+    emits an incidental invalid-cast ``RuntimeWarning`` for them; the on-device path does not.
+
+    Args:
+        image: Source tensor in channel-first layout.
+
+    Returns:
+        The writable, owning NumPy array stored in prediction metadata.
+
+    Examples:
+        >>> source = _tensor_to_source_array(torch.zeros(3, 2, 2))
+        >>> source.shape
+        (2, 2, 3)
+    """
+    source_view = image.permute(1, 2, 0)
+    if (
+        image.device.type == "cuda"
+        and image.dtype in (torch.float16, torch.float32, torch.float64)
+        and all(size > 1 for size in image.shape)
+    ):
+        # Preserve the existing multiply-then-truncate result, but transfer one byte per channel instead of a
+        # floating-point image before NumPy performs the same conversion on the host.
+        # ``copy(order="K")`` retains NumPy ownership and the channel-major strides produced by the existing cast.
+        return source_view.mul(255).to(torch.uint8).cpu().numpy().copy(order="K")
+    return (source_view.cpu().numpy() * 255).astype(np.uint8)
+
+
+def _uint8_image_to_tensor(image: np.ndarray[Any, Any]) -> torch.Tensor:
+    """Convert a 2-D/3-D uint8 image to contiguous CHW floating-point storage.
+
+    This is the uint8 branch of ``torchvision.transforms.functional.to_tensor`` with its layout/dtype conversion fused
+    and division performed on fresh storage in place.
+
+    Args:
+        image: A ``(H, W)`` grayscale or ``(H, W, C)`` HWC ``uint8`` array.
+
+    Returns:
+        A contiguous ``(C, H, W)`` tensor in the current default floating-point dtype, scaled to ``[0, 1]``,
+        byte-for-byte identical to ``to_tensor``'s output. For ``C == 1`` the leading dimension's own stride
+        may differ from ``to_tensor``'s, which is immaterial: a size-1 dimension's stride has no memory-layout
+        effect.
+
+    Examples:
+        >>> arr = np.zeros((2, 2, 3), dtype=np.uint8)
+        >>> _uint8_image_to_tensor(arr).shape
+        torch.Size([3, 2, 2])
+    """
+    if image.ndim == 2:
+        image = image[:, :, None]
+    chw = torch.from_numpy(image.transpose((2, 0, 1)))
+    return chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format).div_(255)
+
+
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
@@ -2341,9 +2401,11 @@ class RFDETR:
             input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
             that copy as well.
 
-            Tensor range and shape checks are evaluated for every input. Any resulting ``ValueError`` is raised only
-            after all inputs have been inspected, so valid-shaped images later in a multi-image call still have their
-            conversion and transfer queued before an earlier validation failure raises.
+            Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.
+            PIL and uint8 NumPy images skip a redundant range scan because their byte-to-float conversion
+            guarantees values in ``[0, 1]`` for both. Any resulting ``ValueError`` is raised only after all inputs
+            have been inspected, so valid-shaped images later in a multi-image call still have their conversion and
+            transfer queued before an earlier validation failure raises.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -2382,7 +2444,7 @@ class RFDETR:
         orig_sizes: list[Any] = []
         processed_images: list[Any] = []
         source_images: list[Any] | None = [] if include_source_image else None
-        # Deferred, not skipped: `(img > 1).any()` itself is a cheap async kernel launch, but
+        # Tensor range checks stay deferred: `(img > 1).any()` itself is a cheap async kernel launch, but
         # consuming its result in `if ...:` forces Python to call `Tensor.__bool__()`, which blocks
         # the calling thread until the device catches up. For a CUDA tensor passed directly to
         # `predict()` (the documented host-round-trip-free path, see the Note above on pinning), doing
@@ -2398,7 +2460,7 @@ class RFDETR:
         # raise is deferred here too, and re-ordered after both range checks in the loop below: the
         # original code checked range before shape for a given image, and raising it eagerly here
         # would flip that precedence for any tensor that is invalid on both axes at once.
-        pending_checks: list[tuple[torch.Tensor, torch.Tensor, bool, tuple[int, ...]]] = []
+        pending_checks: list[tuple[torch.Tensor | bool, torch.Tensor | bool, bool, tuple[int, ...]]] = []
 
         for img_input in images:
             img: Any = img_input
@@ -2409,6 +2471,7 @@ class RFDETR:
                     img = io.BytesIO(resp.content)
                 img = Image.open(img)
 
+            range_known_valid = False
             if not isinstance(img, torch.Tensor):
                 # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
                 # etc.) to RGB before converting to tensor.  This matches the
@@ -2417,18 +2480,34 @@ class RFDETR:
                 # the channel dimension is the caller's responsibility.
                 if isinstance(img, Image.Image) and img.mode != "RGB":
                     img = img.convert("RGB")
+                pil_image = isinstance(img, Image.Image)
+                source_array: np.ndarray[Any, Any] | None = None
                 if include_source_image:
-                    src = np.array(img)
-                    if src.dtype != np.uint8:
-                        src = (src * 255).clip(0, 255).astype(np.uint8)
-                    source_images.append(src)  # type: ignore[union-attr]
-                img = F.to_tensor(img)
+                    source_array = np.array(img)
+                    if source_array.dtype != np.uint8:
+                        source_array = (source_array * 255).clip(0, 255).astype(np.uint8)
+                    source_images.append(source_array)  # type: ignore[union-attr]
+                uint8_array = isinstance(img, np.ndarray) and img.dtype == np.uint8
+                # PIL conversion above guarantees an 8-bit RGB image, and both conversion paths below
+                # scale PIL and uint8 NumPy storage into [0, 1]. Their range cannot fail the checks below.
+                range_known_valid = pil_image or uint8_array
+                if pil_image or (uint8_array and img.ndim in (2, 3)):
+                    # ``F.to_tensor`` first materializes contiguous CHW uint8 storage, then
+                    # allocates float storage, then allocates again for division. Convert dtype
+                    # and layout together and divide that fresh float allocation in place.
+                    if pil_image:
+                        tensor_source = (
+                            source_array if source_array is not None else np.array(img, dtype=np.uint8, copy=True)
+                        )
+                    else:
+                        tensor_source = img
+                    img = _uint8_image_to_tensor(tensor_source)
+                else:
+                    img = F.to_tensor(img)
             elif include_source_image and img.dim() == 3:
                 # Source extraction requires a (C, H, W) tensor for permute(). Skip malformed ranks so the deferred
                 # validation below raises the public shape error instead of an internal RuntimeError.
-                source_images.append(  # type: ignore[union-attr]
-                    (img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-                )
+                source_images.append(_tensor_to_source_array(img))  # type: ignore[union-attr]
 
             # img.dim() != 3 is checked alongside the channel count (not just deferred as a message
             # detail) because `h, w = img_tensor.shape[1:]` a few lines down unpacks exactly 2 values --
@@ -2439,8 +2518,8 @@ class RFDETR:
             invalid_shape = img.dim() != 3 or img.shape[0] != self.model_config.num_channels
             pending_checks.append(
                 (
-                    (img > 1).any(),
-                    (img < 0).any(),
+                    False if range_known_valid else (img > 1).any(),
+                    False if range_known_valid else (img < 0).any(),
                     invalid_shape,
                     tuple(img.shape),
                 )

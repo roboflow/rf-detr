@@ -250,7 +250,7 @@ def _require_kornia() -> None:
     Raises:
         ImportError: When ``kornia`` is not installed, with an install hint.
     """
-    if not AugmentationBackend._is_kornia_available():
+    if not AugmentationBackend.KORNIA._is_available():
         raise ImportError("GPU augmentation requires kornia. Install with: pip install 'rfdetr[augment]'")
 
 
@@ -260,7 +260,7 @@ def _require_albu() -> None:
     Raises:
         ImportError: When ``albumentations`` is not installed, with an install hint.
     """
-    if not AugmentationBackend._is_albu_available():
+    if not AugmentationBackend.ALBU._is_available():
         raise ImportError(
             "Custom Albumentations augmentations require albumentations. Install with: pip install 'rfdetr[augment]'"
         )
@@ -422,6 +422,95 @@ def _make_affine(params: dict[str, Any]) -> Any:
     )
 
 
+#: Albumentations ``ShiftScaleRotate`` options with no ``K.RandomAffine`` equivalent.
+_SHIFT_SCALE_ROTATE_IGNORED_KEYS = (
+    "interpolation",
+    "border_mode",
+    "mask_interpolation",
+    "fill",
+    "fill_mask",
+    "rotate_method",
+)
+
+
+def _as_symmetric_range(value: Any) -> tuple[float, float]:
+    """Normalise an Albumentations ``*_limit`` value to a ``(min, max)`` pair.
+
+    These parameters expand a scalar ``v`` symmetrically to ``(-v, v)`` rather than to the degenerate ``(v, v)``
+    :func:`_as_range` produces, so they need their own normalisation.
+    """
+    if isinstance(value, (list, tuple)):
+        return _as_range(value)
+    return (-float(value), float(value))
+
+
+def _make_shift_scale_rotate(params: dict[str, Any]) -> Any:
+    """Build a ``K.RandomAffine`` from aug_config ``ShiftScaleRotate`` params.
+
+    Albumentations itself calls this "a special case of Affine transform" and deprecates it in favour of ``Affine``,
+    which this backend already supports. It is mapped anyway because the CPU path still accepts the name, so a config
+    using it trains on a CPU box and raises on a GPU box; new configs should prefer ``Affine``.
+
+    The three limits do **not** pass through to :func:`_make_affine`'s parameters unchanged, which is the whole reason
+    this needs its own builder rather than an alias:
+
+    - ``scale_limit`` is a delta biased by 1, not an absolute multiplier. Albumentations samples from
+      ``(1 + low, 1 + high)``, so the documented default ``(-0.1, 0.1)`` means a scale between ``0.9`` and ``1.1``.
+      Kornia's ``scale`` is the absolute multiplier range, so the pivot is applied here. Forwarding the raw value
+      would ask Kornia to scale the image to between a tenth of its size and nothing at all. This is the same
+      1.0-pivot that :func:`_make_sharpen` applies to ``alpha``.
+    - ``shift_limit`` is a signed fraction range, while Kornia's ``translate`` is a non-negative per-axis maximum
+      sampled symmetrically, so it is converted the same way :func:`_make_affine` converts ``translate_percent``.
+      ``shift_limit_x`` and ``shift_limit_y`` override it per axis, with ``None`` preserving the shared limit as it
+      does on the Albumentations backend. Kornia cannot represent an asymmetric shift interval, so this builder uses
+      the greatest absolute bound and logs that distributional approximation.
+    - all three accept a scalar as a symmetric range, unlike the ``(v, v)`` reading :func:`_as_range` gives.
+    """
+    from kornia.augmentation import RandomAffine
+
+    ignored = [k for k in _SHIFT_SCALE_ROTATE_IGNORED_KEYS if k in params]
+    if ignored:
+        logger.warning(
+            "GPU augmentation (Kornia) ShiftScaleRotate ignores %s "
+            "(Kornia's RandomAffine exposes only the geometric parameters). "
+            "CPU augmentation (albumentations) honors them.",
+            ", ".join(repr(k) for k in ignored),
+        )
+
+    shift = _as_symmetric_range(params.get("shift_limit", (-0.0625, 0.0625)))
+    shift_x_value = params.get("shift_limit_x")
+    shift_y_value = params.get("shift_limit_y")
+    shift_x = _as_symmetric_range(shift_x_value) if shift_x_value is not None else shift
+    shift_y = _as_symmetric_range(shift_y_value) if shift_y_value is not None else shift
+    configured_limits = (
+        ("shift_limit", shift, "shift_limit" in params),
+        ("shift_limit_x", shift_x, shift_x_value is not None),
+        ("shift_limit_y", shift_y, shift_y_value is not None),
+    )
+    asymmetric_limits = [
+        name for name, bounds, is_configured in configured_limits if is_configured and bounds[0] != -bounds[1]
+    ]
+    if asymmetric_limits:
+        logger.warning(
+            "GPU augmentation (Kornia) ShiftScaleRotate approximates asymmetric %s with a symmetric range using "
+            "the greatest absolute limit. CPU augmentation (Albumentations) preserves the requested distribution.",
+            ", ".join(repr(name) for name in asymmetric_limits),
+        )
+    translate = (
+        max(abs(shift_x[0]), abs(shift_x[1])),
+        max(abs(shift_y[0]), abs(shift_y[1])),
+    )
+
+    scale_low, scale_high = _as_symmetric_range(params.get("scale_limit", (-0.1, 0.1)))
+
+    return RandomAffine(
+        degrees=_as_symmetric_range(params.get("rotate_limit", (-45, 45))),
+        translate=translate,
+        scale=(1.0 + scale_low, 1.0 + scale_high),
+        p=params.get("p", 0.5),
+    )
+
+
 def _make_color_jitter(params: dict[str, Any]) -> Any:
     """Build a ``K.ColorJiggle`` from aug_config ``ColorJitter`` params.
 
@@ -481,8 +570,18 @@ def _make_gaussian_blur(params: dict[str, Any]) -> Any:
 
     # Shared with Blur: a (min, max) pair collapses to its upper bound, forced odd and >= 3.
     blur_limit = _as_odd_kernel(params.get("blur_limit", 3), "GaussianBlur")
-    # Match the CPU albumentations default sigma range while allowing an explicit override via config.
-    sigma_range = params.get("sigma", (0.1, 2.0))
+    if "sigma" in params:
+        sigma_range = params["sigma"]
+    else:
+        # The supported Albumentations range has version-dependent defaults. Read the installed CPU transform so a
+        # shared config stays aligned whenever both optional augmentation backends are available; otherwise retain
+        # Kornia's original default for GPU-only installations. AUG_INDUSTRIAL reaches this branch.
+        if AugmentationBackend.ALBU._is_available():
+            import albumentations
+
+            sigma_range = albumentations.GaussianBlur().sigma_limit
+        else:
+            sigma_range = (0.1, 2.0)
     blur_sigma = _as_range(sigma_range)
     return RandomGaussianBlur(
         kernel_size=(blur_limit, blur_limit),
@@ -500,7 +599,10 @@ def _make_gauss_noise(params: dict[str, Any]) -> Any:
     """
     from kornia.augmentation import RandomGaussianNoise
 
-    std_range = _as_range(params.get("std_range", (0.01, 0.05)))
+    # Default to the CPU (albumentations) GaussNoise std_range default, (0.2, 0.44), on the 0-1 image
+    # scale both backends use. Kornia still fixes its std at the upper bound, while the CPU path samples
+    # the range; the warning below makes that unavoidable distribution difference visible.
+    std_range = _as_range(params.get("std_range", (0.2, 0.44)))
     if std_range[0] != std_range[1]:
         logger.warning(
             "GPU augmentation (Kornia) uses fixed std=%.3f for GaussianNoise "
@@ -581,18 +683,58 @@ def _make_equalize(params: dict[str, Any]) -> Any:
     return RandomEqualize(p=params.get("p", 0.5))
 
 
+def _as_clahe_clip_limit(value: Any) -> tuple[float, float]:
+    """Normalise ``CLAHE``'s ``clip_limit`` the way Albumentations does.
+
+    Albumentations applies ``to_tuple(clip_limit, low=1)``, so a scalar ``v`` means the range ``(1, v)``. This differs
+    from :func:`_as_range`, which expands a scalar to the degenerate ``(v, v)``; using that here would change the
+    distribution rather than the units.
+
+    Args:
+        value: A scalar, or a 2-element ``(min, max)`` pair.
+
+    Returns:
+        The ``(min, max)`` pair Albumentations would sample from for the same config.
+
+    Raises:
+        ValueError: If *value* is a sequence of any length other than two. Albumentations validates ``clip_limit`` as
+            either a float or an exact 2-tuple and rejects ``[4.0]``, so accepting it here (as a scalar, via
+            :func:`_as_range`) would make the same config train on the GPU backend and fail on the CPU one. The point
+            of this helper is that the two agree.
+
+    Examples:
+        >>> _as_clahe_clip_limit(4.0)
+        (1.0, 4.0)
+        >>> _as_clahe_clip_limit((2.0, 6.0))
+        (2.0, 6.0)
+    """
+    if isinstance(value, (list, tuple)):
+        if len(value) != 2:
+            raise ValueError(
+                "CLAHE clip_limit must be a scalar or a 2-element (min, max) pair; "
+                f"got a {len(value)}-element sequence: {value!r}. Albumentations rejects this too, so the CPU "
+                "(albumentations) backend would fail on the same config."
+            )
+        return (float(value[0]), float(value[1]))
+    # A scalar means the range (1, v), which is what `to_tuple(v, low=1)` produces.
+    return (1.0, float(value))
+
+
 def _make_clahe(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomClahe`` from aug_config ``CLAHE`` params.
 
-    Both parameters map directly: Albumentations' ``clip_limit`` (a scalar or a pair) becomes Kornia's ``clip_limit``
-    range, and ``tile_grid_size`` becomes ``grid_size``.
+    ``tile_grid_size`` becomes ``grid_size`` directly. ``clip_limit`` needs care: Albumentations reads a scalar ``v`` as
+    the range ``(1, v)`` and samples from it, not as the fixed value ``v``. Passing it through :func:`_as_range` would
+    produce the degenerate ``(v, v)`` and pin the GPU path to maximum contrast enhancement on every sample while the CPU
+    path varied it — and since ``4.0`` is the default on both sides, that divergence applied to the default
+    configuration rather than only to unusual ones. A pair is already a range and is used as given.
     """
     import kornia.augmentation as kornia_augmentation
 
     random_clahe = cast(Any, kornia_augmentation).RandomClahe
     grid = params.get("tile_grid_size", (8, 8))
     return random_clahe(
-        clip_limit=_as_range(params.get("clip_limit", 4.0)),
+        clip_limit=_as_clahe_clip_limit(params.get("clip_limit", 4.0)),
         grid_size=(int(grid[0]), int(grid[1])),
         p=params.get("p", 0.5),
     )
@@ -674,6 +816,7 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "VerticalFlip": _make_vertical_flip,
     "Rotate": _make_rotate,
     "Affine": _make_affine,
+    "ShiftScaleRotate": _make_shift_scale_rotate,
     "ColorJitter": _make_color_jitter,
     "ToGray": _make_to_gray,
     "RandomBrightnessContrast": _make_random_brightness_contrast,
