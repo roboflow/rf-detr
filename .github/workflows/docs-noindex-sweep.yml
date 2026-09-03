@@ -50,7 +50,6 @@ jobs:
           fetch-depth: 1
 
       - name: 🏷️ Inject noindex
-        id: sweep
         run: |
           set -euo pipefail
           META='<meta name="robots" content="noindex, follow">'
@@ -83,28 +82,19 @@ jobs:
             done < <(find "$VERSION" -name '*.html' -print0)
           done
           echo "patched=$PATCHED skipped=$SKIPPED"
-          echo "patched=$PATCHED" >> "$GITHUB_OUTPUT"
-          if [ "$PATCHED" -gt 0 ]; then
-            git diff --stat
-          fi
+          git diff --stat
 
-      # Only a dispatched run with dry_run=false mutates gh-pages; a pull_request run has no
-      # matching condition and therefore stops after reporting the diff above.
       - name: 📤 Commit and push
-        if: >-
-          github.event_name == 'workflow_dispatch' &&
-          inputs.dry_run == false &&
-          steps.sweep.outputs.patched != '0'
+        # A pull_request run never matches, so it stops after the report above.
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == false
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -u
-          git commit -m "chore(docs): noindex archived doc versions (${{ steps.sweep.outputs.patched }} pages)"
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(docs): noindex archived doc versions"
           git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)
-
-      - name: 📝 Report dry run
-        if: >-
-          !(github.event_name == 'workflow_dispatch' && inputs.dry_run == false) &&
-          steps.sweep.outputs.patched != '0'
-        run: echo "::notice::Dry run - ${{ steps.sweep.outputs.patched }} files would be patched. Dispatch this workflow with dry_run=false to commit."
