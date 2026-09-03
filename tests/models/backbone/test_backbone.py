@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
@@ -194,6 +197,28 @@ class TestBackboneLevelMask:
         assert level.shape == (3, 10, 20)
         assert level.dtype == torch.bool
         assert level.device == feat.device
+
+    @pytest.mark.parametrize("no_padding", [True, False])
+    def test_forward_propagates_no_padding_to_feature_batches(self, no_padding: bool) -> None:
+        """The backbone must preserve the collate-time claim for position encoding consumers."""
+        nested = NestedTensor(
+            torch.rand(2, 3, 32, 32),
+            torch.zeros(2, 32, 32, dtype=torch.bool),
+            no_padding,
+        )
+        feature = torch.rand(2, 8, 8, 8)
+        backbone = MagicMock()
+        backbone.encoder.return_value = [feature]
+        backbone.projector.return_value = [feature]
+        backbone.cross_attn_projector = None
+        backbone._level_mask = Backbone._level_mask
+
+        outputs, cross_attention_outputs = Backbone.forward(backbone, nested)
+
+        assert cross_attention_outputs is None
+        assert len(outputs) == 1
+        assert outputs[0].no_padding is no_padding
+        assert outputs[0].mask is not None
 
     def test_matches_unflagged_after_default_config_batch_uniform_resize(self) -> None:
         """The shortcut still agrees with the interpolation after the real default-training mutation.

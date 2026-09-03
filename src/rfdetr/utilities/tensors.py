@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from functools import partial
 from types import MappingProxyType
-from typing import Any, overload
+from typing import Any, cast, overload
 
 import torch
 import torchvision
@@ -119,13 +119,14 @@ class NestedTensor:
 
 
 def nested_tensor_from_tensor_list(
-    tensor_list: list[Tensor],
+    tensor_list: list[Tensor] | Tensor,
     block_size: int | None = None,
 ) -> NestedTensor:
-    """Pad a list of variable-size tensors into a single NestedTensor.
+    """Pack image tensors into a single NestedTensor, padding when needed.
 
     Args:
-        tensor_list: List of 3-D tensors (C, H, W) with possibly different H, W.
+        tensor_list: List of 3-D ``(C, H, W)`` tensors with possibly different spatial sizes,
+            or one 4-D ``(B, C, H, W)`` batch tensor.
         block_size: When set, round the padded ``H`` and ``W`` up to the next
             multiple of *block_size* before allocating the batch tensor.  Used to satisfy backbone divisibility
             requirements (e.g. windowed-attention backbones require ``H % (patch_size * num_windows) == 0``).  The
@@ -138,27 +139,28 @@ def nested_tensor_from_tensor_list(
         the NestedTensor. A non-contiguous 4-D batch instead gets an independent, contiguous copy, like every
         other input shape.
     """
+    images = cast(Sequence[Tensor], tensor_list)
     # TODO make this more general
-    if tensor_list[0].ndim == 3:
+    if images[0].ndim == 3:
         if torchvision._is_tracing():
             # nested_tensor_from_tensor_list() does not export well to ONNX
             # call _onnx_nested_tensor_from_tensor_list() instead
-            return _onnx_nested_tensor_from_tensor_list(tensor_list, block_size=block_size)
+            return _onnx_nested_tensor_from_tensor_list(images, block_size=block_size)
 
         # TODO make it support different-sized images
-        max_size = _max_by_axis([list(img.shape) for img in tensor_list])
+        max_size = _max_by_axis([list(img.shape) for img in images])
         if block_size is not None:
             max_size[1] = _round_up_to_multiple(max_size[1], block_size)
             max_size[2] = _round_up_to_multiple(max_size[2], block_size)
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
-        batch_shape = [len(tensor_list)] + max_size
+        batch_shape = [len(images)] + max_size
         b, c, h, w = batch_shape
-        dtype = tensor_list[0].dtype
-        device = tensor_list[0].device
+        dtype = images[0].dtype
+        device = images[0].device
         # Every image already fills the padded extent whenever no image is smaller than the
         # per-axis maximum and block-size rounding added nothing. That is decided here from
         # Python-side shapes alone, so the resulting all-False mask is known without reading it.
-        no_padding = all(list(img.shape) == max_size for img in tensor_list)
+        no_padding = all(list(img.shape) == max_size for img in images)
         if no_padding and isinstance(tensor_list, Tensor) and tensor_list.is_contiguous():
             # The batch tensor already *is* the padded batch: torch.zeros(batch_shape) followed by
             # a full-extent copy_ of every image reproduces it element for element. Skip the
@@ -175,7 +177,7 @@ def nested_tensor_from_tensor_list(
             if no_padding
             else torch.ones((b, h, w), dtype=torch.bool, device=device)
         )
-        for img, pad_img, m in zip(tensor_list, tensor, mask):
+        for img, pad_img, m in zip(images, tensor, mask):
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
             if not no_padding:
                 m[: img.shape[1], : img.shape[2]] = False
@@ -188,13 +190,13 @@ def nested_tensor_from_tensor_list(
 # nested_tensor_from_tensor_list() that is supported by ONNX tracing.
 @torch.jit.unused
 def _onnx_nested_tensor_from_tensor_list(
-    tensor_list: list[Tensor],
+    tensor_list: Sequence[Tensor],
     block_size: int | None = None,
 ) -> NestedTensor:
     """ONNX-tracing-compatible variant of ``nested_tensor_from_tensor_list``.
 
     Args:
-        tensor_list: List of 3-D tensors (C, H, W).
+        tensor_list: List of 3-D ``(C, H, W)`` tensors or one 4-D ``(B, C, H, W)`` batch tensor.
         block_size: When set, round ``H`` and ``W`` up to the next multiple of
             this value before padding.  See :func:`nested_tensor_from_tensor_list`.
 
