@@ -23,7 +23,10 @@ Scope:
     banner rules and its ``extra_javascript`` list no ``version-banner.js``, so an injected
     banner would render in Material's default yellow, left-aligned, with the header
     overlapping it. Once a tree is rebuilt both patches detect the native content and skip.
-    ``latest`` is never touched.
+    ``latest`` is never touched, and neither is the highest numbered directory: ``mike``
+    publishes each release both under its own number and under ``latest``, so a reader there
+    is on the current release. An earlier run that did banner it is undone by
+    ``strip_from_current_release``.
 Usage:
     Run ``python .github/scripts/inject_outdated_banner.py <gh-pages checkout root>``.
     Safe to re-run: previously injected content is replaced in place (so wording or style
@@ -159,7 +162,7 @@ VERSION_BANNER_JS = (Path(__file__).resolve().parents[2] / "docs" / "javascripts
 )
 
 
-def _archived_version_dirs(root: Path) -> list[Path]:
+def _numeric_version_dirs(root: Path) -> list[Path]:
     """Return numeric version directories under a gh-pages checkout, sorted.
 
     Args:
@@ -173,29 +176,78 @@ def _archived_version_dirs(root: Path) -> list[Path]:
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     (Path(tmp) / "1.2.3").mkdir()
         ...     (Path(tmp) / "latest").mkdir()
-        ...     [d.name for d in _archived_version_dirs(Path(tmp))]
+        ...     [d.name for d in _numeric_version_dirs(Path(tmp))]
         ['1.2.3']
     """
     return sorted(d for d in root.iterdir() if d.is_dir() and d.name[:1].isdigit())
 
 
-def _version_dirs(root: Path) -> list[Path]:
-    """Return ``develop`` plus numeric version directories, sorted.
+def _release_sort_key(name: str) -> tuple[int, ...]:
+    """Return the numeric components of a version directory name, for ordering.
+
+    Args:
+        name: Version directory name, such as ``1.10.0``.
+
+    Returns:
+        The name's integer components, so 1.10.0 sorts above 1.9.4 (plain string order
+        would put them the other way round).
+
+    Examples:
+        >>> sorted(["1.9.4", "1.10.0"], key=_release_sort_key)
+        ['1.9.4', '1.10.0']
+    """
+    return tuple(int(part) for part in re.findall(r"\d+", name))
+
+
+def current_release_dir(root: Path) -> Path | None:
+    """Return the version directory holding the current release, if there is one.
+
+    ``mike`` publishes each release both under its own version number and under ``latest``,
+    so the highest numbered directory is the same documentation ``latest/`` serves. A reader
+    there is on the current release and must not be told they are reading an old version.
 
     Args:
         root: Root of the gh-pages checkout.
 
     Returns:
-        Directories that should carry the banner markup.
+        The highest numbered version directory, or None when no numbered directory exists.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     (Path(tmp) / "1.9.4").mkdir()
+        ...     (Path(tmp) / "1.10.0").mkdir()
+        ...     current_release_dir(Path(tmp)).name
+        '1.10.0'
+    """
+    numbered = _numeric_version_dirs(root)
+    if not numbered:
+        return None
+    return max(numbered, key=lambda d: _release_sort_key(d.name))
+
+
+def _version_dirs(root: Path) -> list[Path]:
+    """Return every directory whose readers should see the outdated-version banner.
+
+    That is ``develop`` plus the superseded numbered releases — never ``latest`` and never
+    the current release's own directory.
+
+    Args:
+        root: Root of the gh-pages checkout.
+
+    Returns:
+        Directories that should carry the banner.
 
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     (Path(tmp) / "develop").mkdir()
+        ...     (Path(tmp) / "1.2.3").mkdir()
         ...     [d.name for d in _version_dirs(Path(tmp))]
         ['develop']
     """
-    dirs = _archived_version_dirs(root)
+    current = current_release_dir(root)
+    dirs = [d for d in _numeric_version_dirs(root) if d != current]
     develop = root / "develop"
     if develop.is_dir():
         dirs = sorted([*dirs, develop])
@@ -216,6 +268,7 @@ def patch_tree(root: Path) -> list[Path]:
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     page = Path(tmp) / "1.2.3" / "index.html"
         ...     page.parent.mkdir(parents=True)
+        ...     (Path(tmp) / "1.3.0").mkdir()  # the current release, never banner-ed
         ...     _ = page.write_text('<div data-md-component="outdated" hidden></div>')
         ...     len(patch_tree(Path(tmp)))
         1
@@ -250,6 +303,7 @@ def patch_stylesheets(root: Path) -> list[Path]:
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     css = Path(tmp) / "1.2.3" / "stylesheets" / "rf.css"
         ...     css.parent.mkdir(parents=True)
+        ...     (Path(tmp) / "1.3.0").mkdir()  # the current release, never styled
         ...     _ = css.write_text("body { color: red; }\\n")
         ...     len(patch_stylesheets(Path(tmp)))
         1
@@ -310,6 +364,7 @@ def patch_scripts(root: Path) -> list[Path]:
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     page = Path(tmp) / "1.2.3" / "index.html"
         ...     page.parent.mkdir(parents=True)
+        ...     (Path(tmp) / "1.3.0").mkdir()  # the current release, never scripted
         ...     _ = page.write_text("<body></body>")
         ...     len(patch_scripts(Path(tmp)))
         2
@@ -335,6 +390,57 @@ def patch_scripts(root: Path) -> list[Path]:
     return changed
 
 
+def strip_from_current_release(root: Path) -> list[Path]:
+    """Undo a previous run that banner-ed the directory now holding the current release.
+
+    An earlier backfill treated every numbered directory as superseded, so the release that
+    is now current carries an "older version" warning it must not show. Only content bounded
+    by this script's own markers is removed, so a genuine build is never touched. The copied
+    `version-banner.js` and its script tag are left in place: with no banner markup left to
+    measure the script is inert, and removing the file would break the tag that references it.
+
+    Args:
+        root: Root of the gh-pages checkout.
+
+    Returns:
+        The files that were changed, for the caller to report against.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     page = Path(tmp) / "1.2.3" / "index.html"
+        ...     page.parent.mkdir(parents=True)
+        ...     _ = page.write_text(
+        ...         '<div data-md-component="outdated" hidden>'
+        ...         + _aside(ARCHIVED_TEXT)
+        ...         + "</div>"
+        ...     )
+        ...     len(strip_from_current_release(Path(tmp)))
+        1
+    """
+    current = current_release_dir(root)
+    if current is None:
+        return []
+    changed: list[Path] = []
+    for html_file in current.rglob("*.html"):
+        original = html_file.read_text(encoding="utf-8")
+        if _MARKER_START not in original:
+            continue
+        patched = BANNER_DIV_RE.sub(lambda m: f"{m.group(1)}></div>", original)
+        if patched != original:
+            html_file.write_text(patched, encoding="utf-8")
+            changed.append(html_file)
+    css_file = current / "stylesheets" / "rf.css"
+    if css_file.is_file():
+        original = css_file.read_text(encoding="utf-8")
+        if _CSS_MARKER_START in original:
+            patched = f"{CSS_BLOCK_RE.sub(lambda _m: '', original).rstrip()}\n"
+            if patched != original:
+                css_file.write_text(patched, encoding="utf-8")
+                changed.append(css_file)
+    return changed
+
+
 def main() -> int:
     """Patch the gh-pages tree named on the command line and report what changed.
 
@@ -349,10 +455,12 @@ def main() -> int:
     changed_html = patch_tree(root)
     changed_css = patch_stylesheets(root)
     changed_js = patch_scripts(root)
+    stripped = strip_from_current_release(root)
     print(
         f"patched {len(changed_html)} page(s) with banner markup, "
         f"{len(changed_css)} stylesheet(s) with banner styling, "
-        f"{len(changed_js)} file(s) with the sticky-offset script"
+        f"{len(changed_js)} file(s) with the sticky-offset script, "
+        f"cleared a stale banner from {len(stripped)} file(s) under the current release"
     )
     return 0
 

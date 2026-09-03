@@ -19,7 +19,7 @@ EMPTY_PAGE = (
 
 @pytest.fixture
 def gh_pages(tmp_path: Path) -> Path:
-    """A gh-pages tree with an archived version, develop, latest, and a nested page.
+    """A gh-pages tree with a superseded release, the current release, develop, and latest.
 
     Examples:
         >>> gh_pages  # doctest: +SKIP
@@ -28,13 +28,14 @@ def gh_pages(tmp_path: Path) -> Path:
     for relative in (
         "1.3.0/index.html",
         "1.3.0/learn/index.html",
+        "1.9.4/index.html",
         "develop/index.html",
         "latest/index.html",
     ):
         page = tmp_path / relative
         page.parent.mkdir(parents=True, exist_ok=True)
         page.write_text(EMPTY_PAGE, encoding="utf-8")
-    for version in ("1.3.0", "develop"):
+    for version in ("1.3.0", "1.9.4", "develop"):
         stylesheet = tmp_path / version / "stylesheets" / "rf.css"
         stylesheet.parent.mkdir(parents=True, exist_ok=True)
         stylesheet.write_text("body {\n  color: red;\n}\n", encoding="utf-8")
@@ -174,3 +175,70 @@ def test_non_version_directories_are_ignored(injector: ModuleType, gh_pages: Pat
     stray.write_text(EMPTY_PAGE, encoding="utf-8")
     injector.patch_tree(gh_pages)
     assert stray.read_text(encoding="utf-8") == EMPTY_PAGE
+
+
+def test_current_release_is_not_warned_about(injector: ModuleType, gh_pages: Path) -> None:
+    # 1.9.4 is the highest numbered version, so it is what latest/ serves.
+    injector.patch_tree(gh_pages)
+    assert (gh_pages / "1.9.4" / "index.html").read_text(encoding="utf-8") == EMPTY_PAGE
+
+
+def test_current_release_stylesheet_is_not_patched(injector: ModuleType, gh_pages: Path) -> None:
+    injector.patch_stylesheets(gh_pages)
+    stylesheet = (gh_pages / "1.9.4" / "stylesheets" / "rf.css").read_text(encoding="utf-8")
+    assert "--rf-banner-height" not in stylesheet
+
+
+def test_current_release_is_the_highest_numbered_version(injector: ModuleType, gh_pages: Path) -> None:
+    assert injector.current_release_dir(gh_pages).name == "1.9.4"
+
+
+def test_double_digit_minor_outranks_single_digit(injector: ModuleType, tmp_path: Path) -> None:
+    # String order would rank 1.9.4 above 1.10.0.
+    for version in ("1.9.4", "1.10.0"):
+        (tmp_path / version).mkdir()
+
+    assert injector.current_release_dir(tmp_path).name == "1.10.0"
+
+
+def test_stale_banner_is_cleared_from_the_current_release(injector: ModuleType, gh_pages: Path) -> None:
+    # An earlier backfill treated every numbered version as superseded.
+    page = gh_pages / "1.9.4" / "index.html"
+    page.write_text(EMPTY_PAGE.replace("hidden>", f"hidden>{injector._aside(injector.ARCHIVED_TEXT)}"))
+
+    injector.strip_from_current_release(gh_pages)
+
+    assert "older version of RF-DETR" not in page.read_text(encoding="utf-8")
+
+
+def test_stale_banner_styling_is_cleared_from_the_current_release(injector: ModuleType, gh_pages: Path) -> None:
+    stylesheet = gh_pages / "1.9.4" / "stylesheets" / "rf.css"
+    injector.patch_stylesheets(gh_pages)  # no-op for the current release
+    stylesheet.write_text(
+        f"body {{\n  color: red;\n}}\n\n{injector._CSS_MARKER_START}\nx\n{injector._CSS_MARKER_END}\n"
+    )
+
+    injector.strip_from_current_release(gh_pages)
+
+    assert injector._CSS_MARKER_START not in stylesheet.read_text(encoding="utf-8")
+
+
+def test_clearing_keeps_the_current_release_stylesheet_rules(injector: ModuleType, gh_pages: Path) -> None:
+    stylesheet = gh_pages / "1.9.4" / "stylesheets" / "rf.css"
+    stylesheet.write_text(
+        f"body {{\n  color: red;\n}}\n\n{injector._CSS_MARKER_START}\nx\n{injector._CSS_MARKER_END}\n"
+    )
+
+    injector.strip_from_current_release(gh_pages)
+
+    assert "color: red;" in stylesheet.read_text(encoding="utf-8")
+
+
+def test_clearing_leaves_a_genuine_build_alone(injector: ModuleType, gh_pages: Path) -> None:
+    page = gh_pages / "1.9.4" / "index.html"
+    rebuilt = EMPTY_PAGE.replace("hidden>", 'hidden><aside class="md-banner">built</aside>')
+    page.write_text(rebuilt, encoding="utf-8")
+
+    injector.strip_from_current_release(gh_pages)
+
+    assert page.read_text(encoding="utf-8") == rebuilt
