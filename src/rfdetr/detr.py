@@ -92,30 +92,58 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
     return (source_view.cpu().numpy() * 255).astype(np.uint8)
 
 
-def _uint8_image_to_tensor(image: np.ndarray[Any, Any]) -> torch.Tensor:
-    """Convert a 2-D/3-D uint8 image to contiguous CHW floating-point storage.
+def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
+    """Return a zero-copy ``uint8`` CHW *view* of a 2-D/3-D HWC image array.
 
-    This is the uint8 branch of ``torchvision.transforms.functional.to_tensor`` with its layout/dtype conversion fused
-    and division performed on fresh storage in place.
+    This is the layout half of ``torchvision.transforms.functional.to_tensor``; the dtype half is
+    :func:`_uint8_chw_to_float`. Splitting them lets :meth:`RFDETR.predict` send the
+    1-byte-per-channel storage across the host-to-device boundary and widen it on the accelerator,
+    instead of widening it 4x on the host and transferring that.
 
     Args:
         image: A ``(H, W)`` grayscale or ``(H, W, C)`` HWC ``uint8`` array.
 
     Returns:
-        A contiguous ``(C, H, W)`` tensor in the current default floating-point dtype, scaled to ``[0, 1]``,
-        byte-for-byte identical to ``to_tensor``'s output. For ``C == 1`` the leading dimension's own stride
-        may differ from ``to_tensor``'s, which is immaterial: a size-1 dimension's stride has no memory-layout
-        effect.
+        A ``(C, H, W)`` ``uint8`` tensor sharing *image*'s storage.
 
     Examples:
         >>> arr = np.zeros((2, 2, 3), dtype=np.uint8)
-        >>> _uint8_image_to_tensor(arr).shape
+        >>> _uint8_image_to_chw_view(arr).shape
         torch.Size([3, 2, 2])
     """
     if image.ndim == 2:
         image = image[:, :, None]
-    chw = torch.from_numpy(image.transpose((2, 0, 1)))
-    return chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format).div_(255)
+    return torch.from_numpy(image.transpose((2, 0, 1)))
+
+
+def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Widen a ``uint8`` CHW tensor to the default float dtype and scale it into ``[0, 1]``.
+
+    Dtype and layout are converted together and the division is done in place on that fresh float
+    allocation, so the pair costs one allocation rather than ``to_tensor``'s three.
+
+    Args:
+        chw: ``(C, H, W)`` ``uint8`` tensor, on any device.
+        scale: 0-dim tensor holding ``255``, on ``chw``'s device and in the target dtype. It has to
+            be a tensor rather than the Python ``int``: CUDA evaluates ``Tensor.div_(255)`` as a
+            multiplication by ``255``'s reciprocal, which rounds differently from the host's
+            division for just under half of all byte values (126 of 256, 1 ULP). A tensor divisor
+            keeps IEEE-754 correctly rounded division on both, so the result does not depend on
+            where it was computed.
+
+    Returns:
+        A contiguous ``(C, H, W)`` tensor in the current default floating-point dtype, scaled to
+        ``[0, 1]``, byte-for-byte identical to ``to_tensor``'s output. For ``C == 1`` the leading
+        dimension's own stride may differ from ``to_tensor``'s, which is immaterial: a size-1
+        dimension's stride has no memory-layout effect.
+
+    Examples:
+        >>> chw = _uint8_image_to_chw_view(np.zeros((2, 2, 3), dtype=np.uint8))
+        >>> _uint8_chw_to_float(chw, torch.tensor(255.0)).dtype
+        torch.float32
+    """
+    widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
+    return widened.div_(scale)
 
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
@@ -2446,6 +2474,8 @@ class RFDETR:
         # original code checked range before shape for a given image, and raising it eagerly here
         # would flip that precedence for any tensor that is invalid on both axes at once.
         pending_checks: list[tuple[torch.Tensor | bool, torch.Tensor | bool, bool, tuple[int, ...]]] = []
+        # Built lazily on the first uint8 image, then shared by the rest of the batch.
+        uint8_scale: torch.Tensor | None = None
 
         for img_input in images:
             img: Any = img_input
@@ -2457,6 +2487,7 @@ class RFDETR:
                 img = Image.open(img)
 
             range_known_valid = False
+            deferred_widen = False
             if not isinstance(img, torch.Tensor):
                 # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
                 # etc.) to RGB before converting to tensor.  This matches the
@@ -2486,7 +2517,13 @@ class RFDETR:
                         )
                     else:
                         tensor_source = img
-                    img = _uint8_image_to_tensor(tensor_source)
+                    # Keep the 1-byte-per-channel storage for now: the widening to float is
+                    # deferred until after the host-to-device transfer below, so only a quarter of
+                    # the bytes cross the bus and the widen+divide run on the accelerator. The view
+                    # is already (C, H, W), so every shape check and error message below is
+                    # unchanged.
+                    img = _uint8_image_to_chw_view(tensor_source)
+                    deferred_widen = True
                 else:
                     img = F.to_tensor(img)
             elif include_source_image and img.dim() == 3:
@@ -2536,7 +2573,12 @@ class RFDETR:
             # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
             # reads of the tensor's data can observe an in-flight (partially written) copy.
             non_blocking = self.model.device.type == "cuda"
-            processed_images.append(img_tensor.to(self.model.device, non_blocking=non_blocking))
+            img_tensor = img_tensor.to(self.model.device, non_blocking=non_blocking)
+            if deferred_widen:
+                if uint8_scale is None:
+                    uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
+                img_tensor = _uint8_chw_to_float(img_tensor, uint8_scale)
+            processed_images.append(img_tensor)
 
         # Force the range-check results to Python bools only now, after every image's conversion,
         # range-check kernels, and transfer have all been queued (see the comment where
