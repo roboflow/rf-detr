@@ -1,0 +1,92 @@
+# Patch already-published doc versions on gh-pages with `<meta name="robots" content="noindex, follow">`.
+#
+# Why this exists: /latest/ is the only indexable version, enforced at build time in
+# docs/theme/main.html. Version directories published before that change are frozen HTML
+# that no future build touches, so ~25 archives keep a self-canonical and keep competing
+# with /latest/ in search results. This job rewrites them in place.
+#
+# Manual, idempotent, and safe to re-run: files that already carry a robots meta tag are
+# skipped, and `latest/` is never touched.
+
+name: Docs noindex Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report the files that would change without committing"
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # Required for committing to gh-pages
+
+jobs:
+  sweep:
+    name: Inject noindex into archived doc versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout gh-pages
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: gh-pages
+          fetch-depth: 1
+
+      - name: ⚙️ Configure git for github-actions
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 🏷️ Inject noindex
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          META='<meta name="robots" content="noindex, follow">'
+          PATCHED=0
+          SKIPPED=0
+          # Every version directory except latest/: mike keeps one directory per deployed
+          # version at the gh-pages root, so anything holding an index.html qualifies.
+          for dir in */; do
+            VERSION="${dir%/}"
+            # `[ ... ] && continue` would abort the whole step under `set -e` whenever the
+            # test is false, so both guards are written as explicit conditionals.
+            if [ "$VERSION" = "latest" ]; then
+              continue
+            fi
+            if [ ! -f "$VERSION/index.html" ]; then
+              continue
+            fi
+            while IFS= read -r -d '' page; do
+              if grep -qi 'name="robots"' "$page"; then
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+              # Only the first `<head>` is rewritten, so a docs page quoting `<head>`
+              # inside a code sample keeps its visible content untouched.
+              awk -v meta="    $META" \
+                'done_ins == 0 && /<head>/ { sub(/<head>/, "<head>\n" meta); done_ins = 1 } { print }' \
+                "$page" > "$page.tmp"
+              mv "$page.tmp" "$page"
+              PATCHED=$((PATCHED + 1))
+            done < <(find "$VERSION" -name '*.html' -print0)
+          done
+          echo "patched=$PATCHED skipped=$SKIPPED"
+          if [ "$PATCHED" -eq 0 ]; then
+            echo "Nothing to do."
+            exit 0
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            git diff --stat
+            echo "::notice::Dry run - $PATCHED files would be patched. Re-run with dry_run=false to commit."
+            exit 0
+          fi
+          git add -u
+          git commit -m "chore(docs): noindex archived doc versions ($PATCHED pages)"
+          git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)

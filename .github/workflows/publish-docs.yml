@@ -13,6 +13,11 @@
 #   - Copies robots.txt, llms.txt, llms-full.txt to gh-pages root
 #   - Regenerates sitemap.xml normalising versioned paths to /latest/
 #   - Pings IndexNow (Bing) with canonical /latest/ URLs
+#
+# Search-index consolidation: /latest/ is the only indexable version. Non-latest builds
+# carry `noindex, follow` (docs/theme/main.html), and a latest deploy re-points the site
+# root at /latest/ through a redirect template carrying a canonical link. Version dirs
+# published before that theme change are patched by .github/workflows/docs-noindex-sweep.yml.
 
 name: Build and Publish Docs
 
@@ -118,6 +123,15 @@ jobs:
             DOC_VERSION="${TARGET%.post*}"
             uv run --no-sync mike deploy --push "$DOC_VERSION"
           fi
+
+      # GitHub Pages cannot serve a 301, so the root is a client-side redirect. mike's stock
+      # template carries no canonical, which leaves the root a thin page passing nothing to
+      # /latest/; the template below adds one.
+      - name: 🔗 Point site root at /latest/
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/release/latest') ||
+          (github.event_name == 'workflow_dispatch' && inputs.target == 'release/latest')
+        run: uv run --no-sync mike set-default --push --template docs/root-static/mike-redirect.html latest
 
       - name: 🏗️ Build docs for artifact
         run: uv run --no-sync mkdocs build
