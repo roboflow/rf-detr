@@ -203,6 +203,7 @@ tests = [
   "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
   "pyyaml",  # imported by .github/_tests to parse the workflows they assert on
   "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
+  "packaging",  # imported by .github/scripts/inject_outdated_banner.py to order release dirs
   "tomli>=2.0; python_version < '3.11'",
 ]
 

@@ -92,6 +92,11 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
+      - name: 🐍 Install banner script dependencies
+        # The injector orders release directories with packaging.version, which the runner's
+        # system python3 does not ship.
+        run: python3 -m pip install --quiet --disable-pip-version-check packaging
+
       - name: 🏷️ Inject outdated-version banner, styling, and offset script
         run: |
           set -euo pipefail

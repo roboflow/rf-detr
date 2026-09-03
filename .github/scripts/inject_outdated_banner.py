@@ -23,7 +23,7 @@ Scope:
     banner rules and its ``extra_javascript`` list no ``version-banner.js``, so an injected
     banner would render in Material's default yellow, left-aligned, with the header
     overlapping it. Once a tree is rebuilt both patches detect the native content and skip.
-    ``latest`` is never touched, and neither is the highest numbered directory: ``mike``
+    ``latest`` is never touched, and neither is the newest release directory: ``mike``
     publishes each release both under its own number and under ``latest``, so a reader there
     is on the current release. An earlier run that did banner it is undone by
     ``strip_from_current_release``.
@@ -44,6 +44,8 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
+from packaging.version import InvalidVersion, Version
 
 LATEST_URL = "https://rfdetr.roboflow.com/latest"
 
@@ -162,41 +164,37 @@ VERSION_BANNER_JS = (Path(__file__).resolve().parents[2] / "docs" / "javascripts
 )
 
 
-def _numeric_version_dirs(root: Path) -> list[Path]:
-    """Return numeric version directories under a gh-pages checkout, sorted.
+def _release_version_dirs(root: Path) -> list[Path]:
+    """Return the release directories under a gh-pages checkout, oldest first.
+
+    A directory is a release when its name parses as a version, which also filters out
+    ``latest``, ``develop``, and the stray asset directories at the gh-pages root. Ordering
+    is by parsed version, so 1.10.0 follows 1.9.4 rather than preceding it as it would by
+    name.
 
     Args:
         root: Root of the gh-pages checkout.
 
     Returns:
-        Directories whose name starts with a digit, in name order.
+        Release directories in ascending version order.
 
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     (Path(tmp) / "1.2.3").mkdir()
-        ...     (Path(tmp) / "latest").mkdir()
-        ...     [d.name for d in _numeric_version_dirs(Path(tmp))]
-        ['1.2.3']
-    """
-    return sorted(d for d in root.iterdir() if d.is_dir() and d.name[:1].isdigit())
-
-
-def _release_sort_key(name: str) -> tuple[int, ...]:
-    """Return the numeric components of a version directory name, for ordering.
-
-    Args:
-        name: Version directory name, such as ``1.10.0``.
-
-    Returns:
-        The name's integer components, so 1.10.0 sorts above 1.9.4 (plain string order
-        would put them the other way round).
-
-    Examples:
-        >>> sorted(["1.9.4", "1.10.0"], key=_release_sort_key)
+        ...     for name in ("1.10.0", "1.9.4", "latest"):
+        ...         (Path(tmp) / name).mkdir()
+        ...     [d.name for d in _release_version_dirs(Path(tmp))]
         ['1.9.4', '1.10.0']
     """
-    return tuple(int(part) for part in re.findall(r"\d+", name))
+    releases: list[tuple[Version, Path]] = []
+    for candidate in root.iterdir():
+        if not candidate.is_dir():
+            continue
+        try:
+            releases.append((Version(candidate.name), candidate))
+        except InvalidVersion:
+            continue
+    return [directory for _version, directory in sorted(releases, key=lambda release: release[0])]
 
 
 def current_release_dir(root: Path) -> Path | None:
@@ -220,10 +218,10 @@ def current_release_dir(root: Path) -> Path | None:
         ...     current_release_dir(Path(tmp)).name
         '1.10.0'
     """
-    numbered = _numeric_version_dirs(root)
-    if not numbered:
+    releases = _release_version_dirs(root)
+    if not releases:
         return None
-    return max(numbered, key=lambda d: _release_sort_key(d.name))
+    return releases[-1]
 
 
 def _version_dirs(root: Path) -> list[Path]:
@@ -247,10 +245,10 @@ def _version_dirs(root: Path) -> list[Path]:
         ['develop']
     """
     current = current_release_dir(root)
-    dirs = [d for d in _numeric_version_dirs(root) if d != current]
+    dirs = [d for d in _release_version_dirs(root) if d != current]
     develop = root / "develop"
     if develop.is_dir():
-        dirs = sorted([*dirs, develop])
+        dirs = [*dirs, develop]
     return dirs
 
 

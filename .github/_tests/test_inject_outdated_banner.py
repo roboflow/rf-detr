@@ -201,6 +201,21 @@ def test_double_digit_minor_outranks_single_digit(injector: ModuleType, tmp_path
     assert injector.current_release_dir(tmp_path).name == "1.10.0"
 
 
+def test_prerelease_does_not_outrank_its_release(injector: ModuleType, tmp_path: Path) -> None:
+    for version in ("1.10.0", "1.10.0rc1"):
+        (tmp_path / version).mkdir()
+
+    assert injector.current_release_dir(tmp_path).name == "1.10.0"
+
+
+def test_named_directories_are_not_releases(injector: ModuleType, tmp_path: Path) -> None:
+    # latest/, develop/ and the stray asset dirs at the gh-pages root share the same parent.
+    for name in ("latest", "develop", "assets"):
+        (tmp_path / name).mkdir()
+
+    assert injector._release_version_dirs(tmp_path) == []
+
+
 def test_stale_banner_is_cleared_from_the_current_release(injector: ModuleType, gh_pages: Path) -> None:
     # An earlier backfill treated every numbered version as superseded.
     page = gh_pages / "1.9.4" / "index.html"
