@@ -74,10 +74,7 @@ ARCHIVED_TEXT = (
 # The backfill only patches develop and archived numeric trees, both of which need the
 # warning visible. Reveal the injected wrapper directly; a relative URL has no base in
 # `new URL()` and would abort this inline script before it reaches the banner.
-_UNHIDE_SCRIPT = (
-    '<script>var el=document.querySelector("[data-md-component=outdated]");'
-    "el&&(el.hidden=!1)</script>"
-)
+_UNHIDE_SCRIPT = '<script>var el=document.querySelector("[data-md-component=outdated]");el&&(el.hidden=!1)</script>'
 
 
 def _aside(text: str) -> str:
@@ -109,9 +106,7 @@ def _aside(text: str) -> str:
 # an already-patched stylesheet too, without stacking a second copy.
 _CSS_MARKER_START = "/* rf:outdated-banner:start */"
 _CSS_MARKER_END = "/* rf:outdated-banner:end */"
-CSS_BLOCK_RE = re.compile(
-    re.escape(_CSS_MARKER_START) + r".*?" + re.escape(_CSS_MARKER_END), re.DOTALL
-)
+CSS_BLOCK_RE = re.compile(re.escape(_CSS_MARKER_START) + r".*?" + re.escape(_CSS_MARKER_END), re.DOTALL)
 
 # Verbatim copy of the "Version banner" section of docs/stylesheets/rf.css: the purple
 # tint, centered text, and sticky positioning archived pages never got built with.
@@ -158,9 +153,9 @@ BANNER_CSS = """.md-banner,
 # can briefly overlap it before a reader scrolls. Read from the source tree rather than
 # duplicated here, so the two never drift; the sweep workflow's sparse checkout carries
 # both this script and that file.
-VERSION_BANNER_JS = (
-    Path(__file__).resolve().parents[2] / "docs" / "javascripts" / "version-banner.js"
-).read_text(encoding="utf-8")
+VERSION_BANNER_JS = (Path(__file__).resolve().parents[2] / "docs" / "javascripts" / "version-banner.js").read_text(
+    encoding="utf-8"
+)
 
 
 def _archived_version_dirs(root: Path) -> list[Path]:
@@ -230,9 +225,7 @@ def patch_tree(root: Path) -> list[Path]:
         replacement = _aside(text)
         for html_file in version_dir.rglob("*.html"):
             original = html_file.read_text(encoding="utf-8")
-            patched = BANNER_DIV_RE.sub(
-                lambda m: f"{m.group(1)}>{replacement}</div>", original
-            )
+            patched = BANNER_DIV_RE.sub(lambda m: f"{m.group(1)}>{replacement}</div>", original)
             if patched != original:
                 html_file.write_text(patched, encoding="utf-8")
                 changed.append(html_file)
@@ -316,9 +309,7 @@ def patch_scripts(root: Path) -> list[Path]:
     changed: list[Path] = []
     for version_dir in _archived_version_dirs(root):
         js_file = version_dir / "javascripts" / "version-banner.js"
-        if not js_file.is_file() or js_file.read_text(encoding="utf-8") != (
-            VERSION_BANNER_JS
-        ):
+        if not js_file.is_file() or js_file.read_text(encoding="utf-8") != (VERSION_BANNER_JS):
             js_file.parent.mkdir(parents=True, exist_ok=True)
             js_file.write_text(VERSION_BANNER_JS, encoding="utf-8")
             changed.append(js_file)
