@@ -5,11 +5,10 @@
 # ------------------------------------------------------------------------
 """Regression coverage for the coalesced GPU->CPU output transfer in ``predict()``.
 
-The existing ``predict()`` tests (``test_predict.py``) use ``_DummyModel``, whose
-``postprocess()`` builds result tensors on CPU (``helpers.py``) — that path never
-exercises the CUDA branch added to batch the output transfers, so it cannot catch an
-incomplete device->host read or a synchronization call targeting the wrong device.
-These tests require CUDA and are skipped otherwise.
+The existing ``predict()`` tests (``test_predict.py``) use ``_DummyModel``, whose ``postprocess()`` builds result
+tensors on CPU (``helpers.py``) — that path never exercises the CUDA branch added to batch the output transfers, so it
+cannot catch an incomplete device->host read or a synchronization call targeting the wrong device. These tests require
+CUDA and are skipped otherwise.
 """
 
 from __future__ import annotations
@@ -23,8 +22,6 @@ import pytest
 import torch
 
 from rfdetr.detr import RFDETR
-
-from .helpers import _BaseFakeRFDETR
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 
@@ -86,15 +83,12 @@ class TestPredictCudaTransfer:
         assert np.allclose(detections.xyxy, [[0.1, 0.2, 0.3, 0.4]] * 3, atol=1e-6)
 
     def test_synchronize_targets_the_result_tensors_own_device(self) -> None:
-        """`torch.cuda.synchronize` must be called with the device the tensors actually live
-        on, not left to default to `torch.cuda.current_device()` — the two can differ on a
-        multi-GPU host."""
+        """`torch.cuda.synchronize` must be called with the device the tensors actually live on, not left to default to
+        `torch.cuda.current_device()` — the two can differ on a multi-GPU host."""
         img = torch.rand(3, 28, 28, device="cuda:0")
         model = _CudaDummyRFDETR(pretrain_weights=None)
         with patch("torch.cuda.synchronize", wraps=torch.cuda.synchronize) as spy:
             model.predict(img, threshold=0.5)
         assert spy.call_count >= 1
         called_devices = [torch.device(c.args[0]) if c.args else None for c in spy.call_args_list]
-        assert torch.device("cuda:0") in called_devices, (
-            f"expected a synchronize(cuda:0) call, got: {called_devices}"
-        )
+        assert torch.device("cuda:0") in called_devices, f"expected a synchronize(cuda:0) call, got: {called_devices}"
