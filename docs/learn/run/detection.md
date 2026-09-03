@@ -70,6 +70,33 @@ For memory-constrained inference-only deployments with the `rfdetr` package, opt
 model.inference(compile=False, inplace=True, dtype="float16")
 ```
 
+## Extract Embeddings
+
+Pass `return_embeddings=True` to `predict()` to also get a per-detection embedding vector, gathered with the same indices used for boxes (and masks/keypoints, where applicable). This is useful for downstream tasks like similarity search, clustering, or re-identification. Embeddings are attached as `detections.data["embeddings"]` with shape `(K, H)` — one row per detection.
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium()
+
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5, return_embeddings=True)
+
+embeddings = detections.data["embeddings"]  # shape (K, H)
+```
+
+!!! note "Optimized models decide this at `inference()` time"
+
+    On a model optimized with `model.inference(...)`, the exported/traced forward pass has fixed control flow, so whether embeddings are computed can't be toggled per `predict()` call — it must match the `return_embeddings` value passed to `inference()`:
+
+    ```python
+    model.inference(compile=False, return_embeddings=True)
+    detections = model.predict(image, return_embeddings=True)
+    ```
+
+    Calling `predict(return_embeddings=...)` with a value that doesn't match the optimized model raises `RuntimeError`.
+
+For an end-to-end walkthrough — ranking mislabelled annotations, surfacing unannotated objects, and object-level similarity search — see the [Query Embeddings for Dataset Quality Auditing](../../cookbooks/embedding-extraction.ipynb) cookbook.
+
 ## Run on video, webcam, or RTSP stream
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.

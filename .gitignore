@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+visualizer
+.vscode
 
 # C extensions
 *.so
@@ -227,5 +229,10 @@ docs/cookbooks/*.py
 docs/cookbooks/export_executorch/
 docs/cookbooks/export_tensorrt/
 
+# deprecated code
+visualizer
+
+# VSCode metadata directory
+.vscode
 # MacOS files
 .DS_Store

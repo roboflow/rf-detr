@@ -120,7 +120,10 @@ class TestUnoptimizedInferenceEvalMode:
         monkeypatch.setattr(
             rfdetr.model.model,
             "forward",
-            lambda batch: {"pred_logits": torch.zeros(1, 10, 81), "pred_boxes": torch.zeros(1, 10, 4)},
+            lambda batch, return_embeddings=False: {
+                "pred_logits": torch.zeros(1, 10, 81),
+                "pred_boxes": torch.zeros(1, 10, 4),
+            },
         )
         monkeypatch.setattr(
             rfdetr.model,

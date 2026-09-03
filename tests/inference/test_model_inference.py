@@ -25,7 +25,7 @@ class _FakeModel(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
 
-    def export(self) -> None:
+    def export(self, return_embeddings: bool = False) -> None:
         pass
 
 
@@ -531,7 +531,7 @@ class TestModelInferenceExceptionRecovery:
         original_model = rfdetr.model.model
         mutated: dict[str, bool] = {"happened": False}
 
-        def _mutating_export() -> None:
+        def _mutating_export(return_embeddings: bool = False) -> None:
             mutated["happened"] = True
             raise RuntimeError("export failed mid-mutation")
 

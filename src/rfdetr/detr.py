@@ -476,6 +476,10 @@ class RFDETR:
         self._optimized_resolution: int | None = None
         self._optimized_dtype: torch.dtype | None = None
         self._optimized_inplace = False
+        # Whether the currently optimized `inference_model` was exported with embeddings enabled.
+        # Unlike the eager model, the exported/traced forward pass can't take `return_embeddings`
+        # as a runtime argument, so this is fixed at `inference()` time.
+        self._optimized_return_embeddings = False
         self._has_been_trained = False
 
     def maybe_download_pretrain_weights(self) -> None:
@@ -1268,6 +1272,7 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
+        return_embeddings: bool = False,
     ) -> None:
         """Optimize the model for inference with optional JIT compilation and dtype casting.
 
@@ -1299,6 +1304,11 @@ class RFDETR:
                 inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
                 Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
                 memory savings come only from clearing the base model reference rather than from dtype reduction.
+            return_embeddings: If ``True``, the optimized model also returns per-query embeddings from
+                ``predict(..., return_embeddings=True)``. Unlike the unoptimized model, this cannot be toggled per
+                call: the exported/traced forward pass has fixed control flow, so whether embeddings are computed
+                must be decided here, at optimization time. Calling ``predict(return_embeddings=True)`` on a model
+                optimized with ``return_embeddings=False`` (or vice versa) raises ``RuntimeError``.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
@@ -1316,7 +1326,7 @@ class RFDETR:
             ...         self.linear = torch.nn.Linear(1, 1)
             ...     def forward(self, x):
             ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
+            ...     def export(self, return_embeddings=False):
             ...         return None
             >>> class _TinyContext:
             ...     def __init__(self):
@@ -1385,7 +1395,7 @@ class RFDETR:
             with cuda_ctx:
                 inference_model: Any = self.model.model if inplace else deepcopy(self.model.model)
                 inference_model.eval()
-                inference_model.export()
+                inference_model.export(return_embeddings=return_embeddings)
 
                 inference_model = inference_model.to(dtype=dtype)
 
@@ -1416,6 +1426,7 @@ class RFDETR:
                 self._optimized_resolution = self.model.resolution
                 self._is_optimized_for_inference = True
                 self._optimized_dtype = dtype
+                self._optimized_return_embeddings = return_embeddings
         except Exception:
             # Ensure the object is left in a consistent, unoptimized state if optimization fails.
             with contextlib.suppress(Exception):
@@ -1462,7 +1473,7 @@ class RFDETR:
             ...         self.linear = torch.nn.Linear(1, 1)
             ...     def forward(self, x):
             ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
+            ...     def export(self, return_embeddings=False):
             ...         return None
             >>> class _TinyContext:
             ...     def __init__(self):
@@ -1501,6 +1512,7 @@ class RFDETR:
         self._optimized_resolution = None
         self._optimized_dtype = None
         self._optimized_inplace = False
+        self._optimized_return_embeddings = False
 
     @property
     def is_optimized_inplace(self) -> bool:
@@ -1518,7 +1530,7 @@ class RFDETR:
             ...         self.linear = torch.nn.Linear(1, 1)
             ...     def forward(self, x):
             ...         return {"pred_boxes": self.linear(x[:, :1, :1, :1].squeeze(-1).squeeze(-1))}
-            ...     def export(self):
+            ...     def export(self, return_embeddings=False):
             ...         return None
             >>> class _TinyContext:
             ...     def __init__(self):
@@ -2307,6 +2319,7 @@ class RFDETR:
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
+        return_embeddings: bool = False,
         **kwargs: Any,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Performs model inference on the input images.
@@ -2336,6 +2349,14 @@ class RFDETR:
                 ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level
                 metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
                 needed.
+            return_embeddings:
+                Whether to also return per-detection embeddings, one per selected query, gathered with the same
+                indices used for boxes/masks/keypoints. Embeddings are attached as
+                ``detections.data["embeddings"]`` (shape ``(K, H)``) for detection/segmentation outputs, or
+                ``key_points.data["embeddings"]`` for keypoint outputs. If the model has been optimized via
+                :meth:`inference`, this must match the ``return_embeddings`` value passed to that call — the
+                exported/traced forward pass has fixed control flow and cannot toggle this per call; mismatches
+                raise ``RuntimeError``.
             **kwargs:
                 Additional keyword arguments.
 
@@ -2595,14 +2616,32 @@ class RFDETR:
                     )
 
         if self._is_optimized_for_inference:
+            if return_embeddings != self._optimized_return_embeddings:
+                raise RuntimeError(
+                    f"predict(return_embeddings={return_embeddings}) does not match the optimized model, which was "
+                    f"prepared with inference(return_embeddings={self._optimized_return_embeddings}). The "
+                    "exported/traced forward pass has fixed control flow, so this must be decided at "
+                    "inference()/optimization time, not per predict() call. Call "
+                    f"model.inference(..., return_embeddings={return_embeddings}) (optionally after "
+                    "model.remove_optimized_model()) to change it.",
+                )
             inference_model = self.model.inference_model
             assert inference_model is not None, "inference_model is set whenever _is_optimized_for_inference is True."
             predictions = inference_model(batch_tensor.to(dtype=self._optimized_dtype))
         else:
             model = self.model.model
             assert model is not None, "self.model.model is only cleared when optimized for inference."
-            predictions = model(batch_tensor)
+            predictions = model(batch_tensor, return_embeddings=return_embeddings)
         if isinstance(predictions, tuple):
+            # Only the exported/traced (optimized) forward pass returns a plain tuple; its structure is:
+            # (pred_boxes, pred_logits[, pred_masks | pred_keypoints][, embeddings]).
+            # Embeddings are always the *last* element when `_optimized_return_embeddings` is True, regardless
+            # of whether masks/keypoints are also present, so we pop them off first rather than relying on
+            # `len(predictions)` alone to infer the full structure.
+            embeddings = None
+            if self._optimized_return_embeddings:
+                embeddings = predictions[-1]
+                predictions = predictions[:-1]
             return_predictions = {
                 "pred_logits": predictions[1],
                 "pred_boxes": predictions[0],
@@ -2613,6 +2652,8 @@ class RFDETR:
                     return_predictions["pred_keypoints"] = predictions[2]
                 else:
                     return_predictions["pred_masks"] = predictions[2]
+            if embeddings is not None:
+                return_predictions["embeddings"] = embeddings
             predictions = return_predictions
         target_sizes = torch.tensor(orig_sizes, device=self.model.device)
         results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
@@ -2672,6 +2713,9 @@ class RFDETR:
                 keypoints = result["keypoints"][keep]
                 keypoints_array = keypoints.float().cpu().numpy()
             has_keypoints = keypoints_array is not None
+            embeddings_array = None
+            if "embeddings" in result:
+                embeddings_array = result["embeddings"][keep].float().cpu().numpy()
 
             if "masks" in result:
                 masks = result["masks"]
@@ -2696,6 +2740,8 @@ class RFDETR:
             if include_source_image:
                 detections.metadata["source_image"] = source_images[i]  # type: ignore[index]
             detections.data["source_shape"] = np.tile(np.array(orig_sizes[i], dtype=np.int64), (len(detections), 1))
+            if embeddings_array is not None:
+                detections.data["embeddings"] = embeddings_array
 
             # Attach class names so callers can map class_id → name without a
             # separate lookup. Always set data["class_name"] for a consistent interface.
