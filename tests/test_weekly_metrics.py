@@ -83,8 +83,8 @@ class TestWeeklyDownloads:
 class TestRecordWeek:
     """Tests for checkpoint deltas and bounded history updates."""
 
-    def test_first_observation_establishes_zero_delta_baseline(self) -> None:
-        """First star count must become baseline because no earlier checkpoint exists."""
+    def test_first_observation_establishes_unknown_delta_baseline(self) -> None:
+        """First star count must not claim growth without an earlier checkpoint."""
         state = update_weekly_metrics.MetricsState(
             repository="roboflow/rf-detr",
             package="rfdetr",
@@ -105,7 +105,7 @@ class TestRecordWeek:
                 week_start=date(2026, 8, 24),
                 week_end=date(2026, 8, 30),
                 stars_total=12_000,
-                new_stars=0,
+                new_stars=None,
                 downloads=70_000,
             ),
         )
@@ -132,7 +132,7 @@ class TestRecordWeek:
 
         assert updated.history[-1].new_stars == 125
 
-    def test_gap_establishes_zero_delta_baseline(self) -> None:
+    def test_gap_establishes_unknown_delta_baseline(self) -> None:
         """A skipped checkpoint must not be reported as one week's star growth."""
         previous = update_weekly_metrics.WeeklyMetric(
             week_start=date(2026, 8, 17),
@@ -152,7 +152,7 @@ class TestRecordWeek:
             history_limit=52,
         )
 
-        assert updated.history[-1].new_stars == 0
+        assert updated.history[-1].new_stars is None
 
     def test_same_period_replaces_observation_without_resetting_delta(self) -> None:
         """A rerun must update one period relative to its preceding checkpoint."""
@@ -244,6 +244,7 @@ class TestSvgState:
 
         assert state.history
         assert state.history[0].week_start == date(2026, 8, 24)
+        assert state.history[0].new_stars is None
         assert state.history[0].downloads == 52_689
 
     def test_rendered_metadata_round_trips_complete_state(self) -> None:
@@ -309,6 +310,27 @@ class TestSvgState:
 
 class TestSvgRendering:
     """Tests for deterministic dual-axis chart output."""
+
+    def test_baseline_does_not_claim_zero_weekly_star_growth(self) -> None:
+        """Missing prior checkpoint must render as baseline rather than measured zero growth."""
+        state = update_weekly_metrics.MetricsState(
+            repository="roboflow/rf-detr",
+            package="rfdetr",
+            history=(
+                update_weekly_metrics.WeeklyMetric(
+                    week_start=date(2026, 8, 24),
+                    week_end=date(2026, 8, 30),
+                    stars_total=12_125,
+                    new_stars=None,
+                    downloads=80_000,
+                ),
+            ),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        assert "— baseline" in svg
+        assert "+0 new stars" not in svg
 
     def test_chart_uses_display_window_and_latest_summary(self) -> None:
         """Chart marks must show only configured recent periods plus latest totals."""
@@ -423,7 +445,7 @@ class TestMetricsUpdate:
 
         state = update_weekly_metrics.parse_state(output.read_text(), "roboflow/rf-detr", "rfdetr")
         assert state.history[0].stars_total == 12_125
-        assert state.history[0].new_stars == 0
+        assert state.history[0].new_stars is None
         assert state.history[0].downloads == 91_000
         assert output.stat().st_mode & stat.S_IROTH
 

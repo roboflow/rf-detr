@@ -37,7 +37,7 @@ class WeeklyMetric:
     week_start: date
     week_end: date
     stars_total: int
-    new_stars: int
+    new_stars: int | None
     downloads: int
 
 
@@ -315,15 +315,17 @@ def _validate_state(state: MetricsState) -> None:
             raise MetricsError(msg)
         _require_nonnegative_int(metric.stars_total, "stars_total")
         _require_nonnegative_int(metric.downloads, "downloads")
-        if isinstance(metric.new_stars, bool) or not isinstance(metric.new_stars, int):
-            msg = "new_stars must be an integer"
+        if metric.new_stars is not None and (
+            isinstance(metric.new_stars, bool) or not isinstance(metric.new_stars, int)
+        ):
+            msg = "new_stars must be an integer or null"
             raise MetricsError(msg)
         if previous is not None:
             if metric.week_start <= previous.week_start:
                 msg = "Weekly metrics history must be strictly chronological"
                 raise MetricsError(msg)
             is_contiguous = metric.week_start == previous.week_end + timedelta(days=1)
-            expected_new_stars = metric.stars_total - previous.stars_total if is_contiguous else 0
+            expected_new_stars = metric.stars_total - previous.stars_total if is_contiguous else None
             if metric.new_stars != expected_new_stars:
                 msg = "new_stars does not match its checkpoint interval"
                 raise MetricsError(msg)
@@ -431,6 +433,17 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
         stars_total = "—"
         new_stars = "— new stars"
         downloads = "— weekly downloads"
+    elif latest.new_stars is None:
+        description = (
+            f"For week ending {latest.week_end.isoformat()}, RF-DETR recorded a GitHub star baseline of "
+            f"{latest.stars_total:,} and {latest.downloads:,} PyPI downloads."
+        )
+        start_label = latest.week_start.strftime("%b %d").replace(" 0", " ")
+        end_label = latest.week_end.strftime("%b %d, %Y").replace(" 0", " ")
+        latest_period = f"Latest completed week · {start_label}–{end_label}"
+        stars_total = f"{latest.stars_total:,}"
+        new_stars = "— baseline"
+        downloads = f"{latest.downloads:,} weekly downloads"
     else:
         description = (
             f"For week ending {latest.week_end.isoformat()}, RF-DETR had {latest.new_stars:+,} new GitHub stars "
@@ -473,7 +486,7 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
     plot_width = 1000.0
     plot_height = 290.0
     plot_bottom = plot_top + plot_height
-    star_values = [metric.new_stars for metric in display] or [0]
+    star_values = [metric.new_stars for metric in display if metric.new_stars is not None] or [0]
     star_min = min(0, min(star_values))
     star_max = max(0, max(star_values))
     if star_min == star_max:
@@ -522,14 +535,15 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
         lines.append('  <g id="weekly-stars-bars">')
         for index, metric in enumerate(display):
             x = plot_left + (index + 0.5) * spacing
-            value_y = plot_bottom - ((metric.new_stars - star_min) / (star_max - star_min)) * plot_height
-            bar_y = min(value_y, zero_y)
-            bar_height = max(abs(zero_y - value_y), 1.0)
-            color = "#8315f9" if metric.new_stars >= 0 else "#e85d75"
-            lines.append(
-                f'    <rect x="{x - bar_width / 2:.1f}" y="{bar_y:.1f}" width="{bar_width:.1f}" '
-                f'height="{bar_height:.1f}" rx="4" fill="{color}"/>'
-            )
+            if metric.new_stars is not None:
+                value_y = plot_bottom - ((metric.new_stars - star_min) / (star_max - star_min)) * plot_height
+                bar_y = min(value_y, zero_y)
+                bar_height = max(abs(zero_y - value_y), 1.0)
+                color = "#8315f9" if metric.new_stars >= 0 else "#e85d75"
+                lines.append(
+                    f'    <rect x="{x - bar_width / 2:.1f}" y="{bar_y:.1f}" width="{bar_width:.1f}" '
+                    f'height="{bar_height:.1f}" rx="4" fill="{color}"/>'
+                )
             download_y = plot_bottom - (metric.downloads / download_max) * plot_height
             points.append(f"{x:.1f},{download_y:.1f}")
         lines.append("  </g>")
@@ -662,14 +676,14 @@ def record_week(
         raise MetricsError(msg)
     if history and history[-1].week_start == start:
         history = history[:-1]
-    previous_stars = stars_total
+    new_stars = None
     if history and start == history[-1].week_end + timedelta(days=1):
-        previous_stars = history[-1].stars_total
+        new_stars = stars_total - history[-1].stars_total
     metric = WeeklyMetric(
         week_start=start,
         week_end=end,
         stars_total=stars_total,
-        new_stars=stars_total - previous_stars,
+        new_stars=new_stars,
         downloads=downloads,
     )
     history = (*history, metric)[-history_limit:]
