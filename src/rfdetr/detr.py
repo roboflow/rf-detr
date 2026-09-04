@@ -2736,31 +2736,66 @@ class RFDETR:
             scores = scores[keep]
             labels = labels[keep]
             boxes = boxes[keep]
-            keypoints_array = None
-            if "keypoints" in result:
+            has_keypoints_result = "keypoints" in result
+            has_masks = "masks" in result
+            has_kp_precision = "keypoint_precision_cholesky" in result
+            if has_keypoints_result:
                 keypoints = result["keypoints"][keep]
-                keypoints_array = keypoints.float().cpu().numpy()
+            if has_masks:
+                masks = result["masks"][keep]
+            if has_kp_precision:
+                keypoint_precision = result["keypoint_precision_cholesky"][keep]
+
+            # PERF: queue every GPU->CPU transfer for this image as non_blocking, then
+            # synchronize ONCE instead of once per tensor. Each bare `.cpu()` call below
+            # used to impose its own device synchronization -- up to 4 (5 with keypoints,
+            # 6 with keypoint precision) sequential blocking round-trips per image, scaling
+            # with the number of kept detections (the mask tensor especially, since it is
+            # by far the largest of the group in a crowded/high-detection-count frame).
+            # Queuing the copies together lets them share the copy stream and collapses
+            # the wait to a single barrier; `.numpy()` is only called after that barrier,
+            # so every array below is fully populated exactly as before.
+            #
+            # Restrict the async path to CUDA and synchronize the tensors' own device (not
+            # just "the current device") -- a bare `torch.cuda.synchronize()` waits on
+            # `torch.cuda.current_device()`, which can differ from `boxes.device` on a
+            # multi-GPU setup with a model on a non-default device (e.g. `cuda:1`), and
+            # non-CUDA accelerators (e.g. MPS) have no synchronization here at all, so a
+            # `non_blocking=True` copy there could be read before it lands. Falling back to
+            # the original blocking transfer for non-CUDA devices keeps every other backend
+            # exactly as correct as before this change; the coalesced-sync optimization is
+            # only claimed for CUDA in the first place.
+            is_cuda = boxes.is_cuda
+            boxes_cpu = boxes.float().to("cpu", non_blocking=is_cuda)
+            scores_cpu = scores.float().to("cpu", non_blocking=is_cuda)
+            labels_cpu = labels.to("cpu", non_blocking=is_cuda)
+            if has_keypoints_result:
+                keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda)
+            if has_masks:
+                masks_cpu = masks.squeeze(1).to("cpu", non_blocking=is_cuda)
+            if has_kp_precision:
+                keypoint_precision_cpu = keypoint_precision.float().to("cpu", non_blocking=is_cuda)
+            if is_cuda:
+                torch.cuda.synchronize(boxes.device)
+
+            keypoints_array = keypoints_cpu.numpy() if has_keypoints_result else None
             has_keypoints = keypoints_array is not None
 
-            if "masks" in result:
-                masks = result["masks"]
-                masks = masks[keep]
-
+            if has_masks:
                 detections = Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                    mask=masks.squeeze(1).cpu().numpy(),
+                    xyxy=boxes_cpu.numpy(),
+                    confidence=scores_cpu.numpy(),
+                    class_id=labels_cpu.numpy(),
+                    mask=masks_cpu.numpy(),
                 )
             else:
                 detections = Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
+                    xyxy=boxes_cpu.numpy(),
+                    confidence=scores_cpu.numpy(),
+                    class_id=labels_cpu.numpy(),
                 )
-            if "keypoint_precision_cholesky" in result:
-                keypoint_precision = result["keypoint_precision_cholesky"][keep]
-                detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
+            if has_kp_precision:
+                detections.data["keypoint_precision_cholesky"] = keypoint_precision_cpu.numpy()
 
             if include_source_image:
                 detections.metadata["source_image"] = source_images[i]  # type: ignore[index]
