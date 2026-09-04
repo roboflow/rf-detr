@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `build_trainer` now selects `XLAStrategy` when the accelerator resolves to XLA/TPU — including default `accelerator="auto"` once it resolves to XLA — and more than one local device is requested. RF-DETR's generic `strategy="auto"` distributed branch otherwise creates `DDPStrategy` before Lightning can apply its XLA-first auto selection, producing `The XLAAccelerator can only be used with a SingleDeviceXLAStrategy or XLAStrategy, found DDPStrategy` during `Trainer` construction. Single-device and one-device-per-host XLA are not promoted; the latter needs separate runtime validation. Explicit strategies are never overridden, keypoint models remain excluded, and segmentation follows the same multi-device guard. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
+
 - Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where `XLAAccelerator.is_available()` is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
 
 ### Breaking Changes
