@@ -165,6 +165,33 @@ class TestInit:
         assert "weight" in state
         assert "bias" in state
 
+    def test_on_fit_start_initializes_ema_after_precision_conversion(self) -> None:
+        """EMA weights must match live BF16 weights after Lightning precision conversion.
+
+        Lightning runs callback ``setup`` before its precision plugin replaces or casts the live module. Constructing
+        ``AveragedModel`` in ``setup`` therefore leaves it in FP32, which makes its second update fail once the live
+        model is BF16.
+        """
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        trainer = MagicMock()
+
+        cb.setup(trainer, pl_module, stage="fit")
+        pl_module.to(dtype=torch.bfloat16)
+
+        cb.on_fit_start(trainer, pl_module)
+
+        assert cb._average_model is not None
+        for ema_parameter, live_parameter in zip(
+            cb._average_model.module.parameters(), pl_module.parameters(), strict=True
+        ):
+            assert ema_parameter.shape == live_parameter.shape
+            assert ema_parameter.dtype is live_parameter.dtype
+            assert ema_parameter.device == live_parameter.device
+        cb._average_model.update_parameters(pl_module)
+        cb._average_model.update_parameters(pl_module)
+        assert int(cb._average_model.n_averaged) == 2
+
 
 class TestUpdateInterval:
     """Verify update_interval_steps throttles EMA updates on step hooks."""
@@ -249,8 +276,8 @@ class TestLegacyEMAResume:
 
         assert cb.state_dict() == {"latest_update_step": 7}
 
-    def test_setup_loads_pending_legacy_ema_state_into_average_model(self) -> None:
-        """`_pending_legacy_ema_state` must initialize EMA weights at fit setup."""
+    def test_on_fit_start_loads_pending_legacy_ema_state_into_average_model(self) -> None:
+        """`_pending_legacy_ema_state` must initialize EMA weights after precision conversion."""
         cb = RFDETREMACallback()
         pl_module = _EMAContainerModule()
         trainer = MagicMock()
@@ -259,6 +286,7 @@ class TestLegacyEMAResume:
         pl_module._pending_legacy_ema_state = legacy_ema_state
 
         cb.setup(trainer, pl_module, stage="fit")
+        cb.on_fit_start(trainer, pl_module)
 
         assert cb._average_model is not None
         restored = cb._average_model.module.model.state_dict()
@@ -283,13 +311,14 @@ class _BufferContainerModule(nn.Module):
 class TestMultiAvgFn:
     """Foreach ``multi_avg_fn`` path must reproduce the per-tensor ``avg_fn`` numerics exactly."""
 
-    def test_setup_registers_multi_avg_fn(self) -> None:
-        """Fit setup must wire multi_avg_fn (foreach branch) and leave avg_fn unset."""
+    def test_on_fit_start_registers_multi_avg_fn(self) -> None:
+        """Post-conversion fit start must wire multi_avg_fn and leave avg_fn unset."""
         cb = RFDETREMACallback()
         pl_module = _EMAContainerModule()
         trainer = MagicMock()
 
         cb.setup(trainer, pl_module, stage="fit")
+        cb.on_fit_start(trainer, pl_module)
 
         assert cb._average_model is not None
         assert cb._average_model.multi_avg_fn is not None

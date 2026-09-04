@@ -138,17 +138,45 @@ class RFDETREMACallback(Callback):
         torch._foreach_mul_(averaged_params, effective_decay)
         torch._foreach_add_(averaged_params, model_params, alpha=1.0 - effective_decay)
 
-    def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
-        """Initialise the averaged model at fit start.
+    def _restore_pending_average_state(self, pl_module: LightningModule) -> None:
+        """Restore a callback or legacy EMA state after constructing the averaged model.
+
+        Current callback state takes precedence over the legacy model-only state
+        when a checkpoint supplies both formats.
+
+        Args:
+            pl_module: The live module that may hold a stashed legacy EMA state.
+        """
+        if self._average_model is None:
+            return
+        if self._pending_average_state_dict is not None:
+            self._average_model.load_state_dict(self._pending_average_state_dict)
+            self._pending_average_state_dict = None
+            return
+        if not hasattr(pl_module, "_pending_legacy_ema_state"):
+            return
+
+        legacy_ema_state = pl_module._pending_legacy_ema_state
+        if isinstance(legacy_ema_state, dict):
+            average_module = cast("RFDETRModelModule", self._average_model.module)
+            incompatible = average_module.model.load_state_dict(legacy_ema_state, strict=False)
+            if incompatible.missing_keys or incompatible.unexpected_keys:
+                warnings.warn(
+                    "Legacy EMA checkpoint loaded with non-exact key match; "
+                    f"missing={len(incompatible.missing_keys)} "
+                    f"unexpected={len(incompatible.unexpected_keys)}.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        delattr(pl_module, "_pending_legacy_ema_state")
+
+    def on_fit_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Initialise EMA after Lightning applies precision conversion and device placement.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
-            stage: Current trainer stage (``"fit"``, ``"validate"``, ...).
         """
-        if stage != "fit":
-            return
-
         device = pl_module.device
         if not isinstance(device, torch.device):
             raise TypeError(f"Expected a torch.device from the Lightning module, got {type(device).__name__}.")
@@ -164,39 +192,16 @@ class RFDETREMACallback(Callback):
         # dropout layers stay in training mode and produce ~random outputs.
         self._average_model.eval()
 
-        if self._pending_average_state_dict is not None:
-            self._average_model.load_state_dict(self._pending_average_state_dict)
-            self._pending_average_state_dict = None
-        elif hasattr(pl_module, "_pending_legacy_ema_state"):
-            legacy_ema_state = pl_module._pending_legacy_ema_state
-            if isinstance(legacy_ema_state, dict):
-                average_module = cast("RFDETRModelModule", self._average_model.module)
-                incompatible = average_module.model.load_state_dict(legacy_ema_state, strict=False)
-                if incompatible.missing_keys or incompatible.unexpected_keys:
-                    warnings.warn(
-                        "Legacy EMA checkpoint loaded with non-exact key match; "
-                        f"missing={len(incompatible.missing_keys)} "
-                        f"unexpected={len(incompatible.unexpected_keys)}.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-            delattr(pl_module, "_pending_legacy_ema_state")
+        self._restore_pending_average_state(pl_module)
 
     def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Apply a resumed ``average_model_state_dict`` that arrived after ``setup()``.
+        """Apply resumed EMA state that arrived after ``on_fit_start()``.
 
-        For every strategy RF-DETR ships (``strategy.restore_checkpoint_after_setup`` is ``False``
-        except for FSDP/DeepSpeed/model-parallel), PTL's ``Trainer._run`` calls
-        ``call._call_setup_hook`` (which invokes this callback's ``setup()``) *before*
-        ``_checkpoint_connector._restore_modules_and_callbacks`` (which invokes
-        ``load_state_dict()``). So on a resumed run, ``load_state_dict()`` stashes the checkpoint's
-        ``average_model_state_dict`` into ``_pending_average_state_dict`` only after ``setup()``
-        already built ``_average_model`` from the not-yet-restored live weights — the ``elif``
-        branch in ``setup()`` that applies a pending *plain* state dict never fires for this
-        ordering, silently leaving the averaged model un-resumed. ``on_train_start`` runs from
-        inside ``_run_stage()``, strictly after all checkpoint restoration completes, so it is the
-        first safe point to apply it. A no-op when ``setup()`` already consumed the pending state
-        (the reverse ordering used by FSDP/DeepSpeed/model-parallel).
+        Standard strategies restore callback and module checkpoint state before
+        ``on_fit_start()``, so that hook restores the EMA state immediately after
+        constructing its precision-matched averaged model. Strategies that restore
+        after their setup may deliver callback or legacy EMA state later; this hook
+        is the first point after restoration where the same state can be applied.
 
         Args:
             trainer: The Lightning Trainer instance.
@@ -206,9 +211,7 @@ class RFDETREMACallback(Callback):
         # zero. An absolute saved guard would otherwise skip that many new batches.
         if trainer.global_step < self._latest_update_step:
             self._latest_update_step = trainer.global_step
-        if self._pending_average_state_dict is not None and self._average_model is not None:
-            self._average_model.load_state_dict(self._pending_average_state_dict)
-            self._pending_average_state_dict = None
+        self._restore_pending_average_state(pl_module)
 
     def should_update(
         self,
