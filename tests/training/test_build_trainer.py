@@ -1854,13 +1854,12 @@ class TestMultiDeviceXLAStrategy:
     ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so they run on every lane without
     needing real ``torch_xla``.
 
-    Lightning's ``strategy="auto"`` resolves to DDP as soon as more than one device is requested, and `XLAAccelerator`
-    then refuses it during ``Trainer`` construction -- before any accelerator work, so it surfaces as a config error
-    rather than as a missing capability. Single-device XLA is unaffected because "auto" already lands on
-    `SingleDeviceXLAStrategy` there. The guard fires for an explicit ``accelerator="tpu"``/``"xla"`` string, for
-    ``accelerator="auto"`` once it actually resolves to XLA (``TestAcceleratorResolvesToXLA`` above), for a multi-node
-    single-device topology (``num_nodes > 1``) and not just multiple local devices, and identically for segmentation and
-    plain detection configs -- only ``has_keypoints`` is excluded.
+    RF-DETR's generic ``strategy="auto"`` distributed branch creates ``DDPStrategy`` before Lightning can resolve an XLA
+    accelerator. The guard therefore selects ``"xla"`` only when multiple local XLA devices are requested; one-device-
+    per-host XLA is not claimed supported. Single-device XLA is unaffected because Lightning resolves ``"auto"`` to
+    `SingleDeviceXLAStrategy`. The guard applies to explicit ``accelerator="tpu"``/``"xla"`` and to
+    ``accelerator="auto"`` once it resolves to XLA (``TestAcceleratorResolvesToXLA`` above), for both segmentation and
+    plain detection configs; only ``has_keypoints`` is excluded.
     """
 
     @pytest.mark.xla
@@ -1946,11 +1945,10 @@ class TestMultiDeviceXLAStrategy:
     def test_accelerator_auto_resolves_to_xla_strategy_when_xla_is_available(self, tmp_path) -> None:
         """``accelerator="auto"`` -- TrainConfig's own default -- must be covered too, not just an explicit string.
 
-        A caller who leaves ``accelerator`` unset never passes ``"tpu"``/``"xla"`` here; build_trainer receives
-        literal ``"auto"`` and only Lightning's own ``Trainer(accelerator="auto")`` resolves it to XLA afterwards.
-        Without ``_accelerator_resolves_to_xla`` covering this case, this is the default, most common real-world
-        multi-chip TPU invocation and it would still build a ``DDPStrategy`` here and hit the same
-        `XLAAccelerator`/`DDPStrategy` mismatch this module exists to avoid. Not marked ``xla``/``importorskip``:
+        A caller who leaves ``accelerator`` unset passes literal ``"auto"`` here. Without
+        ``_accelerator_resolves_to_xla``, RF-DETR's generic distributed branch would create ``DDPStrategy`` before
+        Lightning resolves that value to XLA, causing the `XLAAccelerator`/`DDPStrategy` mismatch. Not marked
+        ``xla``/``importorskip``:
         follows ``TestBuildTrainerPrecision.test_xla_accelerator_uses_xla_precision_plugin_not_precision_string``'s
         pattern of patching ``XLAPrecision`` and (here) ``XLAAccelerator.is_available`` directly, so this runs on
         every CI lane rather than only the CPU-PJRT one.
@@ -1958,6 +1956,7 @@ class TestMultiDeviceXLAStrategy:
         import unittest.mock as mock
 
         captured: dict = {}
+        mocked_xla_precision = mock.MagicMock(name="XLAPrecision")
 
         def _fake_trainer(**kwargs):
             captured.update(kwargs)
@@ -1965,22 +1964,22 @@ class TestMultiDeviceXLAStrategy:
 
         with (
             mock.patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True),
-            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock.MagicMock(name="XLAPrecision")),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mocked_xla_precision),
             patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="auto", devices=4)
 
         assert captured["strategy"] == "xla"
+        assert "precision" not in captured
+        assert captured["plugins"] == [mocked_xla_precision.return_value]
 
-    def test_multi_node_single_device_selects_xla_strategy(self, tmp_path) -> None:
-        """A multi-host XLA topology (``num_nodes > 1``, one device per host) is distributed too.
+    def test_multi_node_single_device_keeps_the_existing_ddp_strategy(self, tmp_path) -> None:
+        """One device per host must not be promoted to unsupported ``XLAStrategy``.
 
-        The guard's own ``_requests_multiple_devices(devices, accelerator)`` check only looks at ``devices``; without
-        also checking ``num_nodes > 1`` here (the same condition ``distributed_requested`` below already uses),
-        ``devices=1, num_nodes=2`` would fall through to the pre-existing ``strategy_name == "auto" and
-        distributed_requested`` branch and build a ``DDPStrategy``, hitting the same mismatch this guard exists to
-        avoid. ``accelerator="tpu"`` is explicit here, so only ``XLAPrecision`` needs patching (see the class
-        docstring's cross-reference to ``TestBuildTrainerPrecision``).
+        The generic distributed branch still creates ``DDPStrategy`` for ``devices=1, num_nodes=2``. That topology needs
+        real multi-host XLA validation before it can select ``XLAStrategy``; this test only prevents the local strategy
+        promotion from claiming it is supported. ``accelerator="tpu"`` is explicit here, so only ``XLAPrecision`` needs
+        patching.
         """
         import unittest.mock as mock
 
@@ -1996,7 +1995,9 @@ class TestMultiDeviceXLAStrategy:
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1, num_nodes=2)
 
-        assert captured["strategy"] == "xla"
+        from pytorch_lightning.strategies import DDPStrategy
+
+        assert isinstance(captured["strategy"], DDPStrategy)
 
     def test_multi_device_xla_strategy_is_selected_for_segmentation_models(self, tmp_path) -> None:
         """A segmentation config reaches the same guard as plain detection, since only ``has_keypoints`` is excluded.

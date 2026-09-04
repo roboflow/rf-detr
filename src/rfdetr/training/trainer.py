@@ -630,18 +630,12 @@ def build_trainer(
         and not has_keypoints
         and isinstance(strategy, str)
         and strategy.strip().lower() == "auto"
-        and (_requests_multiple_devices(devices, accelerator) or num_nodes > 1)
+        and _requests_multiple_devices(devices, accelerator)
     ):
-        # `XLAAccelerator` pairs only with `SingleDeviceXLAStrategy` or `XLAStrategy`, and Lightning's
-        # "auto" resolves to DDP once more than one device is requested -- which it then rejects, during
-        # Trainer construction, before any accelerator work happens. Single-device XLA is unaffected
-        # because "auto" already lands on SingleDeviceXLAStrategy there. num_nodes > 1 is included
-        # alongside _requests_multiple_devices because a multi-host XLA topology (e.g. num_nodes=2,
-        # devices=1) is just as distributed as a multi-chip single-host one, and the DDP branch below
-        # treats it identically (distributed_requested also checks num_nodes > 1). Keypoint models are
-        # excluded: they train under manual optimization and the DDP-specific find_unused_parameters
-        # handling a few lines below has no validated XLA equivalent, so they keep hitting the
-        # pre-existing DDPStrategy/XLAAccelerator mismatch instead of silently running unverified.
+        # RF-DETR's generic auto/distributed branch below creates DDPStrategy before Lightning can apply
+        # its XLA-first auto selection. Promote only multiple local devices: one-device-per-host XLA
+        # needs separate runtime validation. Keypoint models remain excluded because their manual-
+        # optimization find_unused_parameters handling has no validated XLA equivalent.
         strategy = "xla"
     strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     if isinstance(tc, KeypointTrainConfig) != has_keypoints:
