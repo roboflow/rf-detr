@@ -1303,8 +1303,9 @@ class RFDETR:
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
         ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
         the model's current resolution. The default ``"torchscript"`` backend preserves the existing
-        ``torch.jit.trace`` path. ``"inductor"`` uses ``torch.compile(mode="reduce-overhead")`` and runs the dummy input
-        once so compilation cost is paid inside this method instead of the first :meth:`predict` call. By default,
+        ``torch.jit.trace`` path. ``"inductor"`` uses ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the
+        dummy input twice before synchronizing the selected device so setup is paid inside this method instead of the
+        first :meth:`predict` call. By default,
         optimization deep-copies the loaded model before exporting it so the original module remains available. Set
         ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
         cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
@@ -1443,6 +1444,10 @@ class RFDETR:
                         inference_model = torch.compile(inference_model, mode="reduce-overhead")
                         with torch.inference_mode():
                             inference_model(dummy_input)
+                            if device.type == "cuda":
+                                # CUDA Graph Trees reserve memory on the first call and record on the second.
+                                inference_model(dummy_input)
+                                torch.cuda.synchronize(device)
                     self._optimized_has_been_compiled = True
                     self._optimized_batch_size = batch_size
 
