@@ -322,8 +322,10 @@ def _validate_state(state: MetricsState) -> None:
             if metric.week_start <= previous.week_start:
                 msg = "Weekly metrics history must be strictly chronological"
                 raise MetricsError(msg)
-            if metric.new_stars != metric.stars_total - previous.stars_total:
-                msg = "new_stars does not match consecutive star checkpoints"
+            is_contiguous = metric.week_start == previous.week_end + timedelta(days=1)
+            expected_new_stars = metric.stars_total - previous.stars_total if is_contiguous else 0
+            if metric.new_stars != expected_new_stars:
+                msg = "new_stars does not match its checkpoint interval"
                 raise MetricsError(msg)
         previous = metric
 
@@ -631,7 +633,7 @@ def record_week(
     downloads: int,
     history_limit: int,
 ) -> MetricsState:
-    """Append one completed week using latest star checkpoint for delta.
+    """Append one completed week, resetting star baseline after any checkpoint gap.
 
     Args:
         state: Existing embedded metrics state.
@@ -660,7 +662,9 @@ def record_week(
         raise MetricsError(msg)
     if history and history[-1].week_start == start:
         history = history[:-1]
-    previous_stars = history[-1].stars_total if history else stars_total
+    previous_stars = stars_total
+    if history and start == history[-1].week_end + timedelta(days=1):
+        previous_stars = history[-1].stars_total
     metric = WeeklyMetric(
         week_start=start,
         week_end=end,

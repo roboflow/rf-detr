@@ -132,6 +132,28 @@ class TestRecordWeek:
 
         assert updated.history[-1].new_stars == 125
 
+    def test_gap_establishes_zero_delta_baseline(self) -> None:
+        """A skipped checkpoint must not be reported as one week's star growth."""
+        previous = update_weekly_metrics.WeeklyMetric(
+            week_start=date(2026, 8, 17),
+            week_end=date(2026, 8, 23),
+            stars_total=12_000,
+            new_stars=75,
+            downloads=70_000,
+        )
+        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (previous,))
+
+        updated = update_weekly_metrics.record_week(
+            state,
+            start=date(2026, 8, 31),
+            end=date(2026, 9, 6),
+            stars_total=12_250,
+            downloads=80_000,
+            history_limit=52,
+        )
+
+        assert updated.history[-1].new_stars == 0
+
     def test_same_period_replaces_observation_without_resetting_delta(self) -> None:
         """A rerun must update one period relative to its preceding checkpoint."""
         first = update_weekly_metrics.WeeklyMetric(
@@ -213,6 +235,16 @@ class TestRecordWeek:
 
 class TestSvgState:
     """Tests for self-contained checkpoint serialization."""
+
+    def test_checked_in_svg_contains_post_correction_backfill(self) -> None:
+        """Published history must contain real data from PyPI's corrected counting period."""
+        output = Path(__file__).resolve().parents[1] / "docs" / "assets" / "weekly-metrics.svg"
+
+        state = update_weekly_metrics.load_state(output, "roboflow/rf-detr", "rfdetr")
+
+        assert state.history
+        assert state.history[0].week_start == date(2026, 8, 24)
+        assert state.history[0].downloads == 52_689
 
     def test_rendered_metadata_round_trips_complete_state(self) -> None:
         """SVG metadata must remain sole machine-readable checkpoint source."""
