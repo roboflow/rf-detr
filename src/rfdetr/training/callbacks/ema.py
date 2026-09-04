@@ -60,7 +60,7 @@ class RFDETREMACallback(Callback):
 
         self._average_model: AveragedModel | None = None
         self._latest_update_step = 0
-        self._swapped_state_dict: dict[str, Tensor] | None = None
+        self._swapped_state_dict: dict[str, Any] | None = None
         self._pending_average_state_dict: dict[str, Any] | None = None
 
     # Retained as the per-tensor fallback for non-floating-point groups (see
@@ -150,7 +150,7 @@ class RFDETREMACallback(Callback):
         if self._average_model is None:
             return
         if self._pending_average_state_dict is not None:
-            self._average_model.load_state_dict(self._pending_average_state_dict)
+            self._load_ema_weights(self._average_model, self._pending_average_state_dict)
             self._pending_average_state_dict = None
             return
         if not hasattr(pl_module, "_pending_legacy_ema_state"):
@@ -159,16 +159,86 @@ class RFDETREMACallback(Callback):
         legacy_ema_state = pl_module._pending_legacy_ema_state
         if isinstance(legacy_ema_state, dict):
             average_module = cast("RFDETRModelModule", self._average_model.module)
-            incompatible = average_module.model.load_state_dict(legacy_ema_state, strict=False)
-            if incompatible.missing_keys or incompatible.unexpected_keys:
+            incompatible = average_module.model.load_state_dict(
+                self._without_extra_state(legacy_ema_state), strict=False
+            )
+            missing_keys = [key for key in incompatible.missing_keys if not self._is_extra_state_key(key)]
+            unexpected_keys = [key for key in incompatible.unexpected_keys if not self._is_extra_state_key(key)]
+            if missing_keys or unexpected_keys:
                 warnings.warn(
                     "Legacy EMA checkpoint loaded with non-exact key match; "
-                    f"missing={len(incompatible.missing_keys)} "
-                    f"unexpected={len(incompatible.unexpected_keys)}.",
+                    f"missing={len(missing_keys)} "
+                    f"unexpected={len(unexpected_keys)}.",
                     UserWarning,
                     stacklevel=2,
                 )
         delattr(pl_module, "_pending_legacy_ema_state")
+
+    @staticmethod
+    def _is_extra_state_key(key: str) -> bool:
+        """Return whether *key* identifies a module extra-state payload.
+
+        Args:
+            key: Fully qualified state-dict key.
+
+        Returns:
+            ``True`` only when the final key component is ``"_extra_state"``.
+        """
+        return key.rsplit(".", maxsplit=1)[-1] == "_extra_state"
+
+    def _without_extra_state(self, state_dict: dict[str, Any]) -> dict[str, Any]:
+        """Return *state_dict* without module extra-state entries or metadata loss.
+
+        Args:
+            state_dict: Source module state dictionary.
+
+        Returns:
+            The original state dictionary when no extra state exists, otherwise a
+            metadata-preserving shallow copy without ``_extra_state`` entries.
+        """
+        extra_state_keys = [key for key in state_dict if self._is_extra_state_key(key)]
+        if not extra_state_keys:
+            return state_dict
+
+        filtered_state_dict = state_dict.copy()
+        for key in extra_state_keys:
+            del filtered_state_dict[key]
+        metadata = getattr(state_dict, "_metadata", None)
+        if metadata is not None:
+            setattr(filtered_state_dict, "_metadata", metadata)
+        return filtered_state_dict
+
+    def _load_ema_weights(self, module: torch.nn.Module, state_dict: dict[str, Any]) -> None:
+        """Copy EMA weights without deserializing module extra-state payloads.
+
+        Transformer Engine records FP8 scaling history in ``_extra_state`` entries
+        and intentionally rejects their pickle deserialization by default. The
+        EMA copy is in-process and needs only parameters and buffers, so it omits
+        exactly those entries while retaining strict errors for all other keys.
+
+        Args:
+            module: Module receiving the EMA or restored live weights.
+            state_dict: Source module state dictionary.
+
+        Raises:
+            RuntimeError: If any non-extra-state key is missing or unexpected.
+        """
+        incompatible = module.load_state_dict(self._without_extra_state(state_dict), strict=False)
+        missing_keys = [key for key in incompatible.missing_keys if not self._is_extra_state_key(key)]
+        unexpected_keys = [key for key in incompatible.unexpected_keys if not self._is_extra_state_key(key)]
+        if not missing_keys and not unexpected_keys:
+            return
+
+        error_messages = []
+        if missing_keys:
+            error_messages.append(f"Missing key(s) in state_dict: {', '.join(repr(key) for key in missing_keys)}.")
+        if unexpected_keys:
+            error_messages.append(
+                f"Unexpected key(s) in state_dict: {', '.join(repr(key) for key in unexpected_keys)}."
+            )
+        raise RuntimeError(
+            f"Error(s) in loading state_dict for {module.__class__.__name__}:\n\t" + "\n\t".join(error_messages)
+        )
 
     def on_fit_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Initialise EMA after Lightning applies precision conversion and device placement.
@@ -239,10 +309,10 @@ class RFDETREMACallback(Callback):
         if self._average_model is None:
             return
         if self._swapped_state_dict is None:
-            self._swapped_state_dict = deepcopy(pl_module.state_dict())
-            pl_module.load_state_dict(self._average_model.module.state_dict(), strict=True)
+            self._swapped_state_dict = deepcopy(self._without_extra_state(pl_module.state_dict()))
+            self._load_ema_weights(pl_module, self._average_model.module.state_dict())
             return
-        pl_module.load_state_dict(self._swapped_state_dict, strict=True)
+        self._load_ema_weights(pl_module, self._swapped_state_dict)
         self._swapped_state_dict = None
 
     def on_train_batch_end(
@@ -280,7 +350,7 @@ class RFDETREMACallback(Callback):
     def on_train_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Leave the module in EMA state after training finishes."""
         if self._average_model is not None:
-            pl_module.load_state_dict(self._average_model.module.state_dict(), strict=True)
+            self._load_ema_weights(pl_module, self._average_model.module.state_dict())
         self._swapped_state_dict = None
 
     def state_dict(self) -> dict[str, Any]:
@@ -289,7 +359,7 @@ class RFDETREMACallback(Callback):
             "latest_update_step": self._latest_update_step,
         }
         if self._average_model is not None:
-            state["average_model_state_dict"] = self._average_model.state_dict()
+            state["average_model_state_dict"] = self._without_extra_state(self._average_model.state_dict())
         return state
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
@@ -302,4 +372,11 @@ class RFDETREMACallback(Callback):
         if self._average_model is None or not hasattr(self._average_model.module, "model"):
             return None
         average_module = cast("RFDETRModelModule", self._average_model.module)
-        return {k: v.detach().clone() for k, v in average_module.model.state_dict().items()}
+        state_dict = self._without_extra_state(average_module.model.state_dict())
+        cloned_state_dict = state_dict.copy()
+        for key, value in cloned_state_dict.items():
+            cloned_state_dict[key] = value.detach().clone()
+        metadata = getattr(state_dict, "_metadata", None)
+        if metadata is not None:
+            setattr(cloned_state_dict, "_metadata", metadata)
+        return cloned_state_dict
