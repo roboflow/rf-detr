@@ -671,15 +671,15 @@ class TestBuildTrainerPrecision:
         which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there.
         """
         pytest.importorskip("torch_xla")
-        from torch_xla import runtime as xr
+        from pytorch_lightning.accelerators import XLAAccelerator
 
-        if xr.device_type() == "TPU":
+        if XLAAccelerator.is_available():
             pytest.skip(
-                "XLAAccelerator.is_available() is True on real TPU silicon, so the Trainer builds instead "
-                "of raising; this pins the CPU/GPU-PJRT refusal path only. NEURON is deliberately excluded: "
-                "Lightning's XLAAccelerator.auto_device_count() calls torch_xla._internal.tpu.num_available_devices(), "
-                "which counts chips by scanning for the Google TPU PCI vendor ID -- it has no NEURON detection, so "
-                "is_available() is False on NEURON too and the refusal path should still hold there."
+                "the refusal this pins holds only while ``XLAAccelerator.is_available()`` is False, so the skip is "
+                "gated on that same predicate rather than on the configured backend: ``xr.device_type()`` reports "
+                "``PJRT_DEVICE`` and would also skip on a host that sets ``PJRT_DEVICE=TPU`` without chips, where "
+                "``auto_device_count()`` is 0, the Trainer still raises, and the assertion is still meaningful. "
+                "Gating on availability keeps NEURON in the refusal path for the same reason."
             )
 
         from pytorch_lightning.utilities.exceptions import MisconfigurationException
