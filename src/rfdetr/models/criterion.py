@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -312,7 +313,7 @@ def dice_loss(
     return result
 
 
-dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptFunction[Any, Any]
+dice_loss_jit = dice_loss if sys.version_info >= (3, 14) else torch.jit.script(dice_loss)
 
 
 def sigmoid_ce_loss(
@@ -336,7 +337,7 @@ def sigmoid_ce_loss(
     return loss.mean(1).sum() / num_masks
 
 
-sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptFunction[Any, Any]
+sigmoid_ce_loss_jit = sigmoid_ce_loss if sys.version_info >= (3, 14) else torch.jit.script(sigmoid_ce_loss)
 
 
 class SetCriterion(nn.Module):
@@ -760,14 +761,16 @@ class SetCriterion(nn.Module):
             # get gt labels
             point_labels = _sample_target_masks_at_points(targets, indices, point_coords)
 
-        # ``sigmoid_ce_loss_jit`` and ``dice_loss_jit`` are TorchScripted with
-        # ``num_masks: float`` in their signatures, so they reject Tensor inputs at
-        # runtime with a "expected float, got Tensor" error.  ``SetCriterion.forward``
+        # On supported Python versions, ``sigmoid_ce_loss_jit`` and ``dice_loss_jit``
+        # are TorchScripted with ``num_masks: float`` in their signatures, so they
+        # reject Tensor inputs at runtime with an "expected float, got Tensor" error.
+        # Python 3.14+ uses the eager aliases, but retaining the same scalar boundary
+        # keeps behavior consistent across supported interpreters. ``SetCriterion.forward``
         # now hands the criterion a Tensor denominator (so it can be all-reduced across
         # ranks and accumulated across grad-accum microbatches), so it must be unwrapped
-        # to a Python scalar exactly here before the JIT call boundary.  Using
-        # ``float(...)`` instead of ``.item()`` keeps the conversion safe whether
-        # ``num_boxes`` arrives as a Tensor, a Python int/float, or a numpy scalar.
+        # to a Python scalar here. Using ``float(...)`` instead of ``.item()`` keeps the
+        # conversion safe whether ``num_boxes`` arrives as a Tensor, a Python int/float,
+        # or a numpy scalar.
         num_boxes_scalar = float(num_boxes)
         losses = {
             "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes_scalar),
