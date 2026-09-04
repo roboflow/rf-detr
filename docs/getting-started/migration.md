@@ -46,6 +46,39 @@ You can apply all changes in one go; working through sections one release at a t
     train_config = TrainConfig(eval_base_model=True)
     ```
 
+!!! warning "Breaking: `grad_accum_steps` now defaults to `1`"
+
+    `TrainConfig.grad_accum_steps` defaults to `1` (was `4`), which changes the default effective batch size from 16 to 4 at the default `batch_size=4`. This is a training-semantics change, not just a throughput change — the optimization trajectory (and possibly convergence/final mAP) can differ from a run using the old default. `batch_size="auto"` runs are unaffected, since the auto-batch probe overwrites `grad_accum_steps` with its own recommendation. Restore the previous default:
+
+    ```python
+    train_config = TrainConfig(grad_accum_steps=4)
+    ```
+
+!!! warning "Breaking: optimizer parameter groups are now merged by hyperparameter"
+
+    `get_param_dict` now builds one parameter group per distinct learning-rate/weight-decay combination instead of one group per parameter (`rfdetr-nano` goes from 465 groups to 28). Layer-wise LR decay and per-parameter weight decay are preserved, and the resulting AdamW steps are bit-identical; checkpoints saved with the old per-parameter layout resume automatically. If you pass an explicit `lr_scheduler` whose `lr_scheduler_kwargs` include a list sized to a specific parameter-group count (e.g. `LambdaLR`'s per-group `lr_lambda`), resize that list to match the new (smaller) group count.
+
+!!! warning "Breaking: dataset builders require a complete pipeline-option namespace"
+
+    `build_roboflow_from_coco`, `build_roboflow_from_yolo`, and `build_o365_raw` now raise instead of silently substituting a default when the config namespace passed to them is missing `square_resize_div_64`, `segmentation_head`, `multi_scale`, `expanded_scales`, `do_random_resize_via_padding`, `patch_size`, or `num_windows` (`build_o365_raw` doesn't take `segmentation_head` — detection-only). Calling these with a complete `TrainConfig`/`ModelConfig` (the normal `.train()`/`RFDETRDataModule` path) is unaffected — this only affects callers who assemble a partial config namespace by hand and pass it to these builders directly. Supply every field on that namespace to fix it:
+
+    ```python
+    # Before — missing fields silently fell back to (sometimes wrong) defaults
+    build_roboflow_from_coco(args=partial_namespace)
+
+    # After — supply every pipeline option the builder needs, matching your
+    # model variant's ModelConfig (patch_size varies by variant — 12, 14, or
+    # 16 — read it from your ModelConfig rather than hardcoding it)
+    partial_namespace.square_resize_div_64 = True
+    partial_namespace.segmentation_head = False
+    partial_namespace.multi_scale = True
+    partial_namespace.expanded_scales = True
+    partial_namespace.do_random_resize_via_padding = False
+    partial_namespace.patch_size = model_config.patch_size
+    partial_namespace.num_windows = model_config.num_windows
+    build_roboflow_from_coco(args=partial_namespace)
+    ```
+
 ### Deprecated in v1.10 → Remove in v1.13
 
 !!! note "`eval_ema_only` is deprecated"
