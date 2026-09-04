@@ -1296,17 +1296,21 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
+        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
-        """Optimize the model for inference with optional JIT compilation and dtype casting.
+        """Optimize the model for inference with optional compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
-        ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
-        the model's current resolution. By default, optimization deep-copies the loaded model before exporting it so the
-        original module remains available. Set ``inplace=True`` for memory-constrained inference-only deployments; this
-        exports the loaded module itself, may cast it to ``dtype``, and clears ``model.model`` after optimization
-        succeeds. In-place optimization is destructive: :meth:`remove_optimized_model` becomes a no-op (issues
-        :class:`UserWarning`), and :meth:`export` raises :class:`RuntimeError`. Create or reload a new ``RFDETR``
-        instance to recover the original model.
+        ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
+        the model's current resolution. The default ``"torchscript"`` backend preserves the existing
+        ``torch.jit.trace`` path. ``"inductor"`` uses ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the
+        dummy input twice before synchronizing the selected device so setup is paid inside this method instead of the
+        first :meth:`predict` call. By default,
+        optimization deep-copies the loaded model before exporting it so the original module remains available. Set
+        ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
+        cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
+        destructive: :meth:`remove_optimized_model` becomes a no-op (issues :class:`UserWarning`), and :meth:`export`
+        raises :class:`RuntimeError`. Create or reload a new ``RFDETR`` instance to recover the original model.
 
         If ``inplace=True`` and the underlying ``export()`` call mutates the module before raising (e.g. setting
         internal flags and swapping ``forward``), the exception handler resets RFDETR wrapper flags to the unoptimized
@@ -1314,10 +1318,9 @@ class RFDETR:
         after such a failure.
 
         Args:
-            compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
-                a JIT-compiled ``ScriptModule``. Set to ``False`` for broader compatibility (e.g. models with dynamic
-                control flow).
-            batch_size: Number of images the traced model will be optimized for. Ignored when ``compile=False``.
+            compile: If ``True``, compile the model using ``compile_backend``. Set to ``False`` for broader
+                compatibility (e.g. models with dynamic control flow).
+            batch_size: Number of images the compiled model will be optimized for. Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
                 ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
@@ -1327,12 +1330,16 @@ class RFDETR:
                 inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
                 Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
                 memory savings come only from clearing the base model reference rather than from dtype reduction.
+            compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
+                preserves the existing trace path. ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode;
+                it can reduce steady-state latency but has a substantially higher one-time compilation cost and its
+                device/operator support depends on the installed PyTorch version.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``dtype`` is not a floating-point dtype, or if ``inplace=True`` is used with
-                ``compile=True``.
+            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, or if
+                ``inplace=True`` is used with ``compile=True``.
             RuntimeError: If the base model has already been cleared by a previous inplace optimization.
 
         Examples:
@@ -1389,12 +1396,14 @@ class RFDETR:
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
         if not dtype.is_floating_point:
             raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
+        if compile_backend not in ("torchscript", "inductor"):
+            raise ValueError(f"compile_backend must be 'torchscript' or 'inductor', got {compile_backend!r}")
         if inplace and compile:
             raise ValueError(
                 "inference(inplace=True) requires compile=False. "
-                "torch.jit.trace retains references to the original parameter storage in the returned "
-                "ScriptModule, so setting model.model=None would not free the weight tensors and "
-                "inplace=True would not reduce memory usage."
+                "Compiled models can retain references to the original parameter storage, so setting "
+                "model.model=None may not free the weight tensors and inplace=True would not reliably reduce "
+                "memory usage."
             )
 
         # Clear any previously optimized state before starting a new optimization run.
@@ -1418,17 +1427,27 @@ class RFDETR:
                 inference_model = inference_model.to(dtype=dtype)
 
                 if compile:
-                    inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
-                        inference_model,
-                        torch.randn(
-                            batch_size,
-                            self.model_config.num_channels,
-                            self.model.resolution,
-                            self.model.resolution,
-                            device=self.model.device,
-                            dtype=dtype,
-                        ),
+                    dummy_input = torch.randn(
+                        batch_size,
+                        self.model_config.num_channels,
+                        self.model.resolution,
+                        self.model.resolution,
+                        device=self.model.device,
+                        dtype=dtype,
                     )
+                    if compile_backend == "torchscript":
+                        inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
+                            inference_model,
+                            dummy_input,
+                        )
+                    else:
+                        inference_model = torch.compile(inference_model, mode="reduce-overhead")
+                        with torch.inference_mode():
+                            inference_model(dummy_input)
+                            if device.type == "cuda":
+                                # CUDA Graph Trees reserve memory on the first call and record on the second.
+                                inference_model(dummy_input)
+                                torch.cuda.synchronize(device)
                     self._optimized_has_been_compiled = True
                     self._optimized_batch_size = batch_size
 
@@ -1458,6 +1477,7 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
+        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
         """Deprecated alias for :meth:`inference`.
 
@@ -1470,6 +1490,7 @@ class RFDETR:
             batch_size: See :meth:`inference`.
             dtype: See :meth:`inference`.
             inplace: See :meth:`inference`.
+            compile_backend: See :meth:`inference`.
         """
         ...
 
