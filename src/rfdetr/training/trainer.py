@@ -190,6 +190,29 @@ def _accelerator_has_multiple_auto_devices(accelerator: str | None) -> bool:
     return False
 
 
+def _accelerator_resolves_to_xla(accelerator: str | None) -> bool:
+    """Return whether *accelerator* names, or will resolve to, the XLA/TPU backend.
+
+    ``build_trainer`` decides the strategy and precision plugin before ``Trainer`` performs its
+    own accelerator resolution, so an explicit ``"xla"``/``"tpu"`` string is not the only case that
+    matters: ``TrainConfig.accelerator`` defaults to ``"auto"``, and leaving it there is this
+    repo's own documented default (see ``TrainConfig.accelerator``'s docstring). When left as
+    ``"auto"``, this mirrors ``lightning_fabric.utilities.device_parser._select_auto_accelerator``'s
+    resolution order, which checks XLA availability first -- otherwise a caller who never names an
+    accelerator would still build a ``DDPStrategy`` here, then hit the exact
+    ``XLAAccelerator``/``DDPStrategy`` mismatch this module works around, once Lightning's own
+    ``Trainer(accelerator="auto")`` resolves to XLA a few lines later.
+    """
+    accelerator_name = str(accelerator).lower()
+    if accelerator_name in ("xla", "tpu"):
+        return True
+    if accelerator_name != "auto":
+        return False
+    from pytorch_lightning.accelerators import XLAAccelerator
+
+    return XLAAccelerator.is_available()
+
+
 def _requests_multiple_devices(devices: int | str, accelerator: str | None = None) -> bool:
     """Return whether the configured devices value explicitly requests multiple devices."""
     if isinstance(devices, int):
@@ -517,8 +540,11 @@ def build_trainer(
     # XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin
     # (Literal["32-true", "16-true", "bf16-true"]); passing precision="bf16-mixed" raises
     # TypeError. Detected here so trainer_config assembly can translate the resolved precision
-    # into the required XLA plugin after applying caller-provided Trainer arguments.
-    xla_accelerator = str(accelerator).lower() in ("xla", "tpu")
+    # into the required XLA plugin after applying caller-provided Trainer arguments. Uses
+    # _accelerator_resolves_to_xla (not a literal string check) so a caller who leaves
+    # accelerator="auto" -- this repo's own default -- is covered too; see that helper's
+    # docstring for why the strategy guard below needs this same resolution.
+    xla_accelerator = _accelerator_resolves_to_xla(accelerator)
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -598,8 +624,26 @@ def build_trainer(
     strategy = trainer_kwargs.get("strategy", tc.strategy)
     devices = trainer_kwargs.get("devices", tc.devices)
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
-    strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     has_keypoints = bool(model_config.use_grouppose_keypoints)
+    if (
+        xla_accelerator
+        and not has_keypoints
+        and isinstance(strategy, str)
+        and strategy.strip().lower() == "auto"
+        and (_requests_multiple_devices(devices, accelerator) or num_nodes > 1)
+    ):
+        # `XLAAccelerator` pairs only with `SingleDeviceXLAStrategy` or `XLAStrategy`, and Lightning's
+        # "auto" resolves to DDP once more than one device is requested -- which it then rejects, during
+        # Trainer construction, before any accelerator work happens. Single-device XLA is unaffected
+        # because "auto" already lands on SingleDeviceXLAStrategy there. num_nodes > 1 is included
+        # alongside _requests_multiple_devices because a multi-host XLA topology (e.g. num_nodes=2,
+        # devices=1) is just as distributed as a multi-chip single-host one, and the DDP branch below
+        # treats it identically (distributed_requested also checks num_nodes > 1). Keypoint models are
+        # excluded: they train under manual optimization and the DDP-specific find_unused_parameters
+        # handling a few lines below has no validated XLA equivalent, so they keep hitting the
+        # pre-existing DDPStrategy/XLAAccelerator mismatch instead of silently running unverified.
+        strategy = "xla"
+    strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     if isinstance(tc, KeypointTrainConfig) != has_keypoints:
         raise ValueError(
             f"Config/model mismatch: isinstance(tc, KeypointTrainConfig)={isinstance(tc, KeypointTrainConfig)} "
