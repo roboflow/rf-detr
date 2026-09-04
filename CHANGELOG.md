@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `RFDETR.inference()` now accepts `compile_backend="inductor"` as an opt-in backend for long-running inference at a fixed batch size and resolution; the default remains the existing TorchScript path. Inductor is warmed up inside `inference()` so compilation does not unexpectedly land on the first `predict()` call. With pretrained RF-DETR Nano, FP16, and default source metadata on an NVIDIA L4, public `predict()` latency fell from 9.179 to 4.797 ms at batch 1 (47.7%) and from 18.553 to 17.047 ms at batch 8 (8.1%) across 10 alternating rounds. One cold setup sample per backend and batch took 36.9-43.7 s with Inductor versus 3.6-3.7 s with TorchScript, so this backend is intended for workloads long enough to amortize setup. One full COCO val2017 run per backend measured mAP@[.50:.95] of 0.47869 with TorchScript and 0.47883 with Inductor.
+
 ## [1.10.0] — 2026-09-04
 
 ### Added

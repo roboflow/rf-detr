@@ -6,7 +6,7 @@
 """Tests for RFDETR.inference()."""
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -52,15 +52,17 @@ class TestOptimizeForInferenceDeprecatedAlias:
     """``optimize_for_inference`` forwards to :meth:`RFDETR.inference` with a deprecation warning."""
 
     def test_forwards_and_warns(self) -> None:
-        """Calling the deprecated alias emits ``FutureWarning`` and still optimizes the model."""
+        """The deprecated alias should warn and forward the selected compilation backend."""
         rfdetr = _FakeRFDETR()
 
         with (
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.compile", side_effect=lambda model, **_: model) as mock_compile,
             pytest.warns(FutureWarning, match="optimize_for_inference"),
         ):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.optimize_for_inference(compile_backend="inductor")
 
+        mock_compile.assert_called_once_with(rfdetr.model.model, mode="reduce-overhead")
         assert rfdetr._is_optimized_for_inference is True
 
 
@@ -213,7 +215,7 @@ class TestModelInferenceCudaDeviceContext:
 
 
 class TestModelInferenceCompile:
-    """Tests for the compile=True path (JIT trace)."""
+    """Tests for the compile=True paths."""
 
     def test_compile_true_calls_jit_trace(self) -> None:
         """torch.jit.trace should be called with the model and a correctly-shaped dummy input."""
@@ -243,6 +245,44 @@ class TestModelInferenceCompile:
 
         assert rfdetr._optimized_has_been_compiled is True
         assert rfdetr._optimized_batch_size == 4
+
+    def test_inductor_backend_compiles_and_warms_up_with_dummy_input(self) -> None:
+        """The opt-in Inductor backend should compile and execute the configured static batch once."""
+        rfdetr = _FakeRFDETR()
+        original_forward = rfdetr.model.model.forward
+        warmup: dict[str, object] = {}
+        compiled_model = Mock(
+            side_effect=lambda x: (
+                warmup.update({"shape": x.shape, "inference_mode": torch.is_inference_mode_enabled()}),
+                original_forward(x),
+            )[1]
+        )
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.compile", return_value=compiled_model) as mock_compile,
+            patch("torch.jit.trace") as mock_trace,
+        ):
+            rfdetr.inference(compile=True, batch_size=2, compile_backend="inductor")
+
+        mock_trace.assert_not_called()
+        mock_compile.assert_called_once_with(rfdetr.model.model, mode="reduce-overhead")
+        compiled_model.assert_called_once()
+        assert warmup == {"shape": torch.Size((2, 3, 28, 28)), "inference_mode": True}
+        assert rfdetr._optimized_has_been_compiled is True
+        assert rfdetr._optimized_batch_size == 2
+
+    def test_invalid_compile_backend_raises(self) -> None:
+        """An unknown backend should fail before copying or exporting the model."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            pytest.raises(ValueError, match="compile_backend must be 'torchscript' or 'inductor'"),
+        ):
+            rfdetr.inference(compile=True, compile_backend="unknown")  # type: ignore[arg-type]
+
+        mock_deepcopy.assert_not_called()
 
     def test_compile_false_skips_jit_trace(self) -> None:
         """torch.jit.trace should NOT be called when compile=False."""
@@ -462,6 +502,23 @@ class TestModelInferenceInplace:
 
 class TestModelInferenceExceptionRecovery:
     """Verify state consistency when optimization fails mid-execution."""
+
+    def test_inductor_warmup_failure_leaves_model_fully_unoptimized(self) -> None:
+        """A failure during the eager warmup should clear the compiled wrapper and all state flags."""
+        rfdetr = _FakeRFDETR()
+        compiled_model = Mock(side_effect=RuntimeError("warmup failed"))
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.compile", return_value=compiled_model),
+            pytest.raises(RuntimeError, match="warmup failed"),
+        ):
+            rfdetr.inference(compile=True, compile_backend="inductor")
+
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
 
     def test_deepcopy_failure_leaves_clean_state(self) -> None:
         """If deepcopy raises, inference_model should be None and _is_optimized_for_inference False."""
