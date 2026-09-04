@@ -83,6 +83,12 @@ Both increase the nominal effective batch, but they are not equivalent in cost o
 
 So: use `batch_size="auto"` on CUDA when the model, task, resolution, or available memory makes manual sizing uncertain. On CPU or MPS, use a concrete integer batch size. If you set it manually, increase the physical batch conservatively and use `grad_accum_steps` only when memory requires it. Keeping `batch_size × grad_accum_steps` constant preserves only the nominal effective-batch target; it does not guarantee the same optimization trajectory, even though the nominal images-per-optimizer-update target is unchanged. See [Training Parameters](learn/train/training-parameters.md).
 
+## Does FP8 training work on Apple MPS, and do I need the CUDA extra?
+
+FP8 training uses NVIDIA Transformer Engine and requires supported NVIDIA CUDA hardware. It does not run on Apple MPS. The `cuda` extra adds the PyTorch extension on Linux x86-64; ordinary CUDA and MPS training only need `rfdetr[train]`. FP8 remains opt-in through `amp_dtype="fp8"`.
+
+See [Advanced FP8 setup](learn/train/advanced.md#fp8-training-on-nvidia-cuda) for installation, CUDA-major compatibility, and fixes for empty-metapackage, skipped-layer, and EMA extra-state messages.
+
 ## What export formats are supported?
 
 ONNX, TFLite (FP32/FP16/INT8), ExecuTorch (XNNPACK, CoreML, QNN), and native CoreML (`.mlpackage`). TensorRT runs via the exported ONNX model. Install the matching extra — `rfdetr[onnx]`, `rfdetr[tflite]`, `rfdetr[executorch]`, or `rfdetr[coreml]` — then call `model.export()`. Native CoreML (`format="coreml"`) is distinct from the ExecuTorch CoreML backend (`format="executorch", backend="coreml"`) — the former produces a `.mlpackage` directly, the latter a `.pte`. See [Export Model](learn/export.md).

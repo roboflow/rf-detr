@@ -36,6 +36,40 @@ class _EMAContainerModule(nn.Module):
         return next(self.parameters()).device
 
 
+class _GuardedExtraStateMixin:
+    """Reject Transformer Engine-style extra-state deserialization.
+
+    Examples:
+        >>> _GuardedExtraStateLinear(1, 1).get_extra_state()
+        {'fp8_scaling': 'serialized'}
+    """
+
+    def get_extra_state(self) -> dict[str, str]:
+        """Return representative serialized state attached by Transformer Engine.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).get_extra_state()
+            {'fp8_scaling': 'serialized'}
+        """
+        return {"fp8_scaling": "serialized"}
+
+    def set_extra_state(self, state: object) -> None:
+        """Reject unsafe deserialization in the same way as Transformer Engine.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).set_extra_state({})
+            Traceback (most recent call last):
+            ...
+            RuntimeError: unsafe FP8 extra state must not be deserialized
+        """
+        del state
+        raise RuntimeError("unsafe FP8 extra state must not be deserialized")
+
+
+class _GuardedExtraStateLinear(_GuardedExtraStateMixin, nn.Linear):
+    """Linear layer that rejects serialized FP8-like extra state."""
+
+
 class TestAvgFnDecayFormula:
     """Verify the tau / no-tau decay formula matches ModelEma."""
 
@@ -165,6 +199,128 @@ class TestInit:
         assert "weight" in state
         assert "bias" in state
 
+    def test_on_fit_start_initializes_ema_after_precision_conversion(self) -> None:
+        """EMA weights must match live BF16 weights after Lightning precision conversion.
+
+        Lightning runs callback ``setup`` before its precision plugin replaces or casts the live module. Constructing
+        ``AveragedModel`` in ``setup`` therefore leaves it in FP32, which makes its second update fail once the live
+        model is BF16.
+        """
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        trainer = MagicMock()
+
+        cb.setup(trainer, pl_module, stage="fit")
+        pl_module.to(dtype=torch.bfloat16)
+
+        cb.on_fit_start(trainer, pl_module)
+
+        assert cb._average_model is not None
+        for ema_parameter, live_parameter in zip(
+            cb._average_model.module.parameters(), pl_module.parameters(), strict=True
+        ):
+            assert ema_parameter.shape == live_parameter.shape
+            assert ema_parameter.dtype is live_parameter.dtype
+            assert ema_parameter.device == live_parameter.device
+        cb._average_model.update_parameters(pl_module)
+        cb._average_model.update_parameters(pl_module)
+        assert int(cb._average_model.n_averaged) == 2
+
+
+class TestExtraStateTransfers:
+    """EMA state transfers must not deserialize Transformer Engine extra state."""
+
+    def test_on_train_end_copies_ema_weights_without_loading_extra_state(self) -> None:
+        """Training end must load EMA weights even when FP8 extra state rejects deserialization."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        trainer = MagicMock()
+        cb.on_fit_start(trainer, pl_module)
+        assert cb._average_model is not None
+
+        with torch.no_grad():
+            pl_module.model.weight.fill_(7.0)
+            cb._average_model.module.model.weight.fill_(5.0)
+
+        cb.on_train_end(trainer, pl_module)
+
+        assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 5.0))
+
+    def test_get_ema_model_state_dict_omits_extra_state(self) -> None:
+        """Checkpoint export must retain model tensors while omitting guarded FP8 metadata."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        cb.on_fit_start(MagicMock(), pl_module)
+
+        state = cb.get_ema_model_state_dict()
+
+        assert state is not None
+        assert set(state) == {"weight", "bias"}
+
+    def test_callback_state_round_trip_preserves_ema_without_loading_extra_state(self) -> None:
+        """Checkpoint resume must retain EMA weights and counters without deserializing FP8 metadata."""
+        source_callback = RFDETREMACallback()
+        source_module = _EMAContainerModule()
+        source_module.model = _GuardedExtraStateLinear(4, 2)
+        source_callback.on_fit_start(MagicMock(), source_module)
+        assert source_callback._average_model is not None
+        with torch.no_grad():
+            source_callback._average_model.module.model.weight.fill_(5.0)
+            source_callback._average_model.n_averaged.fill_(3)
+
+        callback_state = source_callback.state_dict()
+        average_state = callback_state["average_model_state_dict"]
+        assert isinstance(average_state, dict)
+        assert all(key.rsplit(".", maxsplit=1)[-1] != "_extra_state" for key in average_state)
+        restored_callback = RFDETREMACallback()
+        restored_module = _EMAContainerModule()
+        restored_module.model = _GuardedExtraStateLinear(4, 2)
+        restored_callback.load_state_dict(callback_state)
+        restored_callback.on_fit_start(MagicMock(), restored_module)
+
+        assert restored_callback._average_model is not None
+        assert int(restored_callback._average_model.n_averaged) == 3
+        assert torch.equal(
+            restored_callback._average_model.module.model.weight,
+            torch.full_like(restored_callback._average_model.module.model.weight, 5.0),
+        )
+
+    def test_swap_models_round_trip_copies_weights_without_loading_extra_state(self) -> None:
+        """Test-time EMA swapping must restore live weights without deserializing FP8 state."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        trainer = MagicMock()
+        cb.on_fit_start(trainer, pl_module)
+        assert cb._average_model is not None
+
+        with torch.no_grad():
+            pl_module.model.weight.fill_(7.0)
+            cb._average_model.module.model.weight.fill_(5.0)
+
+        cb._swap_models(pl_module)
+        assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 5.0))
+        assert cb._swapped_state_dict is not None
+
+        cb._swap_models(pl_module)
+        assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 7.0))
+        assert cb._swapped_state_dict is None
+
+    def test_swap_models_rejects_non_extra_state_shape_mismatch(self) -> None:
+        """Ignoring FP8 extra state must not hide an EMA parameter shape mismatch."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        trainer = MagicMock()
+        cb.on_fit_start(trainer, pl_module)
+        assert cb._average_model is not None
+        cb._average_model.module.model = nn.Linear(5, 2)
+
+        with pytest.raises(RuntimeError, match=r"size mismatch for model\.weight"):
+            cb._swap_models(pl_module)
+
 
 class TestUpdateInterval:
     """Verify update_interval_steps throttles EMA updates on step hooks."""
@@ -249,8 +405,8 @@ class TestLegacyEMAResume:
 
         assert cb.state_dict() == {"latest_update_step": 7}
 
-    def test_setup_loads_pending_legacy_ema_state_into_average_model(self) -> None:
-        """`_pending_legacy_ema_state` must initialize EMA weights at fit setup."""
+    def test_on_fit_start_loads_pending_legacy_ema_state_into_average_model(self) -> None:
+        """`_pending_legacy_ema_state` must initialize EMA weights after precision conversion."""
         cb = RFDETREMACallback()
         pl_module = _EMAContainerModule()
         trainer = MagicMock()
@@ -259,6 +415,7 @@ class TestLegacyEMAResume:
         pl_module._pending_legacy_ema_state = legacy_ema_state
 
         cb.setup(trainer, pl_module, stage="fit")
+        cb.on_fit_start(trainer, pl_module)
 
         assert cb._average_model is not None
         restored = cb._average_model.module.model.state_dict()
@@ -283,13 +440,14 @@ class _BufferContainerModule(nn.Module):
 class TestMultiAvgFn:
     """Foreach ``multi_avg_fn`` path must reproduce the per-tensor ``avg_fn`` numerics exactly."""
 
-    def test_setup_registers_multi_avg_fn(self) -> None:
-        """Fit setup must wire multi_avg_fn (foreach branch) and leave avg_fn unset."""
+    def test_on_fit_start_registers_multi_avg_fn(self) -> None:
+        """Post-conversion fit start must wire multi_avg_fn and leave avg_fn unset."""
         cb = RFDETREMACallback()
         pl_module = _EMAContainerModule()
         trainer = MagicMock()
 
         cb.setup(trainer, pl_module, stage="fit")
+        cb.on_fit_start(trainer, pl_module)
 
         assert cb._average_model is not None
         assert cb._average_model.multi_avg_fn is not None

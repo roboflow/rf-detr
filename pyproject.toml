@@ -70,6 +70,11 @@ train = [
     "torch-hungarian==0.1.0rc0",
     "roboflow",
 ]
+# Transformer Engine's PyTorch extension needs NVIDIA CUDA and a Linux x86-64 build environment.
+# Keep macOS/MPS and Windows installs free of this optional CUDA dependency.
+cuda = [
+    "transformer-engine[pytorch]>=2.18,<3; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
     "kornia>=0.7,<1",                  # optional GPU-side augmentation

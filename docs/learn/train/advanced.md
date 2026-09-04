@@ -10,6 +10,84 @@ This page covers advanced training topics including resuming training, early sto
 
     All examples on this page use the `RFDETR.train()` high-level API. For custom callbacks, non-default loggers, and fine-grained distributed training control, see the [Custom Training API](customization.md) guide.
 
+## FP8 Training on NVIDIA CUDA
+
+FP8 is an opt-in training mode for supported NVIDIA GPUs. RF-DETR uses Lightning's built-in Transformer Engine precision plugin; no custom accelerator is needed. Eligible layers use FP8 computation with BF16 weights. Installing the `cuda` extra alone does not change training precision: `amp_dtype` still defaults to `"auto"`.
+
+### Install the CUDA extra
+
+The `cuda` extra installs `transformer-engine[pytorch]>=2.18,<3` on Linux x86-64. The upstream framework extra is named `pytorch`, not `torch`. Transformer Engine does not support Apple MPS; the dependency is skipped on macOS and other platforms outside this extra's platform marker. Ordinary CUDA and MPS training do not need this extra.
+
+1. Install CUDA-enabled PyTorch for your driver and CUDA environment using the [PyTorch installation instructions](https://pytorch.org/get-started/locally/).
+
+2. Install the [Transformer Engine prerequisites](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/installation.html), including CUDA toolkit headers, cuDNN, and the compiler needed to build its PyTorch extension. A GPU driver alone is insufficient. NVIDIA documents CUDA 12.8 or later for Blackwell.
+
+3. Install RF-DETR's training and CUDA extras into that same environment:
+
+    ```bash
+    python -m pip install --no-build-isolation 'rfdetr[train,cuda]'
+    ```
+
+    With `uv`, use `uv pip install --no-build-isolation 'rfdetr[train,cuda]'`. From a local RF-DETR checkout, replace `rfdetr[train,cuda]` with `.[train,cuda]`. Restart the notebook kernel after installing or replacing compiled dependencies.
+
+!!! warning "Match the CUDA core library to your environment"
+
+    Successful package resolution does not validate CUDA toolkit, driver, or PyTorch ABI compatibility. Our dependency-resolution check selected `transformer-engine-cu13` for Transformer Engine 2.18.0; do not assume the extra selects CUDA 12 merely because your PyTorch reports CUDA 12.8. Check the resolved packages against NVIDIA's installation instructions, including its `core_cu12` / `core_cu13` selection and source-build guidance. Adding a second core library alone does not establish compatibility with the PyTorch extension.
+
+### Verify and enable FP8
+
+Check the environment before starting a long run. Importing the PyTorch extension verifies more than importing the top-level metapackage:
+
+```python
+from importlib.metadata import version
+
+import torch
+import transformer_engine.pytorch
+
+print("Transformer Engine:", version("transformer-engine"))
+print("PyTorch:", torch.__version__)
+print("PyTorch CUDA build:", torch.version.cuda)
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+```
+
+These checks establish import and device availability, not FP8 kernel compatibility. Run a short training job that reaches validation and training shutdown before committing to a longer run:
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall()
+model.train(
+    dataset_dir="path/to/small/coco-format-dataset",
+    output_dir="output/fp8-smoke",
+    epochs=1,
+    batch_size=4,
+    amp_dtype="fp8",
+    use_ema=True,
+)
+```
+
+FP8 requires model AMP to be enabled. CPU, MPS, FSDP, and DeepSpeed combinations are rejected; use DDP for supported multi-GPU FP8 training.
+
+### Troubleshooting FP8
+
+| Symptom                                                              | Meaning and action                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Missing `transformer_engine` requirement or empty metapackage        | Install the `cuda` extra in the active Python environment. The PyTorch extension is required; the bare metapackage is insufficient.                                                                                                            |
+| Missing CUDA headers, undefined symbols, or extension import failure | Verify toolkit, cuDNN, driver, and PyTorch/Transformer Engine build compatibility using NVIDIA's installation guide.                                                                                                                           |
+| Missing JAX extension warning                                        | RF-DETR uses the PyTorch extension. JAX support is not required for this training path; verify `import transformer_engine.pytorch` succeeds.                                                                                                   |
+| Linear-layer dimensions are not divisible by 8 and 16                | Lightning skips incompatible layers. This warning is nonfatal and means FP8 coverage is partial. Do not change class counts or output shapes just to suppress it.                                                                              |
+| Model summary says Transformer Engine precision is unsupported       | The displayed parameter-memory estimate is a fallback estimate, not measured GPU memory.                                                                                                                                                       |
+| EMA tensor dtype/device mismatch during updates                      | Update RF-DETR to a revision that initializes EMA after Lightning precision conversion. This was an integration bug, not an FP8 hardware limitation.                                                                                           |
+| Pickled Transformer Engine extra-state refusal at training shutdown  | Update RF-DETR to a revision containing the EMA extra-state fix. EMA transfers exclude serialized `_extra_state` while retaining weights, buffers, and counters. Do not enable `NVTE_ALLOW_UNSAFE_PICKLE_EXTRA_STATE` as a routine workaround. |
+
+EMA checkpoint transfers intentionally omit FP8 scaling history; they do not promise bitwise continuation of that history. Full trainer checkpoints and regular non-EMA checkpoints have separate loading paths. Validate the specific resume, inference, and export workflow you need before relying on it for a long experiment.
+
+### Measure the benefit
+
+Compare `amp_dtype="fp8"` with `amp_dtype="bf16"` on the same GPU, model, dataset, resolution, physical batch size, gradient accumulation, and EMA settings. Use separate output directories, exclude warm-up from step timing, and include validation/checkpoint overhead when comparing whole epochs. Record peak GPU memory and validation accuracy as well as throughput. Smaller models or input-bound workloads may see no speedup or a slowdown; faster FP8 matrix operations do not guarantee a faster epoch.
+
 ## Resume Training
 
 You can resume training from a previously saved full checkpoint by passing the path to `last.ckpt` using the `resume` argument. This is useful when training is interrupted or you want to continue fine-tuning an already partially trained model.
