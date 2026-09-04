@@ -188,7 +188,7 @@
               (best, name) => (best === null || isNewer(name, best) ? name : best),
               null,
             );
-          applyVerdict(versionBase, newest !== null && newest !== version);
+          applyVerdict(versionBase, newest !== null && isNewer(newest, version));
         })
         .catch(() => {
           // versions.json unreachable: leave whatever verdict Material reached.
