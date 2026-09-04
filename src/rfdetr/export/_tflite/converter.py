@@ -35,17 +35,14 @@ Import order
 TensorFlow must be imported before ONNX's C extension or the conversion deadlocks, so :func:`export_tflite` calls
 :func:`~rfdetr.export._backend.preload_tensorflow_before_onnx` first — see there for why.
 
-The converter uses the ``onnx2tf`` Python API directly (rather than shelling out to the CLI) so that we can:
+The converter uses the ``onnx2tf`` Python API directly (rather than shelling out to the CLI) to:
 
 * Apply a compatibility shim for older ``onnx2tf`` releases that call
   :func:`numpy.load` on pickled data without ``allow_pickle=True``.
-* Redirect ``onnx2tf``'s built-in ``download_test_image_data()`` to use
-  locally-prepared calibration data instead of downloading from GitHub (which can fail in many environments).
+* Redirect the legacy ``download_test_image_data()`` validation hook to locally prepared data when an ``onnx2tf``
+  version exposes it. Releases 2.4.0–2.4.3 do not expose this hook, so the patch is currently inert.
 * Put the running interpreter's script directory on ``PATH`` (:func:`_interpreter_scripts_on_path`) so the bare
   ``onnxsim`` console script that ``onnx2tf`` shells out to resolves under a non-activated virtual environment.
-
-``onnx2tf`` calls ``download_test_image_data()`` for its ONNX-vs-TF output validation.  ``_patch_validation_download()``
-redirects that call to local data, avoiding the network dependency.
 
 INT8 quantization
 -----------------
@@ -53,7 +50,9 @@ INT8 quantization
 than FP32, no calibration data needed), built from the ``onnx2tf`` SavedModel.
 
 Static (full-integer) INT8 is not supported and raises ``ValueError``: RF-DETR's transformer activations do not survive
-8-bit post-training quantization.
+8-bit post-training quantization.  Because dynamic-range quantization derives its weight scales from the weights
+themselves, *calibration_data* cannot change the INT8 artifact — TFLite only consumes representative data through
+``representative_dataset``, which this path never sets.
 
 Note:
     The resulting ``.tflite`` model expects the same input normalization as the ONNX model: ImageNet mean/std
@@ -607,27 +606,14 @@ def _interpreter_scripts_on_path() -> Generator[None, None, None]:
 
 @contextlib.contextmanager
 def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
-    """Redirect ``download_test_image_data()`` to use local calibration data.
+    """Redirect onnx2tf's legacy validation-data download when the hook exists.
 
-    ``onnx2tf`` calls ``download_test_image_data()`` during conversion to fetch test images from GitHub.  The function
-    is called in two places:
-
-    1. **Validation** — compares ONNX-vs-TF outputs (all conversions).
-    2. **INT8 calibration** — builds a representative dataset when
-       ``output_integer_quantized_tflite=True``.
-
-    This download can fail in many environments (firewalls, CI, air-gapped systems, or when the upstream file is
-    unavailable).  This context manager monkey-patches the function in all known module locations to return the data
-    from the calibration ``.npy`` file we already prepared.
-
-    We intentionally do **not** use ``custom_input_op_name_np_data_path`` because that code path triggers a ``tf.tile``
-    rank mismatch in onnx2tf
-    1.x when processing models with DINOv2-style embeddings and N > 1
-    calibration samples.  Patching the download function achieves the same goal without that issue.
+    onnx2tf 2.4.0–2.4.3 do not define ``download_test_image_data``. The conditional patch remains for
+    compatible 2.x releases that expose it. This is an output-validation hook, not an INT8 calibration path: RF-DETR
+    never passes ``output_integer_quantized_tflite``.
 
     Args:
-        npy_path: Path to the ``.npy`` file containing calibration data in
-            NHWC format.
+        npy_path: Path to locally prepared NHWC validation data.
     """
 
     def _replacement() -> NDArray[np.float32]:
@@ -747,24 +733,21 @@ def _prepare_calibration_data(
     onnx_path: Path,
     calibration_data: str | os.PathLike[str] | NDArray[np.float32] | None,
     output_dir: Path,
-    quantization: str | None,
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
 ) -> Path:
     """Prepare calibration data as a ``.npy`` file for ``onnx2tf``.
 
-    The returned path points to a ``.npy`` file containing an NHWC float32 array with pixel values in ``[0, 1]``.  This
-    file is loaded by the ``_patch_validation_download()`` context manager, which replaces ``onnx2tf``'s built-in
-    ``download_test_image_data()`` call.  ``onnx2tf`` uses this data for both ONNX-vs-TF output validation and (when
-    INT8 is requested) as a representative calibration dataset.
+    The returned path points to an NHWC float32 array with pixel values in ``[0, 1]``. Generated or reformatted data is
+    saved as ``_rfdetr_calib_data.npy`` in *output_dir*; an existing ``.npy`` path is returned unchanged. The data is
+    offered to onnx2tf's conditional legacy validation hook and does not influence the generated ``.tflite`` models.
 
     Args:
-        onnx_path: Path to the source ``.onnx`` file (used to read the
-            input tensor NCHW shape for random data generation and for determining the target resolution when loading
-            images from a directory).
+        onnx_path: Path to the source ``.onnx`` file, read for the input tensor's
+            NCHW shape (random data generation, and the target resolution when loading images from a directory).
         calibration_data: One of:
 
-            * ``None`` — generate random calibration data.  Sufficient for
-              fp32/fp16 but emits a warning for int8.
+            * ``None`` — generate random data.  Adequate for every quantization
+              mode, INT8 included: INT8 is dynamic-range, so no calibration is involved.
             * A **directory path** containing JPEG/PNG images — images are
               loaded, resized to the model input resolution, and converted to the correct format automatically.
             * A path to a ``.npy`` file containing an array of shape
@@ -772,8 +755,6 @@ def _prepare_calibration_data(
             * A :class:`numpy.ndarray` with the same constraints.
         output_dir: Directory where a temporary ``.npy`` file may be
             written when *calibration_data* is ``None``, a directory, or an ndarray.
-        quantization: The requested quantization mode (used only to decide
-            whether to emit a warning).
         max_images: Maximum number of images to load when
             *calibration_data* is a directory path.  Ignored for other calibration data formats.
 
@@ -785,13 +766,6 @@ def _prepare_calibration_data(
             exist, or a directory with no supported images.
     """
     if calibration_data is None:
-        if quantization == "int8":
-            logger.warning(
-                "No calibration_data provided for INT8 quantization. Using "
-                "random data — this will produce poor quantization accuracy. "
-                "For best results, pass calibration_data with representative "
-                "images from your dataset."
-            )
         _, input_dims = _get_onnx_input_info(onnx_path)
         # input_dims is NCHW, e.g. [1, 3, 384, 384].
         _, c, h, w = input_dims
@@ -889,8 +863,7 @@ def export_tflite(
               (``onnx2tf`` always emits both).
             * ``"int8"`` — additionally produce a dynamic-range INT8 model
               (INT8 weights, float activations, ~4x smaller than FP32). Static / full-integer INT8 is not supported.
-        calibration_data: Representative data used by ``onnx2tf`` for its
-            ONNX-vs-TF output validation.  Accepts:
+        calibration_data: Optional data not consumed when building the generated ``.tflite`` models. Accepts:
 
             * ``None`` — auto-generate random data.
             * A **directory path** containing JPEG/PNG images — images
@@ -899,8 +872,9 @@ def export_tflite(
               dtype float32, pixel values in ``[0, 1]``.
             * A :class:`numpy.ndarray` with the same format.
 
-            Dynamic-range INT8 needs no calibration data, so this argument does not affect the quantized weights — it
-            only feeds onnx2tf's internal validation pass.
+            This argument does not affect the generated ``.tflite`` models. INT8 is dynamic-range, so no representative
+            data is involved. ``None``, directories, and arrays produce ``_rfdetr_calib_data.npy`` in *output_dir*;
+            existing ``.npy`` paths are reused without writing a copy.
         verbosity: Log verbosity passed to ``onnx2tf``.  One of
             ``"debug"``, ``"info"``, ``"warn"``, ``"error"`` (default).
         max_images: Maximum number of images to load when
@@ -923,11 +897,11 @@ def export_tflite(
         RuntimeError: If the conversion fails.
 
     Note:
-        This function is **not thread-safe**.  It globally monkey-patches :func:`numpy.load` (via
-        :func:`_numpy_allow_pickle`), ``onnx2tf.download_test_image_data`` (via :func:`_patch_validation_download`), and
-        ``os.environ["PATH"]`` (via :func:`_interpreter_scripts_on_path`) for the duration of the conversion.
-        Concurrent calls from multiple threads will interfere with each other.  Run conversion in a subprocess if
-        isolation is required.
+        This function is **not thread-safe**. It globally monkey-patches :func:`numpy.load` (via
+        :func:`_numpy_allow_pickle`), ``onnx2tf.download_test_image_data`` when available (via
+        :func:`_patch_validation_download`), and ``os.environ["PATH"]`` (via
+        :func:`_interpreter_scripts_on_path`) for the duration of the conversion. Concurrent calls from multiple
+        threads will interfere with each other. Run conversion in a subprocess if isolation is required.
 
         ``tf_converter`` backend is forced unconditionally (overriding onnx2tf's 2.x ``flatbuffer_direct`` default) to
         avoid a runtime error in the TFLite TopK_V2 kernel.  ``Erf`` and ``GeLU`` ops are substituted with TFLite-native
@@ -986,23 +960,14 @@ def export_tflite(
             exc,
         )
 
-    calib_npy_path = _prepare_calibration_data(
-        onnx_path, calibration_data, output_dir, quantization, max_images=max_images
-    )
+    calib_npy_path = _prepare_calibration_data(onnx_path, calibration_data, output_dir, max_images=max_images)
 
     logger.info(f"Converting ONNX → TFLite (quantization={quantization!r}, verbosity={verbosity!r}): {onnx_path}")
 
     try:
-        # _patch_validation_download redirects onnx2tf's
-        # download_test_image_data() to return our calibration data.
-        # onnx2tf uses this data for both ONNX/TF output validation and
-        # (when int8 is requested) as a representative calibration dataset.
-        #
         # We intentionally do NOT pass custom_input_op_name_np_data_path
         # because that code path in onnx2tf 1.x triggers a tf.tile rank
         # mismatch when processing the DINOv2 backbone with N > 1 samples.
-        # The patched download function achieves the same goal without that
-        # issue.
         #
         # output_signaturedefs=True is required because segmentation
         # models produce ONNX node names (e.g.

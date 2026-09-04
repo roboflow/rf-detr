@@ -1644,21 +1644,22 @@ class RFDETR:
                     instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``, ``coremltools``) may affect results.
             quantization: TFLite quantization mode (ignored when
                 ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` /
-                ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces an INT8-quantized
-                model.
-            calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
+                ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range
+                INT8 model (INT8 weights, float activations; needs no calibration data).
+            calibration_data: Optional data not consumed when building the exported ``.tflite`` models. Accepts:
 
-                * ``None`` — auto-generate random data (sufficient for fp32/fp16; warns for int8).
+                * ``None`` — auto-generate random data (the default, and adequate for every quantization mode).
                 * A **directory path** (``str``) containing JPEG/PNG
-                  images — the converter automatically loads, resizes, and prepares them.  This is the simplest
-                  approach.
+                  images — the converter automatically loads, resizes, and prepares them.
                 * A path (``str``) to a ``.npy`` file of shape ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
                 * A :class:`numpy.ndarray` with the same format.
 
-                For INT8 quantization, provide 20–100 representative images from your training/validation set for best
-                accuracy.
-            max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
-                when *calibration_data* is a directory path.
+                This does **not** improve INT8 accuracy: ``quantization="int8"`` produces a dynamic-range model whose
+                weight scales come from the weights themselves. When passed as ``None``, a directory, or an array, the
+                data is saved to ``_rfdetr_calib_data.npy`` in *output_dir* but not consumed to build the model. An
+                existing ``.npy`` path is reused without writing a copy.
+            max_images: Maximum number of images to load from a *calibration_data* directory.  Defaults to ``100``.
+                Only used when *calibration_data* is a directory path.
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
