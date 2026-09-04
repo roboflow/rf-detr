@@ -244,7 +244,8 @@ class TestSvgState:
 
         assert state.history
         assert state.history[0].week_start == date(2026, 8, 24)
-        assert state.history[0].new_stars is None
+        assert state.history[0].stars_total == 9_106
+        assert state.history[0].new_stars == 70
         assert state.history[0].downloads == 52_689
 
     def test_rendered_metadata_round_trips_complete_state(self) -> None:
