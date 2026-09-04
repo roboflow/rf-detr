@@ -2344,10 +2344,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The format is based on <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semantic Versioning</a>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>RFDETR.inference()</code> now accepts <code>compile_backend="inductor"</code> as an opt-in backend for long-running inference at a fixed batch size and resolution; the default remains the existing TorchScript path. On CUDA, Inductor completes its two setup invocations and synchronizes inside <code>inference()</code> before the first public <code>predict()</code> call. Runtime benefit and compatibility depend on the workload, CUDA device, operators, and installed PyTorch version.</li>
+</ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
+<hr />
 <h2 id="1100-2026-09-04">[1.10.0] — 2026-09-04<a class="headerlink" href="#1100-2026-09-04" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
