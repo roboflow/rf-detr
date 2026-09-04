@@ -464,6 +464,10 @@ boxes = interpreter.get_tensor(boxes_detail["index"])
 labels = interpreter.get_tensor(labels_detail["index"])
 ```
 
+### Community example: RF-DETR Nano on an Android GPU (LiteRT)
+
+[LiteRT-Models › RF-DETR Nano](https://github.com/john-rocky/LiteRT-Models#rf-detr-nano) is a community conversion of RF-DETR Nano to LiteRT (`.tflite`) with a Kotlin camera app. It was converted with `litert-torch` rather than the `onnx2tf` route above, and split into two graphs (the two-stage query selection runs on the host between them) so both graphs run fully on the phone GPU through the LiteRT CompiledModel API; on a Pixel 8a it runs live camera at ~9 fps (~110 ms/frame) with detections at IoU 0.98–0.99 against PyTorch.
+
 ## ExecuTorch Export
 
 !!! warning "Experimental — Use with Caution"
