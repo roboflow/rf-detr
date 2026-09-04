@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- `pytest -m xla` now passes on real TPU silicon. Two `xla`-marked tests only held under CPU-PJRT, the single backend the `ci-tests-xla.yml` lane exercises. `test_tpu_accelerator_refuses_to_launch_off_real_tpu` asserts that building a `tpu` Trainer raises, which holds only while `XLAAccelerator.is_available()` is `False`; where chips are present it is `True`, the Trainer builds, and the test failed with `DID NOT RAISE` — on its own as well as in the suite, so it is not an ordering artifact. It now skips on that same availability predicate, which keeps the assertion wherever it is meaningful (including a host that sets `PJRT_DEVICE=TPU` with no chips) and keeps NEURON in the refusal path. `test_all_gather_multiprocess_xla_collective_routing` could not share a process with any other `xla` test: PJRT hands the chips to the first process that claims them, so once a sibling has touched the device `torch_xla.launch` raises `Runtime is already initialized`, and a subprocess does not help because the parent still owns the chips. It now skips when the runtime is already live, so it needs its own pytest invocation to execute. Verified on Cloud TPU v6e-1 and v6e-4: `pytest -m xla` went from 2 passed / 2 failed to 2 passed / 0 failed on both, and the collective passes in a standalone invocation on the 4-chip slice — the only arm that reaches the multi-device `dist.all_gather`, since a single-chip slice returns early at `world_size == 1`. No timing claim is made. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
+
 ### Breaking Changes
 
 ## [1.10.0] — 2026-09-04
