@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `RFDETR.inference()` now accepts `compile_backend="inductor"` as an opt-in backend for long-running inference at a fixed batch size and resolution; the default remains the existing TorchScript path. On CUDA, Inductor completes its two setup invocations and synchronizes inside `inference()` before the first public `predict()` call. Runtime benefit and compatibility depend on the workload, CUDA device, operators, and installed PyTorch version.
+
 ### Changed
 
 ### Deprecated
@@ -15,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 ### Breaking Changes
+
+---
 
 ## [1.10.0] — 2026-09-04
 
