@@ -2,14 +2,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title description">
   <title id="title">RF-DETR weekly project metrics</title>
   <desc id="description">For week ending 2026-08-30, RF-DETR had +0 new GitHub stars and 52,689 PyPI downloads.</desc>
-  <metadata id="weekly-metrics-state">{"history":[{"downloads":52689,"new_stars":0,"stars_total":9154,"week_end":"2026-08-30","week_start":"2026-08-24"}],"package":"rfdetr","repository":"roboflow/rf-detr","schema_version":1}</metadata>
+  <metadata id="weekly-metrics-state">{"history":[{"downloads":52689,"new_stars":0,"stars_total":9164,"week_end":"2026-08-30","week_start":"2026-08-24"}],"package":"rfdetr","repository":"roboflow/rf-detr","schema_version":1}</metadata>
   <rect width="1200" height="640" rx="18" fill="#ffffff"/>
   <text x="56" y="58" fill="#0b0b0b" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="700">RF-DETR weekly growth</text>
   <text x="56" y="86" fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="15">Latest completed week · Aug 24–Aug 30, 2026</text>
   <g font-family="DejaVu Sans, Arial, sans-serif">
     <rect x="56" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
     <text x="76" y="141" fill="#6b6a66" font-size="14">GITHUB STARS</text>
-    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">9,154</text>
+    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">9,164</text>
     <rect x="410" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
     <text x="430" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>
     <text x="430" y="176" fill="#8315f9" font-size="28" font-weight="700">+0 new stars</text>
