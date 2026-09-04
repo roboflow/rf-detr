@@ -2350,6 +2350,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where <code>XLAAccelerator.is_available()</code> is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</li>
+</ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <hr />
 <h2 id="1100-2026-09-04">[1.10.0] — 2026-09-04<a class="headerlink" href="#1100-2026-09-04" title="Permanent link">&para;</a></h2>
