@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `RFDETR.inference()` now accepts `compile_backend="inductor"` as an opt-in backend for long-running inference at a fixed batch size and resolution; the default remains the existing TorchScript path. On CUDA, Inductor completes its two setup invocations and synchronizes inside `inference()` before the first public `predict()` call. Runtime benefit and compatibility depend on the workload, CUDA device, operators, and installed PyTorch version.
+
 ### Changed
 
 ### Deprecated
@@ -15,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - `SetCriterion.loss_masks` no longer reads its normalizing denominator back to the host on every call; `forward` calls `loss_masks` once per matched output layer (final, every aux layer, and enc), so a segmentation training step pays this several times per step (5-7, by model size), not once. `dice_loss` and `sigmoid_ce_loss` declared `num_masks: float`, so `num_boxes` — the distributed-rank all-reduced Tensor `num_boxes_for_targets` returns (segmentation's default path), or a grad-accum-aware override on the keypoint manual-optimization path — was unwrapped with `float(...)` immediately before the TorchScript call boundary; on a lazy backend such as XLA each unwrap is a device-to-host synchronization that cuts the graph. Both signatures now accept `num_masks: Union[Tensor, float, int]` — `loss_masks` always passes the Tensor straight through, removing the synchronization, while a Python `float` or `int` still divides bit-for-bit as before for `lwdetr.py`'s backward-compat re-exports of these functions; a NumPy scalar, which the old single-typed signature happened to accept too, is no longer accepted (an inherent TorchScript `Union`-binding limitation, not exercised by any in-repo caller). The in-repo comment claiming TorchScript rejects a Tensor supplied for a `float` parameter is wrong — it silently converts it inside the scripted function, which is exactly why the signatures had to change for the synchronization to actually go away. On the dtype combination `loss_masks` actually produces (`point_labels` is always `float32`), loss values are unchanged. Measured on a Cloud TPU v6e-1 against this commit, a direct call to each JIT loss with a Tensor denominator went from 1 host read to 0; `loss_masks` itself shared a single host read across both losses before this change, once per matched output layer. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
+
+- Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where `XLAAccelerator.is_available()` is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
 
 ### Breaking Changes
 
