@@ -183,6 +183,20 @@ def test_current_release_is_not_warned_about(injector: ModuleType, gh_pages: Pat
     assert (gh_pages / "1.9.4" / "index.html").read_text(encoding="utf-8") == EMPTY_PAGE
 
 
+def test_current_release_gets_the_banner_script(injector: ModuleType, gh_pages: Path) -> None:
+    # The script is what keeps a natively built banner hidden on the newest release, so that
+    # tree needs it even though it is never banner-ed or styled.
+    injector.patch_scripts(gh_pages)
+    script = gh_pages / "1.9.4" / "javascripts" / "version-banner.js"
+    assert script.read_text(encoding="utf-8") == injector.VERSION_BANNER_JS
+
+
+def test_current_release_page_references_the_banner_script(injector: ModuleType, gh_pages: Path) -> None:
+    injector.patch_scripts(gh_pages)
+    page = (gh_pages / "1.9.4" / "index.html").read_text(encoding="utf-8")
+    assert '<script src="javascripts/version-banner.js"></script>' in page
+
+
 def test_current_release_stylesheet_is_not_patched(injector: ModuleType, gh_pages: Path) -> None:
     injector.patch_stylesheets(gh_pages)
     stylesheet = (gh_pages / "1.9.4" / "stylesheets" / "rf.css").read_text(encoding="utf-8")
