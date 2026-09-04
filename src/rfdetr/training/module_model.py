@@ -1156,7 +1156,7 @@ class RFDETRModelModule(LightningModule):
             self.model_config.fused_optimizer
             and torch.cuda.is_available()
             and torch.cuda.is_bf16_supported()
-            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
+            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true", "transformer-engine"}
         )
 
     @property

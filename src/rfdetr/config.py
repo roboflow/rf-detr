@@ -1093,14 +1093,15 @@ class TrainConfig(BaseConfig):
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
-    amp_dtype: Literal["auto", "bf16", "fp16"] = Field(
+    amp_dtype: Literal["auto", "bf16", "fp16", "fp8"] = Field(
         default="auto",
         description=(
             "Mixed-precision autocast dtype. "
             "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
             "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
             "'fp16' forces fp16. "
-            "Has no effect when model_config.amp=False or when training on CPU."
+            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU. "
+            "Non-FP8 choices have no effect when model_config.amp=False or when training on CPU."
         ),
     )
     best_model_metric: Literal["map", "mar"] = Field(
@@ -1214,10 +1215,10 @@ class TrainConfig(BaseConfig):
         Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
         dtype rather than failing the whole training run.
         """
-        if value not in ("auto", "bf16", "fp16"):
+        if value not in ("auto", "bf16", "fp16", "fp8"):
             # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
             warnings.warn(
-                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16'. Falling back to 'auto'.",
+                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16', 'fp8'. Falling back to 'auto'.",
                 UserWarning,
                 stacklevel=2,
             )

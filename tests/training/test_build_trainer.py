@@ -797,6 +797,7 @@ class TestBuildTrainerAmpDtype:
             pytest.param(True, True, False, "auto", "bf16-mixed", id="auto-cuda-bf16"),
             pytest.param(True, True, False, "fp16", "16-mixed", id="fp16-cuda-bf16"),
             pytest.param(True, True, False, "bf16", "bf16-mixed", id="bf16-cuda-bf16"),
+            pytest.param(True, True, False, "fp8", "transformer-engine", id="fp8-cuda"),
             pytest.param(True, False, False, "auto", "16-mixed", id="auto-cuda-no-bf16"),
             pytest.param(False, False, True, "fp16", "16-mixed", id="fp16-mps"),
         ],
@@ -836,6 +837,27 @@ class TestBuildTrainerAmpDtype:
         with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=True), accelerator="cpu")
         assert captured["precision"] == "32-true"
+
+    def test_fp8_rejects_non_cuda_accelerator(self, tmp_path):
+        """FP8 must fail clearly instead of silently falling back on a non-CUDA accelerator."""
+        with pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator="cpu")
+
+    def test_fp8_requires_amp_enabled(self, tmp_path):
+        """An explicit FP8 request must not be silently disabled by the model AMP flag."""
+        with pytest.raises(ValueError, match="amp_dtype='fp8' requires model_config.amp=True"):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=False))
+
+    def test_fp8_rejects_deepspeed_strategy(self, tmp_path):
+        """Lightning cannot combine its Transformer Engine precision plugin with DeepSpeed precision."""
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            pytest.raises(ValueError, match="amp_dtype='fp8'.*DeepSpeed"),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, amp_dtype="fp8", strategy="deepspeed_stage_2"),
+                _mc(amp=True),
+            )
 
     @pytest.mark.parametrize(
         "bad_value",
@@ -1717,9 +1739,8 @@ class TestEvalIntervalValidationGating:
     def test_force_last_epoch_callback_noops_when_max_epochs_not_a_positive_int(self, max_epochs):
         """max_epochs=None/-1 (PTL's not-yet-known / unlimited sentinels) must not force validation.
 
-        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was
-        previously tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to
-        force.
+        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was previously
+        tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to force.
         """
         cb = _ForceLastEpochValidationCallback()
         trainer = MagicMock()
