@@ -671,6 +671,17 @@ class TestBuildTrainerPrecision:
         which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there.
         """
         pytest.importorskip("torch_xla")
+        from pytorch_lightning.accelerators import XLAAccelerator
+
+        if XLAAccelerator.is_available():
+            pytest.skip(
+                "the refusal this pins holds only while ``XLAAccelerator.is_available()`` is False, so the skip is "
+                "gated on that same predicate rather than on the configured backend: ``xr.device_type()`` reports "
+                "``PJRT_DEVICE`` and would also skip on a host that sets ``PJRT_DEVICE=TPU`` without chips, where "
+                "``auto_device_count()`` is 0, the Trainer still raises, and the assertion is still meaningful. "
+                "Gating on availability keeps NEURON in the refusal path for the same reason."
+            )
+
         from pytorch_lightning.utilities.exceptions import MisconfigurationException
 
         with pytest.raises(MisconfigurationException, match="XLAAccelerator"):
@@ -1717,9 +1728,8 @@ class TestEvalIntervalValidationGating:
     def test_force_last_epoch_callback_noops_when_max_epochs_not_a_positive_int(self, max_epochs):
         """max_epochs=None/-1 (PTL's not-yet-known / unlimited sentinels) must not force validation.
 
-        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was
-        previously tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to
-        force.
+        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was previously
+        tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to force.
         """
         cb = _ForceLastEpochValidationCallback()
         trainer = MagicMock()

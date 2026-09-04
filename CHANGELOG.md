@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `RFDETR.inference()` now accepts `compile_backend="inductor"` as an opt-in backend for long-running inference at a fixed batch size and resolution; the default remains the existing TorchScript path. On CUDA, Inductor completes its two setup invocations and synchronizes inside `inference()` before the first public `predict()` call. Runtime benefit and compatibility depend on the workload, CUDA device, operators, and installed PyTorch version.
+
 ### Changed
 
 ### Deprecated
@@ -16,7 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `point_sample(mode="nearest")` now uses the same backend-agnostic gather path `_bilinear_grid_sample` already uses, instead of `F.grid_sample`. On XLA the nearest branch lowered to an `aten::grid_sampler_2d` host fallback, so `SetCriterion.loss_masks` left the device every time it sampled ground-truth mask labels — once per matched output layer, on every segmentation training step. CUDA and CPU are unaffected: the helper delegates to `F.grid_sample`'s fused kernel off MPS/XLA. Ties are rounded with `torch.round` (round-half-to-even), which matches `F.grid_sample` for random grids and for most constructed exact ties; `floor(x + 0.5)` is a worse substitute but disagrees at only half of all exact ties, not every one. Neither rounding rule tracks `F.grid_sample`'s own compiled kernel at every input: the kernel itself breaks round-half-to-even at specific (size, position) combinations (e.g. width=673 vs width=96 at the same tie), the same divergence already documented and corrected for on CPU/CUDA in `SetCriterion._sample_target_masks_at_points`. Measured on a Cloud TPU v6e-1 with `RFDETRSegNano` segmentation training: `aten::grid_sampler_2d` went from 50 to 0 per 5-step fit and uncached compilations from 26 to 16, in both of two alternating fresh-process pairs. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
 
+- Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where `XLAAccelerator.is_available()` is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
+
 ### Breaking Changes
+
+---
 
 ## [1.10.0] — 2026-09-04
 
