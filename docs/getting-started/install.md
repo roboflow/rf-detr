@@ -89,20 +89,21 @@ If you plan to contribute to RF-DETR or modify the codebase locally, set up a lo
 
 RF-DETR provides several optional extras for additional functionality:
 
-| Extra        | Install command                    | Purpose                                                  |
-| ------------ | ---------------------------------- | -------------------------------------------------------- |
-| `train`      | `pip install "rfdetr[train]"`      | Training dependencies (PyTorch Lightning, etc.)          |
-| `loggers`    | `pip install "rfdetr[loggers]"`    | Experiment tracking (TensorBoard, W&B, MLflow, ClearML)  |
-| `onnx`       | `pip install "rfdetr[onnx]"`       | ONNX export                                              |
-| `tflite`     | `pip install "rfdetr[tflite]"`     | TFLite export (Python 3.12 only)                         |
-| `executorch` | `pip install "rfdetr[executorch]"` | ExecuTorch export (.pte)                                 |
-| `coreml`     | `pip install "rfdetr[coreml]"`     | Native CoreML export (.mlpackage; macOS only)            |
-| `tensorrt`   | `pip install "rfdetr[tensorrt]"`   | TensorRT inference (pycuda, onnxruntime-gpu, tensorrt)   |
-| `augment`    | `pip install "rfdetr[augment]"`    | Custom CPU (Albumentations) + GPU (Kornia) augmentations |
-| `lora`       | `pip install "rfdetr[lora]"`       | LoRA fine-tuning with PEFT                               |
-| `visual`     | `pip install "rfdetr[visual]"`     | Visualization utilities (matplotlib, pandas, seaborn)    |
-| `cli`        | `pip install "rfdetr[cli]"`        | CLI with typed argument parsing (jsonargparse)           |
-| `plus`       | `pip install "rfdetr[plus]"`       | XLarge and 2XLarge detection models (PML 1.0 license)    |
+| Extra        | Install command                                         | Purpose                                                                                                                                                      |
+| ------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `train`      | `pip install "rfdetr[train]"`                           | Training dependencies (PyTorch Lightning, etc.)                                                                                                              |
+| `cuda`       | `pip install --no-build-isolation "rfdetr[train,cuda]"` | Optional NVIDIA FP8 training; Linux x86-64, CUDA build prerequisites required. See [advanced setup](../learn/train/advanced.md#fp8-training-on-nvidia-cuda). |
+| `loggers`    | `pip install "rfdetr[loggers]"`                         | Experiment tracking (TensorBoard, W&B, MLflow, ClearML)                                                                                                      |
+| `onnx`       | `pip install "rfdetr[onnx]"`                            | ONNX export                                                                                                                                                  |
+| `tflite`     | `pip install "rfdetr[tflite]"`                          | TFLite export (Python 3.12 only)                                                                                                                             |
+| `executorch` | `pip install "rfdetr[executorch]"`                      | ExecuTorch export (.pte)                                                                                                                                     |
+| `coreml`     | `pip install "rfdetr[coreml]"`                          | Native CoreML export (.mlpackage; macOS only)                                                                                                                |
+| `tensorrt`   | `pip install "rfdetr[tensorrt]"`                        | TensorRT inference (pycuda, onnxruntime-gpu, tensorrt)                                                                                                       |
+| `augment`    | `pip install "rfdetr[augment]"`                         | Custom CPU (Albumentations) + GPU (Kornia) augmentations                                                                                                     |
+| `lora`       | `pip install "rfdetr[lora]"`                            | LoRA fine-tuning with PEFT                                                                                                                                   |
+| `visual`     | `pip install "rfdetr[visual]"`                          | Visualization utilities (matplotlib, pandas, seaborn)                                                                                                        |
+| `cli`        | `pip install "rfdetr[cli]"`                             | CLI with typed argument parsing (jsonargparse)                                                                                                               |
+| `plus`       | `pip install "rfdetr[plus]"`                            | XLarge and 2XLarge detection models (PML 1.0 license)                                                                                                        |
 
 ## Additional Notes
 
