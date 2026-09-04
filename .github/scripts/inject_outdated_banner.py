@@ -80,8 +80,14 @@ ARCHIVED_TEXT = (
 
 # The backfill only patches develop and archived numeric trees, both of which need the
 # warning visible. Reveal the injected wrapper directly; a relative URL has no base in
-# `new URL()` and would abort this inline script before it reaches the banner.
-_UNHIDE_SCRIPT = '<script>var el=document.querySelector("[data-md-component=outdated]");el&&(el.hidden=!1)</script>'
+# `new URL()` and would abort this inline script before it reaches the banner. The flag
+# it sets alongside says the reveal is settled rather than guessed: `version-banner.js`
+# hides a numbered tree while it checks versions.json, and would otherwise blink the
+# banner back off on every page this script patched.
+_UNHIDE_SCRIPT = (
+    '<script>var el=document.querySelector("[data-md-component=outdated]");'
+    'el&&(el.dataset.rfOutdated="true",el.hidden=!1)</script>'
+)
 
 
 def _aside(text: str) -> str:

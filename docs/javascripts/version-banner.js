@@ -96,10 +96,12 @@
     syncSidebarLayout();
   };
 
-  // Verdict of the version check below: true when this tree is superseded, null
-  // while versions.json is still in flight or unreachable. Material runs its own
-  // check on the same file and may flip `hidden` afterwards, so once a verdict
-  // exists it is re-asserted rather than trusted to stick.
+  // Verdict of the version check below: true when this tree is superseded, false
+  // when it is current or provisionally assumed so while versions.json is in
+  // flight, null when this script has nothing to say - versions.json unreachable,
+  // or a tree it does not classify. Material runs its own check on the same file
+  // and may flip `hidden` afterwards, so once a verdict exists it is re-asserted
+  // rather than trusted to stick.
   let outdatedVerdict = null;
 
   const onHiddenChange = () => {
@@ -144,19 +146,40 @@
     return false;
   };
 
-  const applyVerdict = (versionBase, outdated) => {
-    outdatedVerdict = outdated;
-    // Material caches its own verdict under this key and unhides from it, so
-    // overwrite it too: a page visited before the fix carries a stale `true`, and
-    // agreeing here avoids a visible flash before `onHiddenChange` re-asserts.
+  // Material caches its own verdict under this key, and both of its reveal paths
+  // are driven by it: the inline partial next to the banner markup unhides from a
+  // cached `true` before this script runs at all, and its bundled check recomputes
+  // only when the key is unset. Writing the key is therefore how the banner is kept
+  // off the current release, not bookkeeping alongside the `hidden` attribute.
+  const storageKey = (versionBase) => `${versionBase.pathname}.__outdated`;
+
+  const readCachedVerdict = (versionBase) => {
     try {
-      window.sessionStorage.setItem(
-        `${versionBase.pathname}.__outdated`,
-        JSON.stringify(outdated),
-      );
+      return JSON.parse(window.sessionStorage.getItem(storageKey(versionBase)));
+    } catch (error) {
+      // Storage unavailable or holding something Material did not write.
+      return null;
+    }
+  };
+
+  const cacheVerdict = (versionBase, outdated) => {
+    try {
+      if (outdated === null) {
+        window.sessionStorage.removeItem(storageKey(versionBase));
+      } else {
+        window.sessionStorage.setItem(
+          storageKey(versionBase),
+          JSON.stringify(outdated),
+        );
+      }
     } catch (error) {
       // Storage can be unavailable; the attribute is authoritative regardless.
     }
+  };
+
+  const applyVerdict = (versionBase, outdated) => {
+    outdatedVerdict = outdated;
+    cacheVerdict(versionBase, outdated);
     if (banner.hidden === outdated) {
       banner.hidden = !outdated;
     }
@@ -173,9 +196,21 @@
     );
     const version = versionBase.pathname.replace(/\/$/, "").split("/").pop();
 
-    if (version === "develop") {
+    // The backfill script sets `data-rf-outdated` on the trees it banners and reveals
+    // them itself. Those are settled - mike never makes an archived tree current again
+    // - so take the flag rather than hiding the banner again until the fetch answers.
+    if (version === "develop" || banner.dataset.rfOutdated === "true") {
       applyVerdict(versionBase, true);
     } else if (isRelease(version)) {
+      // Waiting for the fetch with no verdict would leave both of Material's reveal
+      // paths free to run first: a `true` cached by a page visited before this check
+      // existed has already unhidden the banner above, and its bundled check reads
+      // the same versions.json and may resolve first. Claim "not outdated" up front
+      // so neither can warn the current release about itself, and let the fetch
+      // upgrade the verdict; a superseded tree gets its banner a fetch later.
+      const cached = readCachedVerdict(versionBase);
+      const hiddenBeforeFetch = banner.hidden;
+      applyVerdict(versionBase, false);
       fetch(new URL("../versions.json", versionBase))
         .then((response) =>
           response.ok ? response.json() : Promise.reject(response.status),
@@ -191,7 +226,13 @@
           applyVerdict(versionBase, newest !== null && isNewer(newest, version));
         })
         .catch(() => {
-          // versions.json unreachable: leave whatever verdict Material reached.
+          // versions.json unreachable: drop the provisional verdict and put back the
+          // state it overwrote, so Material stays authoritative when this check has
+          // nothing to say. Restoring the cache also lets its bundled check, which
+          // skips a key that is already set, still run if it has not yet.
+          outdatedVerdict = null;
+          cacheVerdict(versionBase, cached);
+          banner.hidden = hiddenBeforeFetch;
         });
     }
   }

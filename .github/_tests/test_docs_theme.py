@@ -141,3 +141,28 @@ def test_banner_script_reasserts_its_verdict(repo_root: Path) -> None:
     # Material unhides asides after its own async check, so the verdict has to survive that.
     script = (repo_root / "docs" / "javascripts" / "version-banner.js").read_text(encoding="utf-8")
     assert "__outdated" in script
+
+
+def test_banner_script_claims_a_verdict_before_fetching(repo_root: Path) -> None:
+    # Material's inline partial unhides from a cached `__outdated` before this script runs, and its
+    # bundled check recomputes only while that key is unset - so a verdict claimed after the fetch
+    # resolves comes too late to keep the banner off the current release.
+    script = (repo_root / "docs" / "javascripts" / "version-banner.js").read_text(encoding="utf-8")
+    assert script.index("applyVerdict(versionBase, false)") < script.index("fetch(new URL")
+
+
+def test_backfilled_trees_are_flagged_for_the_banner_script(injector: ModuleType, repo_root: Path) -> None:
+    # The backfill reveals the banner itself, and the flag tells the script that reveal is settled -
+    # without it a patched archived tree would blink the banner off for the length of a fetch. Both
+    # halves of that handshake live in different files and must not drift apart.
+    script = (repo_root / "docs" / "javascripts" / "version-banner.js").read_text(encoding="utf-8")
+    assert 'dataset.rfOutdated="true"' in injector._UNHIDE_SCRIPT
+    assert 'banner.dataset.rfOutdated === "true"' in script
+
+
+def test_banner_script_restores_the_cached_verdict_when_versions_json_fails(repo_root: Path) -> None:
+    # The provisional verdict overwrites what Material cached; an unreachable versions.json leaves
+    # this script with nothing to say, so that value has to go back rather than stay overwritten.
+    script = (repo_root / "docs" / "javascripts" / "version-banner.js").read_text(encoding="utf-8")
+    rejection_path = script[script.index(".catch(") :]
+    assert "cacheVerdict(versionBase, cached)" in rejection_path
