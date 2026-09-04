@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `TrainConfig.pack_targets` (default `True`) concatenates each batch's per-sample target dicts into one tensor per field before the DataLoader worker-to-main boundary, rebuilding them losslessly on the other side: a batch of 16 crosses as 9 objects, not 114, values bit-identical. Loaders yield `PackedTargets` when packing is lossless, else the original tuple of dicts. ([#1399](https://github.com/roboflow/rf-detr/pull/1399))
+- `TrainConfig.pack_targets` (default `True`) concatenates each batch's per-sample target dicts into one tensor per field before the DataLoader worker-to-main boundary, rebuilding them losslessly on the other side: a batch of 16 crosses as 9 objects, not 114, with bit-identical values. Loaders yield `PackedTargets` when packing is lossless, else the original tuple of dicts. ([#1399](https://github.com/roboflow/rf-detr/pull/1399))
 - `TrainConfig.eval_batch_size` decouples the validation/test/predict dataloaders from the training `batch_size`. Default `None` inherits `batch_size`; unlike `batch_size` it accepts no `"auto"`. ([#1378](https://github.com/roboflow/rf-detr/pull/1378))
 - `TrainConfig.best_model_metric` (`"map"` or `"mar"`, default `"map"`) ranks checkpoints and early-stopping by mAR instead of mAP. ([#1305](https://github.com/roboflow/rf-detr/pull/1305))
 - Training progress bar restored/extended:
