@@ -1297,26 +1297,24 @@ class TestNearestGridSampleParity:
 
         assert torch.equal(actual, expected)
 
-    def test_known_kernel_tie_divergence_at_width_673(self) -> None:
-        """``F.grid_sample``'s own kernel can break round-half-to-even; this path does not chase it.
+    def test_tie_rounding_is_deterministic_where_the_kernel_is_not(self) -> None:
+        """This path always applies round-half-to-even; ``F.grid_sample``'s kernel does not, per platform.
 
-        Width=673 is the exact case already documented in ``SetCriterion._sample_target_masks_at_points``
-        (``src/rfdetr/models/criterion.py``): the compiled kernel rounds the exact tie x=0.5 up to index 1, while the
-        identical tie at width=96 rounds down to index 0. This gather path follows ``torch.round``'s well-defined round-
-        half-to-even contract -- matching ``F.grid_sample`` for every random grid and for most constructed ties -- but
-        not this one. Documented here instead of silently passed over.
+        Width=673 is the case documented in ``SetCriterion._sample_target_masks_at_points``
+        (``src/rfdetr/models/criterion.py``): the exact tie x=0.5. The compiled kernel's answer there is
+        build-dependent -- it rounds up to index 1 on the Linux x86 wheels and down to index 0 on the macOS and Windows
+        wheels -- so the kernel's value is deliberately NOT asserted here. What is asserted is that this gather path
+        gives the same well-defined answer everywhere, which is what makes XLA/MPS results reproducible across hosts.
         """
         width = 673
         input = torch.arange(width, dtype=torch.float32).view(1, 1, 1, width)
         grid_x = (0.5 + 0.5) * 2 / width - 1
         grid = torch.tensor([[[[grid_x, 0.0]]]])
 
-        expected = _nearest_reference(input, grid, "zeros", False)
         actual = _call_manual_nearest(input, grid, "zeros", False)
 
-        assert expected.item() == 1.0
+        # round-half-to-even sends the exact tie 0.5 to index 0, on every platform.
         assert actual.item() == 0.0
-        assert not torch.equal(actual, expected)
 
     @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
     def test_batch_and_multichannel(self, seed: int, padding_mode: str, align_corners: bool) -> None:

@@ -359,10 +359,11 @@ def _nearest_grid_sample(
     ties, not every one (verified over [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]: it agrees at -2.5, -0.5,
     and 1.5).
 
-    Neither rounding rule perfectly matches ``F.grid_sample`` in every case: its own compiled kernel
-    breaks its own round-half-to-even convention at specific (size, position) combinations
-    (verified: width=673 rounds the exact tie x=0.5 up to 1; width=96 rounds the identical tie down
-    to 0). This is the same divergence already documented in
+    Neither rounding rule perfectly matches ``F.grid_sample`` in every case, because the kernel's own
+    answer at an exact tie is build-dependent: at width=673 the tie x=0.5 rounds up to 1 on the Linux
+    x86 wheels and down to 0 on the macOS and Windows wheels. This gather path always applies
+    round-half-to-even, so it is reproducible across hosts where the kernel is not. It is the same
+    divergence already documented in
     ``SetCriterion._sample_target_masks_at_points`` (``src/rfdetr/models/criterion.py``), which
     corrects it on CPU/CUDA by calling the real kernel for tied points only; on XLA/MPS that
     correction now reads through this same gather path and so no longer reaches the kernel's
