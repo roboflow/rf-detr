@@ -5,8 +5,9 @@
 # ------------------------------------------------------------------------
 """Tests for RFDETR.inference()."""
 
+from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -52,15 +53,17 @@ class TestOptimizeForInferenceDeprecatedAlias:
     """``optimize_for_inference`` forwards to :meth:`RFDETR.inference` with a deprecation warning."""
 
     def test_forwards_and_warns(self) -> None:
-        """Calling the deprecated alias emits ``FutureWarning`` and still optimizes the model."""
+        """The deprecated alias should warn and forward the selected compilation backend."""
         rfdetr = _FakeRFDETR()
 
         with (
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.compile", side_effect=lambda model, **_: model) as mock_compile,
             pytest.warns(FutureWarning, match="optimize_for_inference"),
         ):
-            rfdetr.optimize_for_inference(compile=False)
+            rfdetr.optimize_for_inference(compile_backend="inductor")
 
+        mock_compile.assert_called_once_with(rfdetr.model.model, mode="reduce-overhead")
         assert rfdetr._is_optimized_for_inference is True
 
 
@@ -213,7 +216,7 @@ class TestModelInferenceCudaDeviceContext:
 
 
 class TestModelInferenceCompile:
-    """Tests for the compile=True path (JIT trace)."""
+    """Tests for the compile=True paths."""
 
     def test_compile_true_calls_jit_trace(self) -> None:
         """torch.jit.trace should be called with the model and a correctly-shaped dummy input."""
@@ -243,6 +246,65 @@ class TestModelInferenceCompile:
 
         assert rfdetr._optimized_has_been_compiled is True
         assert rfdetr._optimized_batch_size == 4
+
+    def test_inductor_backend_compiles_and_warms_up_with_dummy_input(self) -> None:
+        """The CUDA Inductor backend should complete allocator warmup and graph recording before success."""
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = torch.device("cuda")
+        original_forward = rfdetr.model.model.forward
+        warmup: dict[str, object] = {}
+        dummy_input = torch.randn(2, 3, 28, 28)
+        compiled_model = Mock(
+            side_effect=lambda x: (
+                warmup.update({"shape": x.shape, "inference_mode": torch.is_inference_mode_enabled()}),
+                original_forward(x),
+            )[1]
+        )
+
+        def assert_unoptimized_before_sync(device: torch.device) -> None:
+            """Assert synchronization completes before the optimized wrapper becomes visible.
+
+            Examples:
+                >>> callable(assert_unoptimized_before_sync)
+                True
+            """
+            assert device == rfdetr.model.device
+            assert rfdetr._is_optimized_for_inference is False
+            assert rfdetr._optimized_has_been_compiled is False
+            assert rfdetr._optimized_batch_size is None
+            assert rfdetr.model.inference_model is None
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.compile", return_value=compiled_model) as mock_compile,
+            patch("torch.jit.trace") as mock_trace,
+            patch("rfdetr.detr.torch.randn", return_value=dummy_input),
+            patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
+            patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
+            patch("rfdetr.detr.torch.cuda.synchronize", side_effect=assert_unoptimized_before_sync) as mock_synchronize,
+            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+        ):
+            rfdetr.inference(compile=True, batch_size=2, compile_backend="inductor")
+
+        mock_trace.assert_not_called()
+        mock_compile.assert_called_once_with(rfdetr.model.model, mode="reduce-overhead")
+        assert compiled_model.call_count == 2
+        mock_synchronize.assert_called_once_with(rfdetr.model.device)
+        assert warmup == {"shape": torch.Size((2, 3, 28, 28)), "inference_mode": True}
+        assert rfdetr._optimized_has_been_compiled is True
+        assert rfdetr._optimized_batch_size == 2
+
+    def test_invalid_compile_backend_raises(self) -> None:
+        """An unknown backend should fail before copying or exporting the model."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            pytest.raises(ValueError, match="compile_backend must be 'torchscript' or 'inductor'"),
+        ):
+            rfdetr.inference(compile=True, compile_backend="unknown")  # type: ignore[arg-type]
+
+        mock_deepcopy.assert_not_called()
 
     def test_compile_false_skips_jit_trace(self) -> None:
         """torch.jit.trace should NOT be called when compile=False."""
@@ -462,6 +524,30 @@ class TestModelInferenceInplace:
 
 class TestModelInferenceExceptionRecovery:
     """Verify state consistency when optimization fails mid-execution."""
+
+    def test_inductor_second_setup_call_failure_leaves_model_fully_unoptimized(self) -> None:
+        """A graph-recording failure after allocator warmup should clear all optimized state."""
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = torch.device("cuda")
+        dummy_input = torch.randn(1, 3, 28, 28)
+        compiled_model = Mock(side_effect=[rfdetr.model.model(dummy_input), RuntimeError("recording failed")])
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.compile", return_value=compiled_model),
+            patch("rfdetr.detr.torch.randn", return_value=dummy_input),
+            patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
+            patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
+            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            pytest.raises(RuntimeError, match="recording failed"),
+        ):
+            rfdetr.inference(compile=True, compile_backend="inductor")
+
+        assert compiled_model.call_count == 2
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
 
     def test_deepcopy_failure_leaves_clean_state(self) -> None:
         """If deepcopy raises, inference_model should be None and _is_optimized_for_inference False."""
