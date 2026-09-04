@@ -26,7 +26,8 @@ Scope:
     ``latest`` is never touched, and neither is the newest release directory: ``mike``
     publishes each release both under its own number and under ``latest``, so a reader there
     is on the current release. An earlier run that did banner it is undone by
-    ``strip_from_current_release``.
+    ``strip_from_current_release``. The newest release does get ``version-banner.js``, which
+    is what keeps its natively built banner markup hidden.
 Usage:
     Run ``python .github/scripts/inject_outdated_banner.py <gh-pages checkout root>``.
     Safe to re-run: previously injected content is replaced in place (so wording or style
@@ -153,12 +154,12 @@ BANNER_CSS = """[data-md-component="outdated"] .md-banner,
   text-decoration: underline;
 }"""
 
-# docs/javascripts/version-banner.js publishes the banner's height as a CSS variable and
-# nudges the sticky header/sidebars below it. Archived trees never got it, so a copy is
-# written into each one: without it the banner still sticks (pure CSS), but the header
-# can briefly overlap it before a reader scrolls. Read from the source tree rather than
-# duplicated here, so the two never drift; the sweep workflow's sparse checkout carries
-# both this script and that file.
+# docs/javascripts/version-banner.js decides whether the banner is revealed - comparing this
+# tree against the highest version in versions.json, which Material's own alias-based check
+# gets wrong here - and publishes the banner's height so the sticky header clears it. Trees
+# published before it existed get a copy. Read from the source tree rather than duplicated
+# here, so the two never drift; the sweep workflow's sparse checkout carries both this script
+# and that file.
 VERSION_BANNER_JS = (Path(__file__).resolve().parents[2] / "docs" / "javascripts" / "version-banner.js").read_text(
     encoding="utf-8"
 )
@@ -249,6 +250,35 @@ def _version_dirs(root: Path) -> list[Path]:
     develop = root / "develop"
     if develop.is_dir():
         dirs = [*dirs, develop]
+    return dirs
+
+
+def _script_dirs(root: Path) -> list[Path]:
+    """Return every directory that needs the banner script, current release included.
+
+    The script decides whether the banner is revealed, so the current release needs it as much
+    as the superseded trees do: its pages carry banner markup built before that decision moved
+    out of Material, and without the script Material's own check - which never sees a `latest`
+    alias in versions.json - warns readers of the newest docs that they are reading old ones.
+
+    Args:
+        root: Root of the gh-pages checkout.
+
+    Returns:
+        Directories that should carry the script.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     (Path(tmp) / "1.2.3").mkdir()
+        ...     (Path(tmp) / "1.3.0").mkdir()
+        ...     [d.name for d in _script_dirs(Path(tmp))]
+        ['1.2.3', '1.3.0']
+    """
+    dirs = _version_dirs(root)
+    current = current_release_dir(root)
+    if current is not None and current not in dirs:
+        dirs = [*dirs, current]
     return dirs
 
 
@@ -348,8 +378,9 @@ def _relative_prefix(html_file: Path, version_dir: Path) -> str:
 def patch_scripts(root: Path) -> list[Path]:
     """Copy version-banner.js into each version tree, referenced from every page.
 
-    Without it the banner still sticks (pure CSS), but the header can briefly overlap it
-    before a reader scrolls, since nothing offsets the header below it.
+    The script both decides whether the banner is revealed and offsets the sticky header below
+    it, so every version tree gets it - the current release included, whose pages would
+    otherwise fall back to Material's own outdated check and warn about themselves.
 
     Args:
         root: Root of the gh-pages checkout.
@@ -362,13 +393,13 @@ def patch_scripts(root: Path) -> list[Path]:
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     page = Path(tmp) / "1.2.3" / "index.html"
         ...     page.parent.mkdir(parents=True)
-        ...     (Path(tmp) / "1.3.0").mkdir()  # the current release, never scripted
+        ...     (Path(tmp) / "1.3.0").mkdir()  # the current release, scripted but never banner-ed
         ...     _ = page.write_text("<body></body>")
         ...     len(patch_scripts(Path(tmp)))
-        2
+        3
     """
     changed: list[Path] = []
-    for version_dir in _version_dirs(root):
+    for version_dir in _script_dirs(root):
         js_file = version_dir / "javascripts" / "version-banner.js"
         if not js_file.is_file() or js_file.read_text(encoding="utf-8") != VERSION_BANNER_JS:
             js_file.parent.mkdir(parents=True, exist_ok=True)
@@ -393,9 +424,9 @@ def strip_from_current_release(root: Path) -> list[Path]:
 
     An earlier backfill treated every numbered directory as superseded, so the release that
     is now current carries an "older version" warning it must not show. Only content bounded
-    by this script's own markers is removed, so a genuine build is never touched. The copied
-    `version-banner.js` and its script tag are left in place: with no banner markup left to
-    measure the script is inert, and removing the file would break the tag that references it.
+    by this script's own markers is removed, so a genuine build is never touched - a natively
+    built banner stays in the markup and is kept hidden by `version-banner.js`, which
+    `patch_scripts` also delivers here. The copied script and its tag are left in place.
 
     Args:
         root: Root of the gh-pages checkout.

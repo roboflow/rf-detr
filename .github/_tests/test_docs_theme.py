@@ -128,3 +128,16 @@ def test_banner_script_is_registered(repo_root: Path) -> None:
 def test_banner_stylesheet_defines_the_height_variable(repo_root: Path) -> None:
     stylesheet = (repo_root / "docs" / "stylesheets" / "rf.css").read_text(encoding="utf-8")
     assert "--rf-banner-height" in stylesheet
+
+
+def test_banner_script_decides_visibility_from_versions_json(repo_root: Path) -> None:
+    # Material's own check tests the `latest` alias, which this site's versions.json never
+    # carries, so it flags the current release as outdated; the script decides instead.
+    script = (repo_root / "docs" / "javascripts" / "version-banner.js").read_text(encoding="utf-8")
+    assert "versions.json" in script
+
+
+def test_banner_script_reasserts_its_verdict(repo_root: Path) -> None:
+    # Material unhides asides after its own async check, so the verdict has to survive that.
+    script = (repo_root / "docs" / "javascripts" / "version-banner.js").read_text(encoding="utf-8")
+    assert "__outdated" in script
