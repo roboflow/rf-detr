@@ -2351,7 +2351,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where <code>XLAAccelerator.is_available()</code> is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</li>
+<li>
+<p><code>build_trainer</code> now selects <code>XLAStrategy</code> when the accelerator resolves to XLA/TPU — including default <code>accelerator="auto"</code> once it resolves to XLA — and more than one local device is requested. RF-DETR's generic <code>strategy="auto"</code> distributed branch otherwise creates <code>DDPStrategy</code> before Lightning can apply its XLA-first auto selection, producing <code>The XLAAccelerator can only be used with a SingleDeviceXLAStrategy or XLAStrategy, found DDPStrategy</code> during <code>Trainer</code> construction. Single-device and one-device-per-host XLA are not promoted; the latter needs separate runtime validation. Explicit strategies are never overridden, keypoint models remain excluded, and segmentation follows the same multi-device guard. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</p>
+</li>
+<li>
+<p>Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where <code>XLAAccelerator.is_available()</code> is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</p>
+</li>
 </ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <hr />
