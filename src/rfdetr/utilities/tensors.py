@@ -337,6 +337,90 @@ def _bilinear_grid_sample(
     return wx0 * wy0 * v00 + wx1 * wy0 * v10 + wx0 * wy1 * v01 + wx1 * wy1 * v11
 
 
+def _nearest_grid_sample(
+    input: Tensor,
+    grid: Tensor,
+    padding_mode: str = "zeros",
+    align_corners: bool = False,
+) -> Tensor:
+    """Nearest-neighbour grid sampling compatible with all PyTorch backends including MPS and XLA.
+
+    Drop-in replacement for ``F.grid_sample(input, grid, mode='nearest', ...)`` for well-formed
+    inputs (``grid``'s batch size matches ``input``'s and its trailing dimension is 2), the same
+    contract :func:`_bilinear_grid_sample` relies on -- neither helper independently validates a
+    malformed shape the way ``F.grid_sample`` does. This is the nearest-mode counterpart of
+    :func:`_bilinear_grid_sample`: on XLA, ``F.grid_sample`` lowers to an ``aten::grid_sampler_2d``
+    host fallback, so mask-label sampling silently leaves the device on every criterion call. CUDA
+    and CPU keep the fused kernel, which is faster there.
+
+    Ties are rounded with :func:`torch.round` (round-half-to-even), which matches ``F.grid_sample``
+    for random grids and for most constructed exact ties. ``floor(x + 0.5)`` is a worse substitute,
+    but not a universally opposite one: it disagrees with round-half-to-even at half of all exact
+    ties, not every one (verified over [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]: it agrees at -2.5, -0.5,
+    and 1.5).
+
+    Neither rounding rule perfectly matches ``F.grid_sample`` in every case: its own compiled kernel
+    breaks its own round-half-to-even convention at specific (size, position) combinations
+    (verified: width=673 rounds the exact tie x=0.5 up to 1; width=96 rounds the identical tie down
+    to 0). This is the same divergence already documented in
+    ``SetCriterion._sample_target_masks_at_points`` (``src/rfdetr/models/criterion.py``), which
+    corrects it on CPU/CUDA by calling the real kernel for tied points only; on XLA/MPS that
+    correction now reads through this same gather path and so no longer reaches the kernel's
+    original tie value in that rare case.
+
+    Args:
+        input: Feature map of shape ``(N, C, H, W)``.
+        grid: Sampling grid of shape ``(N, Hg, Wg, 2)`` with values in ``[-1, 1]``.
+        padding_mode: ``"zeros"`` returns 0 for out-of-bounds samples; ``"border"`` clamps to the
+            nearest border pixel.
+        align_corners: If ``True``, grid extremes ``±1`` map to pixel centres at ``0`` and
+            ``H-1``/``W-1``.
+
+    Returns:
+        Sampled tensor of shape ``(N, C, Hg, Wg)``.
+
+    Raises:
+        ValueError: If *padding_mode* is not ``"zeros"`` or ``"border"``.
+    """
+    import torch.nn.functional as F  # noqa: N812
+
+    if input.device.type not in ("mps", "xla"):
+        return F.grid_sample(input, grid, mode="nearest", padding_mode=padding_mode, align_corners=align_corners)
+
+    if padding_mode not in ("zeros", "border"):
+        msg = (
+            f"Unsupported padding_mode={padding_mode!r} for manual grid sampling. "
+            "Only 'zeros' and 'border' are supported in this path."
+        )
+        raise ValueError(msg)
+
+    batch_size, channels, height, width = input.shape
+    grid_height, grid_width = grid.shape[1], grid.shape[2]
+
+    if align_corners:
+        ix = (grid[..., 0] + 1) * (width - 1) / 2
+        iy = (grid[..., 1] + 1) * (height - 1) / 2
+    else:
+        ix = (grid[..., 0] + 1) * width / 2 - 0.5
+        iy = (grid[..., 1] + 1) * height / 2 - 0.5
+
+    ix_nearest = ix.round().long()
+    iy_nearest = iy.round().long()
+
+    inside = None
+    if padding_mode == "zeros":
+        inside = (ix_nearest >= 0) & (ix_nearest < width) & (iy_nearest >= 0) & (iy_nearest < height)
+    ix_nearest = ix_nearest.clamp(0, width - 1)
+    iy_nearest = iy_nearest.clamp(0, height - 1)
+
+    idx = (iy_nearest * width + ix_nearest).flatten(1).unsqueeze(1).expand(batch_size, channels, -1)
+    output = input.flatten(2).gather(2, idx).view(batch_size, channels, grid_height, grid_width)
+
+    if inside is not None:
+        output = output * inside.unsqueeze(1)
+    return output
+
+
 def _collate_with_block_size(
     batch: list[tuple[Any, ...]],
     block_size: int | None = None,

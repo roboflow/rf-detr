@@ -27,6 +27,7 @@ from rfdetr.utilities.tensors import (
     NestedTensor,
     PackedTargets,
     _bilinear_grid_sample,
+    _nearest_grid_sample,
     make_collate_fn,
     nested_tensor_from_tensor_list,
     pack_targets,
@@ -89,6 +90,69 @@ def _call_manual_path(
         return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
 
 
+def _call_manual_nearest(
+    input: torch.Tensor,
+    grid: torch.Tensor,
+    padding_mode: str = "zeros",
+    align_corners: bool = False,
+    device_type: str = "xla",
+) -> torch.Tensor:
+    """Force ``_nearest_grid_sample``'s manual gather path by mocking ``input.device.type``.
+
+    Same mechanism as :func:`_call_manual_path`, for the nearest-mode helper.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.full((1, 1, 1, 2), -1.0)
+        >>> _call_manual_nearest(input, grid, align_corners=True)
+        tensor([[[[0.]]]])
+    """
+
+    class _FakeDevice:
+        type = device_type
+
+        def __eq__(self, other: object) -> bool:
+            return False
+
+        def __repr__(self) -> str:
+            return f"device(type='{device_type}')"
+
+    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeDevice())):
+        return _nearest_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
+
+
+def _nearest_reference(
+    input: torch.Tensor,
+    grid: torch.Tensor,
+    padding_mode: str = "zeros",
+    align_corners: bool = False,
+) -> torch.Tensor:
+    """``F.grid_sample`` in nearest mode, the behaviour the gather path must reproduce exactly.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.full((1, 1, 1, 2), -1.0)
+        >>> _nearest_reference(input, grid, align_corners=True)
+        tensor([[[[0.]]]])
+    """
+    return torch.nn.functional.grid_sample(
+        input, grid, mode="nearest", padding_mode=padding_mode, align_corners=align_corners
+    )
+
+
+def _tie_grid(size: int, align_corners: bool) -> torch.Tensor:
+    """Build a grid whose source indices land exactly on ``.5``, where rounding conventions diverge.
+
+    Examples:
+        >>> _tie_grid(4, False).shape
+        torch.Size([1, 5, 5, 2])
+    """
+    halves = torch.tensor([-1.5, -0.5, 0.5, 1.5, 2.5])
+    coords = (2 * halves) / (size - 1) - 1 if align_corners else (2 * (halves + 0.5)) / size - 1
+    grid_y, grid_x = torch.meshgrid(coords, coords, indexing="ij")
+    return torch.stack([grid_x, grid_y], dim=-1).unsqueeze(0)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -116,6 +180,18 @@ _PADDING_ALIGN_COMBOS = [
     pytest.param("zeros", False, id="zeros-no_align"),
     pytest.param("border", False, id="border-no_align"),
     pytest.param("zeros", True, id="zeros-align_corners"),
+]
+
+_NEAREST_TIE_COMBOS = [
+    pytest.param("zeros", False, id="zeros-no_align"),
+    pytest.param("border", False, id="border-no_align"),
+    pytest.param("zeros", True, id="zeros-align_corners"),
+    pytest.param("border", True, id="border-align_corners"),
+]
+
+_RANDOMIZED_PARITY_DTYPES = [
+    pytest.param(torch.float32, id="float32"),
+    pytest.param(torch.float64, id="float64"),
 ]
 
 _LOW_PRECISION_DTYPES = [
@@ -1160,3 +1236,186 @@ class TestPackedTargets:
         assert isinstance(fallback, tuple)
         assert not isinstance(fallback, PackedTargets)
         assert all(target["boxes"].requires_grad for target in fallback)
+
+
+class TestNearestGridSampleParity:
+    """The nearest gather path must reproduce ``F.grid_sample(mode='nearest')`` exactly."""
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_interior_grid_coordinates(self, seed: int, padding_mode: str, align_corners: bool) -> None:
+        """Grid values well inside [-1, 1] -- no boundary or padding effects."""
+        input = torch.randn(1, 3, 8, 8)
+        grid = torch.rand(1, 4, 4, 2) * 1.6 - 0.8
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_partially_outside_grid_coordinates(self, seed: int, padding_mode: str, align_corners: bool) -> None:
+        """Grid values spanning [-1.5, 1.5] -- exercises zeros masking and border clamping."""
+        input = torch.randn(1, 3, 8, 8)
+        grid = torch.rand(1, 6, 6, 2) * 3.0 - 1.5
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _NEAREST_TIE_COMBOS)
+    def test_exact_half_way_coordinates_round_half_to_even(
+        self, seed: int, padding_mode: str, align_corners: bool
+    ) -> None:
+        """At this width (8), ties follow ATen's round-half-to-even in all 4 padding/align combos.
+
+        ``floor(x + 0.5)`` is not a safe substitute -- it disagrees with round-half-to-even at half
+        of all exact ties, not every one (see ``_nearest_grid_sample``'s docstring). This is a
+        narrower, width-8-specific case: :func:`test_known_kernel_tie_divergence_at_width_673` below
+        documents a real width where ``F.grid_sample``'s own kernel breaks its own round-half-to-even
+        convention.
+        """
+        input = torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8)
+        grid = _tie_grid(8, align_corners)
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("dtype", _RANDOMIZED_PARITY_DTYPES)
+    @pytest.mark.parametrize("padding_mode, align_corners", _NEAREST_TIE_COMBOS)
+    def test_randomized_grid_matches_reference(
+        self, seed: int, dtype: torch.dtype, padding_mode: str, align_corners: bool
+    ) -> None:
+        """Bit-identical to F.grid_sample across 480 randomized cases: 4 combos x 2 dtypes x 60 points each."""
+        input = torch.randn(1, 3, 11, 13, dtype=dtype)
+        grid = torch.rand(1, 6, 10, 2, dtype=dtype) * 3.0 - 1.5  # 60 points, some outside [-1, 1]
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    def test_known_kernel_tie_divergence_at_width_673(self) -> None:
+        """``F.grid_sample``'s own kernel can break round-half-to-even; this path does not chase it.
+
+        Width=673 is the exact case already documented in ``SetCriterion._sample_target_masks_at_points``
+        (``src/rfdetr/models/criterion.py``): the compiled kernel rounds the exact tie x=0.5 up to index 1, while the
+        identical tie at width=96 rounds down to index 0. This gather path follows ``torch.round``'s well-defined round-
+        half-to-even contract -- matching ``F.grid_sample`` for every random grid and for most constructed ties -- but
+        not this one. Documented here instead of silently passed over.
+        """
+        width = 673
+        input = torch.arange(width, dtype=torch.float32).view(1, 1, 1, width)
+        grid_x = (0.5 + 0.5) * 2 / width - 1
+        grid = torch.tensor([[[[grid_x, 0.0]]]])
+
+        expected = _nearest_reference(input, grid, "zeros", False)
+        actual = _call_manual_nearest(input, grid, "zeros", False)
+
+        assert expected.item() == 1.0
+        assert actual.item() == 0.0
+        assert not torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_batch_and_multichannel(self, seed: int, padding_mode: str, align_corners: bool) -> None:
+        """Batch size > 1, multiple channels, and non-square H/W and Hg/Wg.
+
+        Every real caller (``SetCriterion``'s tie correction and fallback sampling, and ``HungarianMatcher``'s mask
+        cost) passes a batch dimension equal to the number of matched instances in the whole training batch, which is
+        routinely greater than one -- unlike the other parity cases above, which all use ``input.shape[0] == 1``. Non-
+        square dimensions also guard the ``iy_nearest * width + ix_nearest`` index arithmetic against a height/width
+        swap.
+        """
+        input = torch.randn(3, 5, 10, 12)
+        grid = torch.rand(3, 7, 9, 2) * 2.0 - 1.0
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_single_pixel_input(self, padding_mode: str, align_corners: bool) -> None:
+        """1x1 spatial input -- extreme edge case for the clamp/index arithmetic."""
+        input = torch.tensor([[[[3.14]]]])
+        grid = torch.tensor([[[[0.0, 0.0]]]])
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    def test_unsupported_padding_mode_raises(self, seed: int) -> None:
+        """``reflection`` is not implemented by the gather path and must fail loudly, not silently."""
+        input = torch.randn(1, 1, 4, 4)
+        grid = torch.zeros(1, 2, 2, 2)
+
+        with pytest.raises(ValueError, match="Unsupported padding_mode"):
+            _call_manual_nearest(input, grid, padding_mode="reflection")
+
+
+class TestNearestGridSampleDelegation:
+    """CPU and CUDA keep ``F.grid_sample``'s fused kernel."""
+
+    @pytest.mark.parametrize("padding_mode", ["zeros", "border"])
+    def test_cpu_delegates_to_grid_sample(self, seed: int, padding_mode: str) -> None:
+        """On CPU the helper returns exactly what ``F.grid_sample`` returns."""
+        input = torch.randn(1, 2, 6, 6)
+        grid = torch.rand(1, 3, 3, 2) * 2.4 - 1.2
+
+        actual = _nearest_grid_sample(input, grid, padding_mode=padding_mode, align_corners=False)
+
+        assert torch.equal(actual, _nearest_reference(input, grid, padding_mode, False))
+
+
+class TestNearestGridSampleLowPrecision:
+    """Low-precision parity stays aligned with F.grid_sample.
+
+    ``HungarianMatcher`` casts target masks to ``pred_masks_logits.dtype`` before sampling them
+    with ``mode="nearest"`` (``matcher.py``), so under autocast this path receives a float16/bfloat16
+    ``input`` in real training, not just float32. Unlike the bilinear helper, no explicit dtype cast
+    is needed here: gather selects a value verbatim rather than combining several in floating point,
+    so there is no intermediate weighted sum that could silently upcast.
+    """
+
+    @pytest.mark.parametrize("dtype", _LOW_PRECISION_DTYPES)
+    def test_low_precision_parity(self, seed: int, dtype: torch.dtype) -> None:
+        """Manual path output matches F.grid_sample, in the same dtype, for low-precision inputs."""
+        _require_grid_sample_dtype_support(dtype)
+
+        input = torch.randn(2, 3, 6, 6, dtype=dtype)
+        grid = torch.rand(2, 4, 4, 2, dtype=dtype) * 3.0 - 1.5
+
+        expected = _nearest_reference(input, grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, grid, padding_mode="zeros", align_corners=False)
+
+        assert torch.equal(actual, expected)
+        assert actual.dtype == dtype
+
+
+class TestNearestGridSampleXLAExecution:
+    """Real torch_xla PJRT execution -- proves the nearest gather path takes no aten:: CPU fallback."""
+
+    @pytest.mark.xla
+    def test_nearest_gather_path_no_cpu_fallback_on_real_xla_device(self, seed: int) -> None:
+        """``point_sample(mode="nearest")`` used to lower to aten::grid_sampler_2d on XLA."""
+        pytest.importorskip("torch_xla")
+        import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as met
+
+        device = xm.xla_device()
+        input = torch.randn(1, 3, 8, 8, device=device)
+        grid = torch.rand(1, 4, 4, 2, device=device) * 1.6 - 0.8
+
+        met.clear_all()
+        actual = _nearest_grid_sample(input, grid, padding_mode="zeros", align_corners=False)
+        xm.mark_step()
+
+        report = met.metrics_report()
+        aten_lines = [line for line in report.splitlines() if "aten::" in line.lower()]
+        assert not aten_lines, "CPU fallback ops detected:\n" + "\n".join(aten_lines)
+
+        expected = _nearest_reference(input.cpu(), grid.cpu(), "zeros", False)
+        assert torch.equal(actual.cpu(), expected)
