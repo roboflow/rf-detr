@@ -395,7 +395,7 @@ def point_sample(input: Tensor, point_coords: Tensor, **kwargs: Any) -> Tensor:
             input,
             grid,
             padding_mode=padding_mode,
-            align_corners=align_corners,
+            align_corners=align_corners
         )
     else:
         # Delegate to torch.nn.functional.grid_sample for the remaining modes and padding modes,
