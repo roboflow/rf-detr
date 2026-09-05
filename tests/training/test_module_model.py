@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
+import logging
 import random
 import warnings
 from types import SimpleNamespace
@@ -402,16 +403,57 @@ class TestInit:
         assert module.model_config is mc
         assert module.train_config is tc
 
-    def test_compile_disabled_when_multi_scale_enabled(self, tmp_path):
-        """torch.compile is skipped when multi_scale=True (dynamic shapes)."""
+    def test_compile_runs_when_multi_scale_enabled(self, tmp_path):
+        """torch.compile still runs with multi_scale=True, which is the shipped default.
+
+        ``dynamic=True`` is passed precisely so one graph covers every (H, W) the multi-scale pipeline produces, so
+        multi-scale is not a reason to skip compilation on CUDA.
+        """
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=True)
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_called_once()
+        assert mock_compile.call_args.kwargs["dynamic"] is True
+
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
+    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, accelerator, tmp_path):
+        """XLA/TPU never compiles, and that no longer depends on multi_scale being set.
+
+        This is the invariant the removed ``not multi_scale`` clause was documented as protecting; the accelerator check
+        is what actually enforces it.
+        """
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False, accelerator=accelerator)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
             patch("rfdetr.training.module_model.torch.compile") as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
+
+    def test_compile_disabled_when_device_is_not_cuda(self, tmp_path, caplog, monkeypatch):
+        """A non-CUDA accelerator disables compilation regardless of multi_scale, with an explanatory notice.
+
+        A caller who sets ``compile=True`` on CPU/XLA/TPU must still learn why nothing was compiled, the same way the
+        old multi_scale-only notice used to inform CUDA callers.
+        """
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=True)
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with (
+            patch("rfdetr.config.DEVICE", "cpu"),
+            patch("rfdetr.training.module_model.torch.compile") as mock_compile,
+            caplog.at_level(logging.INFO, logger="rf-detr"),
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_not_called()
+        assert any("Disabling torch.compile" in record.getMessage() for record in caplog.records)
 
     def test_compile_runs_when_enabled_and_static_shapes(self, tmp_path):
         """torch.compile runs when compile=True and multi_scale=False on CUDA."""
