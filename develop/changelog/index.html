@@ -2352,6 +2352,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>SetCriterion.loss_masks</code> no longer reads its normalizing denominator back to the host on every call; <code>forward</code> calls <code>loss_masks</code> once per matched output layer (final, every aux layer, and enc), so a segmentation training step pays this several times per step (5-7, by model size), not once. <code>dice_loss</code> and <code>sigmoid_ce_loss</code> declared <code>num_masks: float</code>, so <code>num_boxes</code> — the distributed-rank all-reduced Tensor <code>num_boxes_for_targets</code> returns (segmentation's default path), or a grad-accum-aware override on the keypoint manual-optimization path — was unwrapped with <code>float(...)</code> immediately before the TorchScript call boundary; on a lazy backend such as XLA each unwrap is a device-to-host synchronization that cuts the graph. Their signatures now accept <code>num_masks: Union[Tensor, float, int]</code> — <code>loss_masks</code> always passes the Tensor straight through, removing the synchronization, while Python <code>float</code> and <code>int</code> inputs still divide bit-for-bit as before for <code>lwdetr.py</code>'s backward-compat re-exports. The in-repo comment claiming TorchScript rejects a Tensor supplied for a <code>float</code> parameter is wrong — it silently converts it inside the scripted function, which is exactly why the signatures had to change for the synchronization to actually go away. On the dtype combination <code>loss_masks</code> actually produces (<code>point_labels</code> is always <code>float32</code>), loss values are unchanged. Measured on a Cloud TPU v6e-1 against this commit, a direct call to each JIT loss with a Tensor denominator went from 1 host read to 0; <code>loss_masks</code> itself shared a single host read across both losses before this change, once per matched output layer. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</p>
+</li>
+<li>
 <p><code>build_trainer</code> now selects <code>XLAStrategy</code> when the accelerator resolves to XLA/TPU — including default <code>accelerator="auto"</code> once it resolves to XLA — and more than one local device is requested. RF-DETR's generic <code>strategy="auto"</code> distributed branch otherwise creates <code>DDPStrategy</code> before Lightning can apply its XLA-first auto selection, producing <code>The XLAAccelerator can only be used with a SingleDeviceXLAStrategy or XLAStrategy, found DDPStrategy</code> during <code>Trainer</code> construction. Single-device and one-device-per-host XLA are not promoted; the latter needs separate runtime validation. Explicit strategies are never overridden, keypoint models remain excluded, and segmentation follows the same multi-device guard. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</p>
 </li>
 <li>
@@ -2359,6 +2362,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
 </ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>dice_loss_jit</code> and <code>sigmoid_ce_loss_jit</code> no longer accept NumPy scalar denominators because their TorchScript signatures now use <code>Union[Tensor, float, int]</code>; pass <code>float(value)</code> instead. The eager <code>dice_loss</code> and <code>sigmoid_ce_loss</code> functions retain Python numeric behavior. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</li>
+</ul>
 <hr />
 <h2 id="1100-2026-09-04">[1.10.0] — 2026-09-04<a class="headerlink" href="#1100-2026-09-04" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
