@@ -304,11 +304,10 @@ def dice_loss(
                 (0 for the negative class and 1 for the positive class).
         num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
                  caller never has to sync it to the host (a host read cuts XLA's lazy
-                 graph every step); a Python float or int is still accepted for backward
-                 compatibility with callers of this re-exported function. A NumPy scalar
-                 (e.g. numpy.float32) is not accepted -- TorchScript's Union argument
-                 binding requires an exact Tensor/float/int match and does not coerce
-                 arbitrary numeric types; convert with float(...) first.
+                 graph every step). This eager function retains Python numeric behavior,
+                 including NumPy scalars. The scripted ``dice_loss_jit`` wrapper accepts
+                 only Tensor, float, or int; convert another numeric type with
+                 ``float(...)`` before calling that wrapper.
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
@@ -338,7 +337,7 @@ def sigmoid_ce_loss(
     targets: Tensor,
     num_masks: Union[Tensor, float, int],
 ) -> Tensor:
-    """
+    """Compute sigmoid cross-entropy loss for mask predictions.
     Args:
         inputs: A float tensor of arbitrary shape.
                 The predictions for each example.
@@ -347,11 +346,10 @@ def sigmoid_ce_loss(
                 (0 for the negative class and 1 for the positive class).
         num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
                  caller never has to sync it to the host (a host read cuts XLA's lazy
-                 graph every step); a Python float or int is still accepted for backward
-                 compatibility with callers of this re-exported function. A NumPy scalar
-                 (e.g. numpy.float32) is not accepted -- TorchScript's Union argument
-                 binding requires an exact Tensor/float/int match and does not coerce
-                 arbitrary numeric types; convert with float(...) first.
+                 graph every step). This eager function retains Python numeric behavior,
+                 including NumPy scalars. The scripted ``sigmoid_ce_loss_jit`` wrapper
+                 accepts only Tensor, float, or int; convert another numeric type with
+                 ``float(...)`` before calling that wrapper.
 
     Returns:
         Loss tensor
