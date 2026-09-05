@@ -138,6 +138,9 @@ coreml = [
     # cause is understood/fixed upstream; don't treat it as a guaranteed-deterministic fix.
     "torch<2.12",
 ]
+openvino = [
+    "openvino>=2024.0",  # Direct PyTorch -> OpenVINO IR conversion
+]
 loggers = [
     "tensorboard>=2.13.0",
     "protobuf>=3.20.0",  # Cap <4.0.0 removed — tensorflow>=2.16.0 (required by [tflite]) needs protobuf>=3.20.3 and is incompatible with <4.0.0 (see #1041)
@@ -445,6 +448,7 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "openvino", "openvino.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },
