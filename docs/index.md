@@ -114,6 +114,12 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 </div>
 
+## Project Activity
+
+<img src="assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" width="100%" />
+
+PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirrors. New stars are calculated from consecutive scheduled GitHub snapshots.
+
 ## Benchmarks
 
 RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models. It also provides keypoint detection (preview) on COCO person keypoints. For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.

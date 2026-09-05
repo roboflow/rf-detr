@@ -1,0 +1,72 @@
+name: Update Weekly Metrics SVG
+
+on:
+  schedule:
+    # PyPI Stats starts its daily update around 01:00 UTC but publishes no completion SLA.
+    # Monday 06:00 UTC leaves a buffer for Sunday data after the prior Mon–Sun week closes.
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: weekly-metrics-svg
+  cancel-in-progress: false
+
+jobs:
+  update-metrics:
+    name: Update weekly metrics
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: 🐍 Install uv and set Python
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.10"
+          activate-environment: true
+
+      - name: 📚 Restore unmerged metrics history
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METRICS_BRANCH: automation/update-weekly-metrics
+        run: |
+          # Preserve checkpoints when the previous weekly pull request is still open.
+          OPEN_PR_COUNT=$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --base "$DEFAULT_BRANCH" \
+            --head "$METRICS_BRANCH" \
+            --state open \
+            --json number \
+            --jq length)
+          if [ "$OPEN_PR_COUNT" -gt 0 ]; then
+            git fetch --no-tags --depth=1 origin "$METRICS_BRANCH"
+            git show FETCH_HEAD:docs/assets/weekly-metrics.svg > docs/assets/weekly-metrics.svg
+          fi
+
+      - name: 📊 Generate weekly metrics SVG
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/update_weekly_metrics.py
+
+      - name: 📨 Create or update metrics pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          add-paths: docs/assets/weekly-metrics.svg
+          base: ${{ github.event.repository.default_branch }}
+          branch: automation/update-weekly-metrics
+          commit-message: "docs: update weekly project metrics"
+          delete-branch: true
+          title: "docs: update weekly project metrics"
+          body: |
+            Automated weekly refresh of GitHub star growth and PyPI download metrics.
+
+            Download totals cover completed Monday-to-Sunday periods and exclude known mirrors.
