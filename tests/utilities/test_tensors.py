@@ -1263,6 +1263,44 @@ class TestNearestGridSampleParity:
 
         assert torch.equal(actual, expected)
 
+    def test_zeros_padding_masks_nonfinite_clamped_value(self) -> None:
+        """Out-of-bounds zeros padding must not turn a gathered infinity into ``NaN``."""
+        input = torch.tensor([[[[float("inf"), 2.0]]]])
+        grid = torch.tensor([[[[-2.0, 0.0]]]])
+
+        expected = _nearest_reference(input, grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, grid, padding_mode="zeros", align_corners=False)
+
+        assert torch.equal(actual, expected)
+
+    def test_grid_only_gradient_matches_reference(self) -> None:
+        """A differentiable grid must receive the nearest kernel's all-zero gradient."""
+        input = torch.ones(1, 1, 2, 2)
+        reference_grid = torch.zeros(1, 1, 1, 2, requires_grad=True)
+        manual_grid = reference_grid.detach().clone().requires_grad_()
+
+        expected = _nearest_reference(input, reference_grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, manual_grid, padding_mode="zeros", align_corners=False)
+
+        expected.sum().backward()
+        actual.sum().backward()
+
+        assert actual.requires_grad
+        assert manual_grid.grad is not None
+        assert torch.equal(manual_grid.grad, reference_grid.grad)
+
+    def test_grid_only_gradient_preserves_negative_zero(self) -> None:
+        """The zero-gradient edge must not change the sampled output's signed-zero bit."""
+        input = torch.tensor([[[[-0.0]]]])
+        reference_grid = torch.zeros(1, 1, 1, 2, requires_grad=True)
+        manual_grid = reference_grid.detach().clone().requires_grad_()
+
+        expected = _nearest_reference(input, reference_grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, manual_grid, padding_mode="zeros", align_corners=False)
+
+        assert torch.equal(actual, expected)
+        assert torch.equal(torch.signbit(actual), torch.signbit(expected))
+
     @pytest.mark.parametrize("padding_mode, align_corners", _NEAREST_TIE_COMBOS)
     def test_exact_half_way_coordinates_round_half_to_even(
         self, seed: int, padding_mode: str, align_corners: bool

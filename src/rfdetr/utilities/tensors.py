@@ -418,8 +418,11 @@ def _nearest_grid_sample(
     output = input.flatten(2).gather(2, idx).view(batch_size, channels, grid_height, grid_width)
 
     if inside is not None:
-        output = output * inside.unsqueeze(1)
-    return output
+        output = torch.where(inside.unsqueeze(1), output, torch.zeros_like(output))
+
+    # Integer gather indices have no grid gradient, unlike nearest grid_sample's zero gradient.
+    grid_x = grid[..., 0].unsqueeze(1).to(output.dtype)
+    return torch.where(torch.zeros_like(grid_x, dtype=torch.bool), grid_x, output)
 
 
 def _collate_with_block_size(

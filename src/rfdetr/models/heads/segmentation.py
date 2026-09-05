@@ -389,7 +389,8 @@ def point_sample(input: Tensor, point_coords: Tensor, **kwargs: Any) -> Tensor:
     elif mode == "nearest" and not kwargs and padding_mode in ("zeros", "border"):
         # Same reasoning as the bilinear branch: F.grid_sample lowers to an aten::grid_sampler_2d
         # host fallback on XLA, so the gather path keeps mask-label sampling on device. CUDA/CPU
-        # still get the fused kernel from inside the helper. Outputs are identical on every backend.
+        # still get the fused kernel from inside the helper. Exact ties retain the helper's documented
+        # kernel-dependent backend difference.
         output = _nearest_grid_sample(
             input,
             grid,
