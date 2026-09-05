@@ -353,23 +353,171 @@ class RFDETRDataModule(LightningDataModule):
             raise RuntimeError(f"{split} dataset was not built; call setup({split!r}) before requesting a dataloader.")
         return dataset
 
+    def build_train_sampler(self, dataset: torch.utils.data.Dataset[Any]) -> torch.utils.data.Sampler[list[int]] | None:
+        """Return a custom training batch sampler, or ``None`` to use the default sampling strategy.
+
+        Override this hook to plug in a batch sampler such as
+        :class:`~rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler` without reimplementing
+        :meth:`train_dataloader`. When this returns a sampler, ``train_dataloader`` passes it as the
+        DataLoader's ``batch_sampler`` and keeps every other DataLoader kwarg from the base configuration
+        (``num_workers``, ``pin_memory``, ``persistent_workers``, ``prefetch_factor``, ``worker_init_fn``,
+        ``collate_fn``) — only the batching strategy changes. The default ``batch_size``/``shuffle``/
+        ``drop_last``/small-dataset replacement-sampler logic and the :class:`GradAccumAlignedDataset`
+        padding wrapper are all skipped in that case, since a batch sampler already fully owns which
+        indices make up each batch and ``GradAccumAlignedDataset`` only pads a length that a custom batch
+        sampler never consults.
+
+        That skip transfers one responsibility to the sampler: keeping its epoch a whole number of
+        gradient-accumulation windows. Padding is how the default path stops PTL firing the optimizer on a short
+        final window (Lightning-AI/pytorch-lightning#19987), and it cannot reach a batch sampler. A returned
+        sampler whose length is not a multiple of ``grad_accum_steps`` is warned about, not rejected;
+        :class:`~rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler` takes
+        ``batch_multiple=grad_accum_steps`` to satisfy it.
+
+        A returned sampler is responsible for its own DDP sharding (for example via ``num_replicas``/
+        ``rank`` constructor arguments), so a distributed run must be started with
+        ``Trainer(use_distributed_sampler=False)``. Otherwise Lightning tries to rebuild the batch sampler
+        around its own ``DistributedSampler`` and fails with a bare ``TypeError`` about missing ``__init__``
+        arguments; :meth:`train_dataloader` raises a ``RuntimeError`` naming the fix before that happens.
+
+        Args:
+            dataset: The training dataset built by :meth:`setup`, i.e. ``self._dataset_train``.
+
+        Returns:
+            A batch sampler yielding lists of dataset indices, or ``None`` to use the default strategy.
+
+        Example:
+            Return a :class:`~rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler` from a subclass
+            without reimplementing :meth:`train_dataloader`:
+
+            .. code-block:: python
+
+                class MultiSourceDataModule(RFDETRDataModule):
+                    def build_train_sampler(self, dataset):
+                        return WeightedMultiSourceBatchSampler.from_concat_dataset(
+                            dataset,
+                            weights=[0.6, 0.3, 0.1],
+                            batch_size=self.train_config.batch_size,
+                        )
+        """
+        return None
+
+    def _check_custom_sampler_owns_ddp(self, batch_sampler: torch.utils.data.Sampler[list[int]]) -> None:
+        """Raise when Lightning would try to rebuild a custom batch sampler for distributed training.
+
+        A batch sampler returned by :meth:`build_train_sampler` shards itself, so Lightning must be told to
+        keep its hands off with ``Trainer(use_distributed_sampler=False)``. Without that flag Lightning
+        re-instantiates the batch sampler with ``(sampler, batch_size, drop_last)`` to inject a
+        ``DistributedSampler`` and surfaces only the resulting ``TypeError`` about missing ``__init__``
+        arguments, which says nothing about the actual fix.
+
+        Detection uses the public ``Trainer.distributed_sampler_kwargs`` property (a dict only for parallel
+        strategies) together with the Lightning-internal accelerator connector. The internal flags are read
+        defensively: when a Lightning version no longer exposes them, no error is raised and the user falls
+        back to Lightning's own failure mode rather than a false alarm on a correct configuration.
+
+        Args:
+            batch_sampler: The sampler returned by :meth:`build_train_sampler`, used only for its class name.
+
+        Raises:
+            RuntimeError: If a distributed strategy is active and Lightning is still set to wrap samplers.
+        """
+        trainer = self.trainer
+        if trainer is None:
+            return
+        if not isinstance(getattr(trainer, "distributed_sampler_kwargs", None), dict):
+            return
+        connector = getattr(trainer, "_accelerator_connector", None)
+        if getattr(connector, "use_distributed_sampler", None) is not True:
+            return
+        if getattr(connector, "is_distributed", None) is not True:
+            return
+        raise RuntimeError(
+            f"build_train_sampler() returned a custom batch sampler ({type(batch_sampler).__name__}), but the "
+            "Trainer runs a distributed strategy with use_distributed_sampler=True. Lightning would try to "
+            "rebuild that batch sampler around its own DistributedSampler and fail with a bare TypeError about "
+            "missing __init__ arguments. Pass Trainer(use_distributed_sampler=False) and let the batch sampler "
+            "shard itself (WeightedMultiSourceBatchSampler does this via num_replicas/rank, which default to the "
+            "live torch.distributed process group)."
+        )
+
+    def _warn_on_unaligned_batch_sampler(self, batch_sampler: torch.utils.data.Sampler[list[int]]) -> None:
+        """Warn when a custom batch sampler's epoch is not a whole number of gradient-accumulation windows.
+
+        The default loader path keeps that invariant by padding the dataset with :class:`GradAccumAlignedDataset`, so
+        ``drop_last=True`` becomes a no-op and PTL never fires the optimizer on a short final window
+        (Lightning-AI/pytorch-lightning#19987). A batch sampler owns its own batches, so padding the dataset cannot
+        reach it and the invariant has to be restored by the sampler itself.
+
+        Only warns: a short final window under-scales one optimizer step per epoch, which is a real but survivable
+        cost, and refusing to build the loader would break callers who accept it knowingly.
+
+        Args:
+            batch_sampler: The sampler returned by :meth:`build_train_sampler`. A sampler without ``__len__``
+                declares no epoch length, so nothing can be checked and the call is a no-op.
+        """
+        grad_accum_steps = self.train_config.grad_accum_steps
+        if grad_accum_steps < 2:
+            return
+        try:
+            batches = len(batch_sampler)  # type: ignore[arg-type]
+        except TypeError:
+            return
+        if batches % grad_accum_steps == 0:
+            return
+        logger.warning(
+            "build_train_sampler() returned %s yielding %d batches per epoch, which is not a multiple of "
+            "grad_accum_steps=%d. The final accumulation window will be short (%d of %d micro-batches), so the last "
+            "optimizer step of each epoch is under-scaled. WeightedMultiSourceBatchSampler accepts "
+            "batch_multiple=%d to round its epoch down to a whole number of windows.",
+            type(batch_sampler).__name__,
+            batches,
+            grad_accum_steps,
+            batches % grad_accum_steps,
+            grad_accum_steps,
+            grad_accum_steps,
+        )
+
     def train_dataloader(self) -> DataLoader[Any]:
         """Return the training DataLoader.
 
-        Uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES`` effective batches
-        (matching legacy behaviour in ``main.py``).  Otherwise wraps the dataset with :class:`GradAccumAlignedDataset`
-        to ensure its length is an exact multiple of ``effective_batch_size * world_size`` (workaround for
+        Consults :meth:`build_train_sampler` first: when it returns a sampler, that sampler is used as the
+        DataLoader's ``batch_sampler`` and the logic below is skipped entirely (see that method's docstring
+        for exactly which kwargs still apply). Otherwise, uses a replacement sampler when the dataset is too
+        small to fill ``_MIN_TRAIN_BATCHES`` effective batches (matching legacy behaviour in ``main.py``).
+        Otherwise wraps the dataset with :class:`GradAccumAlignedDataset` to ensure its length is an exact
+        multiple of ``effective_batch_size * world_size`` (workaround for
         https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and then uses ``shuffle=True, drop_last=True``
         so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
 
         Returns:
             DataLoader for the training dataset. With ``TrainConfig.pack_targets=True`` (the default), its collated
             batches contain ``PackedTargets`` for losslessly packable target batches.
+
+        Raises:
+            RuntimeError: If :meth:`build_train_sampler` returns a sampler while Lightning is still set to wrap
+                samplers for a distributed strategy; see :meth:`_check_custom_sampler_owns_ddp`.
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
+        num_workers = self._num_workers
+
+        custom_batch_sampler = self.build_train_sampler(dataset)
+        if custom_batch_sampler is not None:
+            self._check_custom_sampler_owns_ddp(custom_batch_sampler)
+            self._warn_on_unaligned_batch_sampler(custom_batch_sampler)
+            return DataLoader(
+                dataset,
+                batch_sampler=custom_batch_sampler,
+                collate_fn=self._collate_fn,
+                num_workers=num_workers,
+                pin_memory=self._pin_memory,
+                persistent_workers=self._persistent_workers,
+                prefetch_factor=self._prefetch_factor,
+                worker_init_fn=_worker_init_fn,
+            )
+
         batch_size = self._resolve_batch_size()
         effective_batch_size = batch_size * self.train_config.grad_accum_steps
-        num_workers = self._num_workers
 
         dataset_length = len(dataset)  # type: ignore[arg-type]
         if dataset_length < effective_batch_size * _MIN_TRAIN_BATCHES:

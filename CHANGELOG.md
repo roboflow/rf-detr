@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.inference()` now accepts `compile_backend="inductor"` as an opt-in backend for long-running inference at a fixed batch size and resolution; the default remains the existing TorchScript path. On CUDA, Inductor completes its two setup invocations and synchronizes inside `inference()` before the first public `predict()` call. Runtime benefit and compatibility depend on the workload, CUDA device, operators, and installed PyTorch version.
 
+- `WeightedMultiSourceBatchSampler` (`rfdetr.datasets.multi_source`) fixes the per-source composition of every training batch when training on a `ConcatDataset` of several datasets, so a small hand-labelled set is not drowned out by a large public one. Sources are recycled with reshuffling when they run out mid-epoch, epoch length can be driven by the largest or smallest source, and batches are sharded across DDP ranks. Opt-in: no existing training path changes. ([#1287](https://github.com/roboflow/rf-detr/pull/1287))
+
+### Documentation
+
+- Cookbook for mixing Roboflow Universe datasets with `WeightedMultiSourceBatchSampler` (`docs/cookbooks/multi-source-batch-sampler.ipynb`).
+
 ### Changed
 
 ### Deprecated

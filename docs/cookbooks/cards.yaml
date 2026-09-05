@@ -1,4 +1,10 @@
 cards:
+  - href: multi-source-batch-sampler/
+    name: "Mix Universe datasets with a fixed batch ratio"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.10.0
+    author: Maryyyyyyyam142
+    description: "Train RF-DETR on several Roboflow Universe datasets at once, with WeightedMultiSourceBatchSampler holding a fixed per-source ratio in every batch."
   - href: train-coco2017/
     name: "Train RF-DETR Nano on COCO2017"
     labels: [TRAINING, COCO2017, PYTORCH LIGHTNING]

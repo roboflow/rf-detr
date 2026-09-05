@@ -49,6 +49,7 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 
 | File                                | Card title                                      | Version |
 | ----------------------------------- | ----------------------------------------------- | ------- |
+| `multi-source-batch-sampler.ipynb`  | Mix Universe datasets with a fixed batch ratio  | v1.10.0 |
 | `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
 | `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler               | v1.9.0  |
 | `export-coreml.ipynb`               | Export to Native CoreML & Run Inference         | v1.9.0  |

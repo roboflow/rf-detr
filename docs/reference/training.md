@@ -42,6 +42,22 @@ This page documents the training primitives that power RF-DETR. For a narrative 
 
 ---
 
+## WeightedMultiSourceBatchSampler
+
+::: rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler
+    options:
+      show_source: false
+      members:
+        - __init__
+        - from_concat_dataset
+        - set_epoch
+
+::: rfdetr.datasets.multi_source.compute_source_batch_sizes
+    options:
+      show_source: false
+
+---
+
 ## build_trainer
 
 ::: rfdetr.training.trainer.build_trainer

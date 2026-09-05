@@ -163,6 +163,58 @@ print(datamodule.class_names)  # e.g. ["cat", "dog", "person"]
 
 Returns sorted category names from the COCO annotation file of the first available split, or `None` if the dataset has not been set up yet.
 
+### Mixing datasets with a fixed per-batch ratio
+
+Concatenating datasets samples each one in proportion to its size, so a large public dataset dominates every batch and a small hand-labelled set contributes almost nothing. `WeightedMultiSourceBatchSampler` fixes the composition of every batch instead: with `batch_size=16` and weights `[0.6, 0.3, 0.1]`, each batch holds 10 samples from the first source, 5 from the second, and 1 from the third — regardless of how the source sizes compare.
+
+A runnable walkthrough that downloads three [Roboflow Universe](https://universe.roboflow.com) datasets and trains with this sampler is in the [multi-source batch sampler cookbook](../../cookbooks/multi-source-batch-sampler/).
+
+```python
+from torch.utils.data import ConcatDataset
+
+from rfdetr.datasets import WeightedMultiSourceBatchSampler
+from rfdetr.training import RFDETRDataModule
+
+
+class MultiSourceDataModule(RFDETRDataModule):
+    def setup(self, stage: str) -> None:
+        super().setup(stage)
+        if stage == "fit":
+            self._dataset_train = ConcatDataset([labeled_dataset, synthetic_dataset, public_dataset])
+
+    def build_train_sampler(self, dataset: ConcatDataset) -> WeightedMultiSourceBatchSampler:
+        self._multi_source_sampler = WeightedMultiSourceBatchSampler.from_concat_dataset(
+            dataset,
+            weights=[0.6, 0.3, 0.1],
+            batch_size=self._resolve_batch_size(),
+            num_replicas=self.trainer.world_size if self.trainer else 1,
+            rank=self.trainer.global_rank if self.trainer else 0,
+        )
+        return self._multi_source_sampler
+```
+
+`_resolve_batch_size()` is used instead of `train_config.batch_size` directly because `batch_size` may still be the literal string `"auto"` on this path — `RFDETR.train()` resolves `"auto"` to a concrete integer before construction, but this custom-`DataModule` pattern bypasses that, and `_resolve_batch_size()` raises a clear `RuntimeError` instead of a cryptic one from the sampler.
+
+Overriding `build_train_sampler` instead of `train_dataloader` keeps the base `DataLoader` construction — `num_workers`, `pin_memory`, `persistent_workers`, `prefetch_factor`, `collate_fn`, and per-worker augmentation-stream seeding all still apply; only the batching strategy changes.
+
+A source that runs out of samples part-way through an epoch is reshuffled and reused, which is what keeps the ratio exact. Epoch length is set by the largest source by default; pass `epoch_length="smallest"` to instead end the epoch when the smallest source has been seen once, so the larger sources are sub-sampled and the small one is not repeated.
+
+!!! warning "Set `use_distributed_sampler=False` under DDP"
+
+    The sampler shards batches across ranks itself via `num_replicas` and `rank`. Let Lightning inject its own `DistributedSampler` on top and the data will be split twice:
+
+    ```python
+    trainer = build_trainer(train_config, model_config, use_distributed_sampler=False)
+    ```
+
+Lightning only auto-calls `set_epoch` on a sampler it owns (`dataloader.sampler` / `dataloader.batch_sampler.sampler`), and `WeightedMultiSourceBatchSampler` has no `.sampler` attribute, so it is never wired up automatically — call it yourself every epoch, or every epoch reuses the same shuffle:
+
+```python
+class MultiSourceModelModule(RFDETRModelModule):
+    def on_train_epoch_start(self) -> None:
+        self.trainer.datamodule._multi_source_sampler.set_epoch(self.current_epoch)
+```
+
 ---
 
 ## build_trainer
