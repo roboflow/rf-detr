@@ -22,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Breaking Changes
 
+- Removed `rfdetr.datasets.synthetic` (`generate_coco_dataset`, `generate_synthetic_sample`, `draw_synthetic_shape`, `calculate_boundary_overlap`, `DatasetSplitRatios`, `SYNTHETIC_SHAPES`, `SYNTHETIC_COLORS`). The module only ever fed RF-DETR's own test fixtures and is replaced by the `fuse-augmentations` package, whose `fuse_augmentations.data` module generates the same shape datasets in COCO or YOLO layout for detection, segmentation, and OBB. Callers migrate to `pip install fuse-augmentations` plus `from fuse_augmentations.data import generate_dataset`; note that it writes dense COCO category ids where the removed generator wrote sparse ones, and its shape set adds `rectangle`.
+
 ---
 
 ## [1.10.0] — 2026-09-04

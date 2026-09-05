@@ -205,6 +205,9 @@ tests = [
   "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
   "packaging",  # imported by .github/scripts/inject_outdated_banner.py to order release dirs
   "tomli>=2.0; python_version < '3.11'",
+  # Generates the synthetic COCO fixtures in tests/conftest.py (replaced rfdetr.datasets.synthetic).
+  # Pinned exactly: the project is pre-1.0 and only publishes dev releases, so a range would drift.
+  "fuse-augmentations==0.10.0.dev0",
 ]
 
 typing = [
