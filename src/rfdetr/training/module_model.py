@@ -419,14 +419,18 @@ class RFDETRModelModule(LightningModule):
 
         accelerator = str(train_config.accelerator).lower()
         uses_cuda_accelerator = accelerator in {"auto", "gpu", "cuda"}
-        compile_enabled = (
-            model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator and not train_config.multi_scale
-        )
-        if model_config.compile and train_config.multi_scale:
+        # multi_scale is deliberately not part of this gate. The XLA concern it used to carry
+        # (one graph trace per scale) cannot arise here: DEVICE == "cuda" and an accelerator of
+        # auto/gpu/cuda are both required first, so an XLA or TPU run has already disabled
+        # compilation before multi-scale is even considered. Excluding it only ever disabled the
+        # CUDA path, where dynamic=True below is precisely what handles the varying (H, W).
+        compile_enabled = model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator
+        if model_config.compile and not compile_enabled:
             logger.info(
-                "Disabling torch.compile: multi_scale=True causes dynamic shapes "
-                "(incompatible with XLA -- each scale = separate graph trace). "
-                "Use do_random_resize_via_padding=True on TPU to avoid recompilation overhead."
+                "Disabling torch.compile: requires DEVICE == 'cuda' and a CUDA-family accelerator "
+                "(got DEVICE=%r, accelerator=%r). torch.compile is not supported on XLA/TPU or CPU.",
+                DEVICE,
+                accelerator,
             )
         if compile_enabled:
             # dynamic=True: one compiled graph handles all multi-scale input sizes instead
