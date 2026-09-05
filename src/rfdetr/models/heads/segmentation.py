@@ -391,12 +391,7 @@ def point_sample(input: Tensor, point_coords: Tensor, **kwargs: Any) -> Tensor:
         # host fallback on XLA, so the gather path keeps mask-label sampling on device. CUDA/CPU
         # still get the fused kernel from inside the helper. Exact ties retain the helper's documented
         # kernel-dependent backend difference.
-        output = _nearest_grid_sample(
-            input,
-            grid,
-            padding_mode=padding_mode,
-            align_corners=align_corners
-        )
+        output = _nearest_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
     else:
         # Delegate to torch.nn.functional.grid_sample for the remaining modes and padding modes,
         # forwarding any remaining supported kwargs.
