@@ -699,6 +699,51 @@ class TestExportExecutorchBody:
             )
         assert out.name == "my-model.pte"
 
+    @pytest.mark.parametrize("output_name", [None, "custom"])
+    def test_backbone_only_does_not_collide_with_full_detector_export(
+        self,
+        tmp_path: Path,
+        output_name: str | None,
+    ) -> None:
+        """Backbone export leaves the full detector artifact intact for variant and custom names."""
+        with mock.patch.dict(sys.modules, self._generic_modules(b"FULL")), mock.patch("torch.export.export"):
+            full_out = export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="xnnpack",
+                variant_name="rfdetr-nano",
+                output_name=output_name,
+            )
+        with mock.patch.dict(sys.modules, self._generic_modules(b"BACKBONE")), mock.patch("torch.export.export"):
+            backbone_out = export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="xnnpack",
+                variant_name="rfdetr-nano",
+                output_name=output_name,
+                backbone_only=True,
+            )
+
+        assert full_out != backbone_out
+        assert backbone_out.name == ("custom-backbone.pte" if output_name else "rfdetr-nano_xnnpack-backbone.pte")
+        assert full_out.read_bytes() == b"FULL"
+        assert backbone_out.read_bytes() == b"BACKBONE"
+
+    def test_backbone_only_bare_default_uses_backbone_model_stem(self, tmp_path: Path) -> None:
+        """Without a variant/output_name, ``backbone_only=True`` falls back to ``backbone_model`` (mirrors the ONNX
+        exporter) instead of appending a redundant ``-backbone`` marker onto the generic default."""
+        with mock.patch.dict(sys.modules, self._generic_modules()), mock.patch("torch.export.export"):
+            out = export_executorch(
+                model=mock.MagicMock(),
+                input_tensors=torch.zeros(1, 3, 8, 8),
+                output_dir=tmp_path,
+                backend="xnnpack",
+                backbone_only=True,
+            )
+        assert out.name == "backbone_model_xnnpack.pte"
+
     def test_lowering_failure_wrapped_as_runtime_error(self, tmp_path: Path) -> None:
         mods = self._generic_modules()
         mods["executorch.exir"].to_edge_transform_and_lower.side_effect = RuntimeError("boom")

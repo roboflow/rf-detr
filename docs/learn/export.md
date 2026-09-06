@@ -122,19 +122,23 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(backbone_only=True)
 ```
 
+The backbone export contains the encoder and its feature projector, without the detection decoder or prediction heads. ONNX outputs are feature maps in NCHW layout, ordered by `projector_scale`: `features` for the first level, followed by `features_1`, `features_2`, and so on when more levels are configured. Backbones with a second projector also return its levels as `cross_attn_features`, `cross_attn_features_1`, and so on, after the primary levels. These outputs are feature maps, not decoded boxes, masks, or keypoint coordinates.
+
 ## Output Files
 
 Filenames are built from the model's variant name (e.g. `rfdetr-medium`, falling back to `inference_model` when no variant or `output_name` is set, or `backbone_model` when `backbone_only=True` in that same case) plus a detail suffix whenever a detail materially changes the artifact — even at its default value, since the file needs to say what it actually is:
 
-| Format       | Filename pattern                                                                                                                                                                       | Detail encoded                                           |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `onnx`       | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`); without a variant or `output_name`, `inference_model.onnx` (or `backbone_model.onnx` if `backbone_only=True`) | none — `-backbone` is structural, not a precision detail |
-| `coreml`     | `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`                                                                                                                                | `coreml_precision`                                       |
-| `executorch` | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_qnn_{soc}.pte`                                                                                                           | `backend` (+ `soc` for `qnn`)                            |
-| `tensorrt`   | `{variant}_fp16.trt` / `{variant}_fp32.trt`                                                                                                                                            | `fp16`                                                   |
-| `tflite`     | `{variant}_fp32.tflite` + `{variant}_fp16.tflite` (+ `{variant}_dynamic_range_quant.tflite` for `quantization="int8"`)                                                                 | precision / quantization mode                            |
+| Format       | Filename pattern                                                                                                                                                                                                                     | Detail encoded                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `onnx`       | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`); without a variant or `output_name`, `inference_model.onnx` (or `backbone_model.onnx` if `backbone_only=True`)                                               | none — `-backbone` is structural, not a precision detail   |
+| `coreml`     | `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage` (or `{variant}_fp32-backbone.mlpackage` if `backbone_only=True`); without a variant or `output_name`, `backbone_model_fp32.mlpackage` if `backbone_only=True`                | `coreml_precision`, plus `-backbone` when named            |
+| `executorch` | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_qnn_{soc}.pte` (or `{variant}_xnnpack-backbone.pte` if `backbone_only=True`); without a variant or `output_name`, `backbone_model_xnnpack.pte` if `backbone_only=True` | `backend` (+ `soc` for `qnn`), plus `-backbone` when named |
+| `tensorrt`   | `{variant}_fp16.trt` / `{variant}_fp32.trt`                                                                                                                                                                                          | `fp16`                                                     |
+| `tflite`     | `{variant}_fp32.tflite` + `{variant}_fp16.tflite` (+ `{variant}_dynamic_range_quant.tflite` for `quantization="int8"`)                                                                                                               | precision / quantization mode                              |
 
 Pass `output_name="my-model"` to override the variant name and write `{output_name}.{ext}` verbatim — this suppresses the detail suffix for every format **except** `tflite`, which always writes multiple files and so keeps its `_fp32`/`_fp16`/`_dynamic_range_quant` suffix even with a custom name (`{output_name}_fp32.tflite`, etc.).
+
+With `backbone_only=True`, ONNX, CoreML, ExecuTorch, and TensorRT retain a `-backbone` marker before the extension even when `output_name` is set, for example `my-model-backbone.onnx`. This distinguishes the backbone artifact from the full detector exported with the same name.
 
 ## Optional: Convert ONNX to TensorRT
 

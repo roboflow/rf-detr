@@ -222,6 +222,57 @@ class TestExportCoremlBareDefaultNaming:
         assert output_file.name == "inference_model_fp16.mlpackage"
         mock_mlmodel.save.assert_called_once_with(str(output_file))
 
+    @pytest.mark.parametrize(
+        "variant_name, output_name, full_name, backbone_name",
+        [
+            ("rfdetr-nano", None, "rfdetr-nano_fp32.mlpackage", "rfdetr-nano_fp32-backbone.mlpackage"),
+            ("rfdetr-nano", "custom", "custom.mlpackage", "custom-backbone.mlpackage"),
+            (None, None, "inference_model_fp32.mlpackage", "backbone_model_fp32.mlpackage"),
+        ],
+    )
+    def test_backbone_only_does_not_collide_with_full_detector_export(
+        self,
+        tmp_path: Path,
+        variant_name: str | None,
+        output_name: str | None,
+        full_name: str,
+        backbone_name: str,
+    ) -> None:
+        """Backbone and detector paths stay distinct with variant, custom, and default names."""
+        coremltools = mock.MagicMock()
+        full_model, backbone_model = mock.MagicMock(), mock.MagicMock()
+        coremltools.convert.side_effect = [full_model, backbone_model]
+        exported_program = mock.MagicMock()
+        exported_program.run_decompositions.return_value = exported_program
+        with (
+            mock.patch.dict("sys.modules", {"coremltools": coremltools}),
+            mock.patch("rfdetr.export._coreml.converter._IS_COREMLTOOLS_AVAILABLE", True),
+            mock.patch("torch.export.export", return_value=exported_program),
+            mock.patch("rfdetr.export._coreml.converter.unsupported_coreml_ops", return_value={}),
+        ):
+            full_out = export_coreml(
+                torch.nn.Identity(),
+                torch.zeros(1, 3, 32, 32),
+                tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                verbose=False,
+            )
+            backbone_out = export_coreml(
+                torch.nn.Identity(),
+                torch.zeros(1, 3, 32, 32),
+                tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                verbose=False,
+                backbone_only=True,
+            )
+        assert full_out != backbone_out
+        assert full_out.name == full_name
+        assert backbone_out.name == backbone_name
+        full_model.save.assert_called_once_with(str(full_out))
+        backbone_model.save.assert_called_once_with(str(backbone_out))
+
 
 class TestVariantNamePathSafety:
     """Regression coverage for the path-traversal mitigation ``export_coreml`` applies to ``variant_name``

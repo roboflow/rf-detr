@@ -17,12 +17,26 @@ import warnings
 from pathlib import Path
 from typing import Literal, cast
 
-from torch import Tensor
+from torch import Tensor, nn
 
-from rfdetr.models.lwdetr import LWDETR
+from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+
+class _BackboneExport(nn.Module):
+    """Expose all feature projectors from a backbone already prepared for export."""
+
+    def __init__(self, backbone: Backbone) -> None:
+        super().__init__()
+        self.backbone = backbone
+
+    def forward(self, images: Tensor) -> list[Tensor]:
+        """Return primary feature levels followed by cross-attention levels, when present."""
+        features, _, cross_attn_features = self.backbone.forward_export(images)
+        return features if cross_attn_features is None else features + cross_attn_features
+
 
 # Every format accepted by :meth:`rfdetr.detr.RFDETR.export`.
 _EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch", "coreml"})
@@ -177,7 +191,7 @@ def preload_tensorflow_before_onnx() -> None:
 
 
 def _export_executorch_format(
-    model: LWDETR,
+    model: nn.Module,
     input_tensors: Tensor,
     output_dir_path: Path,
     *,
@@ -187,6 +201,7 @@ def _export_executorch_format(
     dynamic_batch: bool,
     notes: object,
     output_name: str | None = None,
+    backbone_only: bool = False,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the ExecuTorch converter.
 
@@ -202,6 +217,9 @@ def _export_executorch_format(
         notes: User-supplied export metadata; ExecuTorch has no metadata slot, so a non-``None`` value warns.
         output_name: Full filename override (without extension); forwarded verbatim to
             :func:`~rfdetr.export._executorch.converter.export_executorch`.
+        backbone_only: Whether *model* is a backbone-only export graph; forwarded verbatim to
+            :func:`~rfdetr.export._executorch.converter.export_executorch` so the filename marks it and
+            never collides with a full-detector export of the same variant/backend.
 
     Returns:
         Path to the exported ``.pte`` file.
@@ -243,8 +261,9 @@ def _export_executorch_format(
         raise
     # ExecuTorch consumes a torch.export graph directly, so switch the model into its
     # export-friendly forward (the ONNX path does this inside export_onnx).
-    if hasattr(model, "export"):
-        model.export()
+    export_method = getattr(model, "export", None)
+    if callable(export_method):
+        export_method()
     # soc only applies to the qnn backend; _resolve_export_backend leaves it None otherwise.
     soc_kwargs = {"soc": soc} if soc is not None else {}
     # _resolve_export_backend already validated backend against _VALID_BACKENDS at runtime;
@@ -259,6 +278,7 @@ def _export_executorch_format(
         variant_name=variant_name,
         dynamic_batch=dynamic_batch,
         output_name=output_name,
+        backbone_only=backbone_only,
         **soc_kwargs,
     )
     logger.info(f"Successfully exported ExecuTorch model to: {pte_path}")
@@ -266,7 +286,7 @@ def _export_executorch_format(
 
 
 def _export_coreml_format(
-    model: LWDETR,
+    model: nn.Module,
     input_tensors: Tensor,
     output_dir_path: Path,
     *,
@@ -275,6 +295,7 @@ def _export_coreml_format(
     notes: object,
     compute_precision: str | None = None,
     output_name: str | None = None,
+    backbone_only: bool = False,
 ) -> Path:
     """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the native CoreML converter.
 
@@ -292,6 +313,9 @@ def _export_coreml_format(
             :func:`~rfdetr.export._coreml.converter.export_coreml`'s ``compute_precision``.
         output_name: Full filename override (without extension); forwarded verbatim to
             :func:`~rfdetr.export._coreml.converter.export_coreml`.
+        backbone_only: Whether *model* is a backbone-only export graph; forwarded verbatim to
+            :func:`~rfdetr.export._coreml.converter.export_coreml` so the filename marks it and never
+            collides with a full-detector export of the same variant/precision.
 
     Note:
         Unlike the ONNX path, output names are not forwarded to ``coremltools.convert`` —
@@ -340,8 +364,9 @@ def _export_coreml_format(
         raise
     # CoreML consumes a torch.export graph directly, so switch the model into its
     # export-friendly forward (the ONNX path does this inside export_onnx).
-    if hasattr(model, "export"):
-        model.export()
+    export_method = getattr(model, "export", None)
+    if callable(export_method):
+        export_method()
     mlpackage_path = export_coreml(
         model=model,
         input_tensors=input_tensors,
@@ -350,6 +375,7 @@ def _export_coreml_format(
         verbose=verbose,
         compute_precision=compute_precision,
         output_name=output_name,
+        backbone_only=backbone_only,
     )
     logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")
     return mlpackage_path
