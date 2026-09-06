@@ -27,6 +27,7 @@ from unittest import mock
 import pytest
 import torch
 
+from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
 from rfdetr.export._executorch.converter import (
     _VALID_BACKENDS,
@@ -34,7 +35,7 @@ from rfdetr.export._executorch.converter import (
     export_executorch,
 )
 from tests._online import is_online
-from tests.export.conftest import eager_reference_tensors, max_abs_output_diffs
+from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
@@ -948,6 +949,28 @@ def exported(
     return model, example, Path(pte_path), validate_fn
 
 
+@pytest.fixture(scope="module")
+def executorch_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
+    """Export RFDETRNano's backbone and return its eager feature-map reference module.
+
+    Uses the public ``backbone_only=True`` route so the ExecuTorch runtime executes the same list-valued
+    ``_BackboneExport`` graph that users receive, rather than a mocked converter dispatch.
+    """
+    import rfdetr
+
+    out_dir = tmp_path_factory.mktemp("executorch_backbone")
+    torch.manual_seed(42)
+    detector = rfdetr.RFDETRNano(pretrain_weights=None)
+    pte_path = detector.export(
+        output_dir=str(out_dir), format="executorch", backend="xnnpack", backbone_only=True, verbose=False
+    )
+    backbone = detector.model.model.backbone[0].to("cpu").eval()
+    reference_model = _BackboneExport(backbone)
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
+    return reference_model, example, Path(pte_path)
+
+
 def _portable_kernel_call_names(pte_path: Path) -> list[str]:
     """Return the op name of every non-delegated (portable) kernel call in a ``.pte``, one entry per call.
 
@@ -1027,6 +1050,18 @@ class TestExecutorchEndToEnd:
         """ExecuTorch runtime output must match the eager PyTorch forward within XNNPACK fp32 tolerance."""
         model, example, pte_path, validate_fn = exported
         validate_fn(pte_path, model, example)
+
+    def test_backbone_outputs_match_pytorch_structured(
+        self, executorch_backbone_export: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """ExecuTorch must run every backbone feature-map output from the public backbone-only export."""
+        model, example, pte_path = executorch_backbone_export
+        assert "-backbone" in pte_path.stem
+        diffs = _runtime_parity(model, example, pte_path)
+        assert max(diffs) < _EXECUTORCH_DETECTION_MAX_ABS_DIFF, (
+            "ExecuTorch backbone outputs diverge from PyTorch: "
+            f"max abs diff {max(diffs)} (bound={_EXECUTORCH_DETECTION_MAX_ABS_DIFF})"
+        )
 
     def test_preprocessed_image_detections_match_pytorch(
         self, exported: tuple[Any, torch.Tensor, Path, Any], photo_asset: Path
