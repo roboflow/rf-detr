@@ -427,8 +427,9 @@ class RFDETRModelModule(LightningModule):
         compile_enabled = model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator
         if model_config.compile and not compile_enabled:
             logger.info(
-                "Disabling torch.compile: requires DEVICE == 'cuda' and a CUDA-family accelerator "
-                "(got DEVICE=%r, accelerator=%r). torch.compile is not supported on XLA/TPU or CPU.",
+                "Disabling torch.compile: RF-DETR enables it only on a CUDA device with a "
+                "CUDA-family accelerator (got DEVICE=%r, accelerator=%r). CPU and MPS are not "
+                "expected to benefit; on XLA/TPU the graph is compiled by the XLA runtime instead.",
                 DEVICE,
                 accelerator,
             )
