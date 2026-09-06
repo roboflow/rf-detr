@@ -124,11 +124,11 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 ## EMA (Exponential Moving Average)
 
-| Parameter         | Type   | Default | Description                                                                                                                                                                                                                                                                 |
-| ----------------- | ------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `use_ema`         | `bool` | `True`  | Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.                                                                                                                                                        |
-| `eval_base_model` | `bool` | `False` | Validation-only: also evaluate the base model. Validation forwards through one model by default — the EMA weights when `use_ema=True` — which halves per-batch validation compute. Set to `True` to restore the base+EMA comparison. See Evaluation Parameters.             |
-| `eval_ema_only`   | `bool` | `False` | **Deprecated (removal in v1.13)** — explicit legacy `True` preserves EMA-only evaluation and explicit legacy `False` preserves base-plus-EMA evaluation; either emits a `FutureWarning`. Omit it in new configs; use `eval_base_model=True` to request the base-model pass. |
+| Parameter         | Type   | Default | Description                                                                                                                                                                                                                                                                                          |
+| ----------------- | ------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `use_ema`         | `bool` | `True`  | Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.                                                                                                                                                                                 |
+| `eval_base_model` | `bool` | `False` | Validation-only: also evaluate the base model. Validation forwards through one model by default — the EMA weights when `use_ema=True` — instead of two, removing a full model forward pass from every validation batch. Set to `True` to restore the base+EMA comparison. See Evaluation Parameters. |
+| `eval_ema_only`   | `bool` | `False` | **Deprecated (removal in v1.13)** — explicit legacy `True` preserves EMA-only evaluation and explicit legacy `False` preserves base-plus-EMA evaluation; either emits a `FutureWarning`. Omit it in new configs; use `eval_base_model=True` to request the base-model pass.                          |
 
 !!! info "What is EMA?"
 
@@ -301,7 +301,7 @@ The parameters below are available for fine-grained control over training behavi
 | `prefetch_factor`    | `int`  | `None`  | Number of batches to prefetch per DataLoader worker. `None` uses PyTorch's built-in default.                             |
 | `pack_targets`       | `bool` | `True`  | Concatenate target dicts before crossing the DataLoader worker boundary. See the contract below; set `False` to opt out. |
 
-With `pack_targets=True`, train, validation, test, and predict loaders yield batches whose target element is `PackedTargets` whenever packing is lossless. The Lightning `transfer_batch_to_device` hook accepts those batches or an unpacked tuple of target dicts. It moves packed fields to the target device, then materializes them into the same plain per-sample dict list that training, validation, test, and prediction hooks receive on the unpacked path. Batches that cannot be packed losslessly retain their original tuple of dicts.
+With `pack_targets=True`, train, validation, test, and predict loaders yield batches whose target element is `PackedTargets` whenever packing is lossless. The Lightning `transfer_batch_to_device` hook accepts those batches or an unpacked tuple of target dicts. It materializes each packed field directly into its own independently owned per-sample tensor on the target device, producing the same plain per-sample dict list that training, validation, test, and prediction hooks receive on the unpacked path. Batches that cannot be packed losslessly retain their original tuple of dicts.
 
 ## Complete Parameter Reference
 

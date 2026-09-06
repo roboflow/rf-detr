@@ -92,30 +92,58 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
     return (source_view.cpu().numpy() * 255).astype(np.uint8)
 
 
-def _uint8_image_to_tensor(image: np.ndarray[Any, Any]) -> torch.Tensor:
-    """Convert a 2-D/3-D uint8 image to contiguous CHW floating-point storage.
+def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
+    """Return a zero-copy ``uint8`` CHW *view* of a 2-D/3-D HWC image array.
 
-    This is the uint8 branch of ``torchvision.transforms.functional.to_tensor`` with its layout/dtype conversion fused
-    and division performed on fresh storage in place.
+    This is the layout half of ``torchvision.transforms.functional.to_tensor``; the dtype half is
+    :func:`_uint8_chw_to_float`. Splitting them lets :meth:`RFDETR.predict` send the
+    1-byte-per-channel storage across the host-to-device boundary and widen it on the accelerator,
+    instead of widening it 4x on the host and transferring that.
 
     Args:
         image: A ``(H, W)`` grayscale or ``(H, W, C)`` HWC ``uint8`` array.
 
     Returns:
-        A contiguous ``(C, H, W)`` tensor in the current default floating-point dtype, scaled to ``[0, 1]``,
-        byte-for-byte identical to ``to_tensor``'s output. For ``C == 1`` the leading dimension's own stride
-        may differ from ``to_tensor``'s, which is immaterial: a size-1 dimension's stride has no memory-layout
-        effect.
+        A ``(C, H, W)`` ``uint8`` tensor sharing *image*'s storage.
 
     Examples:
         >>> arr = np.zeros((2, 2, 3), dtype=np.uint8)
-        >>> _uint8_image_to_tensor(arr).shape
+        >>> _uint8_image_to_chw_view(arr).shape
         torch.Size([3, 2, 2])
     """
     if image.ndim == 2:
         image = image[:, :, None]
-    chw = torch.from_numpy(image.transpose((2, 0, 1)))
-    return chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format).div_(255)
+    return torch.from_numpy(image.transpose((2, 0, 1)))
+
+
+def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Widen a ``uint8`` CHW tensor to the default float dtype and scale it into ``[0, 1]``.
+
+    Dtype and layout are converted together and the division is done in place on that fresh float
+    allocation, so the pair costs one allocation rather than ``to_tensor``'s three.
+
+    Args:
+        chw: ``(C, H, W)`` ``uint8`` tensor, on any device.
+        scale: 0-dim tensor holding ``255``, on ``chw``'s device and in the target dtype. It has to
+            be a tensor rather than the Python ``int``: CUDA evaluates ``Tensor.div_(255)`` as a
+            multiplication by ``255``'s reciprocal, which rounds differently from the host's
+            division for just under half of all byte values (126 of 256, 1 ULP). A tensor divisor
+            keeps IEEE-754 correctly rounded division on both, so the result does not depend on
+            where it was computed.
+
+    Returns:
+        A contiguous ``(C, H, W)`` tensor in the current default floating-point dtype, scaled to
+        ``[0, 1]``, byte-for-byte identical to ``to_tensor``'s output. For ``C == 1`` the leading
+        dimension's own stride may differ from ``to_tensor``'s, which is immaterial: a size-1
+        dimension's stride has no memory-layout effect.
+
+    Examples:
+        >>> chw = _uint8_image_to_chw_view(np.zeros((2, 2, 3), dtype=np.uint8))
+        >>> _uint8_chw_to_float(chw, torch.tensor(255.0)).dtype
+        torch.float32
+    """
+    widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
+    return widened.div_(scale)
 
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
@@ -1268,17 +1296,21 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
+        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
-        """Optimize the model for inference with optional JIT compilation and dtype casting.
+        """Optimize the model for inference with optional compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
-        ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
-        the model's current resolution. By default, optimization deep-copies the loaded model before exporting it so the
-        original module remains available. Set ``inplace=True`` for memory-constrained inference-only deployments; this
-        exports the loaded module itself, may cast it to ``dtype``, and clears ``model.model`` after optimization
-        succeeds. In-place optimization is destructive: :meth:`remove_optimized_model` becomes a no-op (issues
-        :class:`UserWarning`), and :meth:`export` raises :class:`RuntimeError`. Create or reload a new ``RFDETR``
-        instance to recover the original model.
+        ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
+        the model's current resolution. The default ``"torchscript"`` backend preserves the existing
+        ``torch.jit.trace`` path. ``"inductor"`` uses ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the
+        dummy input twice before synchronizing the selected device so setup is paid inside this method instead of the
+        first :meth:`predict` call. By default,
+        optimization deep-copies the loaded model before exporting it so the original module remains available. Set
+        ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
+        cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
+        destructive: :meth:`remove_optimized_model` becomes a no-op (issues :class:`UserWarning`), and :meth:`export`
+        raises :class:`RuntimeError`. Create or reload a new ``RFDETR`` instance to recover the original model.
 
         If ``inplace=True`` and the underlying ``export()`` call mutates the module before raising (e.g. setting
         internal flags and swapping ``forward``), the exception handler resets RFDETR wrapper flags to the unoptimized
@@ -1286,10 +1318,9 @@ class RFDETR:
         after such a failure.
 
         Args:
-            compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
-                a JIT-compiled ``ScriptModule``. Set to ``False`` for broader compatibility (e.g. models with dynamic
-                control flow).
-            batch_size: Number of images the traced model will be optimized for. Ignored when ``compile=False``.
+            compile: If ``True``, compile the model using ``compile_backend``. Set to ``False`` for broader
+                compatibility (e.g. models with dynamic control flow).
+            batch_size: Number of images the compiled model will be optimized for. Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
                 ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
@@ -1299,12 +1330,16 @@ class RFDETR:
                 inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
                 Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
                 memory savings come only from clearing the base model reference rather than from dtype reduction.
+            compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
+                preserves the existing trace path. ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode;
+                it can reduce steady-state latency but has a substantially higher one-time compilation cost and its
+                device/operator support depends on the installed PyTorch version.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``dtype`` is not a floating-point dtype, or if ``inplace=True`` is used with
-                ``compile=True``.
+            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, or if
+                ``inplace=True`` is used with ``compile=True``.
             RuntimeError: If the base model has already been cleared by a previous inplace optimization.
 
         Examples:
@@ -1361,12 +1396,14 @@ class RFDETR:
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
         if not dtype.is_floating_point:
             raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
+        if compile_backend not in ("torchscript", "inductor"):
+            raise ValueError(f"compile_backend must be 'torchscript' or 'inductor', got {compile_backend!r}")
         if inplace and compile:
             raise ValueError(
                 "inference(inplace=True) requires compile=False. "
-                "torch.jit.trace retains references to the original parameter storage in the returned "
-                "ScriptModule, so setting model.model=None would not free the weight tensors and "
-                "inplace=True would not reduce memory usage."
+                "Compiled models can retain references to the original parameter storage, so setting "
+                "model.model=None may not free the weight tensors and inplace=True would not reliably reduce "
+                "memory usage."
             )
 
         # Clear any previously optimized state before starting a new optimization run.
@@ -1390,17 +1427,27 @@ class RFDETR:
                 inference_model = inference_model.to(dtype=dtype)
 
                 if compile:
-                    inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
-                        inference_model,
-                        torch.randn(
-                            batch_size,
-                            self.model_config.num_channels,
-                            self.model.resolution,
-                            self.model.resolution,
-                            device=self.model.device,
-                            dtype=dtype,
-                        ),
+                    dummy_input = torch.randn(
+                        batch_size,
+                        self.model_config.num_channels,
+                        self.model.resolution,
+                        self.model.resolution,
+                        device=self.model.device,
+                        dtype=dtype,
                     )
+                    if compile_backend == "torchscript":
+                        inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
+                            inference_model,
+                            dummy_input,
+                        )
+                    else:
+                        inference_model = torch.compile(inference_model, mode="reduce-overhead")
+                        with torch.inference_mode():
+                            inference_model(dummy_input)
+                            if device.type == "cuda":
+                                # CUDA Graph Trees reserve memory on the first call and record on the second.
+                                inference_model(dummy_input)
+                                torch.cuda.synchronize(device)
                     self._optimized_has_been_compiled = True
                     self._optimized_batch_size = batch_size
 
@@ -1430,6 +1477,7 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
+        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
         """Deprecated alias for :meth:`inference`.
 
@@ -1442,6 +1490,7 @@ class RFDETR:
             batch_size: See :meth:`inference`.
             dtype: See :meth:`inference`.
             inplace: See :meth:`inference`.
+            compile_backend: See :meth:`inference`.
         """
         ...
 
@@ -2269,10 +2318,12 @@ class RFDETR:
     def _ensure_eval_mode_for_unoptimized_inference(self) -> None:
         """Put the underlying module in eval mode before unoptimized inference.
 
-        Inference must never run with dropout / batch-norm in training mode. The warning that the model is not optimized
-        is emitted at most once, but eval mode is (re)asserted on every call: ``train()`` reassigns ``self.model.model``
-        to a module that PyTorch Lightning leaves in training mode (see ``train()``), so gating ``eval()`` behind the
-        once-only warning would let a later ``predict()`` silently run with dropout active.
+        Inference must not run with dropout / batch-norm in training mode. The registered module tree is checked on
+        every call, but ``eval()`` is only applied when at least one module is in training mode. This covers both a
+        directly toggled submodule and ``train()`` reassigning ``self.model.model`` to the module returned by PyTorch
+        Lightning (see ``train()``). The warning that the model is not optimized is emitted at most once, but gating the
+        mode check behind that once-only warning would let a later ``predict()`` silently run with dropout active, so
+        the two are independent.
 
         When ``_is_optimized_for_inference`` is ``True``, the method returns immediately — the compiled
         ``inference_model`` snapshot is already in eval mode and ``self.model.model`` is not used for inference.
@@ -2289,7 +2340,11 @@ class RFDETR:
         # self.model.model is only cleared when optimized for inference (guarded by the early return above).
         model = self.model.model
         assert model is not None
-        model.eval()
+        # ``eval()`` recursively reassigns ``training`` through ``nn.Module.__setattr__`` on every node. Reading the
+        # existing flags still visits the tree when it is already in eval mode, but avoids those repeated assignments.
+        # If the root is in training mode, ``any`` stops on its first item before ``eval()`` performs the required walk.
+        if any(module.training for module in model.modules()):
+            model.eval()
 
     @torch.inference_mode()
     # mypy can't match this signature against _ensure_model_on_device's Concatenate[Any, _P] typing without
@@ -2440,6 +2495,8 @@ class RFDETR:
         # original code checked range before shape for a given image, and raising it eagerly here
         # would flip that precedence for any tensor that is invalid on both axes at once.
         pending_checks: list[tuple[torch.Tensor | bool, torch.Tensor | bool, bool, tuple[int, ...]]] = []
+        # Built lazily on the first uint8 image, then shared by the rest of the batch.
+        uint8_scale: torch.Tensor | None = None
 
         for img_input in images:
             img: Any = img_input
@@ -2451,6 +2508,7 @@ class RFDETR:
                 img = Image.open(img)
 
             range_known_valid = False
+            deferred_widen = False
             if not isinstance(img, torch.Tensor):
                 # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
                 # etc.) to RGB before converting to tensor.  This matches the
@@ -2480,7 +2538,13 @@ class RFDETR:
                         )
                     else:
                         tensor_source = img
-                    img = _uint8_image_to_tensor(tensor_source)
+                    # Keep the 1-byte-per-channel storage for now: the widening to float is
+                    # deferred until after the host-to-device transfer below, so only a quarter of
+                    # the bytes cross the bus and the widen+divide run on the accelerator. The view
+                    # is already (C, H, W), so every shape check and error message below is
+                    # unchanged.
+                    img = _uint8_image_to_chw_view(tensor_source)
+                    deferred_widen = True
                 else:
                     img = F.to_tensor(img)
             elif include_source_image and img.dim() == 3:
@@ -2530,7 +2594,12 @@ class RFDETR:
             # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
             # reads of the tensor's data can observe an in-flight (partially written) copy.
             non_blocking = self.model.device.type == "cuda"
-            processed_images.append(img_tensor.to(self.model.device, non_blocking=non_blocking))
+            img_tensor = img_tensor.to(self.model.device, non_blocking=non_blocking)
+            if deferred_widen:
+                if uint8_scale is None:
+                    uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
+                img_tensor = _uint8_chw_to_float(img_tensor, uint8_scale)
+            processed_images.append(img_tensor)
 
         # Force the range-check results to Python bools only now, after every image's conversion,
         # range-check kernels, and transfer have all been queued (see the comment where

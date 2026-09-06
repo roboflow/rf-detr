@@ -44,7 +44,7 @@ def test_background_exclusion_preserves_original_class_ids(
     assert class_ids.tolist() == expected_class_ids
 
 
-@pytest.mark.parametrize("background_class_id", [2, -3], ids=["positive", "negative"])
+@pytest.mark.parametrize("background_class_id", [2, -3])
 def test_out_of_range_background_class_is_rejected(background_class_id: int) -> None:
     """Background IDs outside the exported class axis fail with a clear error."""
     with pytest.raises(ValueError, match="background_class_id"):

@@ -2520,6 +2520,33 @@ class TestConfigureOptimizers:
         assert scheduler.step_size == 30
         assert scheduler.gamma == pytest.approx(0.1)
 
+    @patch("rfdetr.training.module_model._build_param_dicts")
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_per_parameter_lr_lambda_list_is_collapsed_onto_merged_groups(
+        self, mock_get_param_dict, mock_build_param_dicts, tmp_path
+    ):
+        """A legacy per-parameter lr_lambda list is regrouped to one callback per merged group."""
+
+        def shared_lambda(step: int) -> float:
+            return 1.0
+
+        module, param_dicts = self._setup_module(
+            tmp_path,
+            warmup_epochs=0.0,
+            lr_scheduler="torch.optim.lr_scheduler.LambdaLR",
+            lr_scheduler_kwargs={"lr_lambda": [shared_lambda, shared_lambda]},
+        )
+        mock_get_param_dict.return_value = param_dicts
+        lr = module.train_config.lr
+        mock_build_param_dicts.return_value = [
+            {"params": nn.Parameter(torch.randn(2)), "lr": lr},
+            {"params": nn.Parameter(torch.randn(2)), "lr": lr},
+        ]
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+
+        assert scheduler.lr_lambdas == [shared_lambda]
+
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_managed_preset_builds_lambda_lr(self, mock_get_param_dict, tmp_path):
         """A managed preset still builds a LambdaLR at step interval."""
