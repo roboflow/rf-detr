@@ -52,8 +52,8 @@ def _sample_target_masks_at_points(
 
     Large contiguous masks on CPU are indexed directly, avoiding the
     full matched-mask copies created by advanced indexing and concatenation.
-    CUDA boolean masks are sampled per image with the native nearest-neighbor
-    ``point_sample`` path, avoiding a full batch of matched float masks.
+    Eligible multi-image CUDA boolean masks are sampled per image with the native
+    nearest-neighbor ``point_sample`` path, avoiding a full batch of matched float masks.
     Other inputs retain the existing concatenation and sampling path.
 
     Args:
