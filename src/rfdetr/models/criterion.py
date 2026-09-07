@@ -52,8 +52,9 @@ def _sample_target_masks_at_points(
 
     Large contiguous masks on CPU are indexed directly, avoiding the
     full matched-mask copies created by advanced indexing and concatenation.
-    CUDA and other inputs outside that narrow contract retain the existing
-    nearest-neighbor ``point_sample`` path.
+    Eligible multi-image CUDA boolean masks are sampled per image with the native
+    nearest-neighbor ``point_sample`` path, avoiding a full batch of matched float masks.
+    Other inputs retain the existing concatenation and sampling path.
 
     Args:
         targets: Per-image target dictionaries containing ``masks`` tensors.
@@ -194,6 +195,39 @@ def _sample_target_masks_at_points(
             sampled_masks.append(sampled)
             offset += count
 
+        return torch.cat(sampled_masks, dim=0)
+
+    if (
+        point_coords.is_cuda
+        and point_coords.ndim == 3
+        and len(targets) == len(indices) > 1
+        and all(
+            target["masks"].ndim == 3
+            and target["masks"].dtype == torch.bool
+            and target["masks"].device == point_coords.device
+            and target["masks"].shape[1:] == targets[0]["masks"].shape[1:]
+            and target_indices.ndim == 1
+            and target_indices.dtype == torch.int64
+            for target, (_, target_indices) in zip(targets, indices)
+        )
+        and sum(target_indices.numel() for _, target_indices in indices) == point_coords.shape[0] > 0
+    ):
+        # Keep the native sampler's rounding. In loss_masks' no_grad context, each
+        # image's full float masks can be released before sampling the next image.
+        sampled_masks = []
+        offset = 0
+        for target, (_, target_indices) in zip(targets, indices):
+            count = target_indices.numel()
+            if count:
+                sampled_masks.append(
+                    point_sample(
+                        target["masks"][target_indices].unsqueeze(1).float(),
+                        point_coords[offset : offset + count],
+                        align_corners=False,
+                        mode="nearest",
+                    ).squeeze(1)
+                )
+            offset += count
         return torch.cat(sampled_masks, dim=0)
 
     target_masks = torch.cat([target["masks"][target_indices] for target, (_, target_indices) in zip(targets, indices)])
