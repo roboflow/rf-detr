@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.inference()` now accepts `compile_backend="inductor"` as an opt-in backend for long-running inference at a fixed batch size and resolution; the default remains the existing TorchScript path. On CUDA, Inductor completes its two setup invocations and synchronizes inside `inference()` before the first public `predict()` call. Runtime benefit and compatibility depend on the workload, CUDA device, operators, and installed PyTorch version.
 
+- `RFDETR.export(backbone_only=True)` now exports the encoder and feature projector instead of calling the full detector and failing with an `AttributeError`. ONNX exports retain every configured feature-pyramid level and support dynamic batches.
+
 ### Changed
 
 ### Deprecated
@@ -18,25 +20,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - TFLite INT8 documentation and warnings now reflect that dynamic-range quantization needs no calibration data. ([#1363](https://github.com/roboflow/rf-detr/issues/1363))
 
-- `RFDETR.export(backbone_only=True)` now exports the encoder and feature projector instead of calling the full detector and failing with an `AttributeError`. ONNX exports retain every configured feature-pyramid level and support dynamic batches.
-
-- Reduced peak CUDA memory in segmentation loss by sampling matched boolean ground-truth masks one image at a time, keeping the native nearest-neighbor sampler.
-
-- `point_sample(mode="nearest")` now uses the same backend-agnostic gather path `_nearest_grid_sample` already uses, instead of `F.grid_sample`. On XLA the nearest branch lowered to an `aten::grid_sampler_2d` host fallback, so `SetCriterion.loss_masks` left the device every time it sampled ground-truth mask labels — once per matched output layer, on every segmentation training step. CUDA and CPU are unaffected: the helper delegates to `F.grid_sample`'s fused kernel off MPS/XLA. Ties are rounded with `torch.round` (round-half-to-even), which matches `F.grid_sample` for random grids and for most constructed exact ties; `floor(x + 0.5)` is a worse substitute but disagrees at only half of all exact ties, not every one. Neither rounding rule tracks `F.grid_sample`'s own compiled kernel at every input: the kernel itself breaks round-half-to-even at specific (size, position) combinations (e.g. width=673 vs width=96 at the same tie), the same divergence already documented and corrected for on CPU/CUDA in `SetCriterion._sample_target_masks_at_points`. Measured on a Cloud TPU v6e-1 with `RFDETRSegNano` segmentation training: `aten::grid_sampler_2d` went from 50 to 0 per 5-step fit and uncached compilations from 26 to 16, in both of two alternating fresh-process pairs. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
-
-- `SetCriterion.loss_masks` no longer reads its normalizing denominator back to the host on every call; `forward` calls `loss_masks` once per matched output layer (final, every aux layer, and enc), so a segmentation training step pays this several times per step (5-7, by model size), not once. `dice_loss` and `sigmoid_ce_loss` declared `num_masks: float`, so `num_boxes` — the distributed-rank all-reduced Tensor `num_boxes_for_targets` returns (segmentation's default path), or a grad-accum-aware override on the keypoint manual-optimization path — was unwrapped with `float(...)` immediately before the TorchScript call boundary; on a lazy backend such as XLA each unwrap is a device-to-host synchronization that cuts the graph. Their signatures now accept `num_masks: Union[Tensor, float, int]` — `loss_masks` always passes the Tensor straight through, removing the synchronization, while Python `float` and `int` inputs still divide bit-for-bit as before for `lwdetr.py`'s backward-compat re-exports. The in-repo comment claiming TorchScript rejects a Tensor supplied for a `float` parameter is wrong — it silently converts it inside the scripted function, which is exactly why the signatures had to change for the synchronization to actually go away. On the dtype combination `loss_masks` actually produces (`point_labels` is always `float32`), loss values are unchanged. Measured on a Cloud TPU v6e-1 against this commit, a direct call to each JIT loss with a Tensor denominator went from 1 host read to 0; `loss_masks` itself shared a single host read across both losses before this change, once per matched output layer. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
-
-- `build_trainer` now selects `XLAStrategy` when the accelerator resolves to XLA/TPU — including default `accelerator="auto"` once it resolves to XLA — and more than one local device is requested. RF-DETR's generic `strategy="auto"` distributed branch otherwise creates `DDPStrategy` before Lightning can apply its XLA-first auto selection, producing `The XLAAccelerator can only be used with a SingleDeviceXLAStrategy or XLAStrategy, found DDPStrategy` during `Trainer` construction. Single-device and one-device-per-host XLA are not promoted; the latter needs separate runtime validation. Explicit strategies are never overridden, keypoint models remain excluded, and segmentation follows the same multi-device guard. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
-
-- Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where `XLAAccelerator.is_available()` is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
-
-- `compile=True` now takes effect on CUDA with the default `multi_scale=True`. The gate excluded multi-scale training to avoid one XLA graph trace per scale, but it sits behind checks that already require a CUDA device and a CUDA accelerator, so an XLA or TPU run never reached it; the exclusion only ever disabled the CUDA path, where `dynamic=True` is what handles the varying input size. Setting `compile=True` previously logged a notice and trained eagerly. ([#1411](https://github.com/roboflow/rf-detr/pull/1411) made compilation reachable in the first place.)
-
 ### Breaking Changes
 
-- `dice_loss_jit` and `sigmoid_ce_loss_jit` no longer accept NumPy scalar denominators because their TorchScript signatures now use `Union[Tensor, float, int]`; pass `float(value)` instead. The eager `dice_loss` and `sigmoid_ce_loss` functions retain Python numeric behavior. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
-
 ---
+
+## [1.10.1] — 2026-09-07
+
+### Fixed
+
+- Reduced peak CUDA memory in segmentation loss: matched boolean ground-truth masks are now sampled one image at a time on CUDA instead of concatenating a batch-wide float mask tensor. ([#1437](https://github.com/roboflow/rf-detr/pull/1437))
+- `point_sample(mode="nearest")` no longer falls back to a host op on MPS/XLA — routed through a backend-agnostic gather path instead of `F.grid_sample`. CUDA/CPU are unaffected. Measured on a Cloud TPU v6e-1 with `RFDETRSegNano`: `aten::grid_sampler_2d` host fallbacks went from 50 to 0 per 5-step fit. ([#1432](https://github.com/roboflow/rf-detr/pull/1432), issue [#1058](https://github.com/roboflow/rf-detr/issues/1058))
+- `SetCriterion.loss_masks` no longer reads its normalizing denominator back to the host on every call — `dice_loss`/`sigmoid_ce_loss` now accept `Union[Tensor, float, int]` and `loss_masks` passes the Tensor straight through. Side effect: `dice_loss_jit`/`sigmoid_ce_loss_jit` — reachable only through `lwdetr.py`'s backward-compat re-exports, not part of the public API — now reject most NumPy scalar denominators (`np.float64` still works, `np.float32`/`np.int64` and similar now raise `RuntimeError`); the eager `dice_loss`/`sigmoid_ce_loss` functions are unaffected. ([#1428](https://github.com/roboflow/rf-detr/pull/1428), issue [#1058](https://github.com/roboflow/rf-detr/issues/1058))
+- `build_trainer` now selects `XLAStrategy` for multi-device XLA/TPU training when `strategy="auto"` — previously this crashed at `Trainer` construction (`DDPStrategy` built before Lightning's XLA-first auto selection could apply). Also routes single-device `accelerator="auto"` runs on an XLA-available host through Lightning's `XLAPrecision` plugin instead of a plain `precision=` kwarg. Keypoint models are excluded from the strategy promotion. ([#1427](https://github.com/roboflow/rf-detr/pull/1427), issue [#1058](https://github.com/roboflow/rf-detr/issues/1058))
+- XLA-marked tests now pass on real TPU hardware. ([#1426](https://github.com/roboflow/rf-detr/pull/1426), issue [#1058](https://github.com/roboflow/rf-detr/issues/1058))
+- `compile=True` now takes effect on CUDA with the default `multi_scale=True`, instead of logging a notice and training eagerly. ([#1436](https://github.com/roboflow/rf-detr/pull/1436); [#1411](https://github.com/roboflow/rf-detr/pull/1411) made compilation reachable in the first place)
 
 ## [1.10.0] — 2026-09-04
 
