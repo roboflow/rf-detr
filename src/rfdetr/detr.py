@@ -1680,7 +1680,7 @@ class RFDETR:
 
                 This does **not** improve INT8 accuracy: ``quantization="int8"`` produces a dynamic-range model whose
                 weight scales come from the weights themselves. When passed as ``None``, a directory, or an array, the
-                data is saved to ``_rfdetr_calib_data.npy`` in *output_dir* but not consumed to build the model. An
+                data is saved to an unused scratch file in *output_dir* but not consumed to build the model. An
                 existing ``.npy`` path is reused without writing a copy.
             max_images: Maximum number of images to load from a *calibration_data* directory.  Defaults to ``100``.
                 Only used when *calibration_data* is a directory path.
