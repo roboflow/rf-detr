@@ -69,7 +69,7 @@ class TestExportOpenvinoMissingDependency:
         model = torch.nn.Identity()
         example = torch.zeros(1, 3, 32, 32)
         with pytest.raises(ImportError):
-            export_openvino(str(tmp_path), model, example)
+            export_openvino(model, example, str(tmp_path))
 
     def test_import_error_names_pip_install_hint(self, tmp_path: Path) -> None:
         """The raised ``ImportError`` must name the ``rfdetr[openvino]`` extra so users know how to fix it.
@@ -81,7 +81,7 @@ class TestExportOpenvinoMissingDependency:
         model = torch.nn.Identity()
         example = torch.zeros(1, 3, 32, 32)
         with pytest.raises(ImportError, match="rfdetr\\[openvino\\]"):
-            export_openvino(str(tmp_path), model, example)
+            export_openvino(model, example, str(tmp_path))
 
 
 class TestOpenVINOInferenceMissingDependency:
@@ -168,9 +168,9 @@ class TestExportOpenvinoNaming:
         fake_ov = _stub_openvino_module()
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             output_xml = export_openvino(
-                str(tmp_path),
                 torch.nn.Identity(),
                 torch.zeros(1, 3, 8, 8),
+                str(tmp_path),
                 backbone_only=backbone_only,
                 variant_name=variant_name,
                 verbose=False,
@@ -199,9 +199,9 @@ class TestExportOpenvinoNaming:
         fake_ov = _stub_openvino_module()
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             output_xml = export_openvino(
-                str(tmp_path),
                 torch.nn.Identity(),
                 torch.zeros(1, 3, 8, 8),
+                str(tmp_path),
                 variant_name=variant_name,
                 verbose=False,
             )
@@ -231,7 +231,7 @@ class TestExportOpenvinoPrecision:
         fake_ov = _stub_openvino_module()
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             export_openvino(
-                str(tmp_path), torch.nn.Identity(), torch.zeros(1, 3, 8, 8), precision=precision, verbose=False
+                torch.nn.Identity(), torch.zeros(1, 3, 8, 8), str(tmp_path), precision=precision, verbose=False
             )
         assert fake_ov.save_model.call_args.kwargs["compress_to_fp16"] is expected_compress
 
@@ -241,7 +241,7 @@ class TestExportOpenvinoPrecision:
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             with pytest.raises(ValueError, match="precision must be"):
                 export_openvino(
-                    str(tmp_path), torch.nn.Identity(), torch.zeros(1, 3, 8, 8), precision="int8", verbose=False
+                    torch.nn.Identity(), torch.zeros(1, 3, 8, 8), str(tmp_path), precision="int8", verbose=False
                 )
         fake_ov.convert_model.assert_not_called()
 

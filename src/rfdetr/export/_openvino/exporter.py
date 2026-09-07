@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import torch
@@ -65,9 +66,10 @@ class ModelWrapper(nn.Module):
 
 
 def export_openvino(
-    output_dir: str,
     model: nn.Module,
     input_tensors: torch.Tensor,
+    output_dir: str | os.PathLike[str],
+    *,
     backbone_only: bool = False,
     verbose: bool = True,
     variant_name: str | None = None,
@@ -80,10 +82,14 @@ def export_openvino(
     caller -- the public :meth:`rfdetr.detr.RFDETR.export` entry point (via
     :func:`rfdetr.export._backend._export_openvino_format`) handles both.
 
+    Signature matches the CoreML/ExecuTorch converters' convention (``model, input_tensors,
+    output_dir``, keyword-only after) rather than the legacy ``export_onnx``-style
+    ``output_dir``-first order.
+
     Args:
-        output_dir: Directory where the exported model will be saved.
         model: PyTorch model to export, already in export mode and on CPU.
         input_tensors: Example input tensor(s) for tracing.
+        output_dir: Directory where the exported model will be saved.
         backbone_only: Whether *model* is a backbone-only export graph. When ``True`` and a name was
             supplied (*variant_name* or *output_name*), a ``-backbone`` marker is appended to the
             filename so a backbone export never collides with a full-detector export of the same
@@ -95,9 +101,10 @@ def export_openvino(
             *variant_name*; the file is named ``{output_name}.xml``/``.bin`` before the optional
             ``-backbone`` marker.
         precision: ``"float32"``, ``"float16"``, or ``None`` (default, keeps OpenVINO's own
-            ``compress_to_fp16=True`` behavior). ``"float32"`` disables FP16 weight compression for
-            tight numeric parity with the eager PyTorch model; ``"float16"`` is explicit about the
-            default.
+            ``compress_to_fp16=True`` behavior). ``"float32"`` disables FP16 weight compression, which
+            controls IR *storage* precision only -- execution precision still depends on the compiled
+            device and is not guaranteed to match eager PyTorch on non-CPU devices. ``"float16"`` is
+            explicit about the default.
 
     Returns:
         Path to the exported OpenVINO IR model (.xml file).

@@ -68,28 +68,28 @@ This command saves the ONNX model to the `output` directory by default.
 
 The `export()` method accepts several parameters to customize the export process:
 
-| Parameter            | Default    | Description                                                                                                                                                                                                                                                    |
-| -------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `output_dir`         | `"output"` | Directory where the exported model will be saved.                                                                                                                                                                                                              |
-| `format`             | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), `"executorch"`, `"openvino"` or `"coreml"`.                                                                                                                                                |
-| `quantization`       | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                                                                                            |
-| `calibration_data`   | `None`     | Optional image directory, `.npy` file path, NumPy array, or `None`. Not consumed when building the generated `.tflite` models.                                                                                                                                 |
-| `max_images`         | `100`      | Maximum number of images to load from a `calibration_data` directory. Ignored for other calibration data formats.                                                                                                                                              |
-| `infer_dir`          | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                                                                                        |
-| `backbone_only`      | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                                                                                          |
-| `opset_version`      | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                                                                                 |
-| `verbose`            | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                   |
-| `shape`              | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                |
-| `batch_size`         | `1`        | Batch size for the exported model.                                                                                                                                                                                                                             |
-| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                                                                                    |
-| `patch_size`         | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                              |
-| `backend`            | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                                                                               |
-| `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                    |
-| `fp16`               | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). Pass `False` to build an FP32 engine — required on TensorRT builds that do not expose the FP16 builder flag.                                                               |
-| `notes`              | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                                                                                          |
-| `coreml_precision`   | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (smaller, ANE-oriented bundle). Ignored for every other format.                                                                               |
-| `openvino_precision` | `None`     | Weight precision for `format="openvino"`: `None`/`"float16"` (OpenVINO's default FP16 weight compression) or `"float32"` (disables compression, tight numeric parity with eager PyTorch). Ignored for every other format. Does not change the output filename. |
-| `output_name`        | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_{backend}` detail suffix — see [Output Files](#output-files).                                                                  |
+| Parameter            | Default    | Description                                                                                                                                                                                                                                                                                                                                             |
+| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `output_dir`         | `"output"` | Directory where the exported model will be saved.                                                                                                                                                                                                                                                                                                       |
+| `format`             | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), `"executorch"`, `"openvino"` or `"coreml"`.                                                                                                                                                                                                                                         |
+| `quantization`       | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                                                                                                                                                                                     |
+| `calibration_data`   | `None`     | Optional image directory, `.npy` file path, NumPy array, or `None`. Not consumed when building the generated `.tflite` models.                                                                                                                                                                                                                          |
+| `max_images`         | `100`      | Maximum number of images to load from a `calibration_data` directory. Ignored for other calibration data formats.                                                                                                                                                                                                                                       |
+| `infer_dir`          | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                                                                                                                                                                                 |
+| `backbone_only`      | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                                                                                                                                                                                   |
+| `opset_version`      | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                                                                                                                                                                          |
+| `verbose`            | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                                                                                                            |
+| `shape`              | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                                                                                                         |
+| `batch_size`         | `1`        | Batch size for the exported model.                                                                                                                                                                                                                                                                                                                      |
+| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                                                                                                                                                                             |
+| `patch_size`         | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                                                                                                                       |
+| `backend`            | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                                                                                                                                                                        |
+| `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                             |
+| `fp16`               | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). Pass `False` to build an FP32 engine — required on TensorRT builds that do not expose the FP16 builder flag.                                                                                                                                                        |
+| `notes`              | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                                                                                                                                                                                   |
+| `coreml_precision`   | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (smaller, ANE-oriented bundle). Ignored for every other format.                                                                                                                                                                        |
+| `openvino_precision` | `None`     | IR *storage* weight precision for `format="openvino"`: `None`/`"float16"` (OpenVINO's default FP16 weight compression) or `"float32"` (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename. |
+| `output_name`        | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_{backend}` detail suffix — see [Output Files](#output-files).                                                                                                                                                           |
 
 ## Advanced Export Examples
 
@@ -453,7 +453,7 @@ model.export(format="openvino", shape=(608, 608))
 
 ### OpenVINO Export with Precision
 
-OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` for tight numeric parity with the eager PyTorch model (larger file, no compression):
+OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only; actual execution precision still depends on the compiled device (`CPU`/`GPU`/`NPU`), so parity with the eager PyTorch model is not guaranteed on every device:
 
 ```python
 model.export(format="openvino", openvino_precision="float32")
@@ -463,33 +463,31 @@ model.export(format="openvino", openvino_precision="float32")
 
 !!! warning "The input array must be float32 and contiguous"
 
-    `np.array(mean)` / `np.array(std)` default to float64 without an explicit `dtype=`. Subtracting a float64 array from the float32 image promotes the result to float64, silently undoing the earlier `.astype(np.float32)`, and `np.transpose` / `np.expand_dims` carry that float64 array forward as a non-contiguous view. OpenVINO accepts the mismatched buffer without erroring — it converts to fp32 internally on every call — but every inference then ships a doubled-size, non-contiguous input across the runtime boundary. Construct `mean` / `std` with `dtype=np.float32`, and finish preprocessing with `np.ascontiguousarray(...)` before calling the model.
+    `infer()` validates this at the boundary and raises `ValueError` if violated, but a resize step that diverges from `predict()`'s own preprocessing (e.g. PIL's default `Image.resize()`, which resamples with bicubic) will still silently produce different — not obviously wrong — detections. Use `torchvision.transforms.functional.resize(..., antialias=False)` as below to match `predict()`'s antialias-free bilinear resize exactly.
 
 ```python
-import numpy as np
+import torchvision.transforms.functional as F
 from PIL import Image
 from rfdetr.export._openvino.inference import OpenVINOInference
 
 # Load the exported model
 model = OpenVINOInference("output/rfdetr-medium.xml")
 
-# Prepare input image (NCHW format, ImageNet normalized)
-image = Image.open("image.jpg").convert("RGB").resize((576, 576))
-image_array = np.array(image).astype(np.float32) / 255.0
+# Prepare input image (NCHW format, ImageNet normalized) — matches predict()'s own preprocessing
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [576, 576], antialias=False)
 
-# Apply ImageNet normalization
-mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-image_array = (image_array - mean) / std
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+image_tensor = F.normalize(image_tensor, mean, std)
 
 # Convert to NCHW format
-image_array = np.transpose(image_array, (2, 0, 1))
-image_array = np.expand_dims(image_array, axis=0)
-image_array = np.ascontiguousarray(image_array)
+image_array = image_tensor.unsqueeze(0).numpy()
 
 # Run inference
 outputs = model(image_array)
-boxes, labels = outputs
+boxes, labels = outputs  # boxes: normalized cxcywh (center_x, center_y, width, height), not xywh
 ```
 
 ### Benchmark OpenVINO Model
@@ -506,7 +504,7 @@ The exported OpenVINO IR model produces the following outputs:
 
 - **Object Detection Models**:
 
-    - Output 0: Bounding boxes `[batch, 300, 4]` (x, y, w, h in normalized coordinates)
+    - Output 0: Bounding boxes `[batch, 300, 4]` — normalized `cxcywh` (center_x, center_y, width, height), not top-left `xywh`
     - Output 1: Class logits `[batch, 300, num_classes]`
 
 - **Segmentation Models**:

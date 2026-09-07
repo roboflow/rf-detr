@@ -1740,8 +1740,9 @@ class RFDETR:
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
             openvino_precision: ``"float32"``, ``"float16"``, or ``None`` (default) for ``format="openvino"``
                 — ``None`` keeps OpenVINO's own ``compress_to_fp16=True`` default; ``"float32"`` disables
-                FP16 weight compression for tight numeric parity with the eager PyTorch model. Ignored for
-                every other format.
+                FP16 weight compression, controlling IR *storage* precision only (execution precision still
+                depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
+                Ignored for every other format.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -1764,8 +1765,9 @@ class RFDETR:
 
         Raises:
             ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
-                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
-                not divisible by ``patch_size * num_windows``.
+                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; if the resolved export shape is
+                not divisible by ``patch_size * num_windows``; or if ``coreml_precision``/``openvino_precision``
+                is not one of their accepted values.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, or ``format="openvino"`` — those paths require a fixed batch size.
             ImportError: If the optional dependencies for the requested

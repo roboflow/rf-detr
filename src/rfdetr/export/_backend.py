@@ -36,6 +36,22 @@ class _ExportableModule(Protocol):
     def export(self) -> None: ...
 
 
+def _switch_to_export_mode(model: nn.Module) -> None:
+    """Switch *model* into its export-friendly forward, if it exposes one.
+
+    Shared by the ExecuTorch, CoreML, and OpenVINO dispatch functions below -- each consumes a
+    ``torch.export``/``convert_model`` graph directly and needs the same zero-arg mode switch the
+    ONNX path performs inside ``export_onnx`` instead. A model without a callable ``export``
+    attribute (e.g. a plain ``nn.Module`` in a unit test) is left untouched rather than raising.
+
+    Args:
+        model: The module to switch into export mode, if supported.
+    """
+    export_method = getattr(model, "export", None)
+    if callable(export_method):
+        cast(_ExportableModule, model).export()
+
+
 class _BackboneExport(nn.Module):
     """Expose all feature projectors from a backbone already prepared for export."""
 
@@ -270,11 +286,7 @@ def _export_executorch_format(
             " Please run `pip install rfdetr[executorch]` and try again.",
         )
         raise
-    # ExecuTorch consumes a torch.export graph directly, so switch the model into its
-    # export-friendly forward (the ONNX path does this inside export_onnx).
-    export_method = getattr(model, "export", None)
-    if callable(export_method):
-        export_method()
+    _switch_to_export_mode(model)
     # soc only applies to the qnn backend; _resolve_export_backend leaves it None otherwise.
     soc_kwargs = {"soc": soc} if soc is not None else {}
     # _resolve_export_backend already validated backend against _VALID_BACKENDS at runtime;
@@ -373,11 +385,7 @@ def _export_coreml_format(
             " Please run `pip install rfdetr[coreml]` and try again.",
         )
         raise
-    # CoreML consumes a torch.export graph directly, so switch the model into its
-    # export-friendly forward (the ONNX path does this inside export_onnx).
-    export_method = getattr(model, "export", None)
-    if callable(export_method):
-        export_method()
+    _switch_to_export_mode(model)
     mlpackage_path = export_coreml(
         model=model,
         input_tensors=input_tensors,
@@ -465,14 +473,11 @@ def _export_openvino_format(
         raise
     # OpenVINO's convert_model traces the model directly, so switch it into its export-friendly
     # forward here (the ONNX path does this inside export_onnx; ExecuTorch/CoreML do it above).
-    # hasattr/callable narrow at runtime; cast narrows statically before the direct `.export()`
-    # call below, since nn.Module.__getattr__'s stub types plain attribute access as Tensor | Module.
-    if hasattr(model, "export") and callable(model.export):
-        cast(_ExportableModule, model).export()
+    _switch_to_export_mode(model)
     output_file = export_openvino(
-        output_dir=str(output_dir_path),
         model=model,
         input_tensors=input_tensors,
+        output_dir=str(output_dir_path),
         backbone_only=backbone_only,
         verbose=verbose,
         variant_name=variant_name,
