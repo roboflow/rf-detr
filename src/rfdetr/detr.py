@@ -41,6 +41,7 @@ from rfdetr.datasets._keypoint_schema import (
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
@@ -1623,7 +1624,9 @@ class RFDETR:
         Args:
             output_dir: Directory to write the exported model to.
             infer_dir: Optional directory of sample images for dynamic-axes inference.
-            backbone_only: Export only the backbone (feature extractor).
+            backbone_only: Export the encoder and feature projectors without prediction heads. Returns one NCHW
+                feature map per configured ``projector_scale`` level, followed by cross-attention feature levels
+                when a separate cross-attention projector is present.
             opset_version: ONNX opset version to target.
             verbose: Print export progress information.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
@@ -1717,9 +1720,9 @@ class RFDETR:
                 always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
                 ``_dynamic_range_quant`` suffix is unavoidable even with *output_name* set — it becomes the stem
                 instead of the model's variant name.
-                Exceptions: ``format="onnx"`` with ``backbone_only=True`` appends ``-backbone`` to the filename
-                (``{output_name}-backbone.onnx``); ``format="tflite"`` writes separate per-precision files instead
-                of a single ``{output_name}.tflite`` file. The TFLite filenames may include a ``_gs_patched`` infix
+                Exceptions: ONNX, CoreML, ExecuTorch, and TensorRT with ``backbone_only=True`` append ``-backbone``
+                before the extension (e.g., ``{output_name}-backbone.onnx``); TFLite writes per-precision files
+                instead of a single ``{output_name}.tflite`` file. TFLite filenames may include a ``_gs_patched`` infix
                 before the precision suffix when GridSample ops are patched, e.g.
                 ``{output_name}_gs_patched_fp32.tflite``; this is the standard RF-DETR path.
 
@@ -1742,7 +1745,7 @@ class RFDETR:
             format = "tensorrt"
         if format == "pte":  # "pte" is an alias for "executorch"
             format = "executorch"
-        from rfdetr.export._backend import _resolve_export_backend, preload_tensorflow_before_onnx
+        from rfdetr.export._backend import _BackboneExport, _resolve_export_backend, preload_tensorflow_before_onnx
 
         if format == "tflite":
             # Must run before the ONNX export imports onnx's C extension: onnx and TensorFlow share weakly-exported
@@ -1819,8 +1822,20 @@ class RFDETR:
                 infer_dir, shape, batch_size, device, num_channels=self.model_config.num_channels
             ).to(device)
             input_names = ["input"]
+            export_model: torch.nn.Module = model
             if backbone_only:
-                output_names = ["features"]
+                backbone = cast(Backbone, model.backbone[0])
+                backbone.export()
+                export_model = _BackboneExport(backbone)
+                output_names = [
+                    "features" if index == 0 else f"features_{index}"
+                    for index in range(len(self.model_config.projector_scale))
+                ]
+                if backbone.cross_attn_projector is not None:
+                    output_names.extend(
+                        "cross_attn_features" if index == 0 else f"cross_attn_features_{index}"
+                        for index in range(len(self.model_config.projector_scale))
+                    )
             elif self.model_config.segmentation_head:
                 output_names = ["dets", "labels", "masks"]
             elif self.model_config.use_grouppose_keypoints:
@@ -1832,13 +1847,13 @@ class RFDETR:
                 dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
             else:
                 dynamic_axes = None
-            model.eval()
+            export_model.eval()
             with torch.no_grad():
                 if backbone_only:
-                    features = model(input_tensors)
-                    logger.debug(f"PyTorch inference output shape: {features.shape}")
+                    features = export_model(input_tensors)
+                    logger.debug(f"PyTorch backbone output shapes: {[feature.shape for feature in features]}")
                 elif self.model_config.segmentation_head:
-                    outputs = model(input_tensors)
+                    outputs = export_model(input_tensors)
                     dets = outputs["pred_boxes"]
                     labels = outputs["pred_logits"]
                     masks = outputs["pred_masks"]
@@ -1850,7 +1865,7 @@ class RFDETR:
                     else:
                         logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
                 elif self.model_config.use_grouppose_keypoints:
-                    outputs = model(input_tensors)
+                    outputs = export_model(input_tensors)
                     dets = outputs["pred_boxes"]
                     labels = outputs["pred_logits"]
                     keypoints = outputs["pred_keypoints"]
@@ -1859,7 +1874,7 @@ class RFDETR:
                         f"Keypoints: {keypoints.shape}",
                     )
                 else:
-                    outputs = model(input_tensors)
+                    outputs = export_model(input_tensors)
                     dets = outputs["pred_boxes"]
                     labels = outputs["pred_logits"]
                     logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
@@ -1871,7 +1886,7 @@ class RFDETR:
                 from rfdetr.export._backend import _export_executorch_format
 
                 return _export_executorch_format(
-                    model,
+                    export_model,
                     input_tensors,
                     output_dir_path,
                     backend=backend,
@@ -1880,13 +1895,14 @@ class RFDETR:
                     dynamic_batch=dynamic_batch,
                     notes=notes,
                     output_name=output_name,
+                    backbone_only=backbone_only,
                 )
 
             if format == "coreml":
                 from rfdetr.export._backend import _export_coreml_format
 
                 return _export_coreml_format(
-                    model,
+                    export_model,
                     input_tensors,
                     output_dir_path,
                     variant_name=getattr(self, "size", None),
@@ -1894,11 +1910,12 @@ class RFDETR:
                     notes=notes,
                     compute_precision=coreml_precision,
                     output_name=output_name,
+                    backbone_only=backbone_only,
                 )
 
             output_file = export_onnx(
                 output_dir=str(output_dir_path),
-                model=model,
+                model=export_model,
                 input_names=input_names,
                 input_tensors=input_tensors,
                 output_names=output_names,
@@ -1924,7 +1941,7 @@ class RFDETR:
                 max_images=max_images,
                 verbose=verbose,
                 fp16=fp16,
-                output_name=output_name,
+                output_name=Path(output_file).stem if backbone_only and output_name else output_name,
             )
         finally:
             self.model.model = self.model.model.to(device)
