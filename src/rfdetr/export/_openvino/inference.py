@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from rfdetr.export._openvino.exporter import _check_openvino_available
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -40,7 +41,7 @@ class OpenVINOInference:
             boxes, labels = outputs
     """
 
-    def __init__(self, model_path: str | Path, device: str = "AUTO", cache_dir: str | None = None):
+    def __init__(self, model_path: str | Path, device: str = "AUTO", cache_dir: str | None = None) -> None:
         """Initialize OpenVINO inference session.
 
         Args:
@@ -53,13 +54,8 @@ class OpenVINOInference:
             ImportError: If OpenVINO is not installed.
             FileNotFoundError: If the model file doesn't exist.
         """
-        try:
-            import openvino as ov
-        except ImportError:
-            logger.error(
-                'OpenVINO is not installed. Please run `pip install "rfdetr[openvino]"` and try again.',
-            )
-            raise
+        _check_openvino_available()
+        import openvino as ov
 
         model_path = Path(model_path)
         if not model_path.exists():

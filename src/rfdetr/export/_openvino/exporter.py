@@ -22,15 +22,17 @@ logger = get_logger()
 def _check_openvino_available() -> None:
     """Verify that ``openvino`` is importable.
 
+    Shared by :func:`export_openvino` and :class:`~rfdetr.export._openvino.inference.OpenVINOInference`
+    so both surface the same actionable message and tests can monkeypatch a single choke point instead
+    of relying on ``openvino`` actually being absent from the environment.
+
     Raises:
         ImportError: If ``openvino`` cannot be imported.
     """
     try:
         import openvino  # noqa: F401
     except ImportError as error:
-        raise ImportError(
-            'OpenVINO export requires `openvino`. Install it with: pip install "rfdetr[openvino]"'
-        ) from error
+        raise ImportError('OpenVINO requires `openvino`. Install it with: pip install "rfdetr[openvino]"') from error
 
 
 class ModelWrapper(nn.Module):
@@ -101,9 +103,13 @@ def export_openvino(
         Path to the exported OpenVINO IR model (.xml file).
 
     Raises:
-        ImportError: If OpenVINO is not installed.
+        ImportError: If OpenVINO is not installed, or if ``convert_model``'s lazy submodule imports
+            fail on a partial/ABI-mismatched install.
+        NotImplementedError: If *model* was not switched into export mode first (see
+            :class:`ModelWrapper`).
+        TypeError: If *model*'s forward returns an output type :class:`ModelWrapper` cannot wrap.
         ValueError: If *precision* is not one of ``"float32"``, ``"float16"``, or ``None``.
-        RuntimeError: If conversion or saving fails.
+        RuntimeError: If conversion or saving otherwise fails.
 
     Note:
         Output tensor names in the saved IR are OpenVINO-inferred, not renamed to ``dets``/``labels``/
@@ -149,6 +155,13 @@ def export_openvino(
         with torch.no_grad():
             ov_model = convert_model(wrapped_model, example_input=input_tensors)
         save_model(ov_model, str(output_xml), compress_to_fp16=compress_to_fp16)
+    except (ImportError, NotImplementedError, TypeError, ValueError):
+        # ImportError: convert_model lazily imports private submodules that can still fail on a
+        # partial/ABI-mismatched install even after the top-level `openvino` import succeeded.
+        # NotImplementedError/TypeError: raised by ModelWrapper.forward's own documented contract
+        # (dict output / unsupported output type) -- must reach the caller as-is, not be relabeled
+        # RuntimeError by the broad except below. Mirrors the CoreML exporter's passthrough tier.
+        raise
     except Exception as e:
         logger.exception("OpenVINO export failed")
         raise RuntimeError(f"Failed to export model to OpenVINO IR: {e}") from e

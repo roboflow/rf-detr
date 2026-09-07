@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import numpy as np
 import pytest
 import torch
 
@@ -84,17 +85,62 @@ class TestExportOpenvinoMissingDependency:
 
 
 class TestOpenVINOInferenceMissingDependency:
-    """``OpenVINOInference.__init__``'s ``ImportError`` path, exercised for real (openvino not installed)."""
+    """``OpenVINOInference.__init__``'s ``ImportError`` path.
 
-    def test_raises_import_error_before_file_check(self, tmp_path: Path) -> None:
+    Uses ``monkeypatch`` on the shared ``_check_openvino_available`` choke point (see
+    ``test_coreml_export.py::test_missing_coremltools_raises_import_error`` for the sibling
+    pattern) instead of relying on ``openvino`` actually being absent from the environment —
+    the previous version of this test passed only by environment happenstance and would start
+    failing the moment ``openvino`` gets installed anywhere this suite runs.
+    """
+
+    def test_raises_import_error_before_file_check(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A missing ``openvino`` install raises ``ImportError`` even for a nonexistent model path.
 
-        ``OpenVINOInference.__init__`` imports ``openvino`` before checking ``model_path.exists()``, so a nonexistent
+        ``OpenVINOInference.__init__`` checks availability before checking ``model_path.exists()``, so a nonexistent
         path must still surface ``ImportError`` here (never ``FileNotFoundError`` — that branch is unreachable without
         openvino installed; see ``TestOpenVINOInferenceEndToEnd`` for the gated ``FileNotFoundError`` coverage).
         """
+        monkeypatch.setattr(
+            "rfdetr.export._openvino.inference._check_openvino_available",
+            mock.Mock(side_effect=ImportError('pip install "rfdetr[openvino]"')),
+        )
         with pytest.raises(ImportError):
             OpenVINOInference(tmp_path / "does-not-exist.xml")
+
+
+class TestOpenVINOInferenceInputValidation:
+    """``OpenVINOInference.infer()``'s dtype/contiguity boundary check (no real ``openvino`` needed).
+
+    The check runs before ``self.infer_request`` is touched, so these tests construct an instance via ``__new__``
+    (skipping ``__init__``'s real OpenVINO runtime setup) and call ``infer()`` directly.
+    """
+
+    @staticmethod
+    def _make_inference() -> OpenVINOInference:
+        """Build an ``OpenVINOInference`` with ``__init__`` skipped, for testing ``infer()`` in isolation.
+
+        Examples:
+            >>> inference = TestOpenVINOInferenceInputValidation._make_inference()
+            >>> hasattr(inference, "infer")
+            True
+        """
+        return OpenVINOInference.__new__(OpenVINOInference)
+
+    def test_rejects_float64_input(self) -> None:
+        """A ``float64`` array must raise ``ValueError`` instead of silently doubling the buffer size."""
+        inference = self._make_inference()
+        bad_input = np.zeros((1, 3, 32, 32), dtype=np.float64)
+        with pytest.raises(ValueError, match="float32"):
+            inference.infer(bad_input)
+
+    def test_rejects_non_contiguous_input(self) -> None:
+        """A non-contiguous ``float32`` view must raise ``ValueError`` instead of silently mis-decoding."""
+        inference = self._make_inference()
+        strided_input = np.zeros((1, 32, 32, 3), dtype=np.float32).transpose(0, 3, 1, 2)
+        assert not strided_input.flags["C_CONTIGUOUS"]
+        with pytest.raises(ValueError, match="contiguous"):
+            inference.infer(strided_input)
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +213,9 @@ class TestModelWrapper:
     """``ModelWrapper`` (module-scope, importable in isolation) normalizes export-mode output to a tuple.
 
     The wrapped model is expected to already be in export mode (``forward_export``), which returns a tuple (full
-    detector) or a plain list (:class:`rfdetr.export._backend._BackboneExport`) — never a dict. A dict output means the
-    caller forgot the mode-switch, which is a caller bug the wrapper must surface loudly rather than silently reshape.
+    detector) or a plain list (:class:`rfdetr.export._backend._BackboneExport`) — never a dict. A dict output means
+    the caller forgot the mode-switch, which is a caller bug the wrapper must surface loudly rather than silently
+    reshape.
     """
 
     def test_tuple_output_passes_through_unchanged(self) -> None:
