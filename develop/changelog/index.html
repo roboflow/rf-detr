@@ -2352,6 +2352,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>RFDETR.export(backbone_only=True)</code> now exports the encoder and feature projector instead of calling the full detector and failing with an <code>AttributeError</code>. ONNX exports retain every configured feature-pyramid level and support dynamic batches.</p>
+</li>
+<li>
 <p>Reduced peak CUDA memory in segmentation loss by sampling matched boolean ground-truth masks one image at a time, keeping the native nearest-neighbor sampler.</p>
 </li>
 <li>

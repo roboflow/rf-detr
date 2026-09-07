@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-24T10:14:48">
+  <meta property="article:modified_time" content="2026-09-07T11:16:42">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-24T10:14:48",
+    "dateModified": "2026-09-07T11:16:42",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3586,6 +3586,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
 </span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">backbone_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
+<p>The backbone export contains the encoder and its feature projector, without the detection decoder or prediction heads. ONNX outputs are feature maps in NCHW layout, ordered by <code>projector_scale</code>: <code>features</code> for the first level, followed by <code>features_1</code>, <code>features_2</code>, and so on when more levels are configured. Backbones with a second projector also return its levels as <code>cross_attn_features</code>, <code>cross_attn_features_1</code>, and so on, after the primary levels. These outputs are feature maps, not decoded boxes, masks, or keypoint coordinates.</p>
 <h2 id="output-files">Output Files<a class="headerlink" href="#output-files" title="Permanent link">&para;</a></h2>
 <p>Filenames are built from the model's variant name (e.g. <code>rfdetr-medium</code>, falling back to <code>inference_model</code> when no variant or <code>output_name</code> is set, or <code>backbone_model</code> when <code>backbone_only=True</code> in that same case) plus a detail suffix whenever a detail materially changes the artifact — even at its default value, since the file needs to say what it actually is:</p>
 <table>
@@ -3604,18 +3605,18 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 <tr>
 <td><code>coreml</code></td>
-<td><code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code></td>
-<td><code>coreml_precision</code></td>
+<td><code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code> (or <code>{variant}_fp32-backbone.mlpackage</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>backbone_model_fp32.mlpackage</code> if <code>backbone_only=True</code></td>
+<td><code>coreml_precision</code>, plus <code>-backbone</code> when named</td>
 </tr>
 <tr>
 <td><code>executorch</code></td>
-<td><code>{variant}_xnnpack.pte</code> / <code>{variant}_coreml.pte</code> / <code>{variant}_qnn_{soc}.pte</code></td>
-<td><code>backend</code> (+ <code>soc</code> for <code>qnn</code>)</td>
+<td><code>{variant}_xnnpack.pte</code> / <code>{variant}_coreml.pte</code> / <code>{variant}_qnn_{soc}.pte</code> (or <code>{variant}_xnnpack-backbone.pte</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>backbone_model_xnnpack.pte</code> if <code>backbone_only=True</code></td>
+<td><code>backend</code> (+ <code>soc</code> for <code>qnn</code>), plus <code>-backbone</code> when named</td>
 </tr>
 <tr>
 <td><code>tensorrt</code></td>
-<td><code>{variant}_fp16.trt</code> / <code>{variant}_fp32.trt</code></td>
-<td><code>fp16</code></td>
+<td><code>{variant}_fp16.trt</code> / <code>{variant}_fp32.trt</code> (or <code>{variant}-backbone_fp16.trt</code> / <code>{variant}-backbone_fp32.trt</code> if <code>backbone_only=True</code>)</td>
+<td><code>fp16</code>, plus <code>-backbone</code> when named</td>
 </tr>
 <tr>
 <td><code>tflite</code></td>
@@ -3625,6 +3626,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tbody>
 </table>
 <p>Pass <code>output_name="my-model"</code> to override the variant name and write <code>{output_name}.{ext}</code> verbatim — this suppresses the detail suffix for every format <strong>except</strong> <code>tflite</code>, which always writes multiple files and so keeps its <code>_fp32</code>/<code>_fp16</code>/<code>_dynamic_range_quant</code> suffix even with a custom name (<code>{output_name}_fp32.tflite</code>, etc.).</p>
+<p>With <code>backbone_only=True</code>, ONNX, CoreML, ExecuTorch, and TensorRT retain a <code>-backbone</code> marker before the extension even when <code>output_name</code> is set, for example <code>my-model-backbone.onnx</code>. This distinguishes the backbone artifact from the full detector exported with the same name.</p>
 <h2 id="optional-convert-onnx-to-tensorrt">Optional: Convert ONNX to TensorRT<a class="headerlink" href="#optional-convert-onnx-to-tensorrt" title="Permanent link">&para;</a></h2>
 <p>If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX model to a TensorRT engine.</p>
 <blockquote>
@@ -4202,7 +4204,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 24, 2026 10:14:48 UTC">2026-08-24 10:14:48</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 7, 2026 11:16:42 UTC">2026-09-07 11:16:42</span>
   </span>
 
     
