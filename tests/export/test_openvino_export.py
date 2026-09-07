@@ -258,6 +258,7 @@ class TestExportFormatParameter:
         )
         mocks = self._mock_stack.start()
         mocks["make_infer_image"].return_value = torch.zeros(1, 3, 560, 560)
+        self._mock_make_infer_image = mocks["make_infer_image"]
         self._mock_export_onnx = mocks["export_onnx"]
         self._mock_export_onnx.return_value = str(tmp_path / "inference_model.onnx")
 
@@ -327,6 +328,18 @@ class TestExportFormatParameter:
         obj = self._make_rfdetr()
         with pytest.raises(NotImplementedError, match="dynamic_batch"):
             obj.export(format="openvino", output_dir=str(self._tmp_path / "out"), dynamic_batch=True)
+
+    def test_dynamic_batch_raises_before_forward_pass(self) -> None:
+        """``dynamic_batch=True`` must be rejected before ``make_infer_image`` runs the expensive forward pass.
+
+        Regression guard: the rejection must be hoisted next to the ExecuTorch/CoreML fail-fast
+        checks, matching their "reject before paying for a full DINOv2 forward" contract instead
+        of living deep in the OpenVINO-specific dispatch path where it only fires after tracing.
+        """
+        obj = self._make_rfdetr()
+        with pytest.raises(NotImplementedError, match="dynamic_batch"):
+            obj.export(format="openvino", output_dir=str(self._tmp_path / "out"), dynamic_batch=True)
+        self._mock_make_infer_image.assert_not_called()
 
     def test_notes_warns_and_is_dropped(self) -> None:
         """A non-``None`` ``notes`` value must emit a ``UserWarning`` naming the missing metadata slot.

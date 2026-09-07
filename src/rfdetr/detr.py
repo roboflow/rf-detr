@@ -1803,6 +1803,11 @@ class RFDETR:
                 "CoreML export does not support dynamic_batch (fixed shapes are required for reliable "
                 "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
             )
+        if dynamic_batch and format == "openvino":
+            raise NotImplementedError(
+                "OpenVINO export does not support dynamic_batch (the IR graph bakes a fixed input shape). "
+                "Export one model per batch size instead."
+            )
         logger.info(f"Exporting model to {format} format")
         try:
             from rfdetr.export.main import export_onnx, make_infer_image

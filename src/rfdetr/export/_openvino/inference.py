@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,12 @@ logger = get_logger()
 
 class OpenVINOInference:
     """Inference wrapper for OpenVINO IR models.
+
+    A single instance is safe to call from multiple threads: ``infer()`` is guarded by an
+    internal lock, since OpenVINO's ``InferRequest.infer()`` is not thread-safe on a shared
+    request object (concurrent calls would silently corrupt each other's output buffers).
+    The lock serializes calls made through the same instance; for parallel throughput, create
+    one ``OpenVINOInference`` per worker thread instead.
 
     Example:
         .. code-block:: python
@@ -66,6 +73,9 @@ class OpenVINOInference:
         model = core.read_model(model_path)
         self.compiled_model = core.compile_model(model, device)
         self.infer_request = self.compiled_model.create_infer_request()
+        # Guards infer_request.infer() + get_output_tensor(): both touch the same shared
+        # buffers, which are not safe for concurrent access from multiple threads.
+        self._infer_lock = threading.Lock()
 
         # Get input/output info
         self.input_layer = self.compiled_model.input(0)
@@ -79,20 +89,33 @@ class OpenVINOInference:
         """Run inference on input data.
 
         Args:
-            input_data: Input tensor in NCHW format (batch, channels, height, width).
-                Should be ImageNet normalized [0.485, 0.456, 0.406] mean,
-                [0.229, 0.224, 0.225] std.
+            input_data: Input tensor in NCHW format (batch, channels, height, width),
+                dtype ``float32`` and C-contiguous. Should be ImageNet normalized
+                [0.485, 0.456, 0.406] mean, [0.229, 0.224, 0.225] std.
 
         Returns:
             Tuple of output tensors (typically boxes, labels, and optionally masks/keypoints).
             Each array is a copy, so results stay valid after the next ``infer()`` call.
-        """
-        # Run inference
-        self.infer_request.infer({self.input_layer: input_data})
 
-        # Copy outputs: `get_output_tensor(i).data` is a view onto the reused infer-request
-        # buffers, which the next `infer()` call overwrites in place.
-        return tuple(np.copy(self.infer_request.get_output_tensor(i).data) for i in range(len(self.output_layers)))
+        Raises:
+            ValueError: If *input_data* is not ``float32`` or not C-contiguous. OpenVINO
+                accepts a mismatched buffer without erroring and converts to fp32 internally,
+                doubling the buffer size shipped across the runtime boundary on every call.
+        """
+        if input_data.dtype != np.float32 or not input_data.flags["C_CONTIGUOUS"]:
+            raise ValueError(
+                f"infer() requires a C-contiguous float32 array, got dtype={input_data.dtype} "
+                f"contiguous={input_data.flags['C_CONTIGUOUS']}. Construct mean/std with "
+                "dtype=np.float32 and finish preprocessing with np.ascontiguousarray(...)."
+            )
+
+        with self._infer_lock:
+            # Run inference
+            self.infer_request.infer({self.input_layer: input_data})
+
+            # Copy outputs: `get_output_tensor(i).data` is a view onto the reused infer-request
+            # buffers, which the next `infer()` call overwrites in place.
+            return tuple(np.copy(self.infer_request.get_output_tensor(i).data) for i in range(len(self.output_layers)))
 
     def __call__(self, input_data: NDArray[Any]) -> tuple[NDArray[Any], ...]:
         """Alias for infer() to match typical model calling convention."""
