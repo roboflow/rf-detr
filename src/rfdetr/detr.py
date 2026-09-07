@@ -1616,9 +1616,10 @@ class RFDETR:
         fp16: bool = True,
         notes: object = None,
         coreml_precision: str | None = None,
+        openvino_precision: str | None = None,
         output_name: str | None = None,
     ) -> Path:
-        """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, or CoreML format.
+        """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, or OpenVINO format.
 
         See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
@@ -1642,6 +1643,8 @@ class RFDETR:
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
+                Also unsupported for ``format="openvino"``: the IR graph bakes a fixed input shape;
+                export one model per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
                 provided explicitly it must match the instantiated model's
@@ -1662,7 +1665,6 @@ class RFDETR:
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
                 ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
                 format (requires ``pip install rfdetr[openvino]``).
-                ``pip install rfdetr[executorch]``.
                 When ``"coreml"`` is selected the model is exported via ``torch.export`` + ``coremltools`` to a
                 native ``.mlpackage`` (no ONNX step; requires
                 ``pip install rfdetr[coreml]``). This is distinct from
@@ -1721,7 +1723,7 @@ class RFDETR:
                 (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
                 on NVIDIA GPUs.  Pass ``False`` to build an FP32 engine — required on TensorRT builds that do
                 not expose the FP16 builder flag (``export()`` otherwise aborts while configuring FP16).
-                notes: Optional user-defined metadata (string, dict, list,
+            notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
                 When ``None`` no metadata entry is written. String values
@@ -1729,14 +1731,18 @@ class RFDETR:
                 consumers must call ``json.loads()`` to recover a dict or
                 list. The same value can be passed to :meth:`train` so the
                 checkpoint and the ONNX file share the same provenance
-                information. **Ignored for ``format="executorch"`` and
-                ``format="coreml"``**: those artifacts have
+                information. **Ignored for ``format="executorch"``,
+                ``format="coreml"``, and ``format="openvino"``**: those artifacts have
                 no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
                 embedded.
             coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
                 ``"float32"`` selects FP32 (tight CPU parity with eager
                 PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
+            openvino_precision: ``"float32"``, ``"float16"``, or ``None`` (default) for ``format="openvino"``
+                — ``None`` keeps OpenVINO's own ``compress_to_fp16=True`` default; ``"float32"`` disables
+                FP16 weight compression for tight numeric parity with the eager PyTorch model. Ignored for
+                every other format.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -1754,26 +1760,24 @@ class RFDETR:
                 ``{output_name}_gs_patched_fp32.tflite``; this is the standard RF-DETR path.
 
         Returns:
+            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``,
+            ``.pte``, ``.mlpackage`` or ``.xml`` for OpenVINO).
 
-
-        Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``,
-        ``.pte``, ``.mlpackage`` or ``.xml`` for OpenVINO).
-
-                Raises:
-                    ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
-                        unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
-                        not divisible by ``patch_size * num_windows``.
-                    NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` or
-                        ``format="coreml"`` — those paths require a fixed batch size.
-                    ImportError: If the optional dependencies for the requested
-                        ``format``/``backend`` are not installed (e.g.
-                        ``rfdetr[onnx]``, ``rfdetr[executorch]``,
-                        ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
-                        ``backend="coreml"``, ``openvino`` for OpenVINO export,
-                        or an ExecuTorch source build against the QAIRT SDK for
-                        ``backend="qnn"``).
-                    RuntimeError: If called after the model has undergone in-place inference optimization (the original
-                        model has been cleared; instantiate a new :class:`RFDETR` to export).
+        Raises:
+            ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
+                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
+                not divisible by ``patch_size * num_windows``.
+            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
+                ``format="coreml"``, or ``format="openvino"`` — those paths require a fixed batch size.
+            ImportError: If the optional dependencies for the requested
+                ``format``/``backend`` are not installed (e.g.
+                ``rfdetr[onnx]``, ``rfdetr[executorch]``,
+                ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
+                ``backend="coreml"``, ``openvino`` for OpenVINO export,
+                or an ExecuTorch source build against the QAIRT SDK for
+                ``backend="qnn"``).
+            RuntimeError: If called after the model has undergone in-place inference optimization (the original
+                model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
         if format == "trt":  # "trt" is an alias for "tensorrt"
             format = "tensorrt"
@@ -1801,24 +1805,14 @@ class RFDETR:
                 "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
             )
         logger.info(f"Exporting model to {format} format")
-        # OpenVINO and ExecuTorch use direct conversion, others may need ONNX
-        if format not in ("openvino", "executorch"):
-            try:
-                from rfdetr.export.main import export_onnx, make_infer_image
-            except ImportError:
-                logger.error(
-                    "It seems some dependencies for ONNX export are missing."
-                    " Please run `pip install rfdetr[onnx]` and try again.",
-                )
-                raise
-        else:
-            try:
-                from rfdetr.export.main import make_infer_image
-            except ImportError:
-                logger.error(
-                    "It seems some dependencies for export are missing. Please run `pip install rfdetr` and try again.",
-                )
-                raise
+        try:
+            from rfdetr.export.main import export_onnx, make_infer_image
+        except ImportError:
+            logger.error(
+                "It seems some dependencies for ONNX export are missing."
+                " Please run `pip install rfdetr[onnx]` and try again.",
+            )
+            raise
 
         device = self.model.device
 
@@ -1927,26 +1921,20 @@ class RFDETR:
             input_tensors = input_tensors.cpu()
 
             if format == "openvino":
-                try:
-                    from rfdetr.export._openvino.exporter import export_openvino
-                except ImportError:
-                    logger.error(
-                        "It seems OpenVINO is not installed."
-                        ' Please run `pip install "rfdetr[openvino]"` and try again.',
-                    )
-                    raise
+                from rfdetr.export._backend import _export_openvino_format
 
-                output_file = export_openvino(
-                    output_dir=str(output_dir_path),
-                    model=model,
-                    input_tensors=input_tensors,
+                return _export_openvino_format(
+                    export_model,
+                    input_tensors,
+                    output_dir_path,
                     backbone_only=backbone_only,
                     verbose=verbose,
                     variant_name=getattr(self, "size", None),
-                    output_names=output_names,
+                    dynamic_batch=dynamic_batch,
+                    notes=notes,
+                    precision=openvino_precision,
+                    output_name=output_name,
                 )
-                logger.info(f"Successfully exported OpenVINO model to: {output_file}")
-                return Path(output_file)
 
             if format == "executorch":
                 from rfdetr.export._backend import _export_executorch_format

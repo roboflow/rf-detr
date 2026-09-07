@@ -15,7 +15,7 @@ import importlib
 import sys
 import warnings
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 
 from torch import Tensor, nn
 
@@ -23,6 +23,17 @@ from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+
+class _ExportableModule(Protocol):
+    """Structural type for a module exposing a zero-arg export-mode switch.
+
+    Narrows the static type before calling ``.export()`` directly on an ``nn.Module`` -- ``nn.Module.__getattr__``'s
+    stub resolves that attribute access to ``Tensor | Module``, which mypy refuses to call (mirrors the ``cast(Backbone,
+    ...)`` precedent used for backbone-only export in :meth:`rfdetr.detr.RFDETR.export`).
+    """
+
+    def export(self) -> None: ...
 
 
 class _BackboneExport(nn.Module):
@@ -39,7 +50,7 @@ class _BackboneExport(nn.Module):
 
 
 # Every format accepted by :meth:`rfdetr.detr.RFDETR.export`.
-_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch", "coreml"})
+_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch", "coreml", "openvino"})
 # The subset of :data:`_EXPORT_FORMATS` that specialize for a hardware backend, and so require a ``backend`` argument
 # (the rest are backend-agnostic).  The accepted backends per format, and the backends that further require a ``soc``,
 # are owned by the converter (``_VALID_BACKENDS`` / ``_SOC_BACKENDS``).
@@ -379,3 +390,92 @@ def _export_coreml_format(
     )
     logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")
     return mlpackage_path
+
+
+def _export_openvino_format(
+    model: nn.Module,
+    input_tensors: Tensor,
+    output_dir_path: Path,
+    *,
+    backbone_only: bool,
+    verbose: bool,
+    variant_name: str | None,
+    dynamic_batch: bool,
+    notes: object,
+    precision: str | None = None,
+    output_name: str | None = None,
+) -> Path:
+    """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the direct-conversion OpenVINO exporter.
+
+    ``format="openvino"`` converts straight from the PyTorch graph to OpenVINO IR (``.xml``/``.bin``)
+    via ``openvino.convert_model`` -- no ONNX step, distinct from the ONNX/TFLite/TensorRT path.
+
+    Args:
+        model: The prepared (CPU) PyTorch module to export.
+        input_tensors: Example input tensor used to trace the graph.
+        output_dir_path: Directory where the ``.xml``/``.bin`` IR pair is written.
+        backbone_only: Whether *model* is a backbone-only export graph; forwarded to
+            :func:`~rfdetr.export._openvino.exporter.export_openvino` so the filename marks it.
+        verbose: Forwarded to :func:`~rfdetr.export._openvino.exporter.export_openvino`.
+        variant_name: Model variant identifier used to name the output file.
+        dynamic_batch: Whether a dynamic batch dimension was requested (always rejected below --
+            the OpenVINO IR graph bakes a fixed input shape, matching CoreML/ExecuTorch).
+        notes: User-supplied export metadata; OpenVINO IR has no ONNX-style metadata slot, so a
+            non-``None`` value warns.
+        precision: ``"float32"``/``"float16"``/``None`` -- forwarded to
+            :func:`~rfdetr.export._openvino.exporter.export_openvino`'s ``precision``.
+        output_name: Full filename override (without extension); forwarded verbatim to
+            :func:`~rfdetr.export._openvino.exporter.export_openvino`.
+
+    Returns:
+        Path to the exported OpenVINO IR model (``.xml`` file).
+
+    Raises:
+        ImportError: If the optional ``openvino`` dependency is not installed.
+        NotImplementedError: If ``dynamic_batch=True``.
+
+    Examples:
+        >>> _export_openvino_format(  # doctest: +SKIP
+        ...     model, input_tensors, output_dir_path,
+        ...     backbone_only=False, verbose=True, variant_name="small",
+        ...     dynamic_batch=False, notes=None,
+        ... )
+        PosixPath('out/small.xml')
+    """
+    if notes is not None:
+        warnings.warn(
+            "`notes` is not forwarded to format='openvino' (OpenVINO IR has no ONNX-style metadata slot). "
+            "This argument is ignored.",
+            UserWarning,
+            stacklevel=3,
+        )
+    if dynamic_batch:
+        raise NotImplementedError(
+            "OpenVINO export does not support dynamic_batch (the IR graph bakes a fixed input shape). "
+            "Export one model per batch size instead."
+        )
+    try:
+        from rfdetr.export._openvino.exporter import export_openvino
+    except ImportError:
+        logger.error(
+            'It seems OpenVINO is not installed. Please run `pip install "rfdetr[openvino]"` and try again.',
+        )
+        raise
+    # OpenVINO's convert_model traces the model directly, so switch it into its export-friendly
+    # forward here (the ONNX path does this inside export_onnx; ExecuTorch/CoreML do it above).
+    # hasattr/callable narrow at runtime; cast narrows statically before the direct `.export()`
+    # call below, since nn.Module.__getattr__'s stub types plain attribute access as Tensor | Module.
+    if hasattr(model, "export") and callable(model.export):
+        cast(_ExportableModule, model).export()
+    output_file = export_openvino(
+        output_dir=str(output_dir_path),
+        model=model,
+        input_tensors=input_tensors,
+        backbone_only=backbone_only,
+        verbose=verbose,
+        variant_name=variant_name,
+        output_name=output_name,
+        precision=precision,
+    )
+    logger.info(f"Successfully exported OpenVINO model to: {output_file}")
+    return Path(output_file)
