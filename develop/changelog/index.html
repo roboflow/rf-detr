@@ -2363,6 +2363,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p>Fixed XLA-marked tests on real TPU hardware: the Trainer-refusal assertion runs only where <code>XLAAccelerator.is_available()</code> is false, and the multi-process collective runs only on TPU/NEURON with an uninitialized runtime. CPU-PJRT skips the collective because it has no multi-process path. (<a href="https://github.com/roboflow/rf-detr/issues/1058">#1058</a>)</p>
 </li>
+<li>
+<p><code>compile=True</code> now takes effect on CUDA with the default <code>multi_scale=True</code>. The gate excluded multi-scale training to avoid one XLA graph trace per scale, but it sits behind checks that already require a CUDA device and a CUDA accelerator, so an XLA or TPU run never reached it; the exclusion only ever disabled the CUDA path, where <code>dynamic=True</code> is what handles the varying input size. Setting <code>compile=True</code> previously logged a notice and trained eagerly. (<a href="https://github.com/roboflow/rf-detr/pull/1411">#1411</a> made compilation reachable in the first place.)</p>
+</li>
 </ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
