@@ -27,7 +27,7 @@ import pytest
 import torch
 from torch.jit import TracerWarning
 
-from rfdetr import RFDETRNano, RFDETRSegNano
+from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 from rfdetr import detr as _detr_module
 from rfdetr.export import main as _cli_export_module
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -1274,3 +1274,151 @@ class TestExportOnnxVariantNaming:
         )
 
         assert captured["output_file"].endswith(expected_suffix)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+@pytest.mark.parametrize("model_class", [RFDETRNano, RFDETRSegNano, RFDETRKeypointPreview])
+@pytest.mark.parametrize("projector_scale", [["P4"], ["P4", "P5"]])
+@pytest.mark.parametrize("dynamic_batch", [False, True])
+def test_backbone_only_exports_features_without_detector(
+    tmp_path: Path,
+    model_class: type[RFDETRNano] | type[RFDETRSegNano] | type[RFDETRKeypointPreview],
+    projector_scale: list[str],
+    dynamic_batch: bool,
+) -> None:
+    """The public backbone export runs independently of detector heads and preserves every feature level."""
+    import numpy as np
+
+    ort = pytest.importorskip("onnxruntime")
+    model = model_class(
+        pretrain_weights=None,
+        device="cpu",
+        resolution=96,
+        num_queries=4,
+        num_select=4,
+        num_classes=2,
+        projector_scale=projector_scale,
+    )
+    core = model.model.model
+    assert core is not None
+    core.eval()
+    batch = 2 if dynamic_batch else 1
+    inputs = torch.linspace(-1, 1, batch * 3 * 96 * 192).reshape(batch, 3, 96, 192)
+    backbone = core.backbone[0]
+    with torch.no_grad():
+        raw_features = backbone.encoder(inputs)
+        expected = backbone.projector(raw_features)
+        if backbone.cross_attn_projector is not None:
+            expected.extend(backbone.cross_attn_projector(raw_features))
+    with ignore_tracer_warnings():
+        path = model.export(
+            output_dir=str(tmp_path), backbone_only=True, shape=(96, 192), dynamic_batch=dynamic_batch, verbose=False
+        )
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 1
+    session = ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
+    expected_names = ["features" if index == 0 else f"features_{index}" for index in range(len(projector_scale))]
+    if backbone.cross_attn_projector is not None:
+        expected_names.extend(
+            "cross_attn_features" if index == 0 else f"cross_attn_features_{index}"
+            for index in range(len(projector_scale))
+        )
+    assert [output.name for output in session.get_outputs()] == expected_names
+    actual = session.run(None, {session.get_inputs()[0].name: inputs.numpy()})
+    assert len(actual) == len(expected)
+    for exported, reference in zip(actual, expected):
+        np.testing.assert_allclose(exported, reference.numpy(), atol=1e-4, rtol=1e-4)
+    assert not backbone._export
+    assert model.model.model is core
+
+
+@pytest.mark.parametrize("format", ["coreml", "executorch"])
+def test_export_dispatch_accepts_prepared_backbone_module(tmp_path: Path, format: str) -> None:
+    """Native export dispatch accepts a prepared feature sequence without an LWDETR export method."""
+    from rfdetr.export._backend import _export_coreml_format, _export_executorch_format
+
+    model = torch.nn.Sequential(torch.nn.Identity())
+    inputs = torch.zeros(1, 3, 32, 32)
+    output_path = tmp_path / "backbone"
+    with patch(f"rfdetr.export._{format}.converter.export_{format}", return_value=output_path) as convert:
+        if format == "coreml":
+            result = _export_coreml_format(model, inputs, tmp_path, variant_name="nano", verbose=False, notes=None)
+        else:
+            result = _export_executorch_format(
+                model,
+                inputs,
+                tmp_path,
+                backend="xnnpack",
+                soc=None,
+                variant_name="nano",
+                dynamic_batch=False,
+                notes=None,
+            )
+    assert result == output_path
+    assert convert.call_args.kwargs["model"] is model
+
+
+@pytest.mark.parametrize("format", ["coreml", "executorch"])
+@pytest.mark.parametrize("backbone_only", [False, True])
+def test_export_dispatch_forwards_backbone_only_to_converter(tmp_path: Path, format: str, backbone_only: bool) -> None:
+    """``backbone_only`` must reach the native converter so it can mark a backbone export's filename distinctly;
+    otherwise a backbone export silently shares (and overwrites) a full-detector export's name."""
+    from rfdetr.export._backend import _export_coreml_format, _export_executorch_format
+
+    model = torch.nn.Sequential(torch.nn.Identity())
+    inputs = torch.zeros(1, 3, 32, 32)
+    output_path = tmp_path / "backbone"
+    with patch(f"rfdetr.export._{format}.converter.export_{format}", return_value=output_path) as convert:
+        if format == "coreml":
+            _export_coreml_format(
+                model, inputs, tmp_path, variant_name="nano", verbose=False, notes=None, backbone_only=backbone_only
+            )
+        else:
+            _export_executorch_format(
+                model,
+                inputs,
+                tmp_path,
+                backend="xnnpack",
+                soc=None,
+                variant_name="nano",
+                dynamic_batch=False,
+                notes=None,
+                backbone_only=backbone_only,
+            )
+    assert convert.call_args.kwargs["backbone_only"] is backbone_only
+
+
+@pytest.mark.parametrize("backbone_only", [False, True])
+def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
+    tmp_path: Path,
+    backbone_only: bool,
+) -> None:
+    """TensorRT receives the ONNX backbone marker when the caller supplies a custom name."""
+    obj = _detr_module.RFDETR.__new__(_detr_module.RFDETR)
+    obj.model = MagicMock()
+    obj.model.resolution = 32
+    obj.model.device = "cpu"
+    obj.model.model.to.return_value = obj.model.model
+    backbone = torch.nn.Identity()
+    backbone.export = MagicMock()
+    backbone.forward_export = MagicMock(return_value=([torch.zeros(1, 4, 2, 2)], None, None))
+    backbone.cross_attn_projector = None
+    obj.model.model.backbone = torch.nn.ModuleList([backbone])
+    obj.model_config = types.SimpleNamespace(
+        segmentation_head=False,
+        use_grouppose_keypoints=False,
+        patch_size=16,
+        num_windows=1,
+        num_channels=3,
+        projector_scale=["P4"],
+    )
+    stem = "custom-backbone" if backbone_only else "custom"
+    onnx_path = tmp_path / f"{stem}.onnx"
+    with (
+        patch("rfdetr.export.main.make_infer_image", return_value=torch.zeros(1, 3, 32, 32)),
+        patch("rfdetr.export.main.export_onnx", return_value=onnx_path),
+        patch("rfdetr.export._tensorrt.build_engine", return_value=tmp_path / f"{stem}.trt") as build,
+    ):
+        obj.export(format="tensorrt", backbone_only=backbone_only, output_name="custom", output_dir=str(tmp_path))
+    assert build.call_args.kwargs["output_name"] == stem

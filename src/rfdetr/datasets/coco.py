@@ -1293,6 +1293,27 @@ def make_coco_transforms_square_div_64(
 
 
 def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
+    """Build a COCO dataset from an explicit configuration namespace.
+
+    Direct callers must provide either ``dataset_dir`` or ``coco_path``, plus
+    ``square_resize_div_64``, ``segmentation_head``, ``multi_scale``,
+    ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, and
+    ``num_windows`` on ``args``. Keypoint, custom augmentation, scale-jitter,
+    and augmentation-backend fields are optional.
+
+    Args:
+        image_set: COCO split identifier.
+        args: Dataset, model, and transform configuration namespace.
+        resolution: Target image resolution in pixels.
+
+    Returns:
+        The configured COCO dataset.
+
+    Raises:
+        AttributeError: If a required dataset or transform option is absent.
+        FileNotFoundError: If the configured COCO root does not exist.
+        KeyError: If ``image_set`` does not map to a supported COCO split.
+    """
     root = Path(getattr(args, "dataset_dir", None) or args.coco_path)
     if not root.exists():
         logger.error(f"COCO path {root} does not exist")
@@ -1309,8 +1330,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     img_folder, ann_file = PATHS[image_set.split("_", maxsplit=1)[0]]
 
-    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
-    include_masks = getattr(args, "segmentation_head", False)
+    # Model-dependent pipeline options are mandatory for direct builder calls.
+    square_resize_div_64 = args.square_resize_div_64
+    include_masks = args.segmentation_head
     include_keypoints = has_keypoints
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])
     aug_config = getattr(args, "aug_config", None)
@@ -1405,6 +1427,25 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     Each split is built by its own call, so label indices are taken from the train split for every non-train split (see
     :func:`_train_split_cat2label`). Letting a split derive its own mapping would shift its label indices whenever its
     annotation coverage of a grouping category differs from the train split's.
+
+    Direct callers must provide ``dataset_dir``, ``square_resize_div_64``,
+    ``segmentation_head``, ``multi_scale``, ``expanded_scales``,
+    ``do_random_resize_via_padding``, ``patch_size``, and ``num_windows`` on
+    ``args``. Keypoint, custom augmentation, scale-jitter, and
+    augmentation-backend fields are optional.
+
+    Args:
+        image_set: Roboflow split identifier.
+        args: Dataset, model, and transform configuration namespace.
+        resolution: Target image resolution in pixels.
+
+    Returns:
+        The configured Roboflow COCO-format dataset.
+
+    Raises:
+        AttributeError: If a required dataset or transform option is absent.
+        FileNotFoundError: If the configured dataset root does not exist.
+        KeyError: If ``image_set`` does not map to a supported Roboflow split.
     """
     root = Path(args.dataset_dir)
     if not root.exists():
@@ -1419,13 +1460,15 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
 
     split = image_set.split("_", maxsplit=1)[0]
     img_folder, ann_file = PATHS[split]
-    square_resize_div_64 = getattr(args, "square_resize_div_64", False)
-    include_masks = getattr(args, "segmentation_head", False)
-    multi_scale = getattr(args, "multi_scale", False)
-    expanded_scales = getattr(args, "expanded_scales", False)
-    do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
-    patch_size = getattr(args, "patch_size", 16)
-    num_windows = getattr(args, "num_windows", 4)
+    # Model-dependent pipeline options are mandatory for direct builder calls;
+    # optional task/augmentation fields below retain documented safe defaults.
+    square_resize_div_64 = args.square_resize_div_64
+    include_masks = args.segmentation_head
+    multi_scale = args.multi_scale
+    expanded_scales = args.expanded_scales
+    do_random_resize_via_padding = args.do_random_resize_via_padding
+    patch_size = args.patch_size
+    num_windows = args.num_windows
     # Roboflow detection exports omit keypoint schema/flip-pair fields; missing values mean detection-only.
     include_keypoints = getattr(args, "use_grouppose_keypoints", False)
     num_keypoints_per_class = getattr(args, "num_keypoints_per_class", [])

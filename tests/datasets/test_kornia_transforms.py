@@ -9,6 +9,8 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 ``@pytest.mark.gpu`` is needed.
 """
 
+from typing import Any
+
 import pytest
 import torch
 
@@ -414,6 +416,79 @@ class TestBuildKorniaPipeline:
         # Unlike Sharpen's sharpness range, RandomClahe exposes its range on a plain public
         # `clip_limit` attribute (set directly from the constructor arg), so no private access needed.
         assert tuple(transform.clip_limit) == pytest.approx((2.0, 6.0))
+
+    @pytest.mark.parametrize(
+        "configured,expected",
+        [
+            pytest.param(None, (1.0, 4.0), id="default"),
+            pytest.param(4.0, (1.0, 4.0), id="scalar-default-value"),
+            pytest.param(2.0, (1.0, 2.0), id="scalar"),
+            pytest.param((1.0, 4.0), (1.0, 4.0), id="pair"),
+            pytest.param((2.0, 6.0), (2.0, 6.0), id="pair-non-default"),
+        ],
+    )
+    def test_clahe_scalar_clip_limit_is_a_range_not_a_fixed_value(
+        self, configured: float | tuple[float, float] | None, expected: tuple[float, float]
+    ) -> None:
+        """Albumentations reads a scalar clip_limit as (1, v), so the GPU path must too.
+
+        Passing it through `_as_range` produced the degenerate (v, v), which pins every sample to maximum contrast
+        enhancement while the CPU path varies it. 4.0 is the default on both sides, so that divergence applied with no
+        user config at all.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        params = {} if configured is None else {"clip_limit": configured}
+        pipeline = build_kornia_pipeline({"CLAHE": params}, 560)
+        transform = next(iter(pipeline.children()))
+
+        assert tuple(transform.clip_limit) == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "configured",
+        [
+            pytest.param(4.0, id="scalar-default-value"),
+            pytest.param(2.0, id="scalar"),
+            pytest.param((2.0, 6.0), id="pair"),
+            pytest.param([1.0, 4.0], id="list-pair"),
+        ],
+    )
+    def test_clahe_clip_limit_matches_albumentations(
+        self, configured: float | tuple[float, float] | list[float]
+    ) -> None:
+        """The contract stated directly: same config, same range on both backends."""
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"CLAHE": {"clip_limit": configured}}, 560)
+        transform = next(iter(pipeline.children()))
+        cpu = albumentations.CLAHE(clip_limit=configured)
+
+        assert tuple(transform.clip_limit) == pytest.approx(tuple(cpu.clip_limit)), (
+            f"backends disagree for clip_limit={configured!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "configured",
+        [
+            pytest.param([4.0], id="one-list"),
+            pytest.param((4.0,), id="one-tuple"),
+            pytest.param((1.0, 2.0, 3.0), id="three"),
+        ],
+    )
+    def test_clahe_rejects_sequences_that_albumentations_rejects(
+        self, configured: tuple[float, ...] | list[float]
+    ) -> None:
+        """A one-element sequence is not a scalar.
+
+        Albumentations validates `clip_limit` as a float or an exact 2-tuple and raises on `[4.0]`. Reading it as a
+        scalar here would accept a config the CPU backend refuses, which is the divergence this helper exists to remove.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="2-element"):
+            build_kornia_pipeline({"CLAHE": {"clip_limit": configured}}, 560)
 
     def test_hue_saturation_value_still_unsupported(self):
         """Deliberately out of scope: albumentations shifts additively, Kornia scales multiplicatively."""
@@ -1210,7 +1285,10 @@ class TestPerspectiveFactory:
     sequence. Transforms that resize output remain unsupported because this path only transports fixed-size batches.
     """
 
-    @pytest.mark.parametrize("scale", [(0.05, 0.2), 0.2], ids=["range", "scalar"])
+    @pytest.mark.parametrize(
+        "scale",
+        [pytest.param((0.05, 0.2), id="range"), 0.2],
+    )
     def test_distribution_divergence_is_always_reported(self, scale) -> None:
         """The GPU path draws uniformly where the CPU path draws a half-normal, so every config diverges.
 
@@ -1392,3 +1470,189 @@ class TestGaussianDefaultsMatchAlbumentations:
             kornia_transforms._make_gauss_noise({"p": 0.3})
 
         mock_warning.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestShiftScaleRotateFactory - validates the ShiftScaleRotate mapping, whose
+# limits are deltas rather than absolute ranges (issue #1252).
+# ---------------------------------------------------------------------------
+
+
+def _affine_ranges(transform: Any) -> dict[str, tuple[float, float]]:
+    """Read the resolved degrees/translate/scale off a Kornia ``RandomAffine``.
+
+    Like :func:`_sharpness_sampler_range`, this reads a private Kornia detail because no public
+    equivalent exists: ``RandomAffine(...).flags`` carries only the resampling options (verified
+    against the installed Kornia version), so the geometric ranges are reachable only through the
+    parameter generator. A future Kornia release renaming ``_param_generator`` fails here with an
+    actionable message rather than a raw ``AttributeError`` inside a test body.
+
+    Examples:
+        >>> transform = TestShiftScaleRotateFactory()._only_affine({"ShiftScaleRotate": {"p": 1.0}})
+        >>> len(_affine_ranges(transform))
+        3
+    """
+    generator = getattr(transform, "_param_generator", None)
+    if generator is None:
+        pytest.fail(
+            "Kornia's RandomAffine no longer exposes `_param_generator` (no public alternative "
+            "exists for the resolved degrees/translate/scale). Update this helper to match "
+            "Kornia's new internal parameter-generator shape."
+        )
+    resolved = {}
+    for key in ("degrees", "translate", "scale"):
+        value = getattr(generator, key, None)
+        if value is None:
+            pytest.fail(
+                f"Kornia's RandomAffine parameter generator no longer carries {key!r}. "
+                "Update this helper to match Kornia's new internal shape."
+            )
+        resolved[key] = tuple(float(v) for v in value)
+    return resolved
+
+
+class TestShiftScaleRotateFactory:
+    """`ShiftScaleRotate` on the Kornia backend (issue #1252).
+
+    Albumentations deprecates this name in favour of `Affine`, but the CPU path still accepts it, so a config using it
+    trained on a CPU box and raised on a GPU box. It maps onto the same `RandomAffine` that `Affine` uses, which is what
+    makes it safe: no resolution change, so the padding-mask constraint that keeps the crops unsupported does not apply.
+
+    The limits are *not* pass-through, which is why this needs its own builder rather than an alias.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+    def _only_affine(self, aug_config: dict[str, dict[str, Any]]) -> Any:
+        """Build a pipeline and return its sole ``RandomAffine`` transform.
+
+        Examples:
+            >>> transform = TestShiftScaleRotateFactory()._only_affine({"ShiftScaleRotate": {"p": 1.0}})
+            >>> transform.__class__.__name__
+            'RandomAffine'
+        """
+        import kornia.augmentation as kornia_augmentation
+
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline(aug_config, 560)
+        affines = [c for c in pipeline.children() if isinstance(c, kornia_augmentation.RandomAffine)]
+        assert len(affines) == 1, f"Expected exactly 1 RandomAffine, found {len(affines)}"
+        return affines[0]
+
+    def test_scale_limit_is_a_delta_biased_by_one(self) -> None:
+        """The mapping that a plain alias to Affine would get wrong.
+
+        Albumentations documents `scale_limit` as "biased by 1": it samples from `(1 + low, 1 + high)`, so `0.1` means a
+        scale between 0.9 and 1.1. Kornia's `scale` is the absolute multiplier, so forwarding `0.1` unchanged would ask
+        it to shrink the image to between a tenth of its size and nothing at all.
+        """
+        ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"scale_limit": 0.1, "p": 1.0}}))
+        assert ranges["scale"] == pytest.approx((0.9, 1.1), abs=1e-4)
+
+    def test_scale_limit_as_asymmetric_pair(self) -> None:
+        """A pair is also a delta, so it pivots the same way rather than passing through."""
+        ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"scale_limit": (-0.2, 0.5), "p": 1.0}}))
+        assert ranges["scale"] == pytest.approx((0.8, 1.5), abs=1e-4)
+
+    def test_scalar_limits_expand_symmetrically(self) -> None:
+        """`rotate_limit=30` means (-30, 30), not the degenerate (30, 30) `_as_range` would give."""
+        ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"rotate_limit": 30, "p": 1.0}}))
+        assert ranges["degrees"] == pytest.approx((-30.0, 30.0), abs=1e-4)
+
+    def test_defaults_match_albumentations(self) -> None:
+        """An empty config resolves to Albumentations' own documented defaults."""
+        ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"p": 1.0}}))
+        assert ranges["degrees"] == pytest.approx((-45.0, 45.0), abs=1e-4)
+        assert ranges["translate"] == pytest.approx((0.0625, 0.0625), abs=1e-4)
+        assert ranges["scale"] == pytest.approx((0.9, 1.1), abs=1e-4)
+
+    def test_per_axis_shift_limits(self) -> None:
+        """`shift_limit_x`/`shift_limit_y` override the shared limit; Kornia takes them as (tx, ty)."""
+        ranges = _affine_ranges(
+            self._only_affine({"ShiftScaleRotate": {"shift_limit_x": 0.2, "shift_limit_y": 0.05, "p": 1.0}})
+        )
+        assert ranges["translate"] == pytest.approx((0.2, 0.05), abs=1e-4)
+
+    @pytest.mark.parametrize("key", ["shift_limit_x", "shift_limit_y"])
+    def test_none_per_axis_shift_limit_uses_the_shared_limit(self, key: str) -> None:
+        """Albumentations accepts ``None`` as an axis-level fallback to ``shift_limit``."""
+        ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"shift_limit": 0.2, key: None, "p": 1.0}}))
+        assert ranges["translate"] == pytest.approx((0.2, 0.2), abs=1e-4)
+
+    def test_asymmetric_shift_limit_warns_about_the_symmetric_kornia_approximation(self) -> None:
+        """A one-sided CPU range must not silently become a different GPU distribution."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            ranges = _affine_ranges(self._only_affine({"ShiftScaleRotate": {"shift_limit_x": (0.1, 0.2), "p": 1.0}}))
+
+        assert ranges["translate"] == pytest.approx((0.2, 0.0625), abs=1e-4)
+        messages = [
+            call.args[0] % call.args[1:] if len(call.args) > 1 else call.args[0] for call in warn.call_args_list
+        ]
+        assert any("asymmetric" in message and "shift_limit_x" in message for message in messages), messages
+
+    @pytest.mark.parametrize(
+        "key,value",
+        [
+            ("interpolation", 1),
+            ("border_mode", 0),
+            ("mask_interpolation", 0),
+            ("fill", 0),
+            ("fill_mask", 0),
+            ("rotate_method", "ellipse"),
+        ],
+    )
+    def test_unmappable_options_are_reported_not_silently_dropped(self, key, value) -> None:
+        """Kornia's RandomAffine takes only the geometric parameters; the rest must not vanish."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            kornia_transforms.build_kornia_pipeline({"ShiftScaleRotate": {key: value}}, 560)
+
+        messages = [c[0][0] % c[0][1:] if len(c[0]) > 1 else c[0][0] for c in warn.call_args_list]
+        assert any("ignores" in m and key in m for m in messages), messages
+
+    def test_a_plain_config_does_not_warn(self) -> None:
+        """Every parameter here maps, so an ordinary config must stay quiet."""
+        from unittest import mock
+
+        from rfdetr.datasets import kornia_transforms
+
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            kornia_transforms.build_kornia_pipeline(
+                {"ShiftScaleRotate": {"shift_limit": 0.1, "scale_limit": 0.2, "rotate_limit": 15, "p": 1.0}}, 560
+            )
+
+        assert not warn.called, [c[0][0] for c in warn.call_args_list]
+
+    def test_output_keeps_the_input_resolution(self) -> None:
+        """The property that makes this safe where the crops are not."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        img = torch.rand(2, 3, 64, 64)
+        boxes = torch.tensor([[[8.0, 8.0, 40.0, 40.0]], [[4.0, 4.0, 20.0, 20.0]]])
+
+        pipeline = build_kornia_pipeline({"ShiftScaleRotate": {"rotate_limit": 30, "p": 1.0}}, 560)
+        img_out, _ = pipeline(img, boxes)
+
+        assert img_out.shape[-2:] == img.shape[-2:]
+
+    def test_boxes_follow_the_transform(self) -> None:
+        """A geometric transform that left the boxes behind would mislabel every image."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        img = torch.rand(1, 3, 64, 64)
+        boxes = torch.tensor([[[8.0, 8.0, 40.0, 40.0]]])
+
+        pipeline = build_kornia_pipeline({"ShiftScaleRotate": {"rotate_limit": 45, "p": 1.0}}, 560)
+        _, boxes_out = pipeline(img, boxes)
+
+        assert not torch.allclose(boxes_out, boxes), "boxes must move with the image"
