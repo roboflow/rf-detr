@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.10.0.dev"
+version = "1.11.0.dev0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -53,12 +53,22 @@ lora = [
 train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
     "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
-    "torchmetrics[detection]>=1.2",
+    "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract; re-verify _validate_private_contract() (src/rfdetr/training/coco_map.py) against 1.9+ before widening this pin
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
+    # Batched Hungarian solver for the matcher (Apache-2.0). Speeds up the CUDA path only — its
+    # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4; everywhere else it
+    # falls back internally to the same SciPy solve the matcher would have called, so only speed
+    # differs. Measurement evidence: .plans/active/plan-native-linear-assignment.md Phase M3 Item 2.
+    # TODO: pinned to the `0.1.0rc0` pre-release since the stable `0.1.0` (which will carry a
+    #   `>=0.1.0,<0.2.0` floor excluding the 0.0.x line, whose sdist compiled against nvcc) is not
+    #   on PyPI yet. A direct GitHub-archive-URL pin was used here previously — a public index
+    #   rejects that as a `Requires-Dist` entry, which would have failed at the PyPI upload step —
+    #   so this stays a normal PyPI version pin instead. Once 0.1.0 ships, replace this line with:
+    #   "torch-linear-assignment>=0.1.0,<0.2.0",
+    "torch-hungarian==0.1.0rc0",
     "roboflow",
-    "rf100vl",
 ]
 augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
@@ -191,12 +201,18 @@ tests = [
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
   "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
+  "pyyaml",  # imported by .github/_tests to parse the workflows they assert on
+  "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
+  "packaging",  # imported by .github/scripts/inject_outdated_banner.py to order release dirs
   "tomli>=2.0; python_version < '3.11'",
 ]
 
 typing = [
     # Keep this pin aligned with the local mypy hook in .pre-commit-config.yaml.
     "mypy==1.19.1",
+    # Match the Torch annotations checked by the typing pre-commit hook and CI.
+    "torch==2.14.0",
+    "torchvision==0.29.0",
     # mypy 1.19.x can crash while processing NumPy 2.4 symbols in strict mode.
     "numpy<2.4",
     "types-PyYAML",
@@ -258,7 +274,38 @@ conflicts = [
         { extra = "executorch" },
         { extra = "xla" },
     ],
+    # The typing group pins the Torch annotations checked by mypy and cannot
+    # share an environment with configurations that require older Torch releases.
+    [
+        { group = "typing" },
+        { extra = "coreml" },
+    ],
+    [
+        { group = "typing" },
+        { extra = "executorch" },
+    ],
+    [
+        { group = "typing" },
+        { extra = "xla" },
+    ],
+    [
+        { group = "typing" },
+        { group = "ci-gpu-pin" },
+    ],
+    [
+        { group = "typing" },
+        { group = "ci-executorch-pin" },
+    ],
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", group = "typing" }]
+torchvision = [{ index = "pytorch-cpu", group = "typing" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 
 [tool.setuptools.packages.find]
@@ -384,6 +431,7 @@ overrides = [
     "seaborn", "seaborn.*",
     "tqdm", "tqdm.*",
     "kornia", "kornia.*",
+    "albumentations", "albumentations.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
     "onnx_graphsurgeon", "onnx_graphsurgeon.*",
@@ -404,9 +452,4 @@ overrides = [
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
   # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).
   { module = ["rfdetr.utilities.console"], warn_unused_ignores = false },
-  # Modules with pre-existing type errors — ignored until incrementally fixed.
-  { module = [
-    "rfdetr.datasets.coco",
-    "rfdetr.datasets.transforms",
-  ], ignore_errors = true },
 ]

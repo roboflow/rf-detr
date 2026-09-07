@@ -69,6 +69,7 @@ def export_coreml(
     verbose: bool = True,
     compute_precision: ct_precision | str | None = None,
     output_name: str | None = None,
+    backbone_only: bool = False,
 ) -> Path:
     """Export an RF-DETR model to a CoreML ``.mlpackage``.
 
@@ -96,7 +97,12 @@ def export_coreml(
             pick a precision.
         output_name: Full filename override (without extension). Takes precedence over
             *variant_name* and suppresses the ``_fp32``/``_fp16`` suffix — the bundle is named
-            ``{output_name}.mlpackage`` verbatim.
+            ``{output_name}.mlpackage`` before the optional ``-backbone`` marker.
+        backbone_only: Whether *model* is a backbone-only export graph. When ``True`` and a name was
+            supplied (*variant_name* or *output_name*), a ``-backbone`` marker is appended to the
+            bundle name so a backbone export never collides with a full-detector export of the same
+            variant/precision — matching the ONNX exporter's ``{stem}-backbone.onnx`` convention. Not
+            appended onto the bare ``backbone_model`` default, which already spells it out.
 
     Returns:
         Path to the exported ``.mlpackage`` bundle. Output tensor names in the saved spec are
@@ -139,7 +145,9 @@ def export_coreml(
                 f"None, got {compute_precision!r}"
             ) from None
 
-    stem, is_custom = resolve_export_stem(variant_name, output_name)
+    stem, is_custom = resolve_export_stem(
+        variant_name, output_name, default="backbone_model" if backbone_only else "inference_model"
+    )
     # Precision materially changes the artifact (fp16 has larger numeric drift, per the module
     # docstring) — always encode it, unless the caller asked for an exact custom filename.
     if compute_precision == coreml_float16:
@@ -150,6 +158,13 @@ def export_coreml(
         precision_token = "fp32"
         logger.warning(f"Unrecognized CoreML compute precision {compute_precision!r}; using the fp32 filename label.")
     export_name = stem if is_custom else f"{stem}_{precision_token}"
+    # "-backbone" is a structural marker (distinct model graph), not a precision detail -- it is
+    # appended whenever a name was supplied, custom or variant-derived, but not onto the bare
+    # "backbone_model" default (which already spells it out). Mirrors export_onnx's convention;
+    # without it, a backbone export silently overwrites a full-detector export of the same
+    # variant/precision/output_name.
+    if backbone_only and (variant_name or output_name):
+        export_name = f"{export_name}-backbone"
     output_file = output_dir_path / f"{export_name}.mlpackage"
 
     model = model.eval()

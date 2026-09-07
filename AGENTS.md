@@ -118,7 +118,7 @@ pre-commit run --all-files
 **Test Organization:**
 
 - Group related tests in classes
-- Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
+- Use `pytest.param(..., id="name")` only for a function, object, compound setup passed as one case, a per-case mark, or when the raw value would produce an unclear/empty ID (e.g., `""`); use bare string/number/boolean/`None` values otherwise, and do not maintain a parallel `ids` list
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
 - Avoid multiple validation cases in a single test - see [CONTRIBUTING.md](.github/CONTRIBUTING.md#avoid-multiple-validation-cases-in-a-single-test) for details
 - Fixtures return ready-to-use concrete state or a cohesive tuple of related state. Do not return a callable factory unless fixture-managed lifecycle is required; use an ordinary helper function for configurable construction.
@@ -220,9 +220,9 @@ uv run twine check --strict dist/*
 
 **Augmentations:**
 
-- Default training, validation, prediction, and export preprocessing use torchvision-native transforms.
+- **Training** uses torchvision-native transforms **unless Albumentations is installed** — `augmentation_backend="cpu"` (the default) then auto-selects Albumentations and injects the default `AUG_CONFIG`, even when `aug_config=None`. Identical training code therefore resolves differently across environments; pass `augmentation_backend="torchvision"` to pin the torchvision pipeline regardless of what is installed. This backend selection only reaches the dataset builders: `_route_transforms` chooses Albumentations only for `image_set == "train"`, so validation always stays on torchvision, and prediction (`src/rfdetr/detr.py`) and export (`src/rfdetr/export/main.py`) call torchvision preprocessing directly — do not change inference/export behavior based on the training backend.
 - Custom non-empty `aug_config` values on the CPU path use Albumentations and require `rfdetr[augment]`.
-- `augmentation_backend="gpu"` uses Kornia and requires `rfdetr[augment]`; `augmentation_backend="auto"` falls back to CPU when CUDA or Kornia is unavailable.
+- `augmentation_backend="auto"` resolves to Kornia when CUDA and Kornia are available, falling back to CPU otherwise; `augmentation_backend="gpu"` pins Kornia and requires `rfdetr[augment]`.
 
 **Model Architecture:**
 
@@ -338,6 +338,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 - **ci-tests-cpu.yml:** CPU tests across OS/Python versions
 - **ci-tests-gpu.yml:** GPU-dependent tests
+- **ci-github-tests.yml:** Tests and doctests for the helper scripts under `.github/scripts/`, which the CPU/GPU suites never collect; their tests live in `.github/_tests/`
 - **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
 - **ci-deps-resolution.yml:** Dependency resolution (`uv lock`) plus an install-plan check (`uv sync --dry-run`) for every extra on every Python interpreter allowed by requires-python (3.10-3.14). Resolution alone does not prove a pinned version ships a wheel for the interpreter in use. The `list-extras` job derives the checked set from every `[project.optional-dependencies]` extra, so a new extra is covered automatically
 - **build-package.yml:** Build and validate distributions

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<!--
+  Root redirect template for `mike set-default latest --template ...`.
+
+  GitHub Pages cannot serve a 301, so the site root is a client-side redirect to the
+  default version. mike's stock template carries no canonical, which leaves the root
+  as a thin page passing nothing to the version it points at. The canonical below
+  consolidates the root onto /latest/.
+
+  Deliberately no `noindex` here: noindex plus canonical on the same URL is a
+  conflicting signal that search engines discard.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting</title>
+  <link rel="canonical" href="https://rfdetr.roboflow.com/latest/">
+  <noscript>
+    <meta http-equiv="refresh" content="1; url={{href}}" />
+  </noscript>
+  <script>
+    window.location.replace(
+      "{{href}}" + window.location.search + window.location.hash
+    );
+  </script>
+</head>
+<body>
+  Redirecting to <a href="{{href}}">{{href}}</a>...
+</body>
+</html>

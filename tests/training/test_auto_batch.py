@@ -642,6 +642,53 @@ def test_resolve_auto_batch_config_returns_expected_values():
     assert result.device_name == "Fake GPU"
 
 
+@pytest.mark.parametrize(
+    ("devices", "num_nodes", "target", "safe_micro_batch", "expected_accum_steps", "expected_effective_batch"),
+    [
+        pytest.param(2, 1, 16, 8, 1, 8, id="explicit-count"),
+        pytest.param("2", 1, 16, 8, 1, 8, id="numeric-string-count"),
+        pytest.param("auto", 1, 16, 8, 1, 8, id="automatic-cuda-devices"),
+        pytest.param("-1", 1, 16, 8, 1, 8, id="all-cuda-devices"),
+        pytest.param("0,1", 1, 16, 8, 1, 8, id="csv-device-list"),
+        pytest.param(2, 2, 16, 2, 2, 4, id="multi-node"),
+        pytest.param(2, 1, 17, 2, 5, 10, id="ceil-non-divisible-target"),
+    ],
+)
+def test_resolve_auto_batch_config_scales_global_target_across_devices(
+    devices: int | str,
+    num_nodes: int,
+    target: int,
+    safe_micro_batch: int,
+    expected_accum_steps: int,
+    expected_effective_batch: int,
+):
+    """Distribute a global nominal target across PTL device specifications."""
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=target,
+        devices=devices,
+        num_nodes=num_nodes,
+        lr=1e-4,
+        weight_decay=1e-4,
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.device_count", return_value=2),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=safe_micro_batch),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        result = auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+
+    assert result.recommended_grad_accum_steps == expected_accum_steps
+    assert result.effective_batch_size == expected_effective_batch
+
+
 def test_resolve_auto_batch_config_warns_when_optimizer_is_not_builtin_adamw():
     """The shadow optimizer probe always models AdamW's state memory (see _build_shadow_optimizer); a
     train_config.optimizer other than the built-in "adamw" (e.g. "sgd", a pytorch-optimizer name, a custom

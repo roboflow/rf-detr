@@ -53,7 +53,7 @@ def _fit_and_read_csv(mc: RFDETRBaseConfig, tc: TrainConfig, criterion=None) -> 
         ...                 tensorboard=False,
         ...             ),
         ...         )
-        ...     {'train/loss', 'val/loss'}.issubset(metrics.columns)
+        ...     {'train/loss', 'val/mAP_50_95'}.issubset(metrics.columns)
         True
     """
     fake_criterion = criterion or _FakeCriterion()
@@ -95,7 +95,6 @@ _REQUIRED_DETECTION = frozenset(
     {
         "train/loss",
         "train/lr",
-        "val/loss",
         "val/mAP_50",
         "val/mAP_50_95",
         "val/mAR",
@@ -120,25 +119,27 @@ class TestDetectionMetricsCSV:
     """metrics.csv contains all columns that plot_metrics() needs for detection."""
 
     def test_base_metrics_present_without_ema(self, base_model_config, base_train_config):
-        """Without EMA all core val/* columns must appear in metrics.csv with non-NaN data."""
+        """Default validation logs aggregate metrics without optional validation loss."""
         mc = base_model_config()
         tc = base_train_config(use_ema=False, run_test=False)
         df = _fit_and_read_csv(mc, tc)
 
         missing = _REQUIRED_DETECTION - set(df.columns)
         assert not missing, f"Missing columns in metrics.csv: {sorted(missing)}"
+        assert "val/loss" not in df.columns
 
         all_nan = {c for c in _REQUIRED_DETECTION if df[c].isna().all()}
         assert not all_nan, f"Columns with all-NaN values: {sorted(all_nan)}"
 
     def test_ema_metrics_present_with_ema_enabled(self, base_model_config, base_train_config):
-        """With use_ema=True the ema_* aliases must also appear in metrics.csv."""
+        """EMA validation retains aggregate EMA metrics without optional validation loss."""
         mc = base_model_config()
         tc = base_train_config(use_ema=True, run_test=False)
         df = _fit_and_read_csv(mc, tc)
 
         missing = _REQUIRED_DETECTION_EMA - set(df.columns)
         assert not missing, f"Missing EMA columns in metrics.csv: {sorted(missing)}"
+        assert "val/loss" not in df.columns
 
         all_nan = {c for c in _REQUIRED_DETECTION_EMA if df[c].isna().all()}
         assert not all_nan, f"EMA columns with all-NaN values: {sorted(all_nan)}"

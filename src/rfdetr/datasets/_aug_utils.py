@@ -10,9 +10,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+# Albumentations aliases that carry the same horizontal-flip semantics.
+D4_ALIAS_NAMES: frozenset[str] = frozenset({"D4", "SquareSymmetry"})
+HORIZONTAL_FLIP_ALIAS_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "TimeReverse"})
+
 # Transforms that include a horizontal-flip component. Applying these to keypoint
 # data without swapping left/right joint pairs produces incorrect annotations.
-HFLIP_TRANSFORM_NAMES: frozenset[str] = frozenset({"HorizontalFlip", "Flip", "D4"})
+HFLIP_TRANSFORM_NAMES: frozenset[str] = HORIZONTAL_FLIP_ALIAS_NAMES | frozenset({"Flip"}) | D4_ALIAS_NAMES
 
 CONTAINER_TRANSFORM_NAMES: frozenset[str] = frozenset({"OneOf", "SomeOf", "Sequential"})
 

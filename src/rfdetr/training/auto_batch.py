@@ -674,11 +674,24 @@ def resolve_auto_batch_config(
         safe_micro_batch = max(1, math.floor(safe_micro_batch * headroom))
         logger.info("[auto-batch] Applied EMA headroom (%.2f): safe_micro_batch=%s", headroom, safe_micro_batch)
 
-    # Infer world size from train configuration (only when explicit integers are provided)
+    # Infer world size from the PTL device syntax so a global target remains stable when the
+    # trainer selects multiple CUDA devices from an automatic or comma-separated specification.
     devices = getattr(train_config, "devices", None)
     num_nodes = getattr(train_config, "num_nodes", 1)
     if isinstance(devices, int) and isinstance(num_nodes, int):
-        world_size = max(1, devices * num_nodes)
+        device_count = torch.cuda.device_count() if devices == -1 and torch.cuda.is_available() else devices
+        world_size = max(1, device_count * num_nodes)
+    elif isinstance(devices, str) and isinstance(num_nodes, int):
+        devices_name = devices.strip().lower()
+        if devices_name in ("auto", "-1"):
+            device_count = torch.cuda.device_count() if torch.cuda.is_available() else 1
+        elif devices_name.isdigit():
+            device_count = int(devices_name)
+        elif "," in devices_name:
+            device_count = len([entry for entry in devices_name.split(",") if entry.strip()])
+        else:
+            device_count = 1
+        world_size = max(1, device_count * num_nodes)
     else:
         world_size = 1
 

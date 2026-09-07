@@ -72,6 +72,7 @@ def evaluation_result(
         batch_size=4,
         num_workers=0,
         tensorboard=False,
+        log_per_class_metrics=True,
     )
 
     return SimpleNamespace(

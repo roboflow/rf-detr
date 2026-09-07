@@ -7,10 +7,85 @@ description: Per-version migration guide for RF-DETR. Covers breaking changes an
 Read each section between your current version and your target — every section covers only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10
 ```
 
-You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning` until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning`, while deprecated configuration fields emit a `FutureWarning`, until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+
+---
+
+## Upgrade 1.9 → 1.10
+
+### Breaking changes
+
+!!! warning "Breaking: `log_per_class_metrics` now defaults to `False`"
+
+    `TrainConfig.log_per_class_metrics` defaults to `False` (was `True`). Per-class AP keys (`test/AP/<class>`, `val/AP/<class>`) are no longer emitted by default — validation/test now skip that per-class computation. Set it explicitly to restore the old behavior:
+
+    ```python
+    train_config = TrainConfig(log_per_class_metrics=True)
+    ```
+
+!!! warning "Breaking: `compute_val_loss` now defaults to `\"auto\"`"
+
+    `TrainConfig.compute_val_loss` defaults to `"auto"` (was `True`). In `"auto"` mode, validation loss is computed only when something actually consumes it — a `ReduceLROnPlateau` scheduler monitoring `val/loss`, or a callback (e.g. `ModelCheckpoint(monitor="val/loss")`, early stopping) that requires it — and is skipped otherwise. For a default run with no such consumer, `val/loss` no longer appears in `metrics.csv`, TensorBoard, or W&B. Set it explicitly to restore the old unconditional behavior:
+
+    ```python
+    train_config = TrainConfig(compute_val_loss=True)
+    ```
+
+!!! warning "Breaking: validation evaluates one model, and `val/mAP_*` follows it"
+
+    Validation now runs **one** forward pass per batch instead of two: through the EMA weights when `use_ema=True` (the default), through the base weights otherwise. `val/mAP_50_95`, `val/mAP_50`, `val/mAP_75`, `val/mAR`, and per-class `val/AP/<class>` therefore report the EMA model on a default run — they used to report the base model — while the matching `val/ema_*` namespace remains available. Best-checkpoint selection is unaffected in substance (it already preferred EMA), but the "regular" track no longer writes `checkpoint_best_regular.pth` on such runs; `checkpoint_best_total.pth` is copied from the EMA checkpoint.
+
+    `val/F1` and `val/loss` (when computed) follow the same single forward, so they now describe the EMA model too — consistent with the mAP under the primary key, but a change of meaning if you monitor `val/loss` with a `ReduceLROnPlateau` scheduler, `ModelCheckpoint`, or early stopping.
+
+    Restore the previous two-forward behavior, both metric namespaces and both checkpoint tracks:
+
+    ```python
+    train_config = TrainConfig(eval_base_model=True)
+    ```
+
+!!! warning "Breaking: `grad_accum_steps` now defaults to `1`"
+
+    `TrainConfig.grad_accum_steps` defaults to `1` (was `4`), which changes the default effective batch size from 16 to 4 at the default `batch_size=4`. This is a training-semantics change, not just a throughput change — the optimization trajectory (and possibly convergence/final mAP) can differ from a run using the old default. `batch_size="auto"` runs are unaffected, since the auto-batch probe overwrites `grad_accum_steps` with its own recommendation. Restore the previous default:
+
+    ```python
+    train_config = TrainConfig(grad_accum_steps=4)
+    ```
+
+!!! warning "Breaking: optimizer parameter groups are now merged by hyperparameter"
+
+    `get_param_dict` now builds one parameter group per distinct learning-rate/weight-decay combination instead of one group per parameter (`rfdetr-nano` goes from 465 groups to 28). Layer-wise LR decay and per-parameter weight decay are preserved, and the resulting AdamW steps are bit-identical; checkpoints saved with the old per-parameter layout resume automatically. If you pass an explicit `lr_scheduler` whose `lr_scheduler_kwargs` include a list sized to a specific parameter-group count (e.g. `LambdaLR`'s per-group `lr_lambda`), resize that list to match the new (smaller) group count.
+
+!!! warning "Breaking: dataset builders require a complete pipeline-option namespace"
+
+    `build_roboflow_from_coco`, `build_roboflow_from_yolo`, and `build_o365_raw` now raise instead of silently substituting a default when the config namespace passed to them is missing `square_resize_div_64`, `segmentation_head`, `multi_scale`, `expanded_scales`, `do_random_resize_via_padding`, `patch_size`, or `num_windows` (`build_o365_raw` doesn't take `segmentation_head` — detection-only). Calling these with a complete `TrainConfig`/`ModelConfig` (the normal `.train()`/`RFDETRDataModule` path) is unaffected — this only affects callers who assemble a partial config namespace by hand and pass it to these builders directly. Supply every field on that namespace to fix it:
+
+    ```python
+    # Before — missing fields silently fell back to (sometimes wrong) defaults
+    build_roboflow_from_coco(args=partial_namespace)
+
+    # After — supply every pipeline option the builder needs, matching your
+    # model variant's ModelConfig (patch_size varies by variant — 12, 14, or
+    # 16 — read it from your ModelConfig rather than hardcoding it)
+    partial_namespace.square_resize_div_64 = True
+    partial_namespace.segmentation_head = False
+    partial_namespace.multi_scale = True
+    partial_namespace.expanded_scales = True
+    partial_namespace.do_random_resize_via_padding = False
+    partial_namespace.patch_size = model_config.patch_size
+    partial_namespace.num_windows = model_config.num_windows
+    build_roboflow_from_coco(args=partial_namespace)
+    ```
+
+### Deprecated in v1.10 → Remove in v1.13
+
+!!! note "`eval_ema_only` is deprecated"
+
+    Evaluating only the selected model is the default. Explicit legacy `TrainConfig(eval_ema_only=True)` preserves EMA-only evaluation and emits a `FutureWarning`; explicit `eval_ema_only=False` is migrated to the old base-plus-EMA behavior and also warns. Drop the field from new configurations. Use `eval_base_model=True` if you want the base model evaluated as well; `eval_ema_only=True` still requires `use_ema=True` and conflicts with that opt-in.
+
+    One improvement for existing `eval_ema_only` users: `val/mAP_50_95` is now populated (with the EMA score) instead of staying absent, so monitors pointed at it start receiving values again.
 
 ---
 
@@ -54,13 +129,13 @@ You can apply all changes in one go; working through sections one release at a t
     ```python
     from rfdetr.datasets.aug_configs import AUG_CONFIG
 
-    train_config = TrainConfig(aug_config=AUG_CONFIG, ...)
+    train_config = TrainConfig(aug_config=AUG_CONFIG)
     ```
 
     Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects Albumentations for you, but identical code on a machine without `[augment]` installed silently falls back to torchvision instead. The only setting that pins resize behaviour regardless of what is installed is:
 
     ```python
-    train_config = TrainConfig(augmentation_backend="torchvision", ...)
+    train_config = TrainConfig(augmentation_backend="torchvision")
     ```
 
 ### Removed
@@ -128,7 +203,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 
-    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to `inference()` with the same signature.
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature.
 
     ```python
     # Before (deprecated)
@@ -148,6 +223,22 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
     # After
     TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
+    ```
+
+### Deprecated in v1.9 → Remove in v1.12
+
+!!! note "`rfdetr.datasets.aug_config` is deprecated"
+
+    The module was renamed to `rfdetr.datasets.aug_configs` (plural) in v1.8.0 — see the "Upgrade 1.7 → 1.8" section below, where it is listed as a breaking change because that rename shipped with no compatibility shim. A shim was added in v1.9.0, so the singular path imports again and emits a `FutureWarning`. It is scheduled for removal in **v1.12.0**; migrate before then.
+
+    The preset constants are unchanged — only the module path moves.
+
+    ```python
+    # Before (deprecated, warns since v1.9.0)
+    from rfdetr.datasets.aug_config import AUG_AGGRESSIVE
+
+    # After
+    from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
     ```
 
 ---

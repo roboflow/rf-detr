@@ -190,6 +190,29 @@ def _accelerator_has_multiple_auto_devices(accelerator: str | None) -> bool:
     return False
 
 
+def _accelerator_resolves_to_xla(accelerator: str | None) -> bool:
+    """Return whether *accelerator* names, or will resolve to, the XLA/TPU backend.
+
+    ``build_trainer`` decides the strategy and precision plugin before ``Trainer`` performs its
+    own accelerator resolution, so an explicit ``"xla"``/``"tpu"`` string is not the only case that
+    matters: ``TrainConfig.accelerator`` defaults to ``"auto"``, and leaving it there is this
+    repo's own documented default (see ``TrainConfig.accelerator``'s docstring). When left as
+    ``"auto"``, this mirrors ``lightning_fabric.utilities.device_parser._select_auto_accelerator``'s
+    resolution order, which checks XLA availability first -- otherwise a caller who never names an
+    accelerator would still build a ``DDPStrategy`` here, then hit the exact
+    ``XLAAccelerator``/``DDPStrategy`` mismatch this module works around, once Lightning's own
+    ``Trainer(accelerator="auto")`` resolves to XLA a few lines later.
+    """
+    accelerator_name = str(accelerator).lower()
+    if accelerator_name in ("xla", "tpu"):
+        return True
+    if accelerator_name != "auto":
+        return False
+    from pytorch_lightning.accelerators import XLAAccelerator
+
+    return XLAAccelerator.is_available()
+
+
 def _requests_multiple_devices(devices: int | str, accelerator: str | None = None) -> bool:
     """Return whether the configured devices value explicitly requests multiple devices."""
     if isinstance(devices, int):
@@ -336,6 +359,10 @@ def _append_training_callbacks(
         monitor_regular = f"val/{det_key}"
         early_stopping_monitor_ema = f"val/ema_{det_key}"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
+    # Validation evaluates the base model only when explicitly asked for it, or when there is no EMA
+    # model to prefer (see TrainConfig.eval_base_model). Otherwise monitor_regular carries the EMA
+    # score COCOEvalCallback mirrors onto it, and the base-weights checkpoint track must stand down.
+    evaluates_base_model = tc.eval_base_model or not enable_ema
 
     best_model_smooth_alpha = tc.smooth_alpha
 
@@ -350,6 +377,7 @@ def _append_training_callbacks(
             output_dir=str(tc.output_dir),
             monitor_regular=monitor_regular,
             monitor_ema=monitor_ema,
+            evaluates_base_model=evaluates_base_model,
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
             smooth_alpha=best_model_smooth_alpha,
@@ -512,8 +540,11 @@ def build_trainer(
     # XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin
     # (Literal["32-true", "16-true", "bf16-true"]); passing precision="bf16-mixed" raises
     # TypeError. Detected here so trainer_config assembly can translate the resolved precision
-    # into the required XLA plugin after applying caller-provided Trainer arguments.
-    xla_accelerator = str(accelerator).lower() in ("xla", "tpu")
+    # into the required XLA plugin after applying caller-provided Trainer arguments. Uses
+    # _accelerator_resolves_to_xla (not a literal string check) so a caller who leaves
+    # accelerator="auto" -- this repo's own default -- is covered too; see that helper's
+    # docstring for why the strategy guard below needs this same resolution.
+    xla_accelerator = _accelerator_resolves_to_xla(accelerator)
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -593,8 +624,20 @@ def build_trainer(
     strategy = trainer_kwargs.get("strategy", tc.strategy)
     devices = trainer_kwargs.get("devices", tc.devices)
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
-    strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     has_keypoints = bool(model_config.use_grouppose_keypoints)
+    if (
+        xla_accelerator
+        and not has_keypoints
+        and isinstance(strategy, str)
+        and strategy.strip().lower() == "auto"
+        and _requests_multiple_devices(devices, accelerator)
+    ):
+        # RF-DETR's generic auto/distributed branch below creates DDPStrategy before Lightning can apply
+        # its XLA-first auto selection. Promote only multiple local devices: one-device-per-host XLA
+        # needs separate runtime validation. Keypoint models remain excluded because their manual-
+        # optimization find_unused_parameters handling has no validated XLA equivalent.
+        strategy = "xla"
+    strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     if isinstance(tc, KeypointTrainConfig) != has_keypoints:
         raise ValueError(
             f"Config/model mismatch: isinstance(tc, KeypointTrainConfig)={isinstance(tc, KeypointTrainConfig)} "
@@ -719,7 +762,7 @@ def build_trainer(
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
-            eval_ema_only=tc.eval_ema_only,
+            eval_base_model=tc.eval_base_model,
         )
     )
 

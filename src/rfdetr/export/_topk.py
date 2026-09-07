@@ -72,7 +72,34 @@ def _select_topk_multiclass(
     # so the subsequent ``> threshold`` filter drops the same malformed scores rather than
     # allowing a lower finite score to occupy the cap.
     sort_scores = np.where(np.isnan(flat_scores), np.inf, flat_scores)
-    top_idx = np.lexsort((flat_idx, -sort_scores))[:num_to_select]
+    # Composite-key construction only pays off for sparse selections; dense custom-class
+    # grids retain the direct lexsort path.
+    if (
+        flat_scores.dtype == np.float32
+        and num_to_select < flat_scores.shape[0]
+        and num_to_select * 4 <= flat_scores.shape[0]
+        and flat_scores.shape[0] <= np.iinfo(np.uint32).max
+    ):
+        # Map native IEEE float32 bits to ascending unsigned integers, then invert them for
+        # descending score order. Canonicalising signed zero preserves lexsort's numeric tie,
+        # while replacing NaNs above makes them tie with +inf exactly as the established path.
+        score_bits = sort_scores.view(np.uint32)
+        sign_bit = np.uint32(0x80000000)
+        ordered_scores = score_bits ^ np.where(
+            (score_bits & sign_bit) != 0,
+            np.uint32(0xFFFFFFFF),
+            sign_bit,
+        )
+        ordered_scores[(score_bits & np.uint32(0x7FFFFFFF)) == 0] = sign_bit
+
+        # The low 32 bits make every key unique and encode the ascending flattened-index
+        # tiebreak. Partitioning these composite keys therefore selects the exact same cutoff
+        # set as lexsort, after which only the small selected set needs ordering.
+        selection_keys = ((~ordered_scores).astype(np.uint64) << np.uint64(32)) | flat_idx.astype(np.uint64)
+        partition_idx = np.argpartition(selection_keys, num_to_select - 1)[:num_to_select]
+        top_idx = partition_idx[np.argsort(selection_keys[partition_idx], kind="stable")]
+    else:
+        top_idx = np.lexsort((flat_idx, -sort_scores))[:num_to_select]
 
     topk_scores = flat_scores[top_idx]
     topk_query = top_idx // num_classes

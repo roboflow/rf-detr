@@ -130,16 +130,24 @@ pip install uv
 git clone https://github.com/YOUR_USERNAME/rf-detr.git
 cd rf-detr
 
-# Install all development dependencies
-uv sync --all-groups
+# Create the environment. `uv pip install` installs into an existing virtualenv and
+# will not create one for you.
+uv venv
 
-# Or install specific dependency groups
-uv sync --group tests      # Testing dependencies only
+# Install the extras and groups the CPU test job uses (add ,coreml on macOS).
+# --torch-backend=cpu keeps this from pulling a CUDA build of PyTorch.
+uv pip install -e ".[train,augment,cli,visual]" --group tests --torch-backend=cpu
+
+# Docs or build work only, without the test extras
 uv sync --group docs       # Documentation dependencies only
 uv sync --group build      # Build tools only
 ```
 
-**Important:** Always run `uv sync` after pulling changes to ensure your dependencies are up to date.
+Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `--torch-backend` is also only available for `uv pip`.
+
+The test suite imports the training and augmentation dependencies, so installing dependency groups alone leaves a large number of tests erroring on import.
+
+**Important:** Re-run the install command after pulling changes to ensure your dependencies are up to date.
 
 ### Optional Extras
 
@@ -152,11 +160,13 @@ uv sync --group build      # Build tools only
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch and not e2e_roboflow and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
-uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
+uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
+
+The marker expressions exclude suites that need assets or hardware a local checkout does not have: `coco17` needs the COCO dataset, `e2e_roboflow` needs a Roboflow API key, and `xla` / `tpu` / `e2e_tensorrt` need accelerators. Dropping them from the expression is what produces most local-only failures.
 
 **Development vs. PR Requirements:**
 
@@ -214,17 +224,15 @@ class TestModelInference:
 
 **Use `pytest.mark.parametrize` to extend test cases:**
 
+Use `pytest.param(..., id="name")` (instead of a separate `ids` list) when a case passes a function, object, or compound setup as one parameterized item, when it needs a per-case pytest mark, or when the raw value would produce an unclear/empty ID (e.g., `""`). Use bare string, number, boolean, and `None` values otherwise; avoid parallel `ids` lists for simple types.
+
 ```python
 import pytest
 
 
 @pytest.mark.parametrize(
     "model_variant",
-    [
-        pytest.param("nano", id="nano"),
-        pytest.param("small", id="small"),
-        pytest.param("medium", id="medium"),
-    ],
+    ["nano", "small", "medium"],
 )
 def test_model_loading(model_variant):
     # Test code that runs for each model variant
@@ -247,7 +255,10 @@ def test_all_models_have_valid_urls():
 
 
 # GOOD: Parametrized - each model is a separate test case
-@pytest.mark.parametrize("model", list(ModelWeights), ids=[m.filename for m in ModelWeights])
+@pytest.mark.parametrize(
+    "model",
+    [pytest.param(model, id=model.filename) for model in ModelWeights],
+)
 def test_all_models_have_valid_urls(model):
     assert model.url.startswith("http")  # Clear which model failed
 ```
@@ -345,15 +356,17 @@ RF-DETR uses [pyDeprecate](https://github.com/Borda/pyDeprecate) to emit structu
 from deprecate import deprecated
 
 
-@deprecated(target=new_fn, deprecated_in="1.7.0", remove_in="1.9.0")
+@deprecated(target=new_fn, deprecated_in="1.10.0", remove_in="1.13.0")
 def old_fn(*args, **kwargs): ...
 ```
 
 **Rules:**
 
 - All version strings must be full semver: `1.7.0`, not `1.7`.
-- Minimum window: a symbol deprecated in `X.Y.0` cannot be removed before `X.(Y+2).0` (two minor releases).
-- Every new deprecation needs an entry in `docs/getting-started/migration.md` under a `### Deprecated (removal in vX.Z.0)` subsection.
+- Classify every deprecation when it is introduced:
+    - **Major-impact deprecations** — broad or incompatible public changes must remain until the next major release. For example, a symbol deprecated in `1.x` has `remove_in="2.0.0"`.
+    - **Minor deprecations** — routine API, argument, configuration, or rename migrations use a 0.3 release-cycle window. A symbol deprecated in `X.Y.0` has `remove_in="X.(Y+3).0"`; for example, `1.10.0` removes in `1.13.0`.
+- Every new deprecation needs an entry in `docs/getting-started/migration.md` under a `### Deprecated in vX.Y → Remove in vX.Z` subsection. State the tier when the removal target alone could be ambiguous.
 
 **Removal checklist** (when `remove_in` version arrives):
 

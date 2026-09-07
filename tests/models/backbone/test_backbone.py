@@ -3,15 +3,20 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for dual-projector backbone joiner routing."""
+"""Tests for dual-projector backbone joiner routing and per-level mask construction."""
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+import pytest
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
 from rfdetr.models.backbone import Joiner
-from rfdetr.utilities.tensors import NestedTensor
+from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 
 
 class _FakeBackbone(nn.Module):
@@ -138,3 +143,101 @@ def test_joiner_forward_export_contract() -> None:
     assert poss[0].shape == exported_features[0][:, :1, :, :].shape
     assert isinstance(cross_attention, list)
     assert all(isinstance(feature, torch.Tensor) for feature in cross_attention)
+
+
+class TestBackboneLevelMask:
+    """``Backbone._level_mask`` substitutes zeros only where that is exactly the interpolation.
+
+    Nearest-neighbour resampling of an all-False mask is all-False at every output size, so the substitution must agree
+    with ``F.interpolate`` for unpadded batches and must not be taken when the batch carries real padding.
+    """
+
+    @staticmethod
+    def _interpolated(mask: torch.Tensor, feat: torch.Tensor) -> torch.Tensor:
+        """Reference result: the interpolation the unflagged path performs.
+
+        Examples:
+            >>> mask = torch.zeros(1, 8, 8, dtype=torch.bool)
+            >>> TestBackboneLevelMask._interpolated(mask, torch.rand(1, 4, 2, 2)).shape
+            torch.Size([1, 2, 2])
+        """
+        return F.interpolate(mask[None].float(), size=feat.shape[-2:]).to(torch.bool)[0]
+
+    def test_unpadded_matches_interpolation(self) -> None:
+        """The zeros shortcut equals what interpolating the all-False mask produces."""
+        mask = torch.zeros(2, 64, 64, dtype=torch.bool)
+        feat = torch.rand(2, 8, 16, 16)
+        flagged = NestedTensor(torch.rand(2, 3, 64, 64), mask, True)
+        assert torch.equal(Backbone._level_mask(flagged, feat), self._interpolated(mask, feat))
+
+    def test_unflagged_all_false_mask_takes_the_interpolation(self) -> None:
+        """Without the flag the mask is still read, and the result is unchanged."""
+        mask = torch.zeros(2, 64, 64, dtype=torch.bool)
+        feat = torch.rand(2, 8, 16, 16)
+        unflagged = NestedTensor(torch.rand(2, 3, 64, 64), mask, False)
+        assert torch.equal(Backbone._level_mask(unflagged, feat), self._interpolated(mask, feat))
+
+    def test_padded_mask_is_preserved(self) -> None:
+        """Real padding must survive downsampling rather than be zeroed away."""
+        mask = torch.zeros(1, 64, 64, dtype=torch.bool)
+        mask[:, 32:, :] = True
+        feat = torch.rand(1, 8, 16, 16)
+        unflagged = NestedTensor(torch.rand(1, 3, 64, 64), mask, False)
+        level = Backbone._level_mask(unflagged, feat)
+        assert torch.equal(level, self._interpolated(mask, feat))
+        assert level[:, 8:, :].all().item() is True
+        assert level[:, :8, :].any().item() is False
+
+    def test_output_shape_and_dtype_follow_the_feature_map(self) -> None:
+        """The shortcut must produce the same shape/dtype/device contract as the interpolation."""
+        mask = torch.zeros(3, 40, 40, dtype=torch.bool)
+        feat = torch.rand(3, 8, 10, 20)
+        flagged = NestedTensor(torch.rand(3, 3, 40, 40), mask, True)
+        level = Backbone._level_mask(flagged, feat)
+        assert level.shape == (3, 10, 20)
+        assert level.dtype == torch.bool
+        assert level.device == feat.device
+
+    @pytest.mark.parametrize("no_padding", [True, False])
+    def test_forward_propagates_no_padding_to_feature_batches(self, no_padding: bool) -> None:
+        """The backbone must preserve the collate-time claim for position encoding consumers."""
+        nested = NestedTensor(
+            torch.rand(2, 3, 32, 32),
+            torch.zeros(2, 32, 32, dtype=torch.bool),
+            no_padding,
+        )
+        feature = torch.rand(2, 8, 8, 8)
+        backbone = MagicMock()
+        backbone.encoder.return_value = [feature]
+        backbone.projector.return_value = [feature]
+        backbone.cross_attn_projector = None
+        backbone._level_mask = Backbone._level_mask
+
+        outputs, cross_attention_outputs = Backbone.forward(backbone, nested)
+
+        assert cross_attention_outputs is None
+        assert len(outputs) == 1
+        assert outputs[0].no_padding is no_padding
+        assert outputs[0].mask is not None
+
+    def test_matches_unflagged_after_default_config_batch_uniform_resize(self) -> None:
+        """The shortcut still agrees with the interpolation after the real default-training mutation.
+
+        The default training config (``square_resize_div_64=True``, ``multi_scale=True``,
+        ``do_random_resize_via_padding=False``) resizes every sample to one fixed square scale before collate, so
+        the batch is flagged. ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly
+        to a randomly chosen scale in place, without touching ``no_padding`` (see
+        ``tests/utilities/test_tensors.py::TestNestedTensorNoPadding::test_flag_survives_inplace_batch_uniform_resize``
+        for the flag/mask invariant this relies on). The two consumers of the mask must still agree afterwards.
+        """
+        images = [torch.rand(3, 512, 512) for _ in range(2)]
+        nested = nested_tensor_from_tensor_list(images, block_size=64)
+        with torch.no_grad():
+            nested.tensors = F.interpolate(nested.tensors, size=(640, 640), mode="bilinear", align_corners=False)
+            nested.mask = (
+                F.interpolate(nested.mask.unsqueeze(1).float(), size=(640, 640), mode="nearest").squeeze(1).bool()
+            )
+
+        unflagged_twin = NestedTensor(nested.tensors, nested.mask, False)
+        feat = torch.rand(2, 8, 20, 20)
+        assert torch.equal(Backbone._level_mask(nested, feat), Backbone._level_mask(unflagged_twin, feat))
