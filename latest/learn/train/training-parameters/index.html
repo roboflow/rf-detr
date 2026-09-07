@@ -68,6 +68,8 @@
     
   
   
+  
+  
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-5M220DKLMB"></script>
   <script>
@@ -101,7 +103,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-18T05:51:34">
+  <meta property="article:modified_time" content="2026-09-04T09:30:05">
   
   <script type="application/ld+json">
   {
@@ -116,7 +118,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-18T05:51:34",
+    "dateModified": "2026-09-04T09:30:05",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1337,6 +1339,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Evaluation Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#validation-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation performance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2833,6 +2852,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Evaluation Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#validation-performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation performance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2937,12 +2973,12 @@
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">,</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="p">)</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">,</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="p">)</span>
 </span></code></pre></div>
+<p><code>batch_size="auto"</code> requires a CUDA-capable GPU because it probes CUDA memory. For CPU or MPS training, provide a concrete integer batch size and use <code>grad_accum_steps</code> if memory limits the physical batch.</p>
 <h2 id="core-parameters">Core Parameters<a class="headerlink" href="#core-parameters" title="Permanent link">&para;</a></h2>
 <p>These are the essential parameters for training:</p>
 <table>
@@ -2982,14 +3018,20 @@
 <tr>
 <td><code>grad_accum_steps</code></td>
 <td><code>int</code></td>
-<td><code>4</code></td>
-<td>Accumulates gradients over multiple mini-batches. Use with <code>batch_size</code> to achieve effective batch size.</td>
+<td><code>1</code></td>
+<td>Accumulates gradients over several mini-batches before each optimizer step. Opt-in: raise it only when memory caps <code>batch_size</code> below the nominal effective-batch target you want.</td>
+</tr>
+<tr>
+<td><code>eval_batch_size</code></td>
+<td><code>int or None</code></td>
+<td><code>None</code></td>
+<td>Batch size for the validation, test and predict dataloaders. <code>None</code> inherits <code>batch_size</code>. <code>no_grad</code> avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state and needs memory for its forward outputs.</td>
 </tr>
 <tr>
 <td><code>auto_batch_target_effective</code></td>
 <td><code>int</code></td>
 <td><code>16</code></td>
-<td>Only used when <code>batch_size="auto"</code>. Per-device effective batch size the probe search targets (before scaling by <code>devices * num_nodes</code>).</td>
+<td>Only used when <code>batch_size="auto"</code>. Global nominal effective-batch target; the probe derives a per-device target before scaling by <code>devices * num_nodes</code>.</td>
 </tr>
 <tr>
 <td><code>auto_batch_max_targets_per_image</code></td>
@@ -3012,10 +3054,12 @@
 </tbody>
 </table>
 <h3 id="understanding-batch-size">Understanding Batch Size<a class="headerlink" href="#understanding-batch-size" title="Permanent link">&para;</a></h3>
-<p>The <strong>effective batch size</strong> is calculated as:</p>
+<p>The <strong>nominal effective batch size</strong> is calculated as:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>effective_batch_size = batch_size × grad_accum_steps × num_gpus
 </span></code></pre></div>
-<p>Recommended configurations for different GPUs (targeting effective batch size of 16):</p>
+<p><strong>Set <code>batch_size</code> first, <code>grad_accum_steps</code> second.</strong> Raise <code>batch_size</code> only as far as the selected model, task, resolution, and GPU allow, and leave <code>grad_accum_steps</code> at its default of <code>1</code> when possible. If hardware memory prevents the physical batch from reaching your nominal target, increase <code>grad_accum_steps</code> to recover that target's optimizer-step window. This is not an optimization-equivalent substitute: it splits the window across smaller forward/backward passes, changes microbatch cadence, and a small physical batch tends to leave the GPU under-occupied. On one L4 training <code>rfdetr-small</code>, <code>batch_size=16, grad_accum_steps=1</code> ran about 27% faster per epoch than <code>batch_size=4, grad_accum_steps=4</code> at the same nominal effective batch of 16, with mAP equal within run-to-run noise. That figure is one GPU and one dataset, so treat the direction as the lesson, not the number.</p>
+<p>When you trade between the two, use the product <code>batch_size × grad_accum_steps</code> as a nominal effective-batch target. Keeping that product constant does not guarantee identical optimization behavior: changing <code>batch_size</code> changes the forward/backward microbatch cadence even when the nominal images-per-optimizer-update target is unchanged. Start with <code>batch_size="auto"</code> on CUDA when the available memory or workload is uncertain; on CPU or MPS, choose a conservative integer batch size instead.</p>
+<p>Configurations reaching a nominal effective batch size of 16 on illustrative hardware:</p>
 <table>
 <thead>
 <tr>
@@ -3058,6 +3102,11 @@
 </tr>
 </tbody>
 </table>
+<p>These are illustrative starting configurations from the documented model/workload setup, not capacity guarantees. Actual safe values depend on the model, task, resolution, augmentations, optimizer state, and other workloads on the device. Use <code>batch_size="auto"</code> on CUDA or validate a conservative integer batch size before increasing it.</p>
+<div class="admonition note">
+<p class="admonition-title">The default nominal effective batch is 4, not 16</p>
+<p><code>grad_accum_steps</code> defaults to <code>1</code> (it was <code>4</code> in earlier versions), so the defaults give a nominal effective batch of <code>batch_size × 1 = 4</code>. If you were relying on the old defaults and want the previous nominal target of 16, set <code>grad_accum_steps=4</code> explicitly, then validate the resulting training behavior. Runs using <code>batch_size="auto"</code> are unaffected by this default change: the probe sets both values itself.</p>
+</div>
 <h2 id="learning-rate-parameters">Learning Rate Parameters<a class="headerlink" href="#learning-rate-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3198,10 +3247,16 @@
 <td>Enables Exponential Moving Average of weights. Produces a smoothed checkpoint that often improves final performance.</td>
 </tr>
 <tr>
+<td><code>eval_base_model</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Validation-only: also evaluate the base model. Validation forwards through one model by default — the EMA weights when <code>use_ema=True</code> — instead of two, removing a full model forward pass from every validation batch. Set to <code>True</code> to restore the base+EMA comparison. See Evaluation Parameters.</td>
+</tr>
+<tr>
 <td><code>eval_ema_only</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>Validation-only: forward through the EMA model instead of the base model, halving per-batch validation compute. Requires <code>use_ema=True</code>. The base model is never evaluated that epoch, so <code>val/mAP_*</code> stays unpopulated; the real per-epoch score is logged under <code>val/ema_mAP_*</code> instead — see Evaluation Parameters.</td>
+<td><strong>Deprecated (removal in v1.13)</strong> — explicit legacy <code>True</code> preserves EMA-only evaluation and explicit legacy <code>False</code> preserves base-plus-EMA evaluation; either emits a <code>FutureWarning</code>. Omit it in new configs; use <code>eval_base_model=True</code> to request the base-model pass.</td>
 </tr>
 </tbody>
 </table>
@@ -3270,7 +3325,7 @@
 </tr>
 </tbody>
 </table>
-<p>Best validation performance uses the task metric for the model family: box mAP for detection/segmentation and COCO keypoint AP for keypoint preview.</p>
+<p>Best validation performance uses the task metric for the model family (<code>best_model_metric="map"</code>, the default): box mAP for detection, mask mAP for segmentation, and COCO keypoint AP for keypoint models. Set <code>best_model_metric="mar"</code> to rank checkpoints by mAR instead: detection and segmentation use box mAR, while keypoint models use keypoint mAR. mAR for detection and segmentation is evaluated using the configured <code>eval_max_dets</code> limit; keypoint mAR uses fixed COCO <code>maxDets=20</code>.</p>
 <h2 id="early-stopping-parameters">Early Stopping Parameters<a class="headerlink" href="#early-stopping-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3305,6 +3360,12 @@
 <td><code>bool</code></td>
 <td><code>False</code></td>
 <td>Whether to track improvements using EMA model metrics.</td>
+</tr>
+<tr>
+<td><code>best_model_metric</code></td>
+<td><code>Literal["map","mar"]</code></td>
+<td><code>"map"</code></td>
+<td>Metric family for best-checkpoint selection and early stopping — mAP or mAR.</td>
 </tr>
 <tr>
 <td><code>skip_best_epochs</code></td>
@@ -3397,7 +3458,7 @@
 <td><code>eval_max_dets</code></td>
 <td><code>int</code></td>
 <td><code>500</code></td>
-<td>Maximum number of detections per image considered during COCO evaluation. Lower values speed up evaluation.</td>
+<td>Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO <code>maxDets=20</code>; lower values speed up detection/segmentation evaluation.</td>
 </tr>
 <tr>
 <td><code>eval_interval</code></td>
@@ -3408,14 +3469,20 @@
 <tr>
 <td><code>log_per_class_metrics</code></td>
 <td><code>bool</code></td>
-<td><code>True</code></td>
-<td>Log per-class AP metrics to the console and loggers. Disable to also skip the underlying per-class <code>torchmetrics</code> computation (not just its display), reducing per-epoch compute when there are many classes.</td>
+<td><code>False</code></td>
+<td>Log per-class AP metrics to the console and loggers. Enable it to also run the underlying per-class <code>torchmetrics</code> computation. Aggregate mAP/mAR and F1 metrics remain available either way.</td>
+</tr>
+<tr>
+<td><code>eval_base_model</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>Also evaluate the base model during validation, restoring the base+EMA two-forward comparison. Inert when <code>use_ema=False</code>. See <a href="#ema-exponential-moving-average">EMA</a>.</td>
 </tr>
 <tr>
 <td><code>eval_ema_only</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>Forward through the EMA model only during validation, skipping the duplicate base-model pass. Requires <code>use_ema=True</code>. See <a href="#ema-exponential-moving-average">EMA</a>.</td>
+<td><strong>Deprecated (removal in v1.13)</strong> — legacy compatibility field. Explicit values preserve the old <code>True</code>/<code>False</code> policies and emit a <code>FutureWarning</code>; omit it in new configurations. Use <code>eval_base_model</code> for the current opt-in.</td>
 </tr>
 <tr>
 <td><code>eval_masks_head_resolution</code></td>
@@ -3431,6 +3498,15 @@
 </tr>
 </tbody>
 </table>
+<h3 id="validation-performance">Validation performance<a class="headerlink" href="#validation-performance" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>log_per_class_metrics=False</code> is the default. It retains aggregate mAP/mAR and F1/precision/recall while omitting per-class rows and their underlying per-class metric computation. Set it to <code>True</code> when per-class reporting is needed.</li>
+<li><code>compute_val_loss="auto"</code> is the default. It computes <code>val/loss</code> only when a configured scheduler, checkpoint, or early-stopping callback monitors that key. Set it to <code>True</code> to always log validation loss or <code>False</code> to disable it; <code>False</code> is rejected when a configured consumer monitors <code>val/loss</code>. When computed, <code>val/loss</code> describes whichever model validation forwards through — the EMA model under the default <code>eval_base_model=False</code>, the base model under <code>eval_base_model=True</code>.</li>
+<li><code>eval_base_model=False</code> is the default: validation runs <strong>one</strong> forward pass per batch, through the EMA weights when <code>use_ema=True</code> and through the base weights otherwise. This removes a full forward pass over the validation set each epoch. <code>val/mAP_*</code> and per-class <code>val/AP/&lt;class&gt;</code> report the model that was evaluated — the EMA model under the default — so schedulers, early stopping, checkpoint monitors and dashboards keep receiving a real number; <code>val/ema_*</code> and <code>val/ema_AP/&lt;class&gt;</code> remain available for explicit EMA monitors. The best-checkpoint "regular" track is disabled in this mode, because it saves base weights that were never scored; <code>checkpoint_best_ema.pth</code> is promoted to <code>checkpoint_best_total.pth</code> instead.</li>
+<li><code>eval_base_model=True</code> restores the previous behaviour: the base model is evaluated under <code>val/mAP_*</code>, the EMA model under <code>val/ema_*</code>, and both checkpoint tracks run. It costs one extra forward pass per validation batch.</li>
+<li><code>eval_interval</code> controls validation frequency, not the cost of a validation epoch: non-evaluation epochs skip the complete validation loop, while the final epoch always evaluates.</li>
+<li>Lowering <code>eval_max_dets</code> can reduce detection/segmentation evaluation work, but it also changes AP and AR semantics. Keypoint evaluation keeps COCO <code>maxDets=20</code>.</li>
+</ul>
 <h2 id="keypoint-preview-parameters">Keypoint Preview Parameters<a class="headerlink" href="#keypoint-preview-parameters" title="Permanent link">&para;</a></h2>
 <p>These parameters apply when training <code>RFDETRKeypointPreview</code> on COCO keypoint annotations or Ultralytics YOLO pose labels.</p>
 <table>
@@ -3607,15 +3683,21 @@
 </tr>
 <tr>
 <td><code>compute_val_loss</code></td>
-<td><code>bool</code></td>
-<td><code>True</code></td>
-<td>Compute and log the detection loss on the validation set each epoch.</td>
+<td><code>bool \| "auto"</code></td>
+<td><code>"auto"</code></td>
+<td>Compute and log validation loss only when a configured consumer monitors <code>val/loss</code>. Set <code>True</code> to always compute it or <code>False</code> to disable it.</td>
 </tr>
 <tr>
 <td><code>compute_test_loss</code></td>
 <td><code>bool</code></td>
 <td><code>True</code></td>
 <td>Compute and log the detection loss during the final test run.</td>
+</tr>
+<tr>
+<td><code>num_sanity_val_steps</code></td>
+<td><code>int</code></td>
+<td><code>0</code></td>
+<td>PyTorch Lightning sanity-check validation batches run before training starts. <code>0</code> disables it (the default); increase to catch val-path errors before a full epoch runs.</td>
 </tr>
 </tbody>
 </table>
@@ -3648,8 +3730,15 @@
 <td><code>None</code></td>
 <td>Number of batches to prefetch per DataLoader worker. <code>None</code> uses PyTorch's built-in default.</td>
 </tr>
+<tr>
+<td><code>pack_targets</code></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+<td>Concatenate target dicts before crossing the DataLoader worker boundary. See the contract below; set <code>False</code> to opt out.</td>
+</tr>
 </tbody>
 </table>
+<p>With <code>pack_targets=True</code>, train, validation, test, and predict loaders yield batches whose target element is <code>PackedTargets</code> whenever packing is lossless. The Lightning <code>transfer_batch_to_device</code> hook accepts those batches or an unpacked tuple of target dicts. It materializes each packed field directly into its own independently owned per-sample tensor on the target device, producing the same plain per-sample dict list that training, validation, test, and prediction hooks receive on the unpacked path. Batches that cannot be packed losslessly retain their original tuple of dicts.</p>
 <h2 id="complete-parameter-reference">Complete Parameter Reference<a class="headerlink" href="#complete-parameter-reference" title="Permanent link">&para;</a></h2>
 <p>Below is a summary table of all training parameters:</p>
 <table>
@@ -3689,8 +3778,14 @@
 <tr>
 <td><code>grad_accum_steps</code></td>
 <td>int</td>
-<td>4</td>
+<td>1</td>
 <td>Gradient accumulation steps for effective larger batch sizes.</td>
+</tr>
+<tr>
+<td><code>eval_batch_size</code></td>
+<td>int or None</td>
+<td>None</td>
+<td>Batch size for validation, test and predict dataloaders. <code>None</code> inherits <code>batch_size</code>; <code>no_grad</code> avoids autograd activation storage, but in-fit evaluation still shares device memory with the model and optimizer state.</td>
 </tr>
 <tr>
 <td><code>lr</code></td>
@@ -3795,10 +3890,16 @@
 <td>Use EMA model for early stopping metrics.</td>
 </tr>
 <tr>
+<td><code>best_model_metric</code></td>
+<td><code>Literal["map","mar"]</code></td>
+<td>"map"</td>
+<td>Metric family for best-checkpoint selection and early stopping — mAP or mAR.</td>
+</tr>
+<tr>
 <td><code>eval_max_dets</code></td>
 <td>int</td>
 <td>500</td>
-<td>Maximum detections per image considered during COCO evaluation.</td>
+<td>Maximum detections per image for detection/segmentation COCO AP and AR evaluation. Keypoint AP/AR uses fixed COCO <code>maxDets=20</code>.</td>
 </tr>
 <tr>
 <td><code>eval_interval</code></td>
@@ -3809,14 +3910,20 @@
 <tr>
 <td><code>log_per_class_metrics</code></td>
 <td>bool</td>
-<td>True</td>
-<td>Log per-class AP metrics; disable to also skip the underlying per-class compute.</td>
+<td>False</td>
+<td>Log per-class AP metrics; enable to run the underlying per-class compute.</td>
+</tr>
+<tr>
+<td><code>eval_base_model</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Also evaluate the base model during validation (two forward passes). Inert when use_ema=False.</td>
 </tr>
 <tr>
 <td><code>eval_ema_only</code></td>
 <td>bool</td>
 <td>False</td>
-<td>Forward through the EMA model only during validation. Requires use_ema=True.</td>
+<td>Deprecated (removal in v1.13); no-op alias for the default policy. Use <code>eval_base_model</code>.</td>
 </tr>
 <tr>
 <td><code>eval_masks_head_resolution</code></td>
@@ -3828,7 +3935,7 @@
 <td><code>progress_bar</code></td>
 <td>str | bool | None</td>
 <td>None</td>
-<td>Progress bar style: <code>"tqdm"</code>, <code>"rich"</code>, or <code>None</code>. Legacy booleans are still accepted. <code>"rich"</code> leaves each completed epoch's bar in the terminal history instead of overwriting it.</td>
+<td>Progress bar style: <code>"tqdm"</code>, <code>"rich"</code>, or <code>None</code>. Legacy booleans are still accepted.</td>
 </tr>
 <tr>
 <td><code>accelerator</code></td>
@@ -3892,15 +3999,21 @@
 </tr>
 <tr>
 <td><code>compute_val_loss</code></td>
-<td>bool</td>
-<td>True</td>
-<td>Compute and log loss during validation.</td>
+<td>bool | "auto"</td>
+<td>"auto"</td>
+<td>Compute validation loss only for a configured <code>val/loss</code> consumer; <code>True</code> forces it and <code>False</code> disables it.</td>
 </tr>
 <tr>
 <td><code>compute_test_loss</code></td>
 <td>bool</td>
 <td>True</td>
 <td>Compute and log loss during the test run.</td>
+</tr>
+<tr>
+<td><code>num_sanity_val_steps</code></td>
+<td>int</td>
+<td>0</td>
+<td>PTL sanity-check validation batches run before training starts. 0 disables it; increase to catch val-path errors early.</td>
 </tr>
 <tr>
 <td><code>fp16_eval</code></td>
@@ -3926,6 +4039,12 @@
 <td>None</td>
 <td>Number of batches prefetched per worker. None uses PyTorch default.</td>
 </tr>
+<tr>
+<td><code>pack_targets</code></td>
+<td>bool</td>
+<td>True</td>
+<td>Concatenate target dicts before crossing the DataLoader worker boundary. See DataLoader Tuning; set False to opt out.</td>
+</tr>
 </tbody>
 </table>
 
@@ -3948,7 +4067,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 18, 2026 05:51:34 UTC">2026-08-18 05:51:34</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 4, 2026 09:30:05 UTC">2026-09-04 09:30:05</span>
   </span>
 
     
@@ -4057,6 +4176,8 @@
     
     
       <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/version-banner.js"></script>
       
     
   </body>
