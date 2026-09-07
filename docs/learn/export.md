@@ -451,6 +451,10 @@ model.export(format="openvino", shape=(608, 608))
 
 ### OpenVINO Inference Example
 
+!!! warning "The input array must be float32 and contiguous"
+
+    `np.array(mean)` / `np.array(std)` default to float64 without an explicit `dtype=`. Subtracting a float64 array from the float32 image promotes the result to float64, silently undoing the earlier `.astype(np.float32)`, and `np.transpose` / `np.expand_dims` carry that float64 array forward as a non-contiguous view. OpenVINO accepts the mismatched buffer without erroring — it converts to fp32 internally on every call — but every inference then ships a doubled-size, non-contiguous input across the runtime boundary. Construct `mean` / `std` with `dtype=np.float32`, and finish preprocessing with `np.ascontiguousarray(...)` before calling the model.
+
 ```python
 import numpy as np
 from PIL import Image
@@ -464,13 +468,14 @@ image = Image.open("image.jpg").convert("RGB").resize((576, 576))
 image_array = np.array(image).astype(np.float32) / 255.0
 
 # Apply ImageNet normalization
-mean = np.array([0.485, 0.456, 0.406])
-std = np.array([0.229, 0.224, 0.225])
+mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 image_array = (image_array - mean) / std
 
 # Convert to NCHW format
 image_array = np.transpose(image_array, (2, 0, 1))
 image_array = np.expand_dims(image_array, axis=0)
+image_array = np.ascontiguousarray(image_array)
 
 # Run inference
 outputs = model(image_array)
@@ -499,6 +504,12 @@ The exported OpenVINO IR model produces the following outputs:
     - Output 0: Bounding boxes `[batch, 300, 4]`
     - Output 1: Class logits `[batch, 300, num_classes]`
     - Output 2: Instance masks (if segmentation head is present)
+
+- **Keypoint Models**:
+
+    - Output 0: Bounding boxes `[batch, 300, 4]`
+    - Output 1: Class logits `[batch, 300, num_classes]`
+    - Output 2: Keypoints (if keypoint head is present)
 
 ## ExecuTorch Export
 
