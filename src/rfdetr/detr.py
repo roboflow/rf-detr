@@ -1144,8 +1144,7 @@ class RFDETR:
         Apart from ``split``, this method accepts exactly the same keyword arguments as :meth:`train` (``dataset_dir``,
         ``device``, ``resolution``, ``batch_size``, ``output_dir``, ``num_workers``, ...); they are handled identically
         via the shared :func:`_prepare_run_config`. This parity is for convenience — the same kwargs dict used for
-        :meth:`train` can be reused here — not a guarantee every field has an
-        effect. Training-only fields (``epochs``,
+        :meth:`train` can be reused here — not a guarantee every field has an effect. Training-only fields (``epochs``,
         ``lr``, ``weight_decay``, ``ema``, ``early_stopping``, ``run``, ``project``, ``checkpoint_interval``,
         ``tensorboard``/``wandb``/``mlflow``/``clearml``, and similar) are silently accepted and ignored: ``evaluate()``
         runs through an eval-only trainer (``include_training_callbacks=False``) that never builds EMA, drop-path,
@@ -2074,9 +2073,8 @@ class RFDETR:
 
         When the user did **not** explicitly set ``num_classes`` (it is left unset, e.g. inferred from a
         checkpoint), ``model_config.num_classes`` and ``self.model.args.num_classes`` are updated to match the dataset.
-        When the user *did* set ``num_classes`` explicitly — to any value,
-        including the class default — and it differs from the dataset, the
-        configured value is preserved and a warning is emitted.
+        When the user *did* set ``num_classes`` explicitly — to any value, including the class default — and it differs
+        from the dataset, the configured value is preserved and a warning is emitted.
 
         Failures from ``_detect_num_classes_for_training`` are caught and logged at DEBUG level so that training is
         never blocked by detection errors.
