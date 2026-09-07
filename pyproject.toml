@@ -139,7 +139,9 @@ coreml = [
     "torch<2.12",
 ]
 openvino = [
-    "openvino>=2024.0",  # Direct PyTorch -> OpenVINO IR conversion
+    # Calendar-versioned (year.minor.patch); cap at next major to guard convert_model/save_model/Core,
+    # which this package calls directly and which can move across a major release.
+    "openvino>=2024.0,<2027.0",
 ]
 loggers = [
     "tensorboard>=2.13.0",

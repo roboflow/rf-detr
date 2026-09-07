@@ -435,12 +435,14 @@ def _export_openvino_format(
         NotImplementedError: If ``dynamic_batch=True``.
 
     Examples:
-        >>> _export_openvino_format(  # doctest: +SKIP
-        ...     model, input_tensors, output_dir_path,
-        ...     backbone_only=False, verbose=True, variant_name="small",
-        ...     dynamic_batch=False, notes=None,
-        ... )
-        PosixPath('out/small.xml')
+        .. code-block:: python
+
+            _export_openvino_format(
+                model, input_tensors, output_dir_path,
+                backbone_only=False, verbose=True, variant_name="small",
+                dynamic_batch=False, notes=None,
+            )
+            # -> PosixPath('out/small.xml')
     """
     if notes is not None:
         warnings.warn(
