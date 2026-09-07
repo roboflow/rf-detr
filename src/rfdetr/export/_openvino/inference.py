@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from numpy.typing import NDArray
 
 from rfdetr.utilities.logger import get_logger
@@ -30,11 +31,14 @@ class OpenVINOInference:
         >>> boxes, labels = outputs  # doctest: +SKIP
     """
 
-    def __init__(self, model_path: str | Path):
+    def __init__(self, model_path: str | Path, device: str = "AUTO", cache_dir: str | None = None):
         """Initialize OpenVINO inference session.
 
         Args:
             model_path: Path to the OpenVINO IR model (.xml file).
+            device: Device the model is compiled for, e.g. ``"AUTO"``, ``"CPU"``, ``"GPU"`` or ``"NPU"``.
+            cache_dir: Directory holding the compiled-model cache. When set, OpenVINO reuses the
+                compiled kernels across process starts instead of recompiling the model every time.
 
         Raises:
             ImportError: If OpenVINO is not installed.
@@ -54,8 +58,11 @@ class OpenVINOInference:
 
         # Initialize OpenVINO runtime
         core = ov.Core()
-        self.model = core.read_model(model_path)
-        self.compiled_model = core.compile_model(self.model, "AUTO")
+        if cache_dir is not None:
+            # Must be set before compilation so compiled kernels are reused across process starts.
+            core.set_property({"CACHE_DIR": cache_dir})
+        model = core.read_model(model_path)
+        self.compiled_model = core.compile_model(model, device)
         self.infer_request = self.compiled_model.create_infer_request()
 
         # Get input/output info
@@ -76,13 +83,14 @@ class OpenVINOInference:
 
         Returns:
             Tuple of output tensors (typically boxes, labels, and optionally masks/keypoints).
+            Each array is a copy, so results stay valid after the next ``infer()`` call.
         """
         # Run inference
         self.infer_request.infer({self.input_layer: input_data})
 
-        # Get outputs
-        outputs = tuple(self.infer_request.get_output_tensor(i).data for i in range(len(self.output_layers)))
-        return outputs
+        # Copy outputs: `get_output_tensor(i).data` is a view onto the reused infer-request
+        # buffers, which the next `infer()` call overwrites in place.
+        return tuple(np.copy(self.infer_request.get_output_tensor(i).data) for i in range(len(self.output_layers)))
 
     def __call__(self, input_data: NDArray[Any]) -> tuple[NDArray[Any], ...]:
         """Alias for infer() to match typical model calling convention."""
