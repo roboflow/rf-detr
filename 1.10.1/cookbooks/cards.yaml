@@ -1,0 +1,67 @@
+cards:
+  - href: train-coco2017/
+    name: "Train RF-DETR Nano on COCO2017"
+    labels: [TRAINING, COCO2017, PYTORCH LIGHTNING]
+    version: v1.10.0
+    author: Borda
+    description: "Download the full public COCO2017 dataset and train RF-DETR Nano for 40 epochs end to end on a high-end GPU (A100 / H100 / RTX PRO 6000 — e.g. Colab Pro+ with an A100 runtime), using shipped defaults that already carry the latest training-throughput optimizations."
+  - href: export-coreml/
+    name: "Export to Native CoreML & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
+    version: v1.9.0
+    author: Borda
+    description: "Export RF-DETR directly to a native CoreML .mlpackage (no ONNX, no ExecuTorch) and run it with coremltools — the lowest-friction path for Xcode / Apple-platform deployment."
+  - href: export-tensorrt/
+    name: "Export to TensorRT & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
+    version: v1.9.0
+    author: Borda
+    description: "Export RF-DETR to a TensorRT FP16 engine and run inference on it directly — low-latency NVIDIA GPU deployment with supervision-annotated detections."
+  - href: export-executorch/
+    name: "Export to ExecuTorch & Run Inference"
+    labels: [EXPORT, INFERENCE, DEPLOY]
+    version: v1.9.0
+    author: Borda
+    description: "Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) and run it on the CPU — on-device mobile and edge deployment with supervision-annotated detections."
+  - href: fine-tune_detection/
+    name: "Fine-Tune RF-DETR Object Detection"
+    labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
+    version: v1.8.2
+    author: Borda
+    description: "Fine-tune RF-DETR object detection on any COCO detection dataset from Roboflow Universe — covers PPE safety, traffic, sports, infrastructure, and marine-wildlife use cases."
+  - href: inference-latency-benchmark/
+    name: "Inference Latency Benchmark"
+    labels: [INFERENCE, ONNX, GPU]
+    version: v1.8.1
+    author: Borda
+    description: "Benchmark detection, segmentation, and keypoint models across FP32, FP16+JIT, and ONNX Runtime — measures latency and FPS on GPU using CUDA events."
+  - href: fine-tune_segmentation/
+    name: "Fine-Tune RF-DETR Instance Segmentation"
+    labels: [TRAINING, PYTORCH LIGHTNING, SEGMENTATION, INFERENCE]
+    version: v1.8.1
+    author: Borda
+    description: "Fine-tune RF-DETR instance segmentation on any COCO segmentation dataset from Roboflow Universe — covers training, mask loss metrics, and inference with mask overlays."
+  - href: fine-tune_keypoints/
+    name: "Fine-Tune RF-DETR Keypoint Detection"
+    labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
+    version: v1.8.0
+    author: Borda
+    description: "Fine-tune RF-DETR keypoint detection on any COCO keypoint dataset from Roboflow Universe — covers training, metrics, and inference with uncertainty ellipses."
+  - href: custom-augmentations/
+    name: "Custom Augmentations and Live Training Progress"
+    labels: [TRAINING, AUGMENTATION]
+    version: v1.5.0
+    author: Borda
+    description: "Add optional custom Albumentations augmentations and monitor training metrics in real time."
+  - href: pytorch-lightning/
+    name: "Training with PyTorch Lightning"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.6.0
+    author: Borda
+    description: "Train RF-DETR with PyTorch Lightning — callbacks, checkpointing, and the LightningModule API."
+  - href: custom-optimizer-scheduler/
+    name: "Custom Optimizer and LR Scheduler"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.9.0
+    author: Borda
+    description: "Swap RF-DETR's optimizer and LR scheduler via TrainConfig — native torch.optim, a third-party optimizer by import path, or a functools.partial — fine-tuned on a small Roboflow Universe dataset."
