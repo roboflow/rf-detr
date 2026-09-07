@@ -99,7 +99,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-24T08:59:44">
+  <meta property="article:modified_time" content="2026-09-07T07:57:16">
   
   <script type="application/ld+json">
   {
@@ -114,7 +114,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-24T08:59:44",
+    "dateModified": "2026-09-07T07:57:16",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3558,14 +3558,13 @@ from first step to last, so the mAP curve plateaus noisily with no final refinem
 from the run's own total step count, so it decays correctly no matter how many epochs or how large a batch the
 GPU ends up with, and the one-epoch linear warmup keeps the first steps stable.</li>
 </ul>
-<h3 id="levers-deliberately-not-pulled">Levers deliberately not pulled<a class="anchor-link" href="#levers-deliberately-not-pulled">¶</a></h3><p>Two further speedups exist but change the recipe rather than the schedule, so this notebook leaves them alone.
+<h3 id="levers-deliberately-not-pulled">Levers deliberately not pulled<a class="anchor-link" href="#levers-deliberately-not-pulled">¶</a></h3><p>One further speedup exists but changes the recipe rather than the schedule, so this notebook leaves it alone.
 With <code>multi_scale=True</code> (the default) and <code>do_random_resize_via_padding=False</code>, training runs at the largest
 scale of the multi-scale ladder — 544 px for Nano, while validation and inference stay at 384 px. Setting
-<code>multi_scale=False</code> trains at 384 px instead (roughly half the pixels) and additionally unblocks
-<code>RFDETRNano(compile=True)</code>, which is skipped whenever multi-scale is on because the varying input shapes
-retrigger compilation. Separately, <code>augmentation_backend="gpu"</code> moves augmentation off the CPU workers — a
-rescue for CPU-starved runtimes (a 2-core Colab), and exactly backwards on this notebook's target: with the CPU
-mostly idle and the GPU saturated, it would add work to the bottleneck and take it away from idle cores.</p>
+<code>multi_scale=False</code> trains at 384 px instead (roughly half the pixels). Separately, <code>augmentation_backend="gpu"</code>
+moves augmentation off the CPU workers — a rescue for CPU-starved runtimes (a 2-core Colab), and exactly
+backwards on this notebook's target: with the CPU mostly idle and the GPU saturated, it would add work to the
+bottleneck and take it away from idle cores.</p>
 </div>
 </div>
 </div>
@@ -3735,7 +3734,7 @@ plt.close(map_figure)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 24, 2026 08:59:44 UTC">2026-08-24 08:59:44</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 7, 2026 07:57:16 UTC">2026-09-07 07:57:16</span>
   </span>
 
     
