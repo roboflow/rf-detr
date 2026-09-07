@@ -70,22 +70,17 @@ class TestExportOpenvinoMissingDependency:
         with pytest.raises(ImportError):
             export_openvino(str(tmp_path), model, example)
 
-    def test_logs_pip_install_hint(self, tmp_path: Path) -> None:
-        """The logged error must name the ``rfdetr[openvino]`` extra so users know how to fix it.
+    def test_import_error_names_pip_install_hint(self, tmp_path: Path) -> None:
+        """The raised ``ImportError`` must name the ``rfdetr[openvino]`` extra so users know how to fix it.
 
-        ``export_openvino`` re-raises the bare ``ImportError`` from ``from openvino import ...`` (whose message is the
-        stdlib's own, e.g. ``"No module named 'openvino'"``), so the actionable install hint lives only in the
-        ``logger.error(...)`` call preceding the ``raise`` — not in the exception message itself. Assert on the logged
-        call rather than ``pytest.raises(..., match=...)``.
+        ``_check_openvino_available()`` raises a new ``ImportError`` with the actionable install hint baked into the
+        message itself (not merely logged separately), so a caller catching the exception — not just reading logs —
+        still sees the fix.
         """
         model = torch.nn.Identity()
         example = torch.zeros(1, 3, 32, 32)
-        with mock.patch("rfdetr.export._openvino.exporter.logger.error") as mock_error:
-            with pytest.raises(ImportError):
-                export_openvino(str(tmp_path), model, example)
-        mock_error.assert_called_once()
-        logged_message = mock_error.call_args.args[0].replace('"', "")
-        assert "rfdetr[openvino]" in logged_message
+        with pytest.raises(ImportError, match="rfdetr\\[openvino\\]"):
+            export_openvino(str(tmp_path), model, example)
 
 
 class TestOpenVINOInferenceMissingDependency:
@@ -135,7 +130,7 @@ class TestExportOpenvinoNaming:
                 verbose=False,
             )
         assert output_xml == str(tmp_path / f"{expected_stem}.xml")
-        fake_ov.save_model.assert_called_once_with(mock.ANY, output_xml)
+        fake_ov.save_model.assert_called_once_with(mock.ANY, output_xml, compress_to_fp16=True)
 
     @pytest.mark.parametrize(
         ("variant_name", "expected"),
@@ -168,106 +163,77 @@ class TestExportOpenvinoNaming:
         assert ".." not in output_xml.removeprefix(str(tmp_path))
 
 
-class TestExportOpenvinoModelWrapper:
-    """``ModelWrapper`` (built internally by ``export_openvino``) dict-output-to-tuple mapping.
+class TestModelWrapper:
+    """``ModelWrapper`` (module-scope, importable in isolation) normalizes export-mode output to a tuple.
 
-    ``ModelWrapper`` is defined function-local inside ``export_openvino`` (not importable in isolation), so these tests
-    capture the live instance via the stubbed ``convert_model`` call and invoke it directly.
+    The wrapped model is expected to already be in export mode (``forward_export``), which returns a tuple (full
+    detector) or a plain list (:class:`rfdetr.export._backend._BackboneExport`) — never a dict. A dict output means the
+    caller forgot the mode-switch, which is a caller bug the wrapper must surface loudly rather than silently reshape.
     """
 
-    @staticmethod
-    def _wrapped_model_call_args(
-        tmp_path: Path, dict_output: dict[str, torch.Tensor], output_names: list[str]
-    ) -> tuple[torch.Tensor, ...]:
-        """Export a model whose ``forward`` returns *dict_output*; return the wrapper's mapped tuple output.
+    def test_tuple_output_passes_through_unchanged(self) -> None:
+        """A tuple output (full-detector ``forward_export``) must pass through as the same tuple."""
+        from rfdetr.export._openvino.exporter import ModelWrapper
 
-        Examples:
-            >>> boxes = torch.zeros(1, 4)
-            >>> logits = torch.zeros(1, 2)
-            >>> import tempfile
-            >>> with tempfile.TemporaryDirectory() as d:
-            ...     out = TestExportOpenvinoModelWrapper._wrapped_model_call_args(
-            ...         Path(d), {"pred_boxes": boxes, "pred_logits": logits}, ["dets", "labels"]
-            ...     )
-            ...     len(out)
-            2
+        dets, labels = torch.full((1, 4), 1.0), torch.full((1, 2), 2.0)
+
+        class _TupleOutputModel(torch.nn.Module):
+            def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
+                return (dets, labels)
+
+        wrapper = ModelWrapper(_TupleOutputModel())
+        out_dets, out_labels = wrapper(torch.zeros(1, 3, 8, 8))
+        assert torch.equal(out_dets, dets)
+        assert torch.equal(out_labels, labels)
+
+    def test_list_output_converted_to_tuple(self) -> None:
+        """A list output (:class:`_BackboneExport`'s backbone-only graph) must convert to a tuple.
+
+        The backbone-only export path returns a plain ``list[Tensor]`` of feature maps rather than a tuple;
+        ``convert_model`` requires a tuple, so the wrapper must coerce it rather than pass the list through as-is.
         """
+        from rfdetr.export._openvino.exporter import ModelWrapper
+
+        features = [torch.full((1, 3, 4, 4), 5.0), torch.full((1, 6, 2, 2), 6.0)]
+
+        class _ListOutputModel(torch.nn.Module):
+            def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+                return features
+
+        wrapper = ModelWrapper(_ListOutputModel())
+        output = wrapper(torch.zeros(1, 3, 8, 8))
+        assert isinstance(output, tuple)
+        assert torch.equal(output[0], features[0])
+        assert torch.equal(output[1], features[1])
+
+    def test_dict_output_raises_not_implemented(self) -> None:
+        """A dict output must raise ``NotImplementedError`` naming the mode-switch fix, never reshape silently.
+
+        A dict reaching this wrapper means the caller forgot to call ``model.export()`` first (``forward_export`` always
+        returns a tuple/list); the old behaviour silently mapped and sometimes dropped dict keys, which this test guards
+        against regressing to.
+        """
+        from rfdetr.export._openvino.exporter import ModelWrapper
 
         class _DictOutputModel(torch.nn.Module):
             def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-                return dict_output
+                return {"pred_boxes": torch.zeros(1, 4), "pred_logits": torch.zeros(1, 2)}
 
-        fake_ov = _stub_openvino_module()
-        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
-            export_openvino(
-                str(tmp_path),
-                _DictOutputModel(),
-                torch.zeros(1, 3, 8, 8),
-                output_names=output_names,
-                verbose=False,
-            )
-        wrapped_model = fake_ov.convert_model.call_args.args[0]
-        return wrapped_model(torch.zeros(1, 3, 8, 8))
+        wrapper = ModelWrapper(_DictOutputModel())
+        with pytest.raises(NotImplementedError, match="model.export()"):
+            wrapper(torch.zeros(1, 3, 8, 8))
 
-    def test_detection_output_maps_dets_and_labels_in_order(self, tmp_path: Path) -> None:
-        """``["dets", "labels"]`` must map to ``(pred_boxes, pred_logits)``, positionally ordered."""
-        dets, labels = self._wrapped_model_call_args(
-            tmp_path,
-            {"pred_boxes": torch.full((1, 4), 1.0), "pred_logits": torch.full((1, 2), 2.0)},
-            ["dets", "labels"],
-        )
-        assert torch.equal(dets, torch.full((1, 4), 1.0))
-        assert torch.equal(labels, torch.full((1, 2), 2.0))
-
-    def test_segmentation_output_maps_dets_labels_masks_in_order(self, tmp_path: Path) -> None:
-        """``["dets", "labels", "masks"]`` must map to ``(pred_boxes, pred_logits, pred_masks)``."""
-        dets, labels, masks = self._wrapped_model_call_args(
-            tmp_path,
-            {
-                "pred_boxes": torch.full((1, 4), 1.0),
-                "pred_logits": torch.full((1, 2), 2.0),
-                "pred_masks": torch.full((1, 1, 4, 4), 3.0),
-            },
-            ["dets", "labels", "masks"],
-        )
-        assert torch.equal(dets, torch.full((1, 4), 1.0))
-        assert torch.equal(labels, torch.full((1, 2), 2.0))
-        assert torch.equal(masks, torch.full((1, 1, 4, 4), 3.0))
-
-    def test_keypoints_output_maps_dets_labels_keypoints_in_order(self, tmp_path: Path) -> None:
-        """``["dets", "labels", "keypoints"]`` must map to ``(pred_boxes, pred_logits, pred_keypoints)``."""
-        dets, labels, keypoints = self._wrapped_model_call_args(
-            tmp_path,
-            {
-                "pred_boxes": torch.full((1, 4), 1.0),
-                "pred_logits": torch.full((1, 2), 2.0),
-                "pred_keypoints": torch.full((1, 17, 2), 4.0),
-            },
-            ["dets", "labels", "keypoints"],
-        )
-        assert torch.equal(dets, torch.full((1, 4), 1.0))
-        assert torch.equal(labels, torch.full((1, 2), 2.0))
-        assert torch.equal(keypoints, torch.full((1, 17, 2), 4.0))
-
-    def test_backbone_only_tensor_output_passes_through_unwrapped(self, tmp_path: Path) -> None:
-        """A backbone-only export (bare tensor output, not a dict) must pass through as a 1-tuple."""
+    def test_unsupported_output_type_raises_type_error(self) -> None:
+        """A model returning neither tuple, list, nor dict must raise ``TypeError``, not fail obscurely later."""
+        from rfdetr.export._openvino.exporter import ModelWrapper
 
         class _TensorOutputModel(torch.nn.Module):
             def forward(self, x: torch.Tensor) -> torch.Tensor:
-                return torch.full((1, 3, 4, 4), 5.0)
+                return torch.zeros(1, 4)
 
-        fake_ov = _stub_openvino_module()
-        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
-            export_openvino(
-                str(tmp_path),
-                _TensorOutputModel(),
-                torch.zeros(1, 3, 8, 8),
-                backbone_only=True,
-                verbose=False,
-            )
-        wrapped_model = fake_ov.convert_model.call_args.args[0]
-        (features,) = wrapped_model(torch.zeros(1, 3, 8, 8))
-        assert torch.equal(features, torch.full((1, 3, 4, 4), 5.0))
+        wrapper = ModelWrapper(_TensorOutputModel())
+        with pytest.raises(TypeError, match="Unsupported model output type"):
+            wrapper(torch.zeros(1, 3, 8, 8))
 
 
 # ---------------------------------------------------------------------------
@@ -346,17 +312,31 @@ class TestExportFormatParameter:
         obj.export(format="openvino", output_dir=str(self._tmp_path / "out"))
         assert self._mock_export_openvino.call_args.kwargs["variant_name"] == "rfdetr-nano"
 
-    def test_detection_output_names_forwarded_to_converter(self) -> None:
-        """Plain detection models must forward ``["dets", "labels"]`` as ``output_names``."""
+    def test_output_name_forwarded_to_converter(self) -> None:
+        """An explicit ``output_name`` must be forwarded verbatim, overriding the variant-based name."""
         obj = self._make_rfdetr()
-        obj.export(format="openvino", output_dir=str(self._tmp_path / "out"))
-        assert self._mock_export_openvino.call_args.kwargs["output_names"] == ["dets", "labels"]
+        obj.export(format="openvino", output_dir=str(self._tmp_path / "out"), output_name="my-model")
+        assert self._mock_export_openvino.call_args.kwargs["output_name"] == "my-model"
 
-    def test_segmentation_output_names_forwarded_to_converter(self) -> None:
-        """Segmentation models must forward ``["dets", "labels", "masks"]`` as ``output_names``."""
-        obj = self._make_rfdetr(segmentation_head=True)
-        obj.export(format="openvino", output_dir=str(self._tmp_path / "out"))
-        assert self._mock_export_openvino.call_args.kwargs["output_names"] == ["dets", "labels", "masks"]
+    def test_dynamic_batch_raises_not_implemented(self) -> None:
+        """``dynamic_batch=True`` must raise ``NotImplementedError``, matching CoreML/ExecuTorch's fixed-shape guard.
+
+        Regression guard: OpenVINO IR bakes a fixed input shape, so a silently-ignored
+        ``dynamic_batch=True`` would produce a fixed-shape model with no feedback to the caller.
+        """
+        obj = self._make_rfdetr()
+        with pytest.raises(NotImplementedError, match="dynamic_batch"):
+            obj.export(format="openvino", output_dir=str(self._tmp_path / "out"), dynamic_batch=True)
+
+    def test_notes_warns_and_is_dropped(self) -> None:
+        """A non-``None`` ``notes`` value must emit a ``UserWarning`` naming the missing metadata slot.
+
+        Regression guard: OpenVINO IR has no ONNX-style metadata slot; silently dropping ``notes``
+        would leave callers believing their metadata was embedded when it was not.
+        """
+        obj = self._make_rfdetr()
+        with pytest.warns(UserWarning, match="notes"):
+            obj.export(format="openvino", output_dir=str(self._tmp_path / "out"), notes="some metadata")
 
     def test_invalid_format_raises_value_error(self) -> None:
         """Unknown ``format`` must raise ``ValueError`` listing supported formats, not reach the converter."""
