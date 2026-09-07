@@ -344,18 +344,29 @@ class TestExportTfliteConverter:
         export_tflite(onnx_model, tflite_output, quantization="fp16")
         assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
 
+    @pytest.mark.parametrize(
+        "calibration_data",
+        [
+            None,
+            pytest.param(Path("/some/calib_dir"), id="directory"),
+            pytest.param(np.zeros((2, 64, 64, 3), dtype=np.float32), id="ndarray"),
+        ],
+    )
     def test_int8_quantization_produces_dynamic_range(
         self,
         onnx_model: Path,
         tflite_output: Path,
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
+        calibration_data: Path | np.ndarray | None,
     ) -> None:
-        """Int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
+        """Int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path, regardless of calibration_data.
 
         onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static quantization, which RF-DETR's
         transformer activations do not survive. The converter instead builds dynamic-range INT8 from the SavedModel via
-        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the ``output_integer_quantized_tflite`` flag.
+        ``_quantize_dynamic_range``, which accepts no calibration data at all -- so neither the
+        ``output_integer_quantized_tflite`` flag nor a ``representative_dataset`` ever reaches onnx2tf's ``convert()``
+        call, no matter whether ``calibration_data`` is ``None``, a directory, or an ndarray.
         """
         _, convert_mock = fake_onnx2tf
         dyn_path = tflite_output / "model_dynamic_range_quant.tflite"
@@ -363,8 +374,10 @@ class TestExportTfliteConverter:
             "rfdetr.export._tflite.converter._quantize_dynamic_range",
             return_value=dyn_path,
         ) as quant_mock:
-            result = export_tflite(onnx_model, tflite_output, quantization="int8")
-        assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
+            result = export_tflite(onnx_model, tflite_output, quantization="int8", calibration_data=calibration_data)
+        kwargs = convert_mock.call_args.kwargs
+        assert "output_integer_quantized_tflite" not in kwargs
+        assert "representative_dataset" not in kwargs
         quant_mock.assert_called_once()
         assert result == dyn_path
 
@@ -914,15 +927,14 @@ class TestPrepareCalibrationData:
         assert data.dtype == np.float32
 
     def test_generated_data_is_not_reported_as_an_accuracy_problem(self, tmp_path: Path, _mock_onnx_info: None) -> None:
-        """Auto-generated data must not trigger the removed quantization-accuracy warning."""
+        """Auto-generated validation data must not trigger any warning."""
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
 
         with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
             _prepare_calibration_data(onnx_path, None, tmp_path)
 
-        warnings = [str(call.args[0]) for call in mock_logger.warning.call_args_list]
-        assert not any("poor quantization accuracy" in warning.lower() for warning in warnings)
+        mock_logger.warning.assert_not_called()
 
     def test_ndarray_saves_to_npy(self, tmp_path: Path, _mock_onnx_info: None) -> None:
         onnx_path = tmp_path / "model.onnx"
@@ -1024,7 +1036,7 @@ class TestLoadCalibrationImages:
         """The calibration resize must follow predict()'s convention: bilinear, half-pixel, antialias-free.
 
         Guards the #1206 alignment: PIL's default resize (BICUBIC + adaptive antialias when downscaling) produces a
-        pixel distribution the model never sees at inference and would skew the INT8 ranges.
+        different pixel distribution from predict(), reducing fidelity if the conditional validation hook uses it.
         """
         import torchvision.transforms.functional as F  # noqa: N812
         from PIL import Image

@@ -608,9 +608,10 @@ def _interpreter_scripts_on_path() -> Generator[None, None, None]:
 def _patch_validation_download(npy_path: str) -> Generator[None, None, None]:
     """Redirect onnx2tf's legacy validation-data download when the hook exists.
 
-    onnx2tf 2.4.0–2.4.3 do not define ``download_test_image_data``. The conditional patch remains for
-    compatible 2.x releases that expose it. This is an output-validation hook, not an INT8 calibration path: RF-DETR
-    never passes ``output_integer_quantized_tflite``.
+    ``download_test_image_data`` is absent from every released onnx2tf 2.x version this project supports
+    (verified through 2.6.8); the ``hasattr`` guard is retained defensively in case a future 2.x release
+    (still matching the ``<3.0.0`` pin) reintroduces it. This is an output-validation hook, not an INT8
+    calibration path: RF-DETR never passes ``output_integer_quantized_tflite``.
 
     Args:
         npy_path: Path to locally prepared NHWC validation data.
@@ -688,8 +689,8 @@ def _load_calibration_images(
         try:
             with Image.open(img_path) as _img:
                 img = _img.convert("RGB")
-            # Resize with predict()'s convention (bilinear, half-pixel, no antialias) so the INT8
-            # calibration ranges come from the same pixel distribution the model sees at inference.
+            # Retain predict()'s resize convention (bilinear, half-pixel, no antialias) for pixel-distribution
+            # fidelity if the conditional validation hook consumes these images; model building does not use them.
             # PIL's default resize (BICUBIC + adaptive antialias) diverges from that distribution.
             chw = np.asarray(img, dtype=np.float32).transpose(2, 0, 1) / np.float32(255.0)
             image_array = _bilinear_resize_half_pixel(chw, height, width).transpose(1, 2, 0)
@@ -735,7 +736,7 @@ def _prepare_calibration_data(
     output_dir: Path,
     max_images: int = _DEFAULT_DIR_CALIB_SAMPLES,
 ) -> Path:
-    """Prepare calibration data as a ``.npy`` file for ``onnx2tf``.
+    """Prepare a ``.npy`` data file for onnx2tf's conditional legacy validation hook.
 
     The returned path points to an NHWC float32 array with pixel values in ``[0, 1]``. Generated or reformatted data is
     saved as ``_rfdetr_calib_data.npy`` in *output_dir*; an existing ``.npy`` path is returned unchanged. The data is
@@ -958,6 +959,12 @@ def export_tflite(
             "TFLite inference may produce incorrect scores if the model contains GridSample nodes. "
             "Install with: pip install rfdetr[tflite]",
             exc,
+        )
+
+    if calibration_data is not None and quantization == "int8":
+        logger.info(
+            "The provided calibration data has no effect on the generated INT8 model: "
+            "dynamic-range quantization does not use it."
         )
 
     calib_npy_path = _prepare_calibration_data(onnx_path, calibration_data, output_dir, max_images=max_images)
