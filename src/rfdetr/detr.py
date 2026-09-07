@@ -1686,7 +1686,7 @@ class RFDETR:
                     (``onnx2tf``, ``ai_edge_litert``, ``executorch``,
                     ``coremltools``) may affect results.
             quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``, ``format="openvino"``).  One of ``None``, ``"fp32"``, 
+                ``format="onnx"``, ``format="openvino"``).  One of ``None``, ``"fp32"``,
                 ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` /
                 ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range
                 INT8 model (INT8 weights, float activations; needs no calibration data).
