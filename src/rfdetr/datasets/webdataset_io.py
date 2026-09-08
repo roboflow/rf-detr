@@ -171,8 +171,8 @@ def _validate_split_name(split: str) -> str:
             ...
         ValueError: split '../escape' must not contain a path separator or '..'.
     """
-    if not split or "/" in split or "\\" in split or split in (".", ".."):
-        raise ValueError(f"split {split!r} must not contain a path separator or '..'.")
+    if not split or "/" in split or "\\" in split or ":" in split or split in (".", ".."):
+        raise ValueError(f"split {split!r} must not contain a path separator, drive prefix, or '..'.")
     forbidden = sorted(set("*?[]") & set(split))
     if forbidden:
         raise ValueError(
@@ -616,7 +616,7 @@ def pack_coco_to_shards(
         for position, image_entry in enumerate(images):
             file_name = str(image_entry["file_name"])
             candidate = PurePath(file_name)
-            if candidate.is_absolute() or ".." in candidate.parts:
+            if candidate.anchor or ".." in candidate.parts:
                 # Lexical check only, deliberately not `.resolve()` + `is_relative_to`: `.resolve()` follows
                 # symlinks, and a legitimately symlinked image tree (the standard way a large COCO-scale split is
                 # shared on a cluster without duplicating storage) would then resolve outside `image_root` and be
