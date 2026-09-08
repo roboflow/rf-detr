@@ -569,8 +569,13 @@ def _pack(tmp_path: Path, **kwargs: Any) -> Path:
     """Pack a synthetic split into *tmp_path* / ``"shards"`` and return that directory.
 
     Examples:
-        >>> _pack  # doctest: +SKIP
-        Needs a real tmp_path to write files into, so it cannot run standalone.
+        >>> import tempfile
+        >>> from unittest.mock import patch
+        >>> with tempfile.TemporaryDirectory() as tmp, patch("rfdetr.datasets.webdataset_io.logger.info"):
+        ...     shard_dir = _pack(Path(tmp), count=1)
+        ...     sample_count = read_shard_index(shard_dir, "train").num_samples
+        >>> sample_count
+        1
     """
     image_dir, annotations = _build_coco_split(tmp_path, **kwargs)
     shard_dir = tmp_path / "shards"
