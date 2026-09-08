@@ -1191,16 +1191,37 @@ def build_webdataset_loader(
                 deficit * 100,
                 slots,
             )
-        dataset.configure_epoch(
-            samples_per_worker=plan_samples_per_worker(
-                dataset.total_samples,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                world_size=ranks,
-                grad_accum_steps=grad_accum_steps,
-            ),
-            num_workers=max(1, num_workers),
+        samples_per_worker = plan_samples_per_worker(
+            dataset.total_samples,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            world_size=ranks,
+            grad_accum_steps=grad_accum_steps,
         )
+        seen = samples_per_worker * slots
+        # The map-style path (GradAccumAlignedDataset) pads to the same accumulation-window boundary this
+        # floors to, so it sees every sample; flooring instead means a worker never revisits the tail that does
+        # not fill a whole window, once per epoch, for the life of the run. The shard-skew warning above covers
+        # an uneven split leaving a worker short of the plan; this covers the plan itself asking for less than
+        # the split holds, which no per-worker skew measurement would catch.
+        floor_loss = 1.0 - (seen / dataset.total_samples if dataset.total_samples > 0 else 1.0)
+        if floor_loss > SHARD_SKEW_WARN_FRACTION:
+            logger.warning(
+                "Split %r has %d samples, but a fixed epoch of %d worker(s) x %d sample(s) sees only %d "
+                "(%.0f%% never seen this epoch): flooring to a whole accumulation window "
+                "(batch_size=%d x grad_accum_steps=%d) discards the remainder every epoch, unlike the "
+                "map-style loader's padding. Lower num_workers, batch_size or grad_accum_steps, or pack more "
+                "samples, to shrink the discarded remainder.",
+                dataset.index.split,
+                dataset.total_samples,
+                slots,
+                samples_per_worker,
+                seen,
+                floor_loss * 100,
+                batch_size,
+                grad_accum_steps,
+            )
+        dataset.configure_epoch(samples_per_worker=samples_per_worker, num_workers=max(1, num_workers))
     elif ranks > 1:
         # Every rank has at least one shard (checked above), so this alone cannot deadlock the way the
         # empty-rank case does — but an uneven split still gives ranks different per-rank batch counts, and a

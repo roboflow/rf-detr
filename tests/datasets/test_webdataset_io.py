@@ -955,6 +955,29 @@ class TestBuildWebdatasetLoader:
         build_webdataset_loader(dataset, batch_size=2, collate_fn=_count_collate, num_workers=num_workers, world_size=1)
         assert ("fewer samples than the epoch asks" in capsys.readouterr().err) is expect_warning
 
+    @pytest.mark.parametrize(
+        ("batch_size", "expect_warning"),
+        [
+            # 24 samples / 2 workers = 12, floored to a multiple of 5 -> 10: 4 samples (16.7%) never seen.
+            pytest.param(5, True, id="floors-away-more-than-the-threshold-warns"),
+            # window=1 never has a remainder to floor away.
+            pytest.param(1, False, id="no-remainder-is-quiet"),
+        ],
+    )
+    def test_epoch_floor_loss_is_reported(
+        self, tmp_path: Path, capsys: Any, batch_size: int, expect_warning: bool
+    ) -> None:
+        """Flooring the fixed epoch to a whole accumulation window can silently drop a chunk of the split.
+
+        Regression test: unlike the map-style loader (which pads to the same boundary),
+        plan_samples_per_worker floors, so a split not already an exact multiple of
+        batch_size * grad_accum_steps * slots is never seen in full, every epoch, with no warning before this.
+        """
+        dataset = WebDatasetDetection(_pack(tmp_path, count=24, subdir="ep"), "train", transforms=None)
+        capsys.readouterr()
+        build_webdataset_loader(dataset, batch_size=batch_size, collate_fn=_count_collate, num_workers=2, world_size=1)
+        assert ("never seen this epoch" in capsys.readouterr().err) is expect_warning
+
     def test_skew_warning_uses_real_per_shard_counts_not_shard_count_alone(self, tmp_path: Path, capsys: Any) -> None:
         """Regression test: shards are cut by byte size, so a count-only estimate can miss a real skew entirely.
 
@@ -1081,6 +1104,20 @@ class TestBuildWebdataset:
     def test_missing_shard_directory_is_reported(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="does not exist"):
             build_webdataset("train", self._namespace(tmp_path / "absent"), 224)
+
+    def test_missing_train_index_names_itself_not_the_requested_split(self, tmp_path: Path) -> None:
+        """Evaluating a shard directory with no packed 'train' split names the real gap, not 'val'.
+
+        Regression test: adopting the train split's label space for any non-train split unconditionally reads
+        the 'train' index, so a shard directory that only ever packed 'val' used to fail with "No WebDataset
+        index for split 'train'" while the caller asked to evaluate 'val' -- reading as though 'train' were the
+        requested split rather than a prerequisite for evaluating the one that was.
+        """
+        image_dir, annotations = _build_coco_split(tmp_path, count=2)
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split="val")
+        with pytest.raises(WebDatasetSplitUnavailableError, match="needs a packed 'train' index"):
+            build_webdataset("val", self._namespace(shard_dir), 224)
 
     def test_keypoint_training_is_rejected_with_a_pointer_to_the_other_formats(self, tmp_path: Path) -> None:
         shard_dir = _pack(tmp_path, count=2)
