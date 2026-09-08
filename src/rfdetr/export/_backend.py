@@ -39,10 +39,10 @@ class _ExportableModule(Protocol):
 def _switch_to_export_mode(model: nn.Module) -> None:
     """Switch *model* into its export-friendly forward, if it exposes one.
 
-    Shared by the ExecuTorch, CoreML, and OpenVINO dispatch functions below -- each consumes a
-    ``torch.export``/``convert_model`` graph directly and needs the same zero-arg mode switch the
-    ONNX path performs inside ``export_onnx`` instead. A model without a callable ``export``
-    attribute (e.g. a plain ``nn.Module`` in a unit test) is left untouched rather than raising.
+    Shared by the ONNX exporter (``export_onnx``) and the ExecuTorch, CoreML, and OpenVINO dispatch
+    functions below, so every export path switches through one guarded choke point. A model without a
+    callable ``export`` attribute (e.g. a plain ``nn.Module`` in a unit test) is left untouched rather
+    than raising.
 
     Switching a module that is already in export mode is a no-op here, because it is *not* a no-op in
     the models: :meth:`rfdetr.models.lwdetr.LWDETR.export`,
@@ -483,7 +483,7 @@ def _export_openvino_format(
         )
         raise
     # OpenVINO's convert_model traces the model directly, so switch it into its export-friendly
-    # forward here (the ONNX path does this inside export_onnx; ExecuTorch/CoreML do it above).
+    # forward here (the ONNX path does this inside export_onnx, through the same guarded helper).
     _switch_to_export_mode(model)
     output_file = export_openvino(
         model=model,
