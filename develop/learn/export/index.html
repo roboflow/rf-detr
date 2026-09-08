@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and native CoreML (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
+        <meta name="description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
       
       
         <meta name="author" content="Roboflow">
@@ -87,7 +87,7 @@
   
   
   <meta property="og:title" content="Export Model - RF-DETR">
-  <meta property="og:description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and native CoreML (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
+  <meta property="og:description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/learn/export/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
@@ -98,21 +98,21 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
   <meta name="twitter:title" content="Export Model - RF-DETR">
-  <meta name="twitter:description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and native CoreML (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
+  <meta name="twitter:description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
   
   
   
   
-  <meta property="article:modified_time" content="2026-09-07T14:21:37">
+  <meta property="article:modified_time" content="2026-09-08T07:31:42">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "Export Model",
-    "description": "Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and native CoreML (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.",
+    "description": "Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.",
     "url": "https://rfdetr.roboflow.com/develop/learn/export/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-07T14:21:37",
+    "dateModified": "2026-09-08T07:31:42",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1583,6 +1583,100 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#openvino-ir-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO IR Export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenVINO IR Export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#basic-openvino-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic OpenVINO Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-export-with-custom-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Export with Custom Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-export-with-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Export with Precision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-inference-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Inference Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmark-openvino-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark OpenVINO Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-model-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Model Outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#executorch-export" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1595,7 +1689,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#prerequisites_2" class="md-nav__link">
+  <a href="#prerequisites_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         Prerequisites
@@ -1678,7 +1772,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#prerequisites_3" class="md-nav__link">
+  <a href="#prerequisites_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         Prerequisites
@@ -3123,6 +3217,100 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#openvino-ir-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO IR Export
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="OpenVINO IR Export">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prerequisites_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#basic-openvino-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic OpenVINO Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-export-with-custom-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Export with Custom Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-export-with-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Export with Precision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-inference-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Inference Example
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmark-openvino-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark OpenVINO Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-model-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO Model Outputs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#executorch-export" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3135,7 +3323,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#prerequisites_2" class="md-nav__link">
+  <a href="#prerequisites_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         Prerequisites
@@ -3218,7 +3406,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#prerequisites_3" class="md-nav__link">
+  <a href="#prerequisites_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         Prerequisites
@@ -3330,6 +3518,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Key Takeaways</p>
 <ul>
 <li>Export to ONNX for cross-platform inference with ONNX Runtime, OpenVINO, or TensorRT</li>
+<li>Export to OpenVINO IR for optimized inference on CPU (x86, ARM), GPU (Intel integrated &amp; discrete GPU) and AI accelerators (Intel NPU)</li>
 <li>Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment</li>
 <li>TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)</li>
 <li>INT8 quantization is dynamic-range and needs no calibration data</li>
@@ -3338,20 +3527,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Export directly to native CoreML (<code>.mlpackage</code>) for Xcode / Apple-platform deployment — see <a href="#native-coreml-export-mlpackage">Native CoreML Export</a></li>
 </ul>
 </div>
-<p>RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, and native CoreML formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.</p>
+<p>RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.</p>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <p>Install the export dependencies you need:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># ONNX export only</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[onnx]"</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># TFLite export</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[tflite]"</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># OpenVINO IR export</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[openvino]"</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># ExecuTorch export (on-device inference: XNNPACK/CoreML/QNN)</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[executorch]"</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># TFLite export</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[tflite]"</span>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Native CoreML export (.mlpackage; macOS only)</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreml]"</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># ExecuTorch export (on-device inference: XNNPACK/CoreML/QNN)</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[executorch]"</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="c1"># Native CoreML export (.mlpackage; macOS only)</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreml]"</span>
 </span></code></pre></div>
 <h2 id="basic-export">Basic Export<a class="headerlink" href="#basic-export" title="Permanent link">&para;</a></h2>
 <p>Export your trained model to ONNX format:</p>
@@ -3395,7 +3587,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>format</code></td>
 <td><code>"onnx"</code></td>
-<td>Export format: <code>"onnx"</code>, <code>"tflite"</code>, <code>"tensorrt"</code> (alias: <code>"trt"</code>), <code>"executorch"</code>, or <code>"coreml"</code>.</td>
+<td>Export format: <code>"onnx"</code>, <code>"tflite"</code>, <code>"tensorrt"</code> (alias: <code>"trt"</code>), <code>"executorch"</code>, <code>"openvino"</code> or <code>"coreml"</code>.</td>
 </tr>
 <tr>
 <td><code>quantization</code></td>
@@ -3478,6 +3670,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>Compute precision for <code>format="coreml"</code>: <code>None</code>/<code>"float32"</code> (tight CPU parity with eager PyTorch) or <code>"float16"</code> (smaller, ANE-oriented bundle). Ignored for every other format.</td>
 </tr>
 <tr>
+<td><code>openvino_precision</code></td>
+<td><code>None</code></td>
+<td>IR <em>storage</em> weight precision for <code>format="openvino"</code>: <code>None</code>/<code>"float16"</code> (OpenVINO's default FP16 weight compression) or <code>"float32"</code> (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename.</td>
+</tr>
+<tr>
 <td><code>output_name</code></td>
 <td><code>None</code></td>
 <td>Full filename override (without extension). Takes precedence over the model's variant name and suppresses the <code>_fp32</code>/<code>_fp16</code>/<code>_{backend}</code> detail suffix — see <a href="#output-files">Output Files</a>.</td>
@@ -3545,10 +3742,15 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>{variant}_fp32.tflite</code> + <code>{variant}_fp16.tflite</code> (+ <code>{variant}_dynamic_range_quant.tflite</code> for <code>quantization="int8"</code>)</td>
 <td>precision / quantization mode</td>
 </tr>
+<tr>
+<td><code>openvino</code></td>
+<td><code>{variant}.xml</code> + <code>{variant}.bin</code> (or <code>{variant}-backbone.xml</code>/<code>.bin</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>inference_model.xml</code>/<code>.bin</code> (or <code>backbone_model.xml</code>/<code>.bin</code> if <code>backbone_only=True</code>)</td>
+<td>none — <code>openvino_precision</code> controls IR weight compression, not the filename</td>
+</tr>
 </tbody>
 </table>
 <p>Pass <code>output_name="my-model"</code> to override the variant name and write <code>{output_name}.{ext}</code> verbatim — this suppresses the detail suffix for every format <strong>except</strong> <code>tflite</code>, which always writes multiple files and so keeps its <code>_fp32</code>/<code>_fp16</code>/<code>_dynamic_range_quant</code> suffix even with a custom name (<code>{output_name}_fp32.tflite</code>, etc.).</p>
-<p>With <code>backbone_only=True</code>, ONNX, CoreML, ExecuTorch, and TensorRT retain a <code>-backbone</code> marker before the extension even when <code>output_name</code> is set, for example <code>my-model-backbone.onnx</code>. This distinguishes the backbone artifact from the full detector exported with the same name.</p>
+<p>With <code>backbone_only=True</code>, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a <code>-backbone</code> marker before the extension even when <code>output_name</code> is set, for example <code>my-model-backbone.onnx</code>. This distinguishes the backbone artifact from the full detector exported with the same name.</p>
 <h2 id="optional-convert-onnx-to-tensorrt">Optional: Convert ONNX to TensorRT<a class="headerlink" href="#optional-convert-onnx-to-tensorrt" title="Permanent link">&para;</a></h2>
 <p>If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX model to a TensorRT engine.</p>
 <blockquote>
@@ -3771,6 +3973,107 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-17-44"><a id="__codelineno-17-44" name="__codelineno-17-44" href="#__codelineno-17-44"></a><span class="n">boxes</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">boxes_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">])</span>
 </span><span id="__span-17-45"><a id="__codelineno-17-45" name="__codelineno-17-45" href="#__codelineno-17-45"></a><span class="n">labels</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">labels_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">])</span>
 </span></code></pre></div>
+<h2 id="openvino-ir-export">OpenVINO IR Export<a class="headerlink" href="#openvino-ir-export" title="Permanent link">&para;</a></h2>
+<p>OpenVINO IR (Intermediate Representation) is a proprietary model format used by the OpenVINO Toolkit to optimize and deploy deep learning models.</p>
+<h3 id="prerequisites_2">Prerequisites<a class="headerlink" href="#prerequisites_2" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[openvino]"</span>
+</span></code></pre></div>
+<h3 id="basic-openvino-export">Basic OpenVINO Export<a class="headerlink" href="#basic-openvino-export" title="Permanent link">&para;</a></h3>
+<div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">Object Detection</label><label for="__tabbed_3_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<p>This produces two files (named after the model's variant):</p>
+<ul>
+<li><code>output/&lt;model-variant&gt;.xml</code> - The model structure (Intermediate Representation)</li>
+<li><code>output/&lt;model-variant&gt;.bin</code> - The model weights</li>
+</ul>
+<h3 id="openvino-export-with-custom-resolution">OpenVINO Export with Custom Resolution<a class="headerlink" href="#openvino-export-with-custom-resolution" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">608</span><span class="p">,</span> <span class="mi">608</span><span class="p">))</span>
+</span></code></pre></div>
+<h3 id="openvino-export-with-precision">OpenVINO Export with Precision<a class="headerlink" href="#openvino-export-with-precision" title="Permanent link">&para;</a></h3>
+<p>OpenVINO export defaults to FP16 weight compression. Pass <code>openvino_precision="float32"</code> to keep the stored IR weights at full precision (larger file, no compression) — this controls IR <em>storage</em> precision only; actual execution precision still depends on the compiled device (<code>CPU</code>/<code>GPU</code>/<code>NPU</code>), so parity with the eager PyTorch model is not guaranteed on every device:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">,</span> <span class="n">openvino_precision</span><span class="o">=</span><span class="s2">"float32"</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="openvino-inference-example">OpenVINO Inference Example<a class="headerlink" href="#openvino-inference-example" title="Permanent link">&para;</a></h3>
+<div class="admonition warning">
+<p class="admonition-title">The input array must be float32 and contiguous</p>
+<p><code>infer()</code> validates this at the boundary and raises <code>ValueError</code> if violated, but a resize step that diverges from <code>predict()</code>'s own preprocessing (e.g. PIL's default <code>Image.resize()</code>, which resamples with bicubic) will still silently produce different — not obviously wrong — detections. Use <code>torchvision.transforms.functional.resize(..., antialias=False)</code> as below to match <code>predict()</code>'s antialias-free bilinear resize exactly.</p>
+</div>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._openvino.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenVINOInference</span>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="c1"># Load the exported model</span>
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="n">model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span><span class="s2">"output/rfdetr-medium.xml"</span><span class="p">)</span>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="c1"># Prepare input image (NCHW format, ImageNet normalized) — matches predict()'s own preprocessing</span>
+</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="mi">576</span><span class="p">,</span> <span class="mi">576</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>
+</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
+</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
+</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
+</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a>
+</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="c1"># Convert to NCHW format</span>
+</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a>
+</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="c1"># Run inference</span>
+</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">image_array</span><span class="p">)</span>
+</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span>  <span class="c1"># boxes: normalized cxcywh (center_x, center_y, width, height), not xywh</span>
+</span></code></pre></div>
+<h3 id="benchmark-openvino-model">Benchmark OpenVINO Model<a class="headerlink" href="#benchmark-openvino-model" title="Permanent link">&para;</a></h3>
+<p>Use OpenVINO's <code>benchmark_app</code> tool to measure performance:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>benchmark_app<span class="w"> </span>-m<span class="w"> </span>output/rfdetr-medium.xml<span class="w"> </span>-data_shape<span class="w"> </span><span class="o">[</span><span class="m">1</span>,3,576,576<span class="o">]</span>
+</span></code></pre></div>
+<h3 id="openvino-model-outputs">OpenVINO Model Outputs<a class="headerlink" href="#openvino-model-outputs" title="Permanent link">&para;</a></h3>
+<p>The exported OpenVINO IR model produces the following outputs:</p>
+<ul>
+<li>
+<p><strong>Object Detection Models</strong>:</p>
+<ul>
+<li>Output 0: Bounding boxes <code>[batch, 300, 4]</code> — normalized <code>cxcywh</code> (center_x, center_y, width, height), not top-left <code>xywh</code></li>
+<li>Output 1: Class logits <code>[batch, 300, num_classes]</code></li>
+</ul>
+</li>
+<li>
+<p><strong>Segmentation Models</strong>:</p>
+<ul>
+<li>Output 0: Bounding boxes <code>[batch, 300, 4]</code></li>
+<li>Output 1: Class logits <code>[batch, 300, num_classes]</code></li>
+<li>Output 2: Instance masks (if segmentation head is present)</li>
+</ul>
+</li>
+<li>
+<p><strong>Keypoint Models</strong>:</p>
+<ul>
+<li>Output 0: Bounding boxes <code>[batch, 300, 4]</code></li>
+<li>Output 1: Class logits <code>[batch, 300, num_classes]</code></li>
+<li>Output 2: Keypoints (if keypoint head is present)</li>
+</ul>
+</li>
+</ul>
 <h2 id="executorch-export">ExecuTorch Export<a class="headerlink" href="#executorch-export" title="Permanent link">&para;</a></h2>
 <div class="admonition warning">
 <p class="admonition-title">Experimental — Use with Caution</p>
@@ -3783,27 +4086,27 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 </div>
 <p>ExecuTorch is PyTorch's on-device inference runtime. Unlike ONNX export, the model is exported directly via <code>torch.export</code> to a portable <code>.pte</code> binary — no intermediate ONNX conversion step is involved.</p>
-<h3 id="prerequisites_2">Prerequisites<a class="headerlink" href="#prerequisites_2" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[executorch]"</span>
+<h3 id="prerequisites_3">Prerequisites<a class="headerlink" href="#prerequisites_3" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[executorch]"</span>
 </span></code></pre></div>
 <h3 id="xnnpack-backend-portable-cpu-fp32">XNNPACK Backend (Portable CPU, fp32)<a class="headerlink" href="#xnnpack-backend-portable-cpu-fp32" title="Permanent link">&para;</a></h3>
 <p>The <code>"xnnpack"</code> backend targets any CPU platform and runs in fp32. It is the recommended, portable backend and requires only the standard <code>rfdetr[executorch]</code> wheel. <code>backend</code> has no default — it must always be passed explicitly for <code>format="executorch"</code>.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="3:2"><input checked="checked" id="__tabbed_3_1" name="__tabbed_3" type="radio" /><input id="__tabbed_3_2" name="__tabbed_3" type="radio" /><div class="tabbed-labels"><label for="__tabbed_3_1">Object Detection</label><label for="__tabbed_3_2">Image Segmentation</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="4:2"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">Object Detection</label><label for="__tabbed_4_2">Image Segmentation</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"xnnpack"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>
+</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"xnnpack"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"xnnpack"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
+</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>
+</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>
+</span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"xnnpack"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
@@ -3815,13 +4118,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>This is the ExecuTorch delegate — <code>format="executorch", backend="coreml"</code> — which produces a <code>.pte</code> file for the ExecuTorch runtime. It is distinct from <code>format="coreml"</code>, which produces a native <code>.mlpackage</code> directly (no ExecuTorch runtime involved); see <a href="#native-coreml-export-mlpackage">Native CoreML Export</a> below.</p>
 </div>
 <p>The <code>"coreml"</code> backend targets Apple devices (iPhone, iPad, Mac) and runs in fp16 on the Neural Engine. It requires <code>coremltools</code>, which is <strong>not</strong> included in the <code>rfdetr[executorch]</code> extra — install it separately:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>pip<span class="w"> </span>install<span class="w"> </span>coremltools
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>pip<span class="w"> </span>install<span class="w"> </span>coremltools
 </span></code></pre></div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
-</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
-</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>
-</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>
+</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a>
+</span><span id="__span-29-5"><a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -3829,11 +4132,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <h3 id="qnn-backend-qualcomm-snapdragon-htp-fp16">QNN Backend (Qualcomm Snapdragon HTP, fp16)<a class="headerlink" href="#qnn-backend-qualcomm-snapdragon-htp-fp16" title="Permanent link">&para;</a></h3>
 <p>The <code>"qnn"</code> backend targets the Qualcomm AI Engine (HTP) on Snapdragon SoCs and runs in fp16. It <strong>requires a source build</strong> of ExecuTorch against the QAIRT SDK and cannot be installed via <code>pip</code>.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"qnn"</span><span class="p">,</span> <span class="n">soc</span><span class="o">=</span><span class="s2">"SM8650"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>
+</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"qnn"</span><span class="p">,</span> <span class="n">soc</span><span class="o">=</span><span class="s2">"SM8650"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The <code>soc</code> parameter is required for QNN and must be a <code>QcomChipset</code> name matching your target device. For example, <code>"SM8650"</code> targets the Snapdragon 8 Gen 3. This produces <code>output/rfdetr-medium_qnn_SM8650.pte</code> — the SoC is baked into the filename (not just the backend) since a QNN <code>.pte</code> is compiled ahead-of-time for one specific chip and will not run on another.</p>
 <div class="admonition warning">
@@ -3854,31 +4157,31 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">The input tensor must be contiguous</p>
 <p>The ExecuTorch runtime reads the input buffer as contiguous NCHW and ignores tensor strides. Preprocessing steps that permute axes — <code>np.transpose</code>, <code>Tensor.permute</code>, torchvision's <code>ToImage</code> — return a strided view rather than a copy, and such a view is misread as a scrambled image. Nothing errors: the model runs without error and returns plausible-shaped output, but every detection's score collapses below threshold. Finish preprocessing with <code>np.ascontiguousarray(...)</code> (or <code>Tensor.contiguous()</code>) before calling <code>execute</code>.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">executorch.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">Runtime</span>
-</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
-</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>
-</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="c1"># Load the exported .pte program</span>
-</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="n">runtime</span> <span class="o">=</span> <span class="n">Runtime</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
-</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="n">method</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">load_program</span><span class="p">(</span><span class="s2">"output/rfdetr-medium_xnnpack.pte"</span><span class="p">)</span><span class="o">.</span><span class="n">load_method</span><span class="p">(</span><span class="s2">"forward"</span><span class="p">)</span>
-</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>
-</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a><span class="c1"># Prepare input — the .pte expects the same NCHW, ImageNet-normalized input as the ONNX export</span>
-</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="mi">576</span><span class="p">,</span> <span class="mi">576</span>
-</span><span id="__span-24-12"><a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-</span><span id="__span-24-13"><a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
-</span><span id="__span-24-14"><a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-24-15"><a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a>
-</span><span id="__span-24-16"><a id="__codelineno-24-16" name="__codelineno-24-16" href="#__codelineno-24-16"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
-</span><span id="__span-24-17"><a id="__codelineno-24-17" name="__codelineno-24-17" href="#__codelineno-24-17"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
-</span><span id="__span-24-18"><a id="__codelineno-24-18" name="__codelineno-24-18" href="#__codelineno-24-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
-</span><span id="__span-24-19"><a id="__codelineno-24-19" name="__codelineno-24-19" href="#__codelineno-24-19"></a>
-</span><span id="__span-24-20"><a id="__codelineno-24-20" name="__codelineno-24-20" href="#__codelineno-24-20"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>  <span class="c1"># add batch dimension: (1, 3, H, W)</span>
-</span><span id="__span-24-21"><a id="__codelineno-24-21" name="__codelineno-24-21" href="#__codelineno-24-21"></a><span class="n">input_tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">image_array</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
-</span><span id="__span-24-22"><a id="__codelineno-24-22" name="__codelineno-24-22" href="#__codelineno-24-22"></a>
-</span><span id="__span-24-23"><a id="__codelineno-24-23" name="__codelineno-24-23" href="#__codelineno-24-23"></a><span class="c1"># Run inference</span>
-</span><span id="__span-24-24"><a id="__codelineno-24-24" name="__codelineno-24-24" href="#__codelineno-24-24"></a><span class="n">outputs</span> <span class="o">=</span> <span class="n">method</span><span class="o">.</span><span class="n">execute</span><span class="p">([</span><span class="n">input_tensor</span><span class="p">])</span>
-</span><span id="__span-24-25"><a id="__codelineno-24-25" name="__codelineno-24-25" href="#__codelineno-24-25"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">executorch.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">Runtime</span>
+</span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+</span><span id="__span-31-5"><a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>
+</span><span id="__span-31-6"><a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a><span class="c1"># Load the exported .pte program</span>
+</span><span id="__span-31-7"><a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="n">runtime</span> <span class="o">=</span> <span class="n">Runtime</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+</span><span id="__span-31-8"><a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="n">method</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">load_program</span><span class="p">(</span><span class="s2">"output/rfdetr-medium_xnnpack.pte"</span><span class="p">)</span><span class="o">.</span><span class="n">load_method</span><span class="p">(</span><span class="s2">"forward"</span><span class="p">)</span>
+</span><span id="__span-31-9"><a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a>
+</span><span id="__span-31-10"><a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a><span class="c1"># Prepare input — the .pte expects the same NCHW, ImageNet-normalized input as the ONNX export</span>
+</span><span id="__span-31-11"><a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="mi">576</span><span class="p">,</span> <span class="mi">576</span>
+</span><span id="__span-31-12"><a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+</span><span id="__span-31-13"><a id="__codelineno-31-13" name="__codelineno-31-13" href="#__codelineno-31-13"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span><span id="__span-31-14"><a id="__codelineno-31-14" name="__codelineno-31-14" href="#__codelineno-31-14"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-31-15"><a id="__codelineno-31-15" name="__codelineno-31-15" href="#__codelineno-31-15"></a>
+</span><span id="__span-31-16"><a id="__codelineno-31-16" name="__codelineno-31-16" href="#__codelineno-31-16"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
+</span><span id="__span-31-17"><a id="__codelineno-31-17" name="__codelineno-31-17" href="#__codelineno-31-17"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
+</span><span id="__span-31-18"><a id="__codelineno-31-18" name="__codelineno-31-18" href="#__codelineno-31-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
+</span><span id="__span-31-19"><a id="__codelineno-31-19" name="__codelineno-31-19" href="#__codelineno-31-19"></a>
+</span><span id="__span-31-20"><a id="__codelineno-31-20" name="__codelineno-31-20" href="#__codelineno-31-20"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>  <span class="c1"># add batch dimension: (1, 3, H, W)</span>
+</span><span id="__span-31-21"><a id="__codelineno-31-21" name="__codelineno-31-21" href="#__codelineno-31-21"></a><span class="n">input_tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">image_array</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+</span><span id="__span-31-22"><a id="__codelineno-31-22" name="__codelineno-31-22" href="#__codelineno-31-22"></a>
+</span><span id="__span-31-23"><a id="__codelineno-31-23" name="__codelineno-31-23" href="#__codelineno-31-23"></a><span class="c1"># Run inference</span>
+</span><span id="__span-31-24"><a id="__codelineno-31-24" name="__codelineno-31-24" href="#__codelineno-31-24"></a><span class="n">outputs</span> <span class="o">=</span> <span class="n">method</span><span class="o">.</span><span class="n">execute</span><span class="p">([</span><span class="n">input_tensor</span><span class="p">])</span>
+</span><span id="__span-31-25"><a id="__codelineno-31-25" name="__codelineno-31-25" href="#__codelineno-31-25"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
 </span></code></pre></div>
 <h2 id="native-coreml-export-mlpackage">Native CoreML Export (<code>.mlpackage</code>)<a class="headerlink" href="#native-coreml-export-mlpackage" title="Permanent link">&para;</a></h2>
 <div class="admonition warning">
@@ -3890,26 +4193,26 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><code>format="coreml"</code> exports directly via <code>torch.export</code> + <code>coremltools</code> to a native <code>.mlpackage</code> (mlprogram, iOS 16+) — no ONNX and no ExecuTorch runtime involved. This is distinct from <a href="#coreml-backend-apple-neural-engine-fp16"><code>format="executorch", backend="coreml"</code></a>, which produces a <code>.pte</code> file for the ExecuTorch runtime. Passing both <code>format="coreml"</code> and <code>backend="coreml"</code> together does not fall through to the ExecuTorch delegate — <code>backend</code> is ignored (with a warning) and the native <code>.mlpackage</code> path always runs.</p>
 </div>
 <p>RF-DETR's native CoreML export produces a <code>.mlpackage</code> you can drag directly into Xcode, with no ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction path for Apple-native (iOS / macOS) developers.</p>
-<h3 id="prerequisites_3">Prerequisites<a class="headerlink" href="#prerequisites_3" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreml]"</span>
+<h3 id="prerequisites_4">Prerequisites<a class="headerlink" href="#prerequisites_4" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreml]"</span>
 </span></code></pre></div>
 <h3 id="basic-coreml-export">Basic CoreML Export<a class="headerlink" href="#basic-coreml-export" title="Permanent link">&para;</a></h3>
-<div class="tabbed-set tabbed-alternate" data-tabs="4:2"><input checked="checked" id="__tabbed_4_1" name="__tabbed_4" type="radio" /><input id="__tabbed_4_2" name="__tabbed_4" type="radio" /><div class="tabbed-labels"><label for="__tabbed_4_1">Object Detection</label><label for="__tabbed_4_2">Image Segmentation</label></div>
+<div class="tabbed-set tabbed-alternate" data-tabs="5:2"><input checked="checked" id="__tabbed_5_1" name="__tabbed_5" type="radio" /><input id="__tabbed_5_2" name="__tabbed_5" type="radio" /><div class="tabbed-labels"><label for="__tabbed_5_1">Object Detection</label><label for="__tabbed_5_2">Image Segmentation</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>
-</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
-</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>
-</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>
+</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>
+</span><span id="__span-33-5"><a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
-</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>
-</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
-</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>
-</span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
+</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>
+</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-34-4"><a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>
+</span><span id="__span-34-5"><a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
 </span></code></pre></div>
 </div>
 </div>
@@ -3917,34 +4220,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>This produces <code>output/rfdetr-medium_fp32.mlpackage</code> — the file is named after the model variant plus the resolved precision (<code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code>), not a generic <code>inference_model_fp32.mlpackage</code>. The precision is always encoded, even at its default value, since fp16 vs fp32 materially changes the bundle.</p>
 <h3 id="compute-precision">Compute Precision<a class="headerlink" href="#compute-precision" title="Permanent link">&para;</a></h3>
 <p>CoreML export defaults to <code>FLOAT32</code> for tight CPU parity with eager PyTorch. Pass <code>coreml_precision="float16"</code> for a smaller, ANE-oriented bundle (expect larger numeric drift) — this also changes the output filename to <code>output/rfdetr-medium_fp16.mlpackage</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">,</span> <span class="n">coreml_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">,</span> <span class="n">coreml_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">)</span>
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>Output tensor names in the saved <code>.mlpackage</code> spec are coremltools-inferred, not renamed to <code>dets</code>/<code>labels</code>/etc. — match outputs by <strong>position</strong>, in the same order as the ONNX <code>output_names</code> contract (<code>dets, labels</code> for detection; <code>dets, labels, masks</code> for segmentation).</p>
 </div>
 <h3 id="coreml-inference-example">CoreML Inference Example<a class="headerlink" href="#coreml-inference-example" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">coremltools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ct</span>
-</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
-</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-29-5"><a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a>
-</span><span id="__span-29-6"><a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a><span class="n">mlmodel</span> <span class="o">=</span> <span class="n">ct</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">MLModel</span><span class="p">(</span><span class="s2">"output/rfdetr-medium_fp32.mlpackage"</span><span class="p">)</span>
-</span><span id="__span-29-7"><a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a>
-</span><span id="__span-29-8"><a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="mi">576</span><span class="p">,</span> <span class="mi">576</span>
-</span><span id="__span-29-9"><a id="__codelineno-29-9" name="__codelineno-29-9" href="#__codelineno-29-9"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-</span><span id="__span-29-10"><a id="__codelineno-29-10" name="__codelineno-29-10" href="#__codelineno-29-10"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
-</span><span id="__span-29-11"><a id="__codelineno-29-11" name="__codelineno-29-11" href="#__codelineno-29-11"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-29-12"><a id="__codelineno-29-12" name="__codelineno-29-12" href="#__codelineno-29-12"></a>
-</span><span id="__span-29-13"><a id="__codelineno-29-13" name="__codelineno-29-13" href="#__codelineno-29-13"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
-</span><span id="__span-29-14"><a id="__codelineno-29-14" name="__codelineno-29-14" href="#__codelineno-29-14"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
-</span><span id="__span-29-15"><a id="__codelineno-29-15" name="__codelineno-29-15" href="#__codelineno-29-15"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
-</span><span id="__span-29-16"><a id="__codelineno-29-16" name="__codelineno-29-16" href="#__codelineno-29-16"></a>
-</span><span id="__span-29-17"><a id="__codelineno-29-17" name="__codelineno-29-17" href="#__codelineno-29-17"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>  <span class="c1"># add batch dimension: (1, 3, H, W)</span>
-</span><span id="__span-29-18"><a id="__codelineno-29-18" name="__codelineno-29-18" href="#__codelineno-29-18"></a>
-</span><span id="__span-29-19"><a id="__codelineno-29-19" name="__codelineno-29-19" href="#__codelineno-29-19"></a><span class="c1"># Outputs are positional (see the precision note above) — dets, labels, in that order.</span>
-</span><span id="__span-29-20"><a id="__codelineno-29-20" name="__codelineno-29-20" href="#__codelineno-29-20"></a><span class="n">outputs</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">mlmodel</span><span class="o">.</span><span class="n">predict</span><span class="p">({</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)})</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
-</span><span id="__span-29-21"><a id="__codelineno-29-21" name="__codelineno-29-21" href="#__codelineno-29-21"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">coremltools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ct</span>
+</span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+</span><span id="__span-36-4"><a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-36-5"><a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a>
+</span><span id="__span-36-6"><a id="__codelineno-36-6" name="__codelineno-36-6" href="#__codelineno-36-6"></a><span class="n">mlmodel</span> <span class="o">=</span> <span class="n">ct</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">MLModel</span><span class="p">(</span><span class="s2">"output/rfdetr-medium_fp32.mlpackage"</span><span class="p">)</span>
+</span><span id="__span-36-7"><a id="__codelineno-36-7" name="__codelineno-36-7" href="#__codelineno-36-7"></a>
+</span><span id="__span-36-8"><a id="__codelineno-36-8" name="__codelineno-36-8" href="#__codelineno-36-8"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="mi">576</span><span class="p">,</span> <span class="mi">576</span>
+</span><span id="__span-36-9"><a id="__codelineno-36-9" name="__codelineno-36-9" href="#__codelineno-36-9"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+</span><span id="__span-36-10"><a id="__codelineno-36-10" name="__codelineno-36-10" href="#__codelineno-36-10"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span><span id="__span-36-11"><a id="__codelineno-36-11" name="__codelineno-36-11" href="#__codelineno-36-11"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-36-12"><a id="__codelineno-36-12" name="__codelineno-36-12" href="#__codelineno-36-12"></a>
+</span><span id="__span-36-13"><a id="__codelineno-36-13" name="__codelineno-36-13" href="#__codelineno-36-13"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
+</span><span id="__span-36-14"><a id="__codelineno-36-14" name="__codelineno-36-14" href="#__codelineno-36-14"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
+</span><span id="__span-36-15"><a id="__codelineno-36-15" name="__codelineno-36-15" href="#__codelineno-36-15"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
+</span><span id="__span-36-16"><a id="__codelineno-36-16" name="__codelineno-36-16" href="#__codelineno-36-16"></a>
+</span><span id="__span-36-17"><a id="__codelineno-36-17" name="__codelineno-36-17" href="#__codelineno-36-17"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>  <span class="c1"># add batch dimension: (1, 3, H, W)</span>
+</span><span id="__span-36-18"><a id="__codelineno-36-18" name="__codelineno-36-18" href="#__codelineno-36-18"></a>
+</span><span id="__span-36-19"><a id="__codelineno-36-19" name="__codelineno-36-19" href="#__codelineno-36-19"></a><span class="c1"># Outputs are positional (see the precision note above) — dets, labels, in that order.</span>
+</span><span id="__span-36-20"><a id="__codelineno-36-20" name="__codelineno-36-20" href="#__codelineno-36-20"></a><span class="n">outputs</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">mlmodel</span><span class="o">.</span><span class="n">predict</span><span class="p">({</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)})</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+</span><span id="__span-36-21"><a id="__codelineno-36-21" name="__codelineno-36-21" href="#__codelineno-36-21"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
 </span></code></pre></div>
 <h2 id="using-the-exported-model">Using the Exported Model<a class="headerlink" href="#using-the-exported-model" title="Permanent link">&para;</a></h2>
 <p>Once exported, you can use the ONNX model with various inference frameworks:</p>
@@ -3958,73 +4261,73 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Choose the background slot from the checkpoint layout</p>
 <p>The tensor width does not identify the background slot, and the layout depends on how categories were mapped during training, not simply on whether the checkpoint is fine-tuned. Checkpoints trained with contiguous 0-based category IDs — the common case for custom/Roboflow datasets — and active-first keypoint checkpoints use the final slot (index <code>-1</code>) as background. Checkpoints trained directly on sparse COCO category IDs — including the official pretrained weights — retain every slot with <code>background_class_id=None</code>, since a real foreground category (90 for official COCO) occupies the final slot. Legacy background-first keypoint checkpoints use slot <code>0</code>. The ONNX and TFLite <code>_run_inference</code> reference helpers expose this choice explicitly and default to <code>-1</code> for backward compatibility.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
-</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
-</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>
-</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a><span class="c1"># Load the ONNX model</span>
-</span><span id="__span-30-7"><a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a><span class="n">session</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
-</span><span id="__span-30-8"><a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a>
-</span><span id="__span-30-9"><a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a><span class="c1"># Prepare input image</span>
-</span><span id="__span-30-10"><a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">4</span><span class="p">]</span>
-</span><span id="__span-30-11"><a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-</span><span id="__span-30-12"><a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
-</span><span id="__span-30-13"><a id="__codelineno-30-13" name="__codelineno-30-13" href="#__codelineno-30-13"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-30-14"><a id="__codelineno-30-14" name="__codelineno-30-14" href="#__codelineno-30-14"></a>
-</span><span id="__span-30-15"><a id="__codelineno-30-15" name="__codelineno-30-15" href="#__codelineno-30-15"></a><span class="c1"># Normalize</span>
-</span><span id="__span-30-16"><a id="__codelineno-30-16" name="__codelineno-30-16" href="#__codelineno-30-16"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
-</span><span id="__span-30-17"><a id="__codelineno-30-17" name="__codelineno-30-17" href="#__codelineno-30-17"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
-</span><span id="__span-30-18"><a id="__codelineno-30-18" name="__codelineno-30-18" href="#__codelineno-30-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
-</span><span id="__span-30-19"><a id="__codelineno-30-19" name="__codelineno-30-19" href="#__codelineno-30-19"></a>
-</span><span id="__span-30-20"><a id="__codelineno-30-20" name="__codelineno-30-20" href="#__codelineno-30-20"></a><span class="c1"># Convert to NCHW format</span>
-</span><span id="__span-30-21"><a id="__codelineno-30-21" name="__codelineno-30-21" href="#__codelineno-30-21"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-</span><span id="__span-30-22"><a id="__codelineno-30-22" name="__codelineno-30-22" href="#__codelineno-30-22"></a>
-</span><span id="__span-30-23"><a id="__codelineno-30-23" name="__codelineno-30-23" href="#__codelineno-30-23"></a><span class="c1"># Run inference</span>
-</span><span id="__span-30-24"><a id="__codelineno-30-24" name="__codelineno-30-24" href="#__codelineno-30-24"></a><span class="n">outputs</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="p">})</span>
-</span><span id="__span-30-25"><a id="__codelineno-30-25" name="__codelineno-30-25" href="#__codelineno-30-25"></a>
-</span><span id="__span-30-26"><a id="__codelineno-30-26" name="__codelineno-30-26" href="#__codelineno-30-26"></a><span class="c1"># Match outputs by name — do NOT assume positional order or infer role from shape.</span>
-</span><span id="__span-30-27"><a id="__codelineno-30-27" name="__codelineno-30-27" href="#__codelineno-30-27"></a><span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
-</span><span id="__span-30-28"><a id="__codelineno-30-28" name="__codelineno-30-28" href="#__codelineno-30-28"></a><span class="n">boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-30-29"><a id="__codelineno-30-29" name="__codelineno-30-29" href="#__codelineno-30-29"></a><span class="n">logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-30-30"><a id="__codelineno-30-30" name="__codelineno-30-30" href="#__codelineno-30-30"></a><span class="k">if</span> <span class="n">boxes_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">logits_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-30-31"><a id="__codelineno-30-31" name="__codelineno-30-31" href="#__codelineno-30-31"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Could not find expected outputs 'dets'/'labels'. Available outputs: </span><span class="si">{</span><span class="n">output_names</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</span><span id="__span-30-32"><a id="__codelineno-30-32" name="__codelineno-30-32" href="#__codelineno-30-32"></a>
-</span><span id="__span-30-33"><a id="__codelineno-30-33" name="__codelineno-30-33" href="#__codelineno-30-33"></a><span class="n">boxes_cwh</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">boxes_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># (num_queries, 4) normalized cxcywh</span>
-</span><span id="__span-30-34"><a id="__codelineno-30-34" name="__codelineno-30-34" href="#__codelineno-30-34"></a><span class="n">raw_logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">logits_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
-</span><span id="__span-30-35"><a id="__codelineno-30-35" name="__codelineno-30-35" href="#__codelineno-30-35"></a>
-</span><span id="__span-30-36"><a id="__codelineno-30-36" name="__codelineno-30-36" href="#__codelineno-30-36"></a><span class="c1"># Select this from the checkpoint layout. Use None for official sparse-ID COCO</span>
-</span><span id="__span-30-37"><a id="__codelineno-30-37" name="__codelineno-30-37" href="#__codelineno-30-37"></a><span class="c1"># checkpoints, -1 for contiguous-ID/active-first checkpoints, or 0 for legacy</span>
-</span><span id="__span-30-38"><a id="__codelineno-30-38" name="__codelineno-30-38" href="#__codelineno-30-38"></a><span class="c1"># background-first keypoint checkpoints.</span>
-</span><span id="__span-30-39"><a id="__codelineno-30-39" name="__codelineno-30-39" href="#__codelineno-30-39"></a><span class="n">background_class_id</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
-</span><span id="__span-30-40"><a id="__codelineno-30-40" name="__codelineno-30-40" href="#__codelineno-30-40"></a><span class="n">class_slots</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
-</span><span id="__span-30-41"><a id="__codelineno-30-41" name="__codelineno-30-41" href="#__codelineno-30-41"></a><span class="k">if</span> <span class="n">background_class_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-30-42"><a id="__codelineno-30-42" name="__codelineno-30-42" href="#__codelineno-30-42"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span>
-</span><span id="__span-30-43"><a id="__codelineno-30-43" name="__codelineno-30-43" href="#__codelineno-30-43"></a><span class="k">else</span><span class="p">:</span>
-</span><span id="__span-30-44"><a id="__codelineno-30-44" name="__codelineno-30-44" href="#__codelineno-30-44"></a>    <span class="n">num_slots</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-</span><span id="__span-30-45"><a id="__codelineno-30-45" name="__codelineno-30-45" href="#__codelineno-30-45"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="o">-</span><span class="n">num_slots</span> <span class="o">&lt;=</span> <span class="n">background_class_id</span> <span class="o">&lt;</span> <span class="n">num_slots</span><span class="p">:</span>
-</span><span id="__span-30-46"><a id="__codelineno-30-46" name="__codelineno-30-46" href="#__codelineno-30-46"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"background_class_id must index one of </span><span class="si">{</span><span class="n">num_slots</span><span class="si">}</span><span class="s2"> exported class slots"</span><span class="p">)</span>
-</span><span id="__span-30-47"><a id="__codelineno-30-47" name="__codelineno-30-47" href="#__codelineno-30-47"></a>    <span class="n">background_class_id</span> <span class="o">%=</span> <span class="n">num_slots</span>
-</span><span id="__span-30-48"><a id="__codelineno-30-48" name="__codelineno-30-48" href="#__codelineno-30-48"></a>    <span class="n">foreground_mask</span> <span class="o">=</span> <span class="n">class_slots</span> <span class="o">!=</span> <span class="n">background_class_id</span>
-</span><span id="__span-30-49"><a id="__codelineno-30-49" name="__codelineno-30-49" href="#__codelineno-30-49"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="p">[:,</span> <span class="n">foreground_mask</span><span class="p">]</span>
-</span><span id="__span-30-50"><a id="__codelineno-30-50" name="__codelineno-30-50" href="#__codelineno-30-50"></a>    <span class="n">class_slots</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">foreground_mask</span><span class="p">]</span>
-</span><span id="__span-30-51"><a id="__codelineno-30-51" name="__codelineno-30-51" href="#__codelineno-30-51"></a>
-</span><span id="__span-30-52"><a id="__codelineno-30-52" name="__codelineno-30-52" href="#__codelineno-30-52"></a><span class="c1"># RF-DETR uses per-class sigmoid (multi-label), not softmax. This compact example keeps</span>
-</span><span id="__span-30-53"><a id="__codelineno-30-53" name="__codelineno-30-53" href="#__codelineno-30-53"></a><span class="c1"># one top class per query; the reference decoders instead rank query/class pairs globally,</span>
-</span><span id="__span-30-54"><a id="__codelineno-30-54" name="__codelineno-30-54" href="#__codelineno-30-54"></a><span class="c1"># so they can retain multiple above-threshold classes for one query.</span>
-</span><span id="__span-30-55"><a id="__codelineno-30-55" name="__codelineno-30-55" href="#__codelineno-30-55"></a><span class="n">scores_all</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">logits</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="o">-</span><span class="mi">88</span><span class="p">,</span> <span class="mi">88</span><span class="p">)))</span>
-</span><span id="__span-30-56"><a id="__codelineno-30-56" name="__codelineno-30-56" href="#__codelineno-30-56"></a><span class="n">scores</span> <span class="o">=</span> <span class="n">scores_all</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-30-57"><a id="__codelineno-30-57" name="__codelineno-30-57" href="#__codelineno-30-57"></a><span class="n">class_ids</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">scores_all</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)]</span>
-</span><span id="__span-30-58"><a id="__codelineno-30-58" name="__codelineno-30-58" href="#__codelineno-30-58"></a>
-</span><span id="__span-30-59"><a id="__codelineno-30-59" name="__codelineno-30-59" href="#__codelineno-30-59"></a><span class="n">threshold</span> <span class="o">=</span> <span class="mf">0.5</span>
-</span><span id="__span-30-60"><a id="__codelineno-30-60" name="__codelineno-30-60" href="#__codelineno-30-60"></a><span class="n">keep</span> <span class="o">=</span> <span class="n">scores</span> <span class="o">&gt;</span> <span class="n">threshold</span>
-</span><span id="__span-30-61"><a id="__codelineno-30-61" name="__codelineno-30-61" href="#__codelineno-30-61"></a>
-</span><span id="__span-30-62"><a id="__codelineno-30-62" name="__codelineno-30-62" href="#__codelineno-30-62"></a><span class="c1"># cxcywh (normalized) -&gt; xyxy (pixel space)</span>
-</span><span id="__span-30-63"><a id="__codelineno-30-63" name="__codelineno-30-63" href="#__codelineno-30-63"></a><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">bw</span><span class="p">,</span> <span class="n">bh</span> <span class="o">=</span> <span class="n">boxes_cwh</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">T</span>
-</span><span id="__span-30-64"><a id="__codelineno-30-64" name="__codelineno-30-64" href="#__codelineno-30-64"></a><span class="n">xyxy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">cx</span> <span class="o">-</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cx</span> <span class="o">+</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">+</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-30-65"><a id="__codelineno-30-65" name="__codelineno-30-65" href="#__codelineno-30-65"></a><span class="n">xyxy</span> <span class="o">*=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-</span><span id="__span-30-66"><a id="__codelineno-30-66" name="__codelineno-30-66" href="#__codelineno-30-66"></a>
-</span><span id="__span-30-67"><a id="__codelineno-30-67" name="__codelineno-30-67" href="#__codelineno-30-67"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">confidences</span> <span class="o">=</span> <span class="n">xyxy</span><span class="p">,</span> <span class="n">class_ids</span><span class="p">[</span><span class="n">keep</span><span class="p">],</span> <span class="n">scores</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-37-1"><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
+</span><span id="__span-37-2"><a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-37-3"><a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+</span><span id="__span-37-4"><a id="__codelineno-37-4" name="__codelineno-37-4" href="#__codelineno-37-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-37-5"><a id="__codelineno-37-5" name="__codelineno-37-5" href="#__codelineno-37-5"></a>
+</span><span id="__span-37-6"><a id="__codelineno-37-6" name="__codelineno-37-6" href="#__codelineno-37-6"></a><span class="c1"># Load the ONNX model</span>
+</span><span id="__span-37-7"><a id="__codelineno-37-7" name="__codelineno-37-7" href="#__codelineno-37-7"></a><span class="n">session</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+</span><span id="__span-37-8"><a id="__codelineno-37-8" name="__codelineno-37-8" href="#__codelineno-37-8"></a>
+</span><span id="__span-37-9"><a id="__codelineno-37-9" name="__codelineno-37-9" href="#__codelineno-37-9"></a><span class="c1"># Prepare input image</span>
+</span><span id="__span-37-10"><a id="__codelineno-37-10" name="__codelineno-37-10" href="#__codelineno-37-10"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">4</span><span class="p">]</span>
+</span><span id="__span-37-11"><a id="__codelineno-37-11" name="__codelineno-37-11" href="#__codelineno-37-11"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+</span><span id="__span-37-12"><a id="__codelineno-37-12" name="__codelineno-37-12" href="#__codelineno-37-12"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span><span id="__span-37-13"><a id="__codelineno-37-13" name="__codelineno-37-13" href="#__codelineno-37-13"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-37-14"><a id="__codelineno-37-14" name="__codelineno-37-14" href="#__codelineno-37-14"></a>
+</span><span id="__span-37-15"><a id="__codelineno-37-15" name="__codelineno-37-15" href="#__codelineno-37-15"></a><span class="c1"># Normalize</span>
+</span><span id="__span-37-16"><a id="__codelineno-37-16" name="__codelineno-37-16" href="#__codelineno-37-16"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
+</span><span id="__span-37-17"><a id="__codelineno-37-17" name="__codelineno-37-17" href="#__codelineno-37-17"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
+</span><span id="__span-37-18"><a id="__codelineno-37-18" name="__codelineno-37-18" href="#__codelineno-37-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
+</span><span id="__span-37-19"><a id="__codelineno-37-19" name="__codelineno-37-19" href="#__codelineno-37-19"></a>
+</span><span id="__span-37-20"><a id="__codelineno-37-20" name="__codelineno-37-20" href="#__codelineno-37-20"></a><span class="c1"># Convert to NCHW format</span>
+</span><span id="__span-37-21"><a id="__codelineno-37-21" name="__codelineno-37-21" href="#__codelineno-37-21"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+</span><span id="__span-37-22"><a id="__codelineno-37-22" name="__codelineno-37-22" href="#__codelineno-37-22"></a>
+</span><span id="__span-37-23"><a id="__codelineno-37-23" name="__codelineno-37-23" href="#__codelineno-37-23"></a><span class="c1"># Run inference</span>
+</span><span id="__span-37-24"><a id="__codelineno-37-24" name="__codelineno-37-24" href="#__codelineno-37-24"></a><span class="n">outputs</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="p">})</span>
+</span><span id="__span-37-25"><a id="__codelineno-37-25" name="__codelineno-37-25" href="#__codelineno-37-25"></a>
+</span><span id="__span-37-26"><a id="__codelineno-37-26" name="__codelineno-37-26" href="#__codelineno-37-26"></a><span class="c1"># Match outputs by name — do NOT assume positional order or infer role from shape.</span>
+</span><span id="__span-37-27"><a id="__codelineno-37-27" name="__codelineno-37-27" href="#__codelineno-37-27"></a><span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
+</span><span id="__span-37-28"><a id="__codelineno-37-28" name="__codelineno-37-28" href="#__codelineno-37-28"></a><span class="n">boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-37-29"><a id="__codelineno-37-29" name="__codelineno-37-29" href="#__codelineno-37-29"></a><span class="n">logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-37-30"><a id="__codelineno-37-30" name="__codelineno-37-30" href="#__codelineno-37-30"></a><span class="k">if</span> <span class="n">boxes_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">logits_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-37-31"><a id="__codelineno-37-31" name="__codelineno-37-31" href="#__codelineno-37-31"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Could not find expected outputs 'dets'/'labels'. Available outputs: </span><span class="si">{</span><span class="n">output_names</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-37-32"><a id="__codelineno-37-32" name="__codelineno-37-32" href="#__codelineno-37-32"></a>
+</span><span id="__span-37-33"><a id="__codelineno-37-33" name="__codelineno-37-33" href="#__codelineno-37-33"></a><span class="n">boxes_cwh</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">boxes_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># (num_queries, 4) normalized cxcywh</span>
+</span><span id="__span-37-34"><a id="__codelineno-37-34" name="__codelineno-37-34" href="#__codelineno-37-34"></a><span class="n">raw_logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">logits_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-37-35"><a id="__codelineno-37-35" name="__codelineno-37-35" href="#__codelineno-37-35"></a>
+</span><span id="__span-37-36"><a id="__codelineno-37-36" name="__codelineno-37-36" href="#__codelineno-37-36"></a><span class="c1"># Select this from the checkpoint layout. Use None for official sparse-ID COCO</span>
+</span><span id="__span-37-37"><a id="__codelineno-37-37" name="__codelineno-37-37" href="#__codelineno-37-37"></a><span class="c1"># checkpoints, -1 for contiguous-ID/active-first checkpoints, or 0 for legacy</span>
+</span><span id="__span-37-38"><a id="__codelineno-37-38" name="__codelineno-37-38" href="#__codelineno-37-38"></a><span class="c1"># background-first keypoint checkpoints.</span>
+</span><span id="__span-37-39"><a id="__codelineno-37-39" name="__codelineno-37-39" href="#__codelineno-37-39"></a><span class="n">background_class_id</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+</span><span id="__span-37-40"><a id="__codelineno-37-40" name="__codelineno-37-40" href="#__codelineno-37-40"></a><span class="n">class_slots</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+</span><span id="__span-37-41"><a id="__codelineno-37-41" name="__codelineno-37-41" href="#__codelineno-37-41"></a><span class="k">if</span> <span class="n">background_class_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-37-42"><a id="__codelineno-37-42" name="__codelineno-37-42" href="#__codelineno-37-42"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span>
+</span><span id="__span-37-43"><a id="__codelineno-37-43" name="__codelineno-37-43" href="#__codelineno-37-43"></a><span class="k">else</span><span class="p">:</span>
+</span><span id="__span-37-44"><a id="__codelineno-37-44" name="__codelineno-37-44" href="#__codelineno-37-44"></a>    <span class="n">num_slots</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-37-45"><a id="__codelineno-37-45" name="__codelineno-37-45" href="#__codelineno-37-45"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="o">-</span><span class="n">num_slots</span> <span class="o">&lt;=</span> <span class="n">background_class_id</span> <span class="o">&lt;</span> <span class="n">num_slots</span><span class="p">:</span>
+</span><span id="__span-37-46"><a id="__codelineno-37-46" name="__codelineno-37-46" href="#__codelineno-37-46"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"background_class_id must index one of </span><span class="si">{</span><span class="n">num_slots</span><span class="si">}</span><span class="s2"> exported class slots"</span><span class="p">)</span>
+</span><span id="__span-37-47"><a id="__codelineno-37-47" name="__codelineno-37-47" href="#__codelineno-37-47"></a>    <span class="n">background_class_id</span> <span class="o">%=</span> <span class="n">num_slots</span>
+</span><span id="__span-37-48"><a id="__codelineno-37-48" name="__codelineno-37-48" href="#__codelineno-37-48"></a>    <span class="n">foreground_mask</span> <span class="o">=</span> <span class="n">class_slots</span> <span class="o">!=</span> <span class="n">background_class_id</span>
+</span><span id="__span-37-49"><a id="__codelineno-37-49" name="__codelineno-37-49" href="#__codelineno-37-49"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="p">[:,</span> <span class="n">foreground_mask</span><span class="p">]</span>
+</span><span id="__span-37-50"><a id="__codelineno-37-50" name="__codelineno-37-50" href="#__codelineno-37-50"></a>    <span class="n">class_slots</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">foreground_mask</span><span class="p">]</span>
+</span><span id="__span-37-51"><a id="__codelineno-37-51" name="__codelineno-37-51" href="#__codelineno-37-51"></a>
+</span><span id="__span-37-52"><a id="__codelineno-37-52" name="__codelineno-37-52" href="#__codelineno-37-52"></a><span class="c1"># RF-DETR uses per-class sigmoid (multi-label), not softmax. This compact example keeps</span>
+</span><span id="__span-37-53"><a id="__codelineno-37-53" name="__codelineno-37-53" href="#__codelineno-37-53"></a><span class="c1"># one top class per query; the reference decoders instead rank query/class pairs globally,</span>
+</span><span id="__span-37-54"><a id="__codelineno-37-54" name="__codelineno-37-54" href="#__codelineno-37-54"></a><span class="c1"># so they can retain multiple above-threshold classes for one query.</span>
+</span><span id="__span-37-55"><a id="__codelineno-37-55" name="__codelineno-37-55" href="#__codelineno-37-55"></a><span class="n">scores_all</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">logits</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="o">-</span><span class="mi">88</span><span class="p">,</span> <span class="mi">88</span><span class="p">)))</span>
+</span><span id="__span-37-56"><a id="__codelineno-37-56" name="__codelineno-37-56" href="#__codelineno-37-56"></a><span class="n">scores</span> <span class="o">=</span> <span class="n">scores_all</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-37-57"><a id="__codelineno-37-57" name="__codelineno-37-57" href="#__codelineno-37-57"></a><span class="n">class_ids</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">scores_all</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)]</span>
+</span><span id="__span-37-58"><a id="__codelineno-37-58" name="__codelineno-37-58" href="#__codelineno-37-58"></a>
+</span><span id="__span-37-59"><a id="__codelineno-37-59" name="__codelineno-37-59" href="#__codelineno-37-59"></a><span class="n">threshold</span> <span class="o">=</span> <span class="mf">0.5</span>
+</span><span id="__span-37-60"><a id="__codelineno-37-60" name="__codelineno-37-60" href="#__codelineno-37-60"></a><span class="n">keep</span> <span class="o">=</span> <span class="n">scores</span> <span class="o">&gt;</span> <span class="n">threshold</span>
+</span><span id="__span-37-61"><a id="__codelineno-37-61" name="__codelineno-37-61" href="#__codelineno-37-61"></a>
+</span><span id="__span-37-62"><a id="__codelineno-37-62" name="__codelineno-37-62" href="#__codelineno-37-62"></a><span class="c1"># cxcywh (normalized) -&gt; xyxy (pixel space)</span>
+</span><span id="__span-37-63"><a id="__codelineno-37-63" name="__codelineno-37-63" href="#__codelineno-37-63"></a><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">bw</span><span class="p">,</span> <span class="n">bh</span> <span class="o">=</span> <span class="n">boxes_cwh</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">T</span>
+</span><span id="__span-37-64"><a id="__codelineno-37-64" name="__codelineno-37-64" href="#__codelineno-37-64"></a><span class="n">xyxy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">cx</span> <span class="o">-</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cx</span> <span class="o">+</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">+</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-37-65"><a id="__codelineno-37-65" name="__codelineno-37-65" href="#__codelineno-37-65"></a><span class="n">xyxy</span> <span class="o">*=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+</span><span id="__span-37-66"><a id="__codelineno-37-66" name="__codelineno-37-66" href="#__codelineno-37-66"></a>
+</span><span id="__span-37-67"><a id="__codelineno-37-67" name="__codelineno-37-67" href="#__codelineno-37-67"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">confidences</span> <span class="o">=</span> <span class="n">xyxy</span><span class="p">,</span> <span class="n">class_ids</span><span class="p">[</span><span class="n">keep</span><span class="p">],</span> <span class="n">scores</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
 </span></code></pre></div>
 <p>For a fuller reference implementation (name-based matching with a documented shape-based fallback), see <code>_run_inference</code> in <a href="https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_onnx/inference.py"><code>src/rfdetr/export/_onnx/inference.py</code></a>.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
@@ -4066,7 +4369,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 7, 2026 14:21:37 UTC">2026-09-07 14:21:37</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 8, 2026 07:31:42 UTC">2026-09-08 07:31:42</span>
   </span>
 
     
