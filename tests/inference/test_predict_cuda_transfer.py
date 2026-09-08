@@ -35,20 +35,39 @@ _TORN_READ_FILL = 7.0
 class _CudaDummyRFDETR(_BaseFakeRFDETR):
     """Weight-free RFDETR whose model lives on CUDA, for exercising the async transfer path.
 
+    ``predict()`` always wraps its result into ``sv.KeyPoints`` (never ``sv.Detections``) whenever
+    keypoints are present — a pre-existing, unrelated branch — so a dummy requesting masks *and*
+    keypoints together can only ever be read back as a ``KeyPoints`` object, which has no ``mask``
+    field. ``include_masks``/``include_keypoints`` default to the mutually exclusive shapes real
+    segmentation vs. keypoint models actually produce; pass both ``True`` only when a test genuinely
+    needs to exercise every optional transfer branch without reading the mask back afterward.
+
     Examples:
         >>> m = _CudaDummyRFDETR.__new__(_CudaDummyRFDETR)  # doctest: +SKIP
         >>> isinstance(m, RFDETR)  # doctest: +SKIP
         True
     """
 
+    def __init__(
+        self,
+        *args: object,
+        include_masks: bool = False,
+        include_keypoints: bool = False,
+        **kwargs: object,
+    ) -> None:
+        """Initialise with the optional-field combination this test instance should exercise."""
+        self._include_masks = include_masks
+        self._include_keypoints = include_keypoints
+        super().__init__(*args, **kwargs)
+
     def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> _DummyModel:
-        """Return a CUDA-resident ``_DummyModel`` exercising masks, keypoints, and keypoint precision."""
+        """Return a CUDA-resident ``_DummyModel`` configured per this instance's constructor flags."""
         return _DummyModel(
             labels=[1, 2, 3],
             device="cuda:0",
-            include_keypoints=True,
+            include_keypoints=self._include_keypoints,
             num_keypoints=_NUM_KEYPOINTS,
-            include_masks=True,
+            include_masks=self._include_masks,
             mask_size=_MASK_SIZE,
             fill_value=_TORN_READ_FILL,
         )
@@ -58,14 +77,16 @@ class TestPredictCudaTransfer:
     """Verifies the batched CUDA->CPU transfer is complete, ordered, non-blocking, and correctly synchronized."""
 
     def test_output_values_are_complete_after_async_transfer(self) -> None:
-        """Every field — boxes, scores, labels, masks, keypoints, keypoint precision — is fully populated.
+        """Every ``Detections`` field — boxes, scores, labels, mask — is fully populated after the batched transfer.
 
         Uses a distinctive non-zero fill (7.0) across every field so a torn (partially completed) async device-to-host
         copy leaves detectable stale values instead of being masked by a coincidentally correct zero — the prior
-        fixture's zero-containing boxes could not distinguish "never written" from "written as zero".
+        fixture's zero-containing boxes could not distinguish "never written" from "written as zero". Masks only,
+        no keypoints: ``predict()`` always returns ``sv.KeyPoints`` (no ``mask`` field) whenever keypoints are
+        present, so a combined masks+keypoints dummy could never validate the mask read-back.
         """
         img = torch.rand(3, 28, 28, device="cuda:0")
-        model = _CudaDummyRFDETR(pretrain_weights=None)
+        model = _CudaDummyRFDETR(pretrain_weights=None, include_masks=True)
         detections = model.predict(img, threshold=0.5)
         assert len(detections) == 3
         assert detections.confidence == pytest.approx([_TORN_READ_FILL] * 3)
@@ -73,8 +94,21 @@ class TestPredictCudaTransfer:
         assert np.allclose(detections.xyxy, [[_TORN_READ_FILL] * 4] * 3, atol=1e-6)
         assert detections.mask is not None
         assert detections.mask.all(), "mask transfer is incomplete or torn"
+
+    def test_keypoint_precision_is_complete_after_async_transfer(self) -> None:
+        """Every ``KeyPoints`` field — including keypoint precision — is fully populated after the batched transfer.
+
+        Keypoints only, no masks: ``predict()`` returns ``sv.KeyPoints`` whenever keypoints are present, and
+        ``KeyPoints`` has no ``mask`` field — the mask-completeness case above is covered separately.
+        """
+        img = torch.rand(3, 28, 28, device="cuda:0")
+        model = _CudaDummyRFDETR(pretrain_weights=None, include_keypoints=True)
+        keypoints = model.predict(img, threshold=0.5)
+        assert len(keypoints) == 3
+        assert np.allclose(keypoints.xy, _TORN_READ_FILL, atol=1e-6)
+        assert np.allclose(keypoints.keypoint_confidence, _TORN_READ_FILL, atol=1e-6)
         assert np.allclose(
-            detections.data["keypoint_precision_cholesky"],
+            keypoints.data["keypoint_precision_cholesky"],
             _TORN_READ_FILL,
             atol=1e-6,
         )
@@ -89,7 +123,7 @@ class TestPredictCudaTransfer:
         the two can differ on a multi-GPU host.
         """
         img = torch.rand(3, 28, 28, device="cuda:0")
-        model = _CudaDummyRFDETR(pretrain_weights=None)
+        model = _CudaDummyRFDETR(pretrain_weights=None, include_masks=True, include_keypoints=True)
         call_order: list[str] = []
 
         def _record_sync(*args: object, **kwargs: object) -> torch.cuda.Stream:
@@ -130,7 +164,7 @@ class TestPredictCudaTransfer:
         and asserts every CPU-bound `.to()` call for the result tensors was issued with `non_blocking=True`.
         """
         img = torch.rand(3, 28, 28, device="cuda:0")
-        model = _CudaDummyRFDETR(pretrain_weights=None)
+        model = _CudaDummyRFDETR(pretrain_weights=None, include_masks=True, include_keypoints=True)
         real_to = torch.Tensor.to
         cpu_bound_calls: list[bool] = []
 
