@@ -20,9 +20,9 @@ For a feature: what it enables and why it belongs here.
 
 <!--
 Test commands you ran and their result, e.g.:
-  uv run --no-sync pytest tests/datasets/ -n 1: 184 passed
-  pre-commit run --all-files: passed
-The final commit must have the full CPU suite and pre-commit passing — see AGENTS.md.
+  uv run --no-sync pytest tests/datasets/ -n 1  # 184 passed
+  pre-commit run --all-files  # passed
+The final commit must have the full CPU suite and pre-commit passing — see .github/CONTRIBUTING.md.
 Note anything you could NOT verify (no GPU/TPU available, CI not yet rerun, etc.).
 -->
 
