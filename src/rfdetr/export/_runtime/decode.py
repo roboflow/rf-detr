@@ -120,6 +120,7 @@ def decode_detections(
 
     cx, cy, bw, bh = boxes_cwh[query_idx].T
     width, height = image_size
+    scale = np.array([width, height, width, height], dtype=np.float32)
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
-    xyxy *= np.array([width, height, width, height], dtype=np.float32)
+    xyxy = np.clip(xyxy * scale, 0.0, scale)
     return DecodedDetections(xyxy=xyxy, confidence=scores, class_id=cls, query_index=query_idx)
