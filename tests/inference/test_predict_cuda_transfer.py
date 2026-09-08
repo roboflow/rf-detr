@@ -121,6 +121,13 @@ class TestPredictCudaTransfer:
         every recorded `.numpy()` call index, and that the synchronized stream belongs to the result
         tensors' own device (cuda:0) rather than being left to default to `torch.cuda.current_device()` —
         the two can differ on a multi-GPU host.
+
+        ``include_source_image=False`` is required here: capturing the source image from an
+        already-CUDA tensor input does its own separate, already-correctly-synchronized blocking
+        ``.cpu().numpy()`` call (see the ``predict()`` docstring's Note on this) before the
+        output-transfer loop even starts. Left at the default, that unrelated call is the first
+        ``.numpy()`` recorded and predates this test's barrier, which is a false positive for the
+        assertion below, not a regression in the transfer path under test.
         """
         img = torch.rand(3, 28, 28, device="cuda:0")
         model = _CudaDummyRFDETR(pretrain_weights=None, include_masks=True, include_keypoints=True)
@@ -141,7 +148,7 @@ class TestPredictCudaTransfer:
             patch("torch.cuda.current_stream", side_effect=_record_sync) as stream_spy,
             patch.object(torch.Tensor, "numpy", _record_numpy, create=False),
         ):
-            model.predict(img, threshold=0.5)
+            model.predict(img, threshold=0.5, include_source_image=False)
 
         assert stream_spy.call_count >= 1
         called_devices = [torch.device(c.args[0]) if c.args else None for c in stream_spy.call_args_list]
