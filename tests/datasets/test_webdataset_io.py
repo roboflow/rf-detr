@@ -975,6 +975,49 @@ class TestBuildWebdatasetLoader:
         assert ids0.isdisjoint(ids1)
         assert ids0 | ids1 == set(range(1000, 1024))
 
+    def test_rank_split_and_worker_split_compose_to_one_clean_partition(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fixed nodesplitter and webdataset's own workersplitter don't overlap when combined.
+
+        The single-rank test above (``num_workers=4``, ``world_size=1``) exercises only the worker split, and
+        ``test_explicit_world_size_and_rank_are_honored_even_without_env_vars`` above exercises only the rank
+        split (``num_workers=0``). Neither proves the two compose cleanly: a bug that made the workersplitter
+        ignore which rank's shard subset it was handed (e.g. re-deriving shards from the full index instead of
+        the node-split iterator) would pass both of those and still duplicate or drop samples once both splits
+        are active together, which is the actual training configuration. Drives ``configure_distribution`` and a
+        monkeypatched ``get_worker_info`` directly against all four (rank, worker) cells in one process, rather
+        than real ``num_workers`` DataLoader subprocesses per rank: two live multi-worker ``DataLoader``\\ s
+        constructed back to back in one test process take noticeably longer here and are harder to reason about
+        (each parent blocks on its own worker subprocesses, so its own CPU time is not a reliable progress signal
+        while waiting on it), so this drives the same split composition the loader relies on directly and fast,
+        without going through DataLoader at all.
+        """
+        shard_dir = _pack(tmp_path, count=32)
+
+        def _cell(rank: int, worker_id: int) -> frozenset[int]:
+            dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
+            dataset.configure_distribution(rank=rank, world_size=2)
+            monkeypatch.setattr(
+                torch.utils.data,
+                "get_worker_info",
+                lambda: types.SimpleNamespace(id=worker_id, num_workers=2),
+            )
+            return frozenset(int(target["image_id"]) for _, target in dataset)
+
+        rank0_worker0 = _cell(rank=0, worker_id=0)
+        rank0_worker1 = _cell(rank=0, worker_id=1)
+        rank1_worker0 = _cell(rank=1, worker_id=0)
+        rank1_worker1 = _cell(rank=1, worker_id=1)
+        assert rank0_worker0 and rank0_worker1 and rank1_worker0 and rank1_worker1
+        assert rank0_worker0.isdisjoint(rank0_worker1)
+        assert rank0_worker0.isdisjoint(rank1_worker0)
+        assert rank0_worker0.isdisjoint(rank1_worker1)
+        assert rank0_worker1.isdisjoint(rank1_worker0)
+        assert rank0_worker1.isdisjoint(rank1_worker1)
+        assert rank1_worker0.isdisjoint(rank1_worker1)
+        assert rank0_worker0 | rank0_worker1 | rank1_worker0 | rank1_worker1 == frozenset(range(1000, 1032))
+
     def test_more_workers_than_shards_is_rejected_for_training(self, tmp_path: Path) -> None:
         image_dir, annotations = _build_coco_split(tmp_path, count=16)
         shard_dir = tmp_path / "shards"
