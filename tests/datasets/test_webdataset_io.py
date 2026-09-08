@@ -40,6 +40,7 @@ from rfdetr.datasets.webdataset_io import (
     _pack_generation,
     _resolve_within,
     _shard_url,
+    _tar_member_bytes,
     _validate_split_name,
     build_webdataset,
     build_webdataset_loader,
@@ -178,6 +179,29 @@ class TestPackCocoToShards:
         assert len(index.samples_per_shard) == len(index.shards)
         assert sum(index.samples_per_shard) == index.num_samples
         assert all(count == 1 for count in index.samples_per_shard)
+
+
+class TestTarMemberBytes:
+    """Shard-size accounting must match a member's real tar footprint, not its raw content length."""
+
+    @pytest.mark.parametrize(
+        ("payload_len", "expected"),
+        [
+            pytest.param(0, 512, id="empty"),
+            pytest.param(1, 1024, id="one-byte-still-costs-a-full-data-block"),
+            pytest.param(511, 1024, id="just-under-a-block"),
+            pytest.param(512, 1024, id="exactly-one-block"),
+            pytest.param(513, 1536, id="just-over-a-block-needs-a-second"),
+        ],
+    )
+    def test_accounts_for_the_header_and_padding_a_raw_byte_count_misses(self, payload_len: int, expected: int) -> None:
+        """Regression test: shard-size accounting used to sum raw payload lengths alone.
+
+        That undercounted every member by its 512-byte tar header plus padding to the next 512-byte boundary -- two
+        members per sample here (image, JSON sidecar) -- so ``max_shard_bytes`` under-shot the real shard size on disk,
+        worse the smaller the average sample.
+        """
+        assert _tar_member_bytes(payload_len) == expected
 
 
 class TestPackCocoToShardsFailures:
@@ -382,6 +406,32 @@ class TestPackCocoToShardsFailures:
             assert (shard_dir / name).read_bytes() == payload
         assert not any(shard_dir.glob(".train-pack-*"))
 
+    def test_staged_index_publish_failure_leaves_no_stray_dotfile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failure between staging and publishing the index leaves nothing behind in destination.
+
+        Regression test: the staged index dotfile used to be written directly into ``destination`` rather than
+        the run's ``work_dir``, so a failure in ``Path.replace()`` after ``write_bytes()`` had already succeeded
+        left a stray ``.train-index.json.<generation>`` file in ``destination`` that the ``finally`` block's
+        ``rmtree(work_dir)`` never reached, since it only ever cleaned ``work_dir`` itself.
+        """
+        image_dir, annotations = _build_coco_split(tmp_path, count=2)
+        shard_dir = tmp_path / "shards"
+        real_replace = Path.replace
+        staged_prefix = f".{index_name('train')}."
+
+        def _replace(self: Path, target: Any) -> Path:
+            if self.name.startswith(staged_prefix):
+                raise OSError("simulated failure publishing the index")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", _replace)
+        with pytest.raises(OSError, match="simulated failure"):
+            pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        assert not any(shard_dir.glob(f"{staged_prefix}*"))
+        assert not any(shard_dir.glob(".train-pack-*"))
+
 
 class TestShardIndex:
     """The index carries the label space so a reader never parses the source annotation file."""
@@ -439,6 +489,19 @@ class TestShardIndex:
     def test_split_with_path_separator_is_rejected_on_read(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="path separator"):
             read_shard_index(tmp_path, "../escape")
+
+    def test_index_whose_own_split_field_disagrees_with_the_filename_is_rejected(self, tmp_path: Path) -> None:
+        """The index's own recorded ``split`` field is checked, not just the filename it was read from.
+
+        Regression test: a val-index.json copied or renamed to train-index.json (or vice versa) used to be
+        accepted silently and read as if it were the requested split, since only the filename was ever checked.
+        """
+        image_dir, annotations = _build_coco_split(tmp_path, count=2)
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split="val")
+        (shard_dir / index_name("val")).rename(shard_dir / index_name("train"))
+        with pytest.raises(ValueError, match="recorded split"):
+            read_shard_index(shard_dir, "train")
 
 
 class TestShardPathValidation:

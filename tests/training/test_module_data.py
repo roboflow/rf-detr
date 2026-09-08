@@ -1233,6 +1233,22 @@ class TestClassNames:
 
         assert dm.class_names == ["", "person"]
 
+    def test_dataset_with_class_names_attribute_but_not_webdataset_is_ignored(self, tmp_path):
+        """A dataset merely exposing a `class_names` attribute, without being a WebDatasetDetection, is not used.
+
+        Regression test: this property used to duck-type on `getattr(dataset, "class_names", None)`, so any
+        dataset happening to carry an attribute of that name would satisfy it without the guarantee a real
+        `WebDatasetDetection` gives -- label-indexed names read from its packed shard index. `_FakeDataset` has
+        no `class_names` of its own, so setting one directly on the instance stands in for that broader surface.
+        """
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path)
+        dm = RFDETRDataModule(mc, tc)
+        dataset = _fake_dataset(50, with_coco=False)
+        dataset.class_names = ["decoy"]
+        dm._dataset_train = dataset
+        assert dm.class_names is None
+
 
 class TestSegmentationSupport:
     """DataModule accepts SegmentationTrainConfig without errors."""

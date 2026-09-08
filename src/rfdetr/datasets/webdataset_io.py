@@ -107,6 +107,37 @@ WebDataset rejects ``True`` here with a warning and silently substitutes this sa
 CategoryIdPolicy = Literal["remap", "raw"]
 
 _IMAGE_EXTENSIONS: tuple[str, ...] = ("jpg", "jpeg", "png", "webp", "bmp")
+
+_TAR_BLOCK_BYTES = 512
+
+
+def _tar_member_bytes(payload_len: int) -> int:
+    """Bytes a POSIX ustar member of *payload_len* content bytes actually occupies in the archive.
+
+    Every member costs one 512-byte header block plus its content padded up to the next 512-byte boundary. Summing
+    raw payload lengths alone (as the packer's shard-size accounting used to) undercounts by this framing overhead
+    on every member — two per sample here (image, JSON sidecar) — which under-shoots ``max_shard_bytes`` and
+    produces shards measurably larger than requested, worse the smaller the average sample.
+
+    Args:
+        payload_len: Content length of the member, in bytes.
+
+    Returns:
+        Total bytes the member occupies in the tar archive, including its header and padding.
+
+    Examples:
+        >>> _tar_member_bytes(0)
+        512
+        >>> _tar_member_bytes(1)
+        1024
+        >>> _tar_member_bytes(512)
+        1024
+        >>> _tar_member_bytes(513)
+        1536
+    """
+    return _TAR_BLOCK_BYTES + -(-payload_len // _TAR_BLOCK_BYTES) * _TAR_BLOCK_BYTES
+
+
 _TAR_MEMBER_MODE = 0o644
 
 
@@ -369,7 +400,14 @@ def read_shard_index(shard_dir: str | Path, split: str) -> ShardIndex:
         )
     with path.open(encoding="utf-8") as handle:
         payload = json.load(handle)
-    return ShardIndex.from_json(payload)
+    index = ShardIndex.from_json(payload)
+    if index.split != split:
+        raise ValueError(
+            f"{path} is named for split {split!r} but its own recorded split is {index.split!r} — "
+            "the index file was likely copied or renamed rather than produced by packing this split; "
+            "repack it instead of renaming an existing index."
+        )
+    return index
 
 
 # ----------------------------------------------------------------------------------------------------------------
@@ -500,7 +538,9 @@ def pack_coco_to_shards(
     Every image becomes two adjacent tar members sharing one basename: the original image file copied byte for byte,
     and a ``.json`` sidecar holding that image's ``image_id``, ``file_name`` and annotation list. A new shard is
     started once the current one reaches *max_shard_bytes*, so shards land near that size rather than exactly on it —
-    a sample is never split across two shards.
+    a sample is never split across two shards. Size accounting counts each member's actual tar footprint (its
+    512-byte header plus content padded to the next 512-byte boundary, see :func:`_tar_member_bytes`), not just raw
+    payload length, so shards land close to *max_shard_bytes* even with many small samples.
 
     Args:
         image_dir: Directory holding the split's image files, named as the annotation file's ``file_name`` entries.
@@ -617,7 +657,7 @@ def pack_coco_to_shards(
             key = f"{position:08d}"
             _add_bytes(tar, f"{key}.{extension}", payload)
             _add_bytes(tar, f"{key}.json", sidecar)
-            shard_bytes += len(payload) + len(sidecar)
+            shard_bytes += _tar_member_bytes(len(payload)) + _tar_member_bytes(len(sidecar))
             written += 1
             shard_samples += 1
 
@@ -674,7 +714,11 @@ def pack_coco_to_shards(
         previous = _published_shard_names(destination, split)
         for staged, published in zip(provisional, shard_names):
             (work_dir / staged).replace(destination / published)
-        staged_index = destination / f".{index_name(split)}.{generation}"
+        # Staged inside work_dir, not destination: work_dir was created with dir=destination (same filesystem,
+        # so the replace() below stays an atomic rename), and this way a failure between write_bytes and
+        # replace() leaves the partial file inside work_dir, where the finally block's rmtree cleans it up
+        # instead of leaving a stray dotfile behind in destination.
+        staged_index = work_dir / f".{index_name(split)}.{generation}"
         staged_index.write_bytes(index_bytes)
         staged_index.replace(destination / index_name(split))
         for name in previous - set(shard_names):
@@ -1291,7 +1335,10 @@ def build_webdataset_loader(
                     "busiest rank holds %d samples against the quietest rank's %d, so they produce different "
                     "numbers of evaluation batches. This module does not equalize per-rank evaluation batch "
                     "counts, so a rank that reaches epoch-end collectives before its busiest sibling can wait "
-                    "indefinitely there. Re-pack with a smaller --max-shard-mb (aim for a shard count that "
+                    "indefinitely there. A simple mean-of-per-rank-means reduction over a logged metric (not "
+                    "mAP, which this training loop accumulates through a dedicated, correctly sample-weighted "
+                    "metric object) would also under- or over-weight the quieter rank's batches relative to its "
+                    "actual sample count. Re-pack with a smaller --max-shard-mb (aim for a shard count that "
                     "divides %d) to reduce the imbalance.",
                     dataset.index.split,
                     ranks,

@@ -847,11 +847,12 @@ class RFDETRDataModule(LightningDataModule):
         for dataset in (self._dataset_train, self._dataset_val, self._dataset_test):
             if dataset is None:
                 continue
-            # A dataset that carries its own label-indexed names (a shard stream reads them from its index)
-            # answers directly; the COCO-object path below stays the route for every map-style dataset.
-            own_names = getattr(dataset, "class_names", None)
-            if isinstance(own_names, list) and own_names:
-                return own_names
+            # A webdataset stream carries its own label-indexed names, read from its shard index; the
+            # COCO-object path below stays the route for every map-style dataset.
+            if isinstance(dataset, WebDatasetDetection):
+                own_names = dataset.class_names
+                if own_names:
+                    return own_names
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
                 label2cat = getattr(dataset, "label2cat", None)
