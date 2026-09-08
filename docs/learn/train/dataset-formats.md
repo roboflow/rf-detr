@@ -438,9 +438,7 @@ Image bytes are copied verbatim — no re-encode — so a packed split decodes t
 ```python
 from rfdetr import RFDETRSmall
 
-# num_classes is a model argument, not a train() one. 80 matches the `--category-ids remap`
-# default the packing command above used; see below for the `raw` formula.
-model = RFDETRSmall(num_classes=80)
+model = RFDETRSmall()
 model.train(
     dataset_dir="/data/coco-shards",
     dataset_file="webdataset",
@@ -452,7 +450,7 @@ model.train(
 
 Install the reader with `pip install "rfdetr[webdataset]"`.
 
-`num_classes` has to be given explicitly: the auto-detection the other formats use looks for `train/_annotations.coco.json` or `data.yaml`, and a shard directory has neither, so the model keeps whatever count it was built with. Read the right number from `train-index.json` — under `raw`, that is the **highest `id` in `categories`, plus one** (COCO's own ids run 1-90 with gaps for its 80 categories, so `len(categories)` undercounts it — the same `max_obj_id + 1` convention `dataset_file="coco"` uses); under `remap`, it is simply the number of categories left after grouping nodes are dropped. Class *names* need no such help: they are read from the same index, indexed by the same labels the loader emits, so checkpoints and `predict()` label output are unaffected.
+`num_classes` auto-detects from `train-index.json` when not set on the model, the same as the other formats — under `raw`, that is the **highest `id` in `categories`, plus one** (COCO's own ids run 1-90 with gaps for its 80 categories, so `len(categories)` undercounts it — the same `max_obj_id + 1` convention `dataset_file="coco"` uses); under `remap`, it is simply the number of categories left after grouping nodes are dropped. Class *names* are read from the same index, indexed by the same labels the loader emits, so checkpoints and `predict()` label output are unaffected. Pass `num_classes` explicitly to override auto-detection, e.g. to keep a pretrained head's width.
 
 ### How an epoch is sized
 
