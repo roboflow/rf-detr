@@ -43,6 +43,7 @@ import hashlib
 import io
 import json
 import os
+import random
 import shutil
 import tarfile
 import tempfile
@@ -832,9 +833,9 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     def _epoch_seeds(self) -> tuple[int, int]:
         """Return this epoch's ``(shard_order_seed, buffer_seed)``.
 
-        The shard-order shuffle runs *before* the split by node and worker, so every worker of one epoch has to draw
-        the same permutation or the split stops being a partition — while a seed that never changes would replay one
-        sample order every epoch. Under DataLoader workers, ``torch.initial_seed()`` only changes epoch to epoch
+        Every worker of one epoch has to draw the same shard-order permutation or the split stops being a
+        partition — while a seed that never changes would replay one sample order every epoch. Under DataLoader
+        workers, ``torch.initial_seed()`` only changes epoch to epoch
         when the loader restarts its worker processes: with ``persistent_workers=False`` PyTorch draws a fresh base
         seed and hands worker *i* ``base_seed + i`` every time it spawns them, but with ``persistent_workers=True``
         — the DataModule's own default whenever ``num_workers > 0`` — the same worker process stays alive across
@@ -844,6 +845,10 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         policy: added to the worker's base seed, it changes the draw every epoch even when the seed itself does not.
         Iterating in the main process has no ``torch.initial_seed()`` per-epoch signal at all, so the same counter
         stands in for the whole seed there too.
+
+        The shared seed is used to shuffle the full shard-URL list, identically on every worker, *before*
+        ``webdataset``'s own ``nodesplitter``/``workersplitter`` see it: see :meth:`__iter__` for why the order
+        of those two steps, not just the seed, is what makes the shard-to-worker assignment rotate every epoch.
 
         Returns:
             Seed shared by every worker this epoch, and a seed unique to this worker.
@@ -906,12 +911,26 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     def __iter__(self) -> Iterator[tuple[Any, Any]]:
         """Iterate this worker's share of the split.
 
+        ``webdataset``'s own pipeline applies ``nodesplitter`` and ``workersplitter`` *before* its shard-order
+        shuffler (``compat.WebDataset.__init__``, checked against the pinned ``webdataset==1.0.2`` source): the
+        node/worker split is a plain positional stride (``islice(src, rank, None, world_size)``, then the same
+        over workers) over whatever order the shard list already has, and only the surviving per-worker subset
+        gets shuffled afterwards. Passing ``shardshuffle=`` to :class:`webdataset.WebDataset` therefore never
+        changes *which* shards a worker owns — it only reorders shards the split already fixed for the entire
+        run, every epoch. Shuffling ``urls`` ourselves first, identically across every worker via the shared
+        epoch seed, changes the input to the stride split itself, so the shard-to-worker assignment actually
+        rotates every epoch instead of being frozen for the run.
+
         Returns:
             Iterator over ``(image, target)`` pairs.
         """
         wds = _require_webdataset()
         shard_seed, buffer_seed = self._epoch_seeds()
         urls = self._shard_urls()
+        if self._shard_shuffle > 0:
+            # Only when shard-order shuffling was actually requested: shard_shuffle=0 (evaluation) keeps its
+            # documented contract of visiting shards in packing order, deterministic run to run.
+            random.Random(shard_seed).shuffle(urls)
         pipeline = wds.WebDataset(
             urls,
             # A split with fewer shards than workers legitimately leaves some workers with nothing to read;

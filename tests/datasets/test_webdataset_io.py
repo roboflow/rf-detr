@@ -704,6 +704,28 @@ class TestStreamingShuffle:
         streamed = [image_id for batch in loader for image_id in batch]
         assert sorted(streamed) == list(range(1000, 1024))
 
+    def test_shard_to_worker_assignment_rotates_between_epochs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A worker's shard subset changes epoch to epoch instead of being frozen for the whole run.
+
+        Regression test for the root cause behind the PR's own reported 2-3x seed-to-seed accuracy variance:
+        ``webdataset``'s ``nodesplitter``/``workersplitter`` run on the shard-URL list's existing order, *before* its
+        own shard-order shuffler (verified against the pinned ``webdataset==1.0.2`` source), so leaving that list
+        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed subset
+        varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it cannot
+        tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not change.
+        """
+        dataset = WebDatasetDetection(_pack(tmp_path, count=24), "train", transforms=None, shard_shuffle=4)
+        monkeypatch.setattr(
+            torch.utils.data,
+            "get_worker_info",
+            lambda: types.SimpleNamespace(id=0, num_workers=4),
+        )
+        first_epoch = frozenset(target["image_id"] for _, target in dataset)
+        second_epoch = frozenset(target["image_id"] for _, target in dataset)
+        assert first_epoch != second_epoch
+
     def test_streaming_emits_no_webdataset_warning(self, tmp_path: Path) -> None:
         dataset = WebDatasetDetection(
             _pack(tmp_path, count=8), "train", transforms=None, shuffle_buffer=4, shard_shuffle=4
