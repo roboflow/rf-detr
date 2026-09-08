@@ -370,10 +370,8 @@ jobs:
         # opt-in marker (see pyproject.toml `e2e_openvino`) — deliberately excluded from the
         # ci-tests-cpu.yml default filter (`and not e2e_openvino`) so it only runs here.
         run: |
-          uv run --no-sync pytest tests/export/test_openvino_export.py \
-            -m e2e_openvino -n 1 \
-            --timeout=600 \
-            --durations=20
+          uv run --no-sync pytest -m e2e_openvino -n 1 \
+            --timeout=600 --durations=20
 
       - name: Minimize uv cache
         continue-on-error: true
