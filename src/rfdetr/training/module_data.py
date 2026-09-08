@@ -66,7 +66,8 @@ def _has_cuda_device() -> bool:
 
 
 class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
-    """Dataset wrapper that pads length to a multiple of ``effective_batch_size * world_size``.
+    """Dataset wrapper that pads length to a multiple of ``effective_batch_size * world_size``, optionally above a
+    minimum.
 
     Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987: PTL fires the optimizer on partial
     accumulation windows at the tail of the dataset, causing the last optimizer step to be under-scaled.  Padding the
@@ -85,6 +86,9 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
         world_size: Number of DDP processes (default 1 for single-GPU/CPU).
             The alignment unit is ``effective_batch_size * world_size`` so that after PTL's ``DistributedSampler``
             splits samples across ranks each rank still receives an exact multiple of ``effective_batch_size``.
+        minimum_length: Optional minimum padded length before alignment. This lets DDP repeat short datasets through a
+            dataset wrapper that Lightning can safely partition instead of a replacement sampler that Lightning would
+            discard when injecting ``DistributedSampler``.
     """
 
     def __init__(
@@ -92,6 +96,7 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
         dataset: torch.utils.data.Dataset[Any],
         effective_batch_size: int,
         world_size: int = 1,
+        minimum_length: int | None = None,
     ) -> None:
         if effective_batch_size < 1:
             raise ValueError(f"effective_batch_size must be >= 1, got {effective_batch_size}")
@@ -101,8 +106,9 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
         self._dataset = dataset
         self._dataset_length = len(dataset)  # type: ignore[arg-type]
         pad_unit = effective_batch_size * world_size
-        remainder = self._dataset_length % pad_unit
-        pad_count = (pad_unit - remainder) % pad_unit
+        target_length = max(self._dataset_length, minimum_length or 0)
+        aligned_length = target_length + (pad_unit - target_length % pad_unit) % pad_unit
+        pad_count = aligned_length - self._dataset_length
         pad_index_generator = torch.Generator()
         pad_index_generator.manual_seed(0)
         self._pad_indices: list[int] = (
@@ -404,17 +410,32 @@ class RFDETRDataModule(LightningDataModule):
             fixed_epoch=fixed_epoch,
             world_size=world_size,
             rank=rank,
-            grad_accum_steps=self.train_config.grad_accum_steps if fixed_epoch else 1,
+            grad_accum_steps=self._effective_grad_accum_steps() if fixed_epoch else 1,
         )
+
+    def _effective_grad_accum_steps(self) -> int:
+        """Return the accumulation count that owns optimizer stepping for this training route.
+
+        Keypoint models accumulate manually from ``TrainConfig`` while Lightning owns accumulation for detection and
+        segmentation, including caller overrides passed directly to ``Trainer``.
+
+        Returns:
+            The number of microbatches per optimizer step.
+        """
+        trainer = self.trainer
+        if trainer is None or self.model_config.use_grouppose_keypoints:
+            return self.train_config.grad_accum_steps
+        return trainer.accumulate_grad_batches
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Return the training DataLoader.
 
-        Uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES`` effective batches
-        (matching legacy behaviour in ``main.py``).  Otherwise wraps the dataset with :class:`GradAccumAlignedDataset`
-        to ensure its length is an exact multiple of ``effective_batch_size * world_size`` (workaround for
-        https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and then uses ``shuffle=True, drop_last=True``
-        so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
+        On one process, uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES``
+        effective batches (matching legacy behaviour in ``main.py``). In DDP, repeats short datasets through
+        :class:`GradAccumAlignedDataset` so that Lightning can safely inject ``DistributedSampler`` without discarding
+        the requested sample count. The wrapper also ensures the length is an exact multiple of
+        ``effective_batch_size * world_size`` (workaround for
+        https://github.com/Lightning-AI/pytorch-lightning/issues/19987).
 
         Returns:
             DataLoader for the training dataset. With ``TrainConfig.pack_targets=True`` (the default), its collated
@@ -424,20 +445,22 @@ class RFDETRDataModule(LightningDataModule):
         batch_size = self._resolve_batch_size()
         if isinstance(dataset, WebDatasetDetection):
             return self._webdataset_loader(dataset, batch_size=batch_size, fixed_epoch=True)
-        effective_batch_size = batch_size * self.train_config.grad_accum_steps
+        effective_batch_size = batch_size * self._effective_grad_accum_steps()
         num_workers = self._num_workers
 
+        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
         dataset_length = len(dataset)  # type: ignore[arg-type]
-        if dataset_length < effective_batch_size * _MIN_TRAIN_BATCHES:
+        minimum_length_per_process = effective_batch_size * _MIN_TRAIN_BATCHES
+        if dataset_length < minimum_length_per_process and world_size == 1:
             logger.info(
                 "Training with uniform sampler because dataset is too small: %d < %d",
                 dataset_length,
-                effective_batch_size * _MIN_TRAIN_BATCHES,
+                minimum_length_per_process,
             )
             sampler = torch.utils.data.RandomSampler(
                 dataset,  # type: ignore[arg-type]
                 replacement=True,
-                num_samples=effective_batch_size * _MIN_TRAIN_BATCHES,
+                num_samples=minimum_length_per_process,
             )
             return DataLoader(
                 dataset,
@@ -451,12 +474,26 @@ class RFDETRDataModule(LightningDataModule):
                 worker_init_fn=_worker_init_fn,
             )
 
+        minimum_distributed_length = minimum_length_per_process * world_size
+        minimum_length: int | None = None
+        if world_size > 1 and dataset_length < minimum_distributed_length:
+            logger.info(
+                "Repeating training samples because dataset is too small for DDP: %d < %d",
+                dataset_length,
+                minimum_distributed_length,
+            )
+            minimum_length = minimum_distributed_length
+
         # Pad the dataset to a multiple of effective_batch_size * world_size so
         # that drop_last=True below becomes a true no-op and PTL never fires the
         # optimizer on a partial accumulation window.
         # See https://github.com/Lightning-AI/pytorch-lightning/issues/19987
-        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
-        aligned_dataset = GradAccumAlignedDataset(dataset, effective_batch_size, world_size)
+        aligned_dataset = GradAccumAlignedDataset(
+            dataset,
+            effective_batch_size,
+            world_size,
+            minimum_length=minimum_length,
+        )
 
         return DataLoader(
             aligned_dataset,
