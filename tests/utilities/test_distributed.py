@@ -124,4 +124,13 @@ def test_all_gather_multiprocess_xla_collective_routing() -> None:
 
     import torch_xla
 
+    if torch_xla._XLAC._xla_runtime_is_initialized():
+        pytest.skip(
+            "the XLA runtime is already live in this process, so torch_xla.launch cannot spawn replicas -- PJRT "
+            "hands the chips to the first process that claims them. Any sibling xla-marked test that touched the "
+            "device leaves it live, and a subprocess does not help because the parent still owns the chips. Run "
+            "this test alone, e.g. 'pytest tests/utilities/test_distributed.py::test_all_gather_multiprocess_"
+            "xla_collective_routing', to exercise it on real TPU/NEURON hardware."
+        )
+
     torch_xla.launch(_xla_all_gather_worker)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rfdetr"
-version = "1.10.0.dev1"
+version = "1.11.0.dev0"
 description = "RF-DETR"
 readme = "README.md"
 authors = [
@@ -60,14 +60,14 @@ train = [
     # Batched Hungarian solver for the matcher (Apache-2.0). Speeds up the CUDA path only — its
     # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4; everywhere else it
     # falls back internally to the same SciPy solve the matcher would have called, so only speed
-    # differs. The >=0.1.0 floor excludes the 0.0.x line, whose sdist compiled against nvcc.
-    # Measurement evidence: .plans/active/plan-native-linear-assignment.md Phase M3 Item 2.
-    # TODO: 0.1.0 is not on PyPI yet, so it comes from a branch archive meanwhile. RELEASE BLOCKER —
-    #   the URL lands verbatim in built metadata as `Requires-Dist`, and PEP 440 has public indexes
-    #   reject direct references, so publish-release.yml fails at the PyPI upload step while this
-    #   entry is a URL and `twine check --strict` does not catch it. Once 0.1.0 ships, replace this
-    #   TODO and the URL — nothing else — with: "torch-linear-assignment>=0.1.0,<0.2.0",
-    "torch-linear-assignment @ https://github.com/Borda/torch-hungarian/archive/refs/heads/refactor/triton.zip",
+    # differs. Measurement evidence: .plans/active/plan-native-linear-assignment.md Phase M3 Item 2.
+    # TODO: pinned to the `0.1.0rc0` pre-release since the stable `0.1.0` (which will carry a
+    #   `>=0.1.0,<0.2.0` floor excluding the 0.0.x line, whose sdist compiled against nvcc) is not
+    #   on PyPI yet. A direct GitHub-archive-URL pin was used here previously — a public index
+    #   rejects that as a `Requires-Dist` entry, which would have failed at the PyPI upload step —
+    #   so this stays a normal PyPI version pin instead. Once 0.1.0 ships, replace this line with:
+    #   "torch-linear-assignment>=0.1.0,<0.2.0",
+    "torch-hungarian==0.1.0rc0",
     "roboflow",
 ]
 augment = [
@@ -138,6 +138,11 @@ coreml = [
     # cause is understood/fixed upstream; don't treat it as a guaranteed-deterministic fix.
     "torch<2.12",
 ]
+openvino = [
+    # Calendar-versioned (year.minor.patch); cap at next major to guard convert_model/save_model/Core,
+    # which this package calls directly and which can move across a major release.
+    "openvino>=2024.0,<2027.0",
+]
 loggers = [
     "tensorboard>=2.13.0",
     "protobuf>=3.20.0",  # Cap <4.0.0 removed — tensorflow>=2.16.0 (required by [tflite]) needs protobuf>=3.20.3 and is incompatible with <4.0.0 (see #1041)
@@ -201,6 +206,9 @@ tests = [
   "pytest-timeout>=2,<3",
   "pytest-doctestplus>=1.2,<2",
   "pandas",  # imported directly by tests/training/test_metrics_csv.py to read CSVLogger output
+  "pyyaml",  # imported by .github/_tests to parse the workflows they assert on
+  "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
+  "packaging",  # imported by .github/scripts/inject_outdated_banner.py to order release dirs
   "tomli>=2.0; python_version < '3.11'",
 ]
 
@@ -373,6 +381,7 @@ markers = [
     "flaky: tests that may fail due to nondeterminism and are retried via pytest-rerunfailures",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
+    "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
     "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",
 ]
@@ -442,6 +451,7 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "openvino", "openvino.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
   ], ignore_missing_imports = true },

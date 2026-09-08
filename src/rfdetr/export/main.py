@@ -56,8 +56,9 @@ def _convert_onnx_export(
         format: Export format; one of ``"onnx"``, ``"tflite"``, ``"tensorrt"``.
         output_dir_path: Directory where converted artifacts are written.
         quantization: TFLite quantization mode (ignored for other formats).
-        calibration_data: Representative images for TFLite INT8 calibration (ignored for other formats).
-        max_images: Maximum calibration images to load from a directory (ignored for other formats).
+        calibration_data: Optional data not consumed when building the generated ``.tflite`` models. Ignored for other
+            formats.
+        max_images: Maximum images to load from a *calibration_data* directory (ignored for other formats).
         verbose: Print conversion progress information.
         fp16: Build the TensorRT engine with FP16 precision (ignored for other formats). Pass ``False`` to
             build an FP32 engine — useful on TensorRT builds that do not expose the FP16 builder flag.

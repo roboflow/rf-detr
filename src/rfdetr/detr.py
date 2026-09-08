@@ -41,6 +41,7 @@ from rfdetr.datasets._keypoint_schema import (
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
@@ -1296,17 +1297,21 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
+        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
-        """Optimize the model for inference with optional JIT compilation and dtype casting.
+        """Optimize the model for inference with optional compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
-        ``compile=True`` the model is traced with ``torch.jit.trace`` using a dummy input of ``batch_size`` images at
-        the model's current resolution. By default, optimization deep-copies the loaded model before exporting it so the
-        original module remains available. Set ``inplace=True`` for memory-constrained inference-only deployments; this
-        exports the loaded module itself, may cast it to ``dtype``, and clears ``model.model`` after optimization
-        succeeds. In-place optimization is destructive: :meth:`remove_optimized_model` becomes a no-op (issues
-        :class:`UserWarning`), and :meth:`export` raises :class:`RuntimeError`. Create or reload a new ``RFDETR``
-        instance to recover the original model.
+        ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
+        the model's current resolution. The default ``"torchscript"`` backend preserves the existing
+        ``torch.jit.trace`` path. ``"inductor"`` uses ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the
+        dummy input twice before synchronizing the selected device so setup is paid inside this method instead of the
+        first :meth:`predict` call. By default,
+        optimization deep-copies the loaded model before exporting it so the original module remains available. Set
+        ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
+        cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
+        destructive: :meth:`remove_optimized_model` becomes a no-op (issues :class:`UserWarning`), and :meth:`export`
+        raises :class:`RuntimeError`. Create or reload a new ``RFDETR`` instance to recover the original model.
 
         If ``inplace=True`` and the underlying ``export()`` call mutates the module before raising (e.g. setting
         internal flags and swapping ``forward``), the exception handler resets RFDETR wrapper flags to the unoptimized
@@ -1314,10 +1319,9 @@ class RFDETR:
         after such a failure.
 
         Args:
-            compile: If ``True``, trace the model with ``torch.jit.trace`` to obtain
-                a JIT-compiled ``ScriptModule``. Set to ``False`` for broader compatibility (e.g. models with dynamic
-                control flow).
-            batch_size: Number of images the traced model will be optimized for. Ignored when ``compile=False``.
+            compile: If ``True``, compile the model using ``compile_backend``. Set to ``False`` for broader
+                compatibility (e.g. models with dynamic control flow).
+            batch_size: Number of images the compiled model will be optimized for. Ignored when ``compile=False``.
             dtype: Target floating-point dtype for the inference model. Accepts a
                 ``torch.dtype`` directly (e.g. ``torch.float16``) or its string name (e.g. ``"float16"``). Defaults to
                 ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
@@ -1327,12 +1331,16 @@ class RFDETR:
                 inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
                 Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
                 memory savings come only from clearing the base model reference rather than from dtype reduction.
+            compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
+                preserves the existing trace path. ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode;
+                it can reduce steady-state latency but has a substantially higher one-time compilation cost and its
+                device/operator support depends on the installed PyTorch version.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``dtype`` is not a floating-point dtype, or if ``inplace=True`` is used with
-                ``compile=True``.
+            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, or if
+                ``inplace=True`` is used with ``compile=True``.
             RuntimeError: If the base model has already been cleared by a previous inplace optimization.
 
         Examples:
@@ -1389,12 +1397,14 @@ class RFDETR:
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
         if not dtype.is_floating_point:
             raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
+        if compile_backend not in ("torchscript", "inductor"):
+            raise ValueError(f"compile_backend must be 'torchscript' or 'inductor', got {compile_backend!r}")
         if inplace and compile:
             raise ValueError(
                 "inference(inplace=True) requires compile=False. "
-                "torch.jit.trace retains references to the original parameter storage in the returned "
-                "ScriptModule, so setting model.model=None would not free the weight tensors and "
-                "inplace=True would not reduce memory usage."
+                "Compiled models can retain references to the original parameter storage, so setting "
+                "model.model=None may not free the weight tensors and inplace=True would not reliably reduce "
+                "memory usage."
             )
 
         # Clear any previously optimized state before starting a new optimization run.
@@ -1418,17 +1428,27 @@ class RFDETR:
                 inference_model = inference_model.to(dtype=dtype)
 
                 if compile:
-                    inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
-                        inference_model,
-                        torch.randn(
-                            batch_size,
-                            self.model_config.num_channels,
-                            self.model.resolution,
-                            self.model.resolution,
-                            device=self.model.device,
-                            dtype=dtype,
-                        ),
+                    dummy_input = torch.randn(
+                        batch_size,
+                        self.model_config.num_channels,
+                        self.model.resolution,
+                        self.model.resolution,
+                        device=self.model.device,
+                        dtype=dtype,
                     )
+                    if compile_backend == "torchscript":
+                        inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
+                            inference_model,
+                            dummy_input,
+                        )
+                    else:
+                        inference_model = torch.compile(inference_model, mode="reduce-overhead")
+                        with torch.inference_mode():
+                            inference_model(dummy_input)
+                            if device.type == "cuda":
+                                # CUDA Graph Trees reserve memory on the first call and record on the second.
+                                inference_model(dummy_input)
+                                torch.cuda.synchronize(device)
                     self._optimized_has_been_compiled = True
                     self._optimized_batch_size = batch_size
 
@@ -1458,6 +1478,7 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
+        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
         """Deprecated alias for :meth:`inference`.
 
@@ -1470,6 +1491,7 @@ class RFDETR:
             batch_size: See :meth:`inference`.
             dtype: See :meth:`inference`.
             inplace: See :meth:`inference`.
+            compile_backend: See :meth:`inference`.
         """
         ...
 
@@ -1593,72 +1615,96 @@ class RFDETR:
         fp16: bool = True,
         notes: object = None,
         coreml_precision: str | None = None,
+        openvino_precision: str | None = None,
         output_name: str | None = None,
     ) -> Path:
-        """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, or CoreML format.
+        """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, or OpenVINO format.
 
         See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
         Args:
             output_dir: Directory to write the exported model to.
             infer_dir: Optional directory of sample images for dynamic-axes inference.
-            backbone_only: Export only the backbone (feature extractor).
+            backbone_only: Export the encoder and feature projectors without prediction heads. Returns one NCHW
+                feature map per configured ``projector_scale`` level, followed by cross-attention feature levels
+                when a separate cross-attention projector is present.
             opset_version: ONNX opset version to target.
             verbose: Print export progress information.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph.
-            dynamic_batch: If True, export with a dynamic batch dimension so the model accepts variable batch sizes
-                at runtime (spatial dimensions always stay fixed).  Applies to the ONNX and TFLite graphs.  Not
-                supported for ExecuTorch export on executorch 1.3.1 (raises ``NotImplementedError``): the runtime
-                cannot resize RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced
-                batch — export one ``.pte`` per batch size instead.  Also unsupported for native CoreML
+            dynamic_batch: If True, export with a dynamic batch dimension
+                so the model accepts variable batch sizes at runtime
+                (spatial dimensions always stay fixed). Applies to the ONNX
+                and TFLite graphs. Not supported for ExecuTorch export on
+                executorch 1.3.1 (raises ``NotImplementedError``): the runtime
+                cannot resize RF-DETR's windowed-attention reshapes, so a
+                dynamic ``.pte`` runs only at the traced batch — export one
+                ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-            patch_size: Backbone patch size. Defaults to the value stored in
-                ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
-                instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
+                Also unsupported for ``format="openvino"``: the IR graph bakes a fixed input shape;
+                export one model per batch size instead.
+            patch_size: Backbone patch size. Defaults to the value stored
+                in ``model_config.patch_size`` (typically 14 or 16). When
+                provided explicitly it must match the instantiated model's
+                patch size. Shape divisibility is validated against
+                ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``),
-                ``"executorch"`` (alias: ``"pte"``), or ``"coreml"``.
-                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
-                ``onnx2tf`` (requires ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the TensorRT
-                Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
-                ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
-                time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
-                When ``"executorch"`` is selected the model is exported directly via ``torch.export`` to an ExecuTorch
+                ``"executorch"`` (alias: ``"pte"``), ``"coreml"`` or ``"openvino"``.
+                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX,
+                then convert: ``"tflite"`` via ``onnx2tf`` (requires
+                ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the
+                TensorRT Python API (requires ``pip install rfdetr[tensorrt]``).
+                Unlike ``"onnx"``/``"tflite"`` portable serialization,
+                ``"tensorrt"`` performs target-specific compilation at
+                export time and produces a non-portable ``.trt`` engine
+                tied to the build machine's GPU and TensorRT version.
+                When ``"executorch"`` is selected the model is exported
+                directly via ``torch.export`` to an ExecuTorch
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
-                ``pip install rfdetr[executorch]``.
+                ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
+                format (requires ``pip install rfdetr[openvino]``).
                 When ``"coreml"`` is selected the model is exported via ``torch.export`` + ``coremltools`` to a
-                native ``.mlpackage`` (no ONNX step; requires ``pip install rfdetr[coreml]``). This is distinct from
-                ExecuTorch's ``format="executorch", backend="coreml"`` path, which still produces a ``.pte``. If
-                you know that ExecuTorch delegate and expect ``format="coreml"`` to mean the same thing: it does
-                not — pass ``format="executorch", backend="coreml"`` for the ``.pte`` route instead. Passing both
-                ``format="coreml"`` and ``backend="coreml"`` together does **not** fall through to the ExecuTorch
-                delegate; ``backend`` is ignored (with a warning) and the native ``.mlpackage`` path always runs.
+                native ``.mlpackage`` (no ONNX step; requires
+                ``pip install rfdetr[coreml]``). This is distinct from
+                ExecuTorch's ``format="executorch", backend="coreml"``
+                path, which still produces a ``.pte``. If you know that
+                ExecuTorch delegate and expect ``format="coreml"`` to mean
+                the same thing: it does not — pass
+                ``format="executorch", backend="coreml"`` for the ``.pte``
+                route instead. Passing both ``format="coreml"`` and
+                ``backend="coreml"`` together does **not** fall through
+                to the ExecuTorch delegate; ``backend`` is ignored (with
+                a warning) and the native ``.mlpackage`` path always runs.
                 Keypoint models are untested with ``format="coreml"`` — detection and segmentation have
                 registry-clean and numerical-parity test coverage (see
                 ``tests/export/test_coreml_op_coverage.py`` / ``test_coreml_export.py``), keypoint models
                 currently do not.
 
                 .. warning::
-                    TFLite, ExecuTorch, and CoreML export are experimental and subject to change; upstream dependency
-                    instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``, ``coremltools``) may affect results.
+                    TFLite, ExecuTorch, and CoreML export are experimental
+                    and subject to change; upstream dependency instabilities
+                    (``onnx2tf``, ``ai_edge_litert``, ``executorch``,
+                    ``coremltools``) may affect results.
             quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` /
-                ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces an INT8-quantized
-                model.
-            calibration_data: Representative images for INT8 calibration and ``onnx2tf`` output validation.  Accepts:
+                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``,
+                ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16
+                ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range INT8 model (INT8 weights,
+                float activations; needs no calibration data).
+            calibration_data: Optional data not consumed when building the exported ``.tflite`` models. Accepts:
 
-                * ``None`` — auto-generate random data (sufficient for fp32/fp16; warns for int8).
+                * ``None`` — auto-generate random data (the default, and adequate for every quantization mode).
                 * A **directory path** (``str``) containing JPEG/PNG
-                  images — the converter automatically loads, resizes, and prepares them.  This is the simplest
-                  approach.
+                  images — the converter automatically loads, resizes, and prepares them.
                 * A path (``str``) to a ``.npy`` file of shape ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
                 * A :class:`numpy.ndarray` with the same format.
 
-                For INT8 quantization, provide 20–100 representative images from your training/validation set for best
-                accuracy.
-            max_images: Maximum number of images to load from a calibration directory.  Defaults to ``100``.  Only used
-                when *calibration_data* is a directory path.
+                This does **not** improve INT8 accuracy: ``quantization="int8"`` produces a dynamic-range model whose
+                weight scales come from the weights themselves. When passed as ``None``, a directory, or an array, the
+                data is saved to an unused scratch file in *output_dir* but not consumed to build the model. An
+                existing ``.npy`` path is reused without writing a copy.
+            max_images: Maximum number of images to load from a *calibration_data* directory.  Defaults to ``100``.
+                Only used when *calibration_data* is a directory path.
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
@@ -1676,17 +1722,27 @@ class RFDETR:
                 (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
                 on NVIDIA GPUs.  Pass ``False`` to build an FP32 engine — required on TensorRT builds that do
                 not expose the FP16 builder flag (``export()`` otherwise aborts while configuring FP16).
-            notes: Optional user-defined metadata (string, dict, list, or
-                any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
-                property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
-                types are JSON-encoded so consumers must call ``json.loads()`` to recover a dict or list.  The same
-                value can be passed to :meth:`train` so the checkpoint and the ONNX file share the same provenance
-                information.  **Ignored for ``format="executorch"`` and ``format="coreml"``**: those artifacts have
+            notes: Optional user-defined metadata (string, dict, list,
+                or any JSON-serialisable value) to embed in the exported
+                ONNX model under the ``"rfdetr_notes"`` metadata property.
+                When ``None`` no metadata entry is written. String values
+                are stored verbatim; all other types are JSON-encoded so
+                consumers must call ``json.loads()`` to recover a dict or
+                list. The same value can be passed to :meth:`train` so the
+                checkpoint and the ONNX file share the same provenance
+                information. **Ignored for ``format="executorch"``,
+                ``format="coreml"``, and ``format="openvino"``**: those artifacts have
                 no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
                 embedded.
             coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
-                ``"float32"`` selects FP32 (tight CPU parity with eager PyTorch); ``"float16"`` selects a smaller
+                ``"float32"`` selects FP32 (tight CPU parity with eager
+                PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
+            openvino_precision: ``"float32"``, ``"float16"``, or ``None`` (default) for ``format="openvino"``
+                — ``None`` keeps OpenVINO's own ``compress_to_fp16=True`` default; ``"float32"`` disables
+                FP16 weight compression, controlling IR *storage* precision only (execution precision still
+                depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
+                Ignored for every other format.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -1694,26 +1750,33 @@ class RFDETR:
                 (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above). Sanitized against path
                 traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``
                 always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
-                ``_dynamic_range_quant`` suffix is unavoidable even with *output_name* set — it becomes the stem
+                ``_dynamic_range_quant`` suffix is unavoidable even with
+                *output_name* set — it becomes the stem
                 instead of the model's variant name.
-                Exceptions: ``format="onnx"`` with ``backbone_only=True`` appends ``-backbone`` to the filename
-                (``{output_name}-backbone.onnx``); ``format="tflite"`` writes separate per-precision files instead
-                of a single ``{output_name}.tflite`` file. The TFLite filenames may include a ``_gs_patched`` infix
+                Exceptions: ONNX, CoreML, ExecuTorch, and TensorRT with ``backbone_only=True`` append ``-backbone``
+                before the extension (e.g., ``{output_name}-backbone.onnx``); TFLite writes per-precision files
+                instead of a single ``{output_name}.tflite`` file. TFLite filenames may include a ``_gs_patched`` infix
                 before the precision suffix when GridSample ops are patched, e.g.
                 ``{output_name}_gs_patched_fp32.tflite``; this is the standard RF-DETR path.
 
         Returns:
-            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, or ``.mlpackage``).
+            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``,
+            ``.pte``, ``.mlpackage`` or ``.xml`` for OpenVINO).
 
         Raises:
             ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
-                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
-                not divisible by ``patch_size * num_windows``.
-            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` or
-                ``format="coreml"`` — those paths require a fixed batch size.
-            ImportError: If the optional dependencies for the requested ``format``/``backend`` are not installed
-                (e.g. ``rfdetr[onnx]``, ``rfdetr[executorch]``, ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
-                ``backend="coreml"``, or an ExecuTorch source build against the QAIRT SDK for ``backend="qnn"``).
+                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; if the resolved export shape is
+                not divisible by ``patch_size * num_windows``; or if ``coreml_precision``/``openvino_precision``
+                is not one of their accepted values.
+            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
+                ``format="coreml"``, or ``format="openvino"`` — those paths require a fixed batch size.
+            ImportError: If the optional dependencies for the requested
+                ``format``/``backend`` are not installed (e.g.
+                ``rfdetr[onnx]``, ``rfdetr[executorch]``,
+                ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
+                ``backend="coreml"``, ``openvino`` for OpenVINO export,
+                or an ExecuTorch source build against the QAIRT SDK for
+                ``backend="qnn"``).
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
@@ -1721,7 +1784,7 @@ class RFDETR:
             format = "tensorrt"
         if format == "pte":  # "pte" is an alias for "executorch"
             format = "executorch"
-        from rfdetr.export._backend import _resolve_export_backend, preload_tensorflow_before_onnx
+        from rfdetr.export._backend import _BackboneExport, _resolve_export_backend, preload_tensorflow_before_onnx
 
         if format == "tflite":
             # Must run before the ONNX export imports onnx's C extension: onnx and TensorFlow share weakly-exported
@@ -1741,6 +1804,11 @@ class RFDETR:
             raise NotImplementedError(
                 "CoreML export does not support dynamic_batch (fixed shapes are required for reliable "
                 "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
+            )
+        if dynamic_batch and format == "openvino":
+            raise NotImplementedError(
+                "OpenVINO export does not support dynamic_batch (the IR graph bakes a fixed input shape). "
+                "Export one model per batch size instead."
             )
         logger.info(f"Exporting model to {format} format")
         try:
@@ -1798,8 +1866,20 @@ class RFDETR:
                 infer_dir, shape, batch_size, device, num_channels=self.model_config.num_channels
             ).to(device)
             input_names = ["input"]
+            export_model: torch.nn.Module = model
             if backbone_only:
-                output_names = ["features"]
+                backbone = cast(Backbone, model.backbone[0])
+                backbone.export()
+                export_model = _BackboneExport(backbone)
+                output_names = [
+                    "features" if index == 0 else f"features_{index}"
+                    for index in range(len(self.model_config.projector_scale))
+                ]
+                if backbone.cross_attn_projector is not None:
+                    output_names.extend(
+                        "cross_attn_features" if index == 0 else f"cross_attn_features_{index}"
+                        for index in range(len(self.model_config.projector_scale))
+                    )
             elif self.model_config.segmentation_head:
                 output_names = ["dets", "labels", "masks"]
             elif self.model_config.use_grouppose_keypoints:
@@ -1811,13 +1891,13 @@ class RFDETR:
                 dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
             else:
                 dynamic_axes = None
-            model.eval()
+            export_model.eval()
             with torch.no_grad():
                 if backbone_only:
-                    features = model(input_tensors)
-                    logger.debug(f"PyTorch inference output shape: {features.shape}")
+                    features = export_model(input_tensors)
+                    logger.debug(f"PyTorch backbone output shapes: {[feature.shape for feature in features]}")
                 elif self.model_config.segmentation_head:
-                    outputs = model(input_tensors)
+                    outputs = export_model(input_tensors)
                     dets = outputs["pred_boxes"]
                     labels = outputs["pred_logits"]
                     masks = outputs["pred_masks"]
@@ -1829,7 +1909,7 @@ class RFDETR:
                     else:
                         logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
                 elif self.model_config.use_grouppose_keypoints:
-                    outputs = model(input_tensors)
+                    outputs = export_model(input_tensors)
                     dets = outputs["pred_boxes"]
                     labels = outputs["pred_logits"]
                     keypoints = outputs["pred_keypoints"]
@@ -1838,7 +1918,7 @@ class RFDETR:
                         f"Keypoints: {keypoints.shape}",
                     )
                 else:
-                    outputs = model(input_tensors)
+                    outputs = export_model(input_tensors)
                     dets = outputs["pred_boxes"]
                     labels = outputs["pred_logits"]
                     logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
@@ -1846,11 +1926,27 @@ class RFDETR:
             model.cpu()
             input_tensors = input_tensors.cpu()
 
+            if format == "openvino":
+                from rfdetr.export._backend import _export_openvino_format
+
+                return _export_openvino_format(
+                    export_model,
+                    input_tensors,
+                    output_dir_path,
+                    backbone_only=backbone_only,
+                    verbose=verbose,
+                    variant_name=getattr(self, "size", None),
+                    dynamic_batch=dynamic_batch,
+                    notes=notes,
+                    precision=openvino_precision,
+                    output_name=output_name,
+                )
+
             if format == "executorch":
                 from rfdetr.export._backend import _export_executorch_format
 
                 return _export_executorch_format(
-                    model,
+                    export_model,
                     input_tensors,
                     output_dir_path,
                     backend=backend,
@@ -1859,13 +1955,14 @@ class RFDETR:
                     dynamic_batch=dynamic_batch,
                     notes=notes,
                     output_name=output_name,
+                    backbone_only=backbone_only,
                 )
 
             if format == "coreml":
                 from rfdetr.export._backend import _export_coreml_format
 
                 return _export_coreml_format(
-                    model,
+                    export_model,
                     input_tensors,
                     output_dir_path,
                     variant_name=getattr(self, "size", None),
@@ -1873,11 +1970,12 @@ class RFDETR:
                     notes=notes,
                     compute_precision=coreml_precision,
                     output_name=output_name,
+                    backbone_only=backbone_only,
                 )
 
             output_file = export_onnx(
                 output_dir=str(output_dir_path),
-                model=model,
+                model=export_model,
                 input_names=input_names,
                 input_tensors=input_tensors,
                 output_names=output_names,
@@ -1903,7 +2001,7 @@ class RFDETR:
                 max_images=max_images,
                 verbose=verbose,
                 fp16=fp16,
-                output_name=output_name,
+                output_name=Path(output_file).stem if backbone_only and output_name else output_name,
             )
         finally:
             self.model.model = self.model.model.to(device)
