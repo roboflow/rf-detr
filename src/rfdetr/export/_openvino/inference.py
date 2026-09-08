@@ -24,6 +24,13 @@ logger = get_logger()
 class OpenVINOInference:
     """Inference wrapper for OpenVINO IR models.
 
+    Import it from its public path, :mod:`rfdetr.export.inference` — this module is private and its
+    location is not part of the public API.
+
+    Session-tier by design: it takes already-preprocessed NCHW tensors and returns the model's raw
+    output tensors. Decoding those into detections is the caller's job (see
+    :doc:`the export guide </learn/export>`).
+
     A single instance is safe to call from multiple threads: ``infer()`` is guarded by an
     internal lock, since OpenVINO's ``InferRequest.infer()`` is not thread-safe on a shared
     request object (concurrent calls would silently corrupt each other's output buffers).
@@ -33,7 +40,7 @@ class OpenVINOInference:
     Example:
         .. code-block:: python
 
-            from rfdetr.export._openvino.inference import OpenVINOInference
+            from rfdetr.export.inference import OpenVINOInference
 
             model = OpenVINOInference("output/inference_model.xml")
             # Prepare input image (NCHW format, ImageNet normalized)
