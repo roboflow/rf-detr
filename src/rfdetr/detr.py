@@ -1615,9 +1615,10 @@ class RFDETR:
         fp16: bool = True,
         notes: object = None,
         coreml_precision: str | None = None,
+        openvino_precision: str | None = None,
         output_name: str | None = None,
     ) -> Path:
-        """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, or CoreML format.
+        """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, or OpenVINO format.
 
         See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
 
@@ -1632,44 +1633,64 @@ class RFDETR:
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph.
-            dynamic_batch: If True, export with a dynamic batch dimension so the model accepts variable batch sizes
-                at runtime (spatial dimensions always stay fixed).  Applies to the ONNX and TFLite graphs.  Not
-                supported for ExecuTorch export on executorch 1.3.1 (raises ``NotImplementedError``): the runtime
-                cannot resize RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced
-                batch — export one ``.pte`` per batch size instead.  Also unsupported for native CoreML
+            dynamic_batch: If True, export with a dynamic batch dimension
+                so the model accepts variable batch sizes at runtime
+                (spatial dimensions always stay fixed). Applies to the ONNX
+                and TFLite graphs. Not supported for ExecuTorch export on
+                executorch 1.3.1 (raises ``NotImplementedError``): the runtime
+                cannot resize RF-DETR's windowed-attention reshapes, so a
+                dynamic ``.pte`` runs only at the traced batch — export one
+                ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-            patch_size: Backbone patch size. Defaults to the value stored in
-                ``model_config.patch_size`` (typically 14 or 16). When provided explicitly it must match the
-                instantiated model's patch size. Shape divisibility is validated against ``patch_size * num_windows``.
+                Also unsupported for ``format="openvino"``: the IR graph bakes a fixed input shape;
+                export one model per batch size instead.
+            patch_size: Backbone patch size. Defaults to the value stored
+                in ``model_config.patch_size`` (typically 14 or 16). When
+                provided explicitly it must match the instantiated model's
+                patch size. Shape divisibility is validated against
+                ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``),
-                ``"executorch"`` (alias: ``"pte"``), or ``"coreml"``.
-                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX, then convert: ``"tflite"`` via
-                ``onnx2tf`` (requires ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the TensorRT
-                Python API (requires ``pip install rfdetr[tensorrt]``).  Unlike ``"onnx"``/
-                ``"tflite"`` portable serialization, ``"tensorrt"`` performs target-specific compilation at export
-                time and produces a non-portable ``.trt`` engine tied to the build machine's GPU and TensorRT version.
-                When ``"executorch"`` is selected the model is exported directly via ``torch.export`` to an ExecuTorch
+                ``"executorch"`` (alias: ``"pte"``), ``"coreml"`` or ``"openvino"``.
+                ``"tflite"`` and ``"tensorrt"`` both first export to ONNX,
+                then convert: ``"tflite"`` via ``onnx2tf`` (requires
+                ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the
+                TensorRT Python API (requires ``pip install rfdetr[tensorrt]``).
+                Unlike ``"onnx"``/``"tflite"`` portable serialization,
+                ``"tensorrt"`` performs target-specific compilation at
+                export time and produces a non-portable ``.trt`` engine
+                tied to the build machine's GPU and TensorRT version.
+                When ``"executorch"`` is selected the model is exported
+                directly via ``torch.export`` to an ExecuTorch
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
-                ``pip install rfdetr[executorch]``.
+                ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
+                format (requires ``pip install rfdetr[openvino]``).
                 When ``"coreml"`` is selected the model is exported via ``torch.export`` + ``coremltools`` to a
-                native ``.mlpackage`` (no ONNX step; requires ``pip install rfdetr[coreml]``). This is distinct from
-                ExecuTorch's ``format="executorch", backend="coreml"`` path, which still produces a ``.pte``. If
-                you know that ExecuTorch delegate and expect ``format="coreml"`` to mean the same thing: it does
-                not — pass ``format="executorch", backend="coreml"`` for the ``.pte`` route instead. Passing both
-                ``format="coreml"`` and ``backend="coreml"`` together does **not** fall through to the ExecuTorch
-                delegate; ``backend`` is ignored (with a warning) and the native ``.mlpackage`` path always runs.
+                native ``.mlpackage`` (no ONNX step; requires
+                ``pip install rfdetr[coreml]``). This is distinct from
+                ExecuTorch's ``format="executorch", backend="coreml"``
+                path, which still produces a ``.pte``. If you know that
+                ExecuTorch delegate and expect ``format="coreml"`` to mean
+                the same thing: it does not — pass
+                ``format="executorch", backend="coreml"`` for the ``.pte``
+                route instead. Passing both ``format="coreml"`` and
+                ``backend="coreml"`` together does **not** fall through
+                to the ExecuTorch delegate; ``backend`` is ignored (with
+                a warning) and the native ``.mlpackage`` path always runs.
                 Keypoint models are untested with ``format="coreml"`` — detection and segmentation have
                 registry-clean and numerical-parity test coverage (see
                 ``tests/export/test_coreml_op_coverage.py`` / ``test_coreml_export.py``), keypoint models
                 currently do not.
 
                 .. warning::
-                    TFLite, ExecuTorch, and CoreML export are experimental and subject to change; upstream dependency
-                    instabilities (``onnx2tf``, ``ai_edge_litert``, ``executorch``, ``coremltools``) may affect results.
+                    TFLite, ExecuTorch, and CoreML export are experimental
+                    and subject to change; upstream dependency instabilities
+                    (``onnx2tf``, ``ai_edge_litert``, ``executorch``,
+                    ``coremltools``) may affect results.
             quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``).  One of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` /
-                ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range
-                INT8 model (INT8 weights, float activations; needs no calibration data).
+                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``,
+                ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16
+                ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range INT8 model (INT8 weights,
+                float activations; needs no calibration data).
             calibration_data: Optional data not consumed when building the exported ``.tflite`` models. Accepts:
 
                 * ``None`` — auto-generate random data (the default, and adequate for every quantization mode).
@@ -1701,17 +1722,27 @@ class RFDETR:
                 (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
                 on NVIDIA GPUs.  Pass ``False`` to build an FP32 engine — required on TensorRT builds that do
                 not expose the FP16 builder flag (``export()`` otherwise aborts while configuring FP16).
-            notes: Optional user-defined metadata (string, dict, list, or
-                any JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata
-                property.  When ``None`` no metadata entry is written.  String values are stored verbatim; all other
-                types are JSON-encoded so consumers must call ``json.loads()`` to recover a dict or list.  The same
-                value can be passed to :meth:`train` so the checkpoint and the ONNX file share the same provenance
-                information.  **Ignored for ``format="executorch"`` and ``format="coreml"``**: those artifacts have
+            notes: Optional user-defined metadata (string, dict, list,
+                or any JSON-serialisable value) to embed in the exported
+                ONNX model under the ``"rfdetr_notes"`` metadata property.
+                When ``None`` no metadata entry is written. String values
+                are stored verbatim; all other types are JSON-encoded so
+                consumers must call ``json.loads()`` to recover a dict or
+                list. The same value can be passed to :meth:`train` so the
+                checkpoint and the ONNX file share the same provenance
+                information. **Ignored for ``format="executorch"``,
+                ``format="coreml"``, and ``format="openvino"``**: those artifacts have
                 no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
                 embedded.
             coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
-                ``"float32"`` selects FP32 (tight CPU parity with eager PyTorch); ``"float16"`` selects a smaller
+                ``"float32"`` selects FP32 (tight CPU parity with eager
+                PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
+            openvino_precision: ``"float32"``, ``"float16"``, or ``None`` (default) for ``format="openvino"``
+                — ``None`` keeps OpenVINO's own ``compress_to_fp16=True`` default; ``"float32"`` disables
+                FP16 weight compression, controlling IR *storage* precision only (execution precision still
+                depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
+                Ignored for every other format.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -1719,7 +1750,8 @@ class RFDETR:
                 (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above). Sanitized against path
                 traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``
                 always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
-                ``_dynamic_range_quant`` suffix is unavoidable even with *output_name* set — it becomes the stem
+                ``_dynamic_range_quant`` suffix is unavoidable even with
+                *output_name* set — it becomes the stem
                 instead of the model's variant name.
                 Exceptions: ONNX, CoreML, ExecuTorch, and TensorRT with ``backbone_only=True`` append ``-backbone``
                 before the extension (e.g., ``{output_name}-backbone.onnx``); TFLite writes per-precision files
@@ -1728,17 +1760,23 @@ class RFDETR:
                 ``{output_name}_gs_patched_fp32.tflite``; this is the standard RF-DETR path.
 
         Returns:
-            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``, ``.pte``, or ``.mlpackage``).
+            Path to the exported model file (``.onnx``, ``.tflite``, ``.trt``,
+            ``.pte``, ``.mlpackage`` or ``.xml`` for OpenVINO).
 
         Raises:
             ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
-                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; or if the resolved export shape is
-                not divisible by ``patch_size * num_windows``.
-            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"`` or
-                ``format="coreml"`` — those paths require a fixed batch size.
-            ImportError: If the optional dependencies for the requested ``format``/``backend`` are not installed
-                (e.g. ``rfdetr[onnx]``, ``rfdetr[executorch]``, ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
-                ``backend="coreml"``, or an ExecuTorch source build against the QAIRT SDK for ``backend="qnn"``).
+                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; if the resolved export shape is
+                not divisible by ``patch_size * num_windows``; or if ``coreml_precision``/``openvino_precision``
+                is not one of their accepted values.
+            NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
+                ``format="coreml"``, or ``format="openvino"`` — those paths require a fixed batch size.
+            ImportError: If the optional dependencies for the requested
+                ``format``/``backend`` are not installed (e.g.
+                ``rfdetr[onnx]``, ``rfdetr[executorch]``,
+                ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
+                ``backend="coreml"``, ``openvino`` for OpenVINO export,
+                or an ExecuTorch source build against the QAIRT SDK for
+                ``backend="qnn"``).
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
@@ -1766,6 +1804,11 @@ class RFDETR:
             raise NotImplementedError(
                 "CoreML export does not support dynamic_batch (fixed shapes are required for reliable "
                 "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
+            )
+        if dynamic_batch and format == "openvino":
+            raise NotImplementedError(
+                "OpenVINO export does not support dynamic_batch (the IR graph bakes a fixed input shape). "
+                "Export one model per batch size instead."
             )
         logger.info(f"Exporting model to {format} format")
         try:
@@ -1882,6 +1925,22 @@ class RFDETR:
 
             model.cpu()
             input_tensors = input_tensors.cpu()
+
+            if format == "openvino":
+                from rfdetr.export._backend import _export_openvino_format
+
+                return _export_openvino_format(
+                    export_model,
+                    input_tensors,
+                    output_dir_path,
+                    backbone_only=backbone_only,
+                    verbose=verbose,
+                    variant_name=getattr(self, "size", None),
+                    dynamic_batch=dynamic_batch,
+                    notes=notes,
+                    precision=openvino_precision,
+                    output_name=output_name,
+                )
 
             if format == "executorch":
                 from rfdetr.export._backend import _export_executorch_format
