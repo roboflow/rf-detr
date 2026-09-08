@@ -285,6 +285,7 @@ def export_executorch(
     soc: str = "SM8650",
     dynamic_batch: bool = False,
     output_name: str | None = None,
+    backbone_only: bool = False,
 ) -> Path:
     """Export an RF-DETR model to an ExecuTorch ``.pte`` file.
 
@@ -314,7 +315,13 @@ def export_executorch(
             RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced batch.  Export one
             ``.pte`` per batch size for now.
         output_name: Full filename override (without extension). Takes precedence over *variant_name* and
-            suppresses the ``_{backend}``/``_qnn_{soc}`` suffix -- the file is named ``{output_name}.pte`` verbatim.
+            suppresses the ``_{backend}``/``_qnn_{soc}`` suffix -- the file is named ``{output_name}.pte`` before
+            the optional ``-backbone`` marker.
+        backbone_only: Whether *model* is a backbone-only export graph. When ``True`` and a name was supplied
+            (*variant_name* or *output_name*), a ``-backbone`` marker is appended to the filename so a backbone
+            export never collides with a full-detector export of the same variant/backend -- matching the ONNX
+            exporter's ``{stem}-backbone.onnx`` convention. Not appended onto the bare ``backbone_model`` default,
+            which already spells it out.
 
     Returns:
         Path to the exported ``.pte`` file.
@@ -363,13 +370,22 @@ def export_executorch(
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    stem, is_custom = resolve_export_stem(variant_name, output_name)
+    stem, is_custom = resolve_export_stem(
+        variant_name, output_name, default="backbone_model" if backbone_only else "inference_model"
+    )
     if is_custom:
         export_name = stem
     else:
         # backend (+ SoC for qnn) determines what can load the file -- always encode it.
         backend_token = f"qnn_{soc}" if backend_name == "qnn" else backend_name
         export_name = f"{stem}_{backend_token}"
+    # "-backbone" is a structural marker (distinct model graph), not a backend/SoC detail -- it is
+    # appended whenever a name was supplied, custom or variant-derived, but not onto the bare
+    # "backbone_model" default (which already spells it out). Mirrors export_onnx's convention;
+    # without it, a backbone export silently overwrites a full-detector export of the same
+    # variant/backend/output_name.
+    if backbone_only and (variant_name or output_name):
+        export_name = f"{export_name}-backbone"
     output_file = output_dir / f"{export_name}.pte"
 
     model = model.eval()

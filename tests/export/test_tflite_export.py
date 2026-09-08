@@ -260,8 +260,7 @@ class TestExportTfliteConverter:
     ) -> None:
         """custom_input_op_name_np_data_path must NOT be passed to convert().
 
-        The onnx2tf custom_input code path triggers a tf.tile rank mismatch with DINOv2-style backbones when N > 1.  We
-        rely on patching download_test_image_data() instead.
+        The onnx2tf custom_input code path triggers a tf.tile rank mismatch with DINOv2-style backbones when N > 1.
         """
         _, convert_mock = fake_onnx2tf
         export_tflite(onnx_model, tflite_output)
@@ -345,18 +344,29 @@ class TestExportTfliteConverter:
         export_tflite(onnx_model, tflite_output, quantization="fp16")
         assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
 
+    @pytest.mark.parametrize(
+        "calibration_data",
+        [
+            None,
+            pytest.param(Path("/some/calib_dir"), id="directory"),
+            pytest.param(np.zeros((2, 64, 64, 3), dtype=np.float32), id="ndarray"),
+        ],
+    )
     def test_int8_quantization_produces_dynamic_range(
         self,
         onnx_model: Path,
         tflite_output: Path,
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
+        calibration_data: Path | np.ndarray | None,
     ) -> None:
-        """Int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path.
+        """Int8 export derives a dynamic-range model and avoids onnx2tf's -oiqt path, regardless of calibration_data.
 
         onnx2tf's ``output_integer_quantized_tflite`` (-oiqt) only yields static quantization, which RF-DETR's
         transformer activations do not survive. The converter instead builds dynamic-range INT8 from the SavedModel via
-        ``_quantize_dynamic_range``, so the onnx2tf call must NOT carry the ``output_integer_quantized_tflite`` flag.
+        ``_quantize_dynamic_range``, which accepts no calibration data at all -- so neither the
+        ``output_integer_quantized_tflite`` flag nor a ``representative_dataset`` ever reaches onnx2tf's ``convert()``
+        call, no matter whether ``calibration_data`` is ``None``, a directory, or an ndarray.
         """
         _, convert_mock = fake_onnx2tf
         dyn_path = tflite_output / "model_dynamic_range_quant.tflite"
@@ -364,8 +374,10 @@ class TestExportTfliteConverter:
             "rfdetr.export._tflite.converter._quantize_dynamic_range",
             return_value=dyn_path,
         ) as quant_mock:
-            result = export_tflite(onnx_model, tflite_output, quantization="int8")
-        assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
+            result = export_tflite(onnx_model, tflite_output, quantization="int8", calibration_data=calibration_data)
+        kwargs = convert_mock.call_args.kwargs
+        assert "output_integer_quantized_tflite" not in kwargs
+        assert "representative_dataset" not in kwargs
         quant_mock.assert_called_once()
         assert result == dyn_path
 
@@ -905,7 +917,7 @@ class TestPrepareCalibrationData:
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
 
-        npy_path = _prepare_calibration_data(onnx_path, None, tmp_path, "fp32")
+        npy_path = _prepare_calibration_data(onnx_path, None, tmp_path)
 
         assert isinstance(npy_path, Path)
         assert npy_path.is_file()
@@ -914,21 +926,22 @@ class TestPrepareCalibrationData:
         assert data.shape == (_DEFAULT_CALIB_SAMPLES, 256, 256, 3)
         assert data.dtype == np.float32
 
-    def test_none_int8_emits_warning(self, tmp_path: Path, _mock_onnx_info: None) -> None:
+    def test_generated_data_is_not_reported_as_an_accuracy_problem(self, tmp_path: Path, _mock_onnx_info: None) -> None:
+        """Auto-generated validation data must not trigger any warning."""
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
 
         with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
-            _prepare_calibration_data(onnx_path, None, tmp_path, "int8")
-            mock_logger.warning.assert_called_once()
-            assert "INT8" in mock_logger.warning.call_args[0][0]
+            _prepare_calibration_data(onnx_path, None, tmp_path)
+
+        mock_logger.warning.assert_not_called()
 
     def test_ndarray_saves_to_npy(self, tmp_path: Path, _mock_onnx_info: None) -> None:
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
         calib = np.random.rand(10, 256, 256, 3).astype(np.float32)
 
-        npy_path = _prepare_calibration_data(onnx_path, calib, tmp_path, "fp32")
+        npy_path = _prepare_calibration_data(onnx_path, calib, tmp_path)
 
         loaded = np.load(str(npy_path))
         np.testing.assert_array_equal(loaded, calib)
@@ -939,7 +952,7 @@ class TestPrepareCalibrationData:
         npy_file = tmp_path / "my_calib.npy"
         np.save(str(npy_file), np.zeros((5, 256, 256, 3), dtype=np.float32))
 
-        npy_path = _prepare_calibration_data(onnx_path, str(npy_file), tmp_path, "fp32")
+        npy_path = _prepare_calibration_data(onnx_path, str(npy_file), tmp_path)
 
         assert npy_path == npy_file
 
@@ -955,7 +968,7 @@ class TestPrepareCalibrationData:
             img = Image.new("RGB", (100, 80), color=(i * 50, 0, 0))
             img.save(img_dir / f"img_{i:03d}.jpg")
 
-        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path, "int8")
+        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path)
 
         assert npy_path.is_file()
         data = np.load(str(npy_path))
@@ -975,7 +988,7 @@ class TestPrepareCalibrationData:
             img = Image.new("RGB", (100, 80), color=(i * 25, 0, 0))
             img.save(img_dir / f"img_{i:03d}.jpg")
 
-        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path, "int8", max_images=3)
+        npy_path = _prepare_calibration_data(onnx_path, str(img_dir), tmp_path, max_images=3)
 
         assert npy_path.is_file()
         data = np.load(str(npy_path))
@@ -986,7 +999,7 @@ class TestPrepareCalibrationData:
         onnx_path.write_bytes(b"\x00")
 
         with pytest.raises(FileNotFoundError, match="Calibration data path not found"):
-            _prepare_calibration_data(onnx_path, "/nonexistent/calib.npy", tmp_path, "fp32")
+            _prepare_calibration_data(onnx_path, "/nonexistent/calib.npy", tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1023,7 +1036,7 @@ class TestLoadCalibrationImages:
         """The calibration resize must follow predict()'s convention: bilinear, half-pixel, antialias-free.
 
         Guards the #1206 alignment: PIL's default resize (BICUBIC + adaptive antialias when downscaling) produces a
-        pixel distribution the model never sees at inference and would skew the INT8 ranges.
+        different pixel distribution from predict(), reducing fidelity if the conditional validation hook uses it.
         """
         import torchvision.transforms.functional as F  # noqa: N812
         from PIL import Image
@@ -1467,8 +1480,11 @@ class TestInterpreterScriptsOnPath:
 
     @pytest.mark.parametrize(
         ("original_path", "expected_path"),
-        [("/usr/bin", "/usr/bin"), ("", ""), (None, None)],
-        ids=["nonempty", "explicit-empty", "unset"],
+        [
+            pytest.param("/usr/bin", "/usr/bin", id="nonempty"),
+            pytest.param("", "", id="explicit-empty"),
+            pytest.param(None, None, id="unset"),
+        ],
     )
     def test_restores_path_on_exception(
         self,
@@ -1513,7 +1529,10 @@ class TestInterpreterScriptsOnPath:
         assert entries[: len(preferred)] == preferred
         assert entries[len(preferred) :] == [unrelated, unrelated]
 
-    @pytest.mark.parametrize("executable", ["", "python"], ids=["empty", "relative"])
+    @pytest.mark.parametrize(
+        "executable",
+        [pytest.param("", id="empty"), pytest.param("python", id="relative")],
+    )
     def test_skips_empty_or_relative_executable(self, monkeypatch: pytest.MonkeyPatch, executable: str) -> None:
         """Invalid executable paths do not add the current directory to PATH."""
         monkeypatch.setattr("rfdetr.export._tflite.converter.sys.executable", executable)

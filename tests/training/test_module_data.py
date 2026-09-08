@@ -1325,6 +1325,24 @@ class TestTransferBatchToDevice:
             for key, value in original.items():
                 assert torch.equal(rebuilt[key], value)
 
+    def test_packed_targets_are_materialised_without_a_whole_batch_device_copy(self, fixture_training_setup) -> None:
+        """Packed transfer must not create a device copy of every field before constructing per-sample tensors."""
+        _, _, dm = fixture_training_setup
+        samples, plain_targets = _make_batch()
+        packed_targets = pack_targets(plain_targets)
+        assert isinstance(packed_targets, PackedTargets)
+
+        with patch.object(
+            PackedTargets,
+            "to",
+            side_effect=AssertionError("whole packed batch copied to the target device"),
+        ):
+            _, result_targets = dm.transfer_batch_to_device(
+                (samples, packed_targets), torch.device("cpu"), dataloader_idx=0
+            )
+
+        assert isinstance(result_targets, list)
+
 
 # ---------------------------------------------------------------------------
 # TestBackendResolution — validates augmentation_backend logic in setup("fit")

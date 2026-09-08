@@ -6,12 +6,14 @@
 """Tests for DepthwiseConvBlock, _DepthwiseConvWithoutCuDNN, and SegmentationHead."""
 
 from contextlib import contextmanager
+from unittest import mock
 
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 
-from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead
+from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead, point_sample
+from rfdetr.utilities.tensors import _nearest_grid_sample
 
 
 @pytest.fixture(autouse=True)
@@ -367,3 +369,46 @@ class TestSegmentationHeadSkipBlocksFalseUnaffected:
         assert len(actual_logits) == len(expected_logits)
         for actual, expected in zip(actual_logits, expected_logits):
             torch.testing.assert_close(actual, expected)
+
+
+class TestPointSampleNearestRouting:
+    """``mode="nearest"`` must use the backend-agnostic gather path, not ``F.grid_sample``.
+
+    On XLA ``F.grid_sample`` lowers to an ``aten::grid_sampler_2d`` host fallback, which is what
+    ``SetCriterion.loss_masks`` hits when it samples ground-truth mask labels.
+    """
+
+    @pytest.mark.parametrize("padding_mode", ["zeros", "border"])
+    def test_nearest_routes_through_the_gather_helper(self, padding_mode: str) -> None:
+        """Without the routing change this call reaches ``F.grid_sample`` instead."""
+        input = torch.randn(1, 2, 6, 6)
+        point_coords = torch.rand(1, 5, 2)
+
+        with mock.patch(
+            "rfdetr.models.heads.segmentation._nearest_grid_sample",
+            wraps=_nearest_grid_sample,
+        ) as spy:
+            point_sample(input, point_coords, mode="nearest", padding_mode=padding_mode)
+
+        assert spy.call_count == 1
+
+    def test_nearest_output_matches_grid_sample(self) -> None:
+        """Routing must not change values: the helper delegates to F.grid_sample off MPS/XLA."""
+        input = torch.randn(1, 3, 7, 7)
+        point_coords = torch.rand(1, 9, 2)
+
+        actual = point_sample(input, point_coords, mode="nearest")
+        grid = (2.0 * point_coords - 1.0).unsqueeze(2)
+        expected = F.grid_sample(input, grid, mode="nearest", padding_mode="border", align_corners=False).squeeze(3)
+
+        assert torch.equal(actual, expected)
+
+    def test_unsupported_mode_still_delegates(self) -> None:
+        """A mode the gather path does not implement must keep reaching F.grid_sample."""
+        input = torch.randn(1, 1, 5, 5)
+        point_coords = torch.rand(1, 4, 2)
+
+        with mock.patch("rfdetr.models.heads.segmentation.F.grid_sample", wraps=F.grid_sample) as spy:
+            point_sample(input, point_coords, mode="bicubic")
+
+        assert spy.call_count == 1

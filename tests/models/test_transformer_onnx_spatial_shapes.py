@@ -17,15 +17,26 @@ spatial_shapes path for all of them.
 
 import inspect
 import io
+from typing import TYPE_CHECKING
+from unittest import mock
 
 import numpy as np
 import pytest
 import torch
 from torch import nn
 
-onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+from rfdetr.models.transformer import Transformer
 
-from rfdetr.models.transformer import Transformer  # noqa: E402
+if TYPE_CHECKING:
+    import onnx
+
+# onnx is imported lazily at runtime inside the fixtures that build an ONNX graph
+# (exported_static_onnx, exported_dynamic_onnx_bytes, exported_1lvl_onnx), not at module scope: a
+# module-level pytest.importorskip("onnx") would skip collection of the whole file, including the
+# torch.compile/TorchScript-trace regression tests below, which do not touch onnx at all and must
+# still run in CI environments that install this project without the [onnx] extra (e.g.
+# ci-tests-cpu.yml's "train,augment,cli,visual" set). The TYPE_CHECKING import above only satisfies
+# the "onnx.ModelProto" string annotations used as return/parameter types.
 
 # CI guard: torch._shape_as_tensor is a private ATen API used on the live forward path in
 # Transformer.forward(). If a future PyTorch upgrade removes it, this assertion fails
@@ -218,6 +229,7 @@ def exported_static_onnx(
     Returns:
         Loaded ``onnx.ModelProto`` for structural graph assertions.
     """
+    onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
     out = tmp_path_factory.mktemp("onnx_static") / "transformer.onnx"
     torch.onnx.export(
         transformer_wrapper_2lvl,
@@ -241,6 +253,7 @@ def exported_dynamic_onnx_bytes(
     Returns:
         Serialized ONNX model bytes for onnxruntime inference with variable batch sizes.
     """
+    pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
     buf = io.BytesIO()
     torch.onnx.export(
         transformer_wrapper_2lvl,
@@ -273,6 +286,7 @@ def exported_1lvl_onnx(
     Returns:
         Loaded ``onnx.ModelProto`` for structural graph assertions.
     """
+    onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
     out = tmp_path_factory.mktemp("onnx_1lvl") / "transformer_1lvl.onnx"
     torch.onnx.export(
         transformer_wrapper_1lvl,
@@ -407,3 +421,88 @@ def test_level_start_index_correctness_two_levels() -> None:
     assert torch.equal(level_start_index, torch.tensor([0, 48], dtype=torch.long)), (
         f"level_start_index expected [0, 48], got {level_start_index.tolist()}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Tests: torch.compile takes the Python-int branch (Dynamo polyfills _shape_as_tensor)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("wrapper_fixture", "inputs_fixture", "compile_predicate"),
+    [
+        pytest.param("transformer_wrapper_1lvl", "example_inputs_1lvl", "compiler", id="compiler-1lvl"),
+        pytest.param("transformer_wrapper_2lvl", "example_inputs_2lvl", "compiler", id="compiler-2lvl"),
+        pytest.param("transformer_wrapper_1lvl", "example_inputs_1lvl", "dynamo", id="dynamo-1lvl"),
+        pytest.param("transformer_wrapper_2lvl", "example_inputs_2lvl", "dynamo", id="dynamo-2lvl"),
+    ],
+)
+def test_spatial_shapes_survives_dynamo_shape_as_tensor_polyfill(
+    wrapper_fixture: str,
+    inputs_fixture: str,
+    compile_predicate: str,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Transformer.forward`` must not call ``torch._shape_as_tensor`` while compiling.
+
+    Dynamo polyfills ``torch._shape_as_tensor`` to return a ``torch.Size`` rather than a tensor, so
+    ``torch.stack([...])`` raises ``TypeError: expected Tensor as element 0 in argument 0, but got torch.Size`` and the
+    whole compile aborts (``suppress_errors=True`` does not catch it: the ``TypeError`` comes from user code, not from
+    Dynamo). This reproduces that polyfill and the ``is_compiling()`` state on CPU, without paying for a real compile in
+    CI, and checks the output still matches the eager one. PyTorch 2.2 lacks
+    ``torch.compiler.is_compiling``, so its legacy ``torch._dynamo.is_compiling`` predicate is covered too. Both
+    feature-level counts are covered because the two branches build ``spatial_shapes`` from differently shaped
+    sources.
+
+    Args:
+        wrapper_fixture: Name of the Transformer wrapper fixture to exercise.
+        inputs_fixture: Name of the matching example-input fixture.
+        compile_predicate: Compile-state API to emulate (public ``torch.compiler`` or legacy Dynamo).
+        request: Pytest fixture request used to resolve the two names.
+        monkeypatch: Pytest helper that isolates the selected compile-state API.
+    """
+    wrapper = request.getfixturevalue(wrapper_fixture)
+    inputs = request.getfixturevalue(inputs_fixture)
+    with torch.no_grad():
+        eager = wrapper(*inputs)
+
+    if compile_predicate == "compiler":
+        monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True, raising=False)
+    else:
+        monkeypatch.delattr(torch.compiler, "is_compiling", raising=False)
+        monkeypatch.setattr(torch._dynamo, "is_compiling", lambda: True)
+
+    with torch.no_grad():
+        with mock.patch.object(torch, "_shape_as_tensor", lambda t: torch.Size(t.shape)):
+            compiling = wrapper(*inputs)
+    assert torch.equal(eager, compiling), "is_compiling() branch changed Transformer output"
+
+
+def test_spatial_shapes_compile_guard_is_false_under_torchscript_trace() -> None:
+    """``is_compiling()`` must stay ``False`` under ``torch.jit.trace``.
+
+    The ``_shape_as_tensor`` form exists because TensorRT accepts the Constant it produces while a
+    ``ScatterND``-producing form is rejected (#1155). If ``is_compiling()`` were true during the TorchScript trace the
+    export path would silently switch formulation.
+    """
+    seen: list[bool] = []
+
+    class _Probe(nn.Module):
+        """Minimal module that records ``is_compiling()`` on every forward call."""
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            """Record the ``is_compiling()`` state seen during the trace.
+
+            Args:
+                x: Any tensor; only its identity matters here.
+
+            Returns:
+                ``x + 1``, so the traced graph has a real op.
+            """
+            seen.append(bool(getattr(torch.compiler, "is_compiling", lambda: False)()))
+            return x + 1
+
+    probe = _Probe().eval()
+    torch.jit.trace(probe, (torch.randn(1, 3, 4, 4),), check_trace=False)
+    assert seen and not any(seen), "torch.compiler.is_compiling() was true during torch.jit.trace"

@@ -3,9 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests that unoptimized inference always runs the module in eval mode."""
+"""Tests eval-mode handling for unoptimized inference."""
 
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import PIL.Image
 import pytest
@@ -47,7 +48,7 @@ class _FakeRFDETR(_BaseFakeRFDETR):
 
 
 class TestUnoptimizedInferenceEvalMode:
-    """`_ensure_eval_mode_for_unoptimized_inference` must keep the module in eval mode."""
+    """`_ensure_eval_mode_for_unoptimized_inference` must keep the module tree in eval mode."""
 
     def test_eval_mode_reasserted_after_train_round_trip(self) -> None:
         """Eval mode must be applied to whatever self.model.model currently points to.
@@ -68,6 +69,38 @@ class TestUnoptimizedInferenceEvalMode:
         # Every subsequent inference call must re-assert eval on the *new* object.
         rfdetr._ensure_eval_mode_for_unoptimized_inference()
         assert rfdetr.model.model.training is False
+
+    def test_eval_assignments_skipped_when_module_tree_is_already_in_eval_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A module tree already in eval mode must not have its flags reassigned.
+
+        ``nn.Module.eval()`` reassigns ``training`` on every node of the tree, so re-asserting a mode the tree is
+        already in is host time spent to reach the state it is already in. The read-only mode check remains.
+        """
+        rfdetr = _FakeRFDETR()
+        rfdetr._ensure_eval_mode_for_unoptimized_inference()
+        assert rfdetr.model.model.training is False
+
+        train_spy = Mock(wraps=rfdetr.model.model.train)
+        monkeypatch.setattr(rfdetr.model.model, "train", train_spy)
+
+        rfdetr._ensure_eval_mode_for_unoptimized_inference()
+
+        train_spy.assert_not_called()
+        assert rfdetr.model.model.training is False
+
+    def test_eval_mode_reasserted_when_only_a_submodule_is_training(self) -> None:
+        """A mixed-mode tree must be returned completely to eval mode."""
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.model.eval()
+        rfdetr.model.model.dropout.train()
+        assert rfdetr.model.model.training is False
+        assert rfdetr.model.model.dropout.training is True
+
+        rfdetr._ensure_eval_mode_for_unoptimized_inference()
+
+        assert all(not module.training for module in rfdetr.model.model.modules())
 
     def test_optimized_model_skips_eval_assertion(self) -> None:
         """When _is_optimized_for_inference is True, the method must be a no-op.
@@ -97,12 +130,12 @@ class TestUnoptimizedInferenceEvalMode:
 
         assert len(warnings) == 1
 
-    def test_eval_mode_applied_on_every_call(self) -> None:
-        """Eval() must run on every call, not just when the warning fires.
+    def test_eval_mode_applied_after_warning_when_root_is_training(self) -> None:
+        """Eval() must still run after the warning when the current root is in training mode.
 
         Simulate the code path where the warning has already been emitted
         (``_has_warned_about_not_being_optimized_for_inference=True``) and verify
-        that ``eval()`` is still applied to the current module.
+        that ``eval()`` is still applied to a current module whose root reports training mode.
         """
         rfdetr = _FakeRFDETR()
         rfdetr._has_warned_about_not_being_optimized_for_inference = True

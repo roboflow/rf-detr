@@ -35,7 +35,7 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.1
+    rev: v0.16.6
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]
@@ -55,8 +55,8 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        # Keep the mypy requirement in pyproject.toml aligned when changing this hook.
-        entry: python -m mypy src/rfdetr/ --no-error-summary
+        # Run through the project environment, matching ci-typing.yml.
+        entry: uv run --group typing --extra train --extra cli --extra visual mypy src/rfdetr/ --no-error-summary
         language: system
         pass_filenames: false
 
