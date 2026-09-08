@@ -390,7 +390,7 @@ This is an alternative input path, not a replacement — `coco`, `roboflow` and 
 
 !!! note "It is not a general speed-up"
 
-    Whether packing helps depends on where your input pipeline is actually blocked. Measured on a 32-vCPU machine with an NVMe-attached persistent disk, on COCO 2017, throughput was the same either way — between 0.92x and 1.03x across six configurations. That pipeline was limited by decode and augmentation, not by file access: `iowait` stayed under 1%, and raw reads on the same disk sustained roughly 5.5x the images per second the loader consumed. Packing pays off where per-file access genuinely is the constraint — network filesystems, object-store mounts, directories with millions of small files. What it improves regardless is construction.
+    Whether packing helps depends on where your input pipeline is actually blocked. Measured on a 32-vCPU machine with an NVMe-attached persistent disk, on COCO 2017, throughput was the same either way — between 0.92x and 1.03x across six configurations. Measurements identified the worker-to-main batch transfer as the ceiling, not decode/augmentation or file access: `iowait` stayed under 1%, and raw reads on the same disk sustained roughly 5.5x the images per second the loader consumed. Packing pays off where per-file access genuinely is the constraint — network filesystems, object-store mounts, directories with millions of small files. What it improves regardless is construction.
 
 ### What it does change, everywhere
 
@@ -424,6 +424,8 @@ coco-shards/
 
 The hex segment in a shard name is a generation token derived from the packed contents. It lets a re-pack write its shards alongside the ones the published index still points at, so the index swap is the only moment the pack changes; because it is derived from the contents rather than random, re-packing unchanged data reproduces the same names instead of churning the directory.
 
+Repacking is an offline operation: stop every reader and other packer for that split before starting. Publication swaps the index after all new shards exist, then removes the old generation. A running dataset retains its old index and can fail with `FileNotFoundError` after that cleanup. Atomic index publication does not make live repacking safe; construct new datasets/loaders after repacking completes.
+
 Image bytes are copied verbatim — no re-encode — so a packed split decodes to exactly the same pixels as the directory it came from. A `.json` member next to each image carries that image's `image_id`, `file_name` and annotation list, segmentation polygons included.
 
 `--category-ids` chooses the label space, and the index records the choice so the loader never has to guess:
@@ -456,7 +458,7 @@ Install the reader with `pip install "rfdetr[webdataset]"`.
 
 A streaming dataset has no index to sample from, so the two loaders size an epoch differently:
 
-- **Training** gives every worker a fixed number of samples, floored to a whole number of *accumulation windows* (`batch_size × grad_accum_steps`), so a partial window at the tail never fires the optimizer early. The epoch length is then exact, which is what the LR schedule needs — it is derived from `trainer.estimated_stepping_batches`. The cost is that a worker holding fewer shards than average repeats some of its own samples inside the epoch.
+- **Training** gives every worker the same fixed number of samples, with full batches per worker and full accumulation windows across each rank. For `W = max(1, num_workers)` workers and `A = max(1, grad_accum_steps)`, each worker's count is floored to a multiple of `batch_size × A / gcd(W, A)`. For example, two workers with batch size 4 and accumulation 2 need only 4 samples each: together they supply one complete accumulation window. The epoch length is then exact, which is what the LR schedule needs — it is derived from `trainer.estimated_stepping_batches`. The cost is that a worker holding fewer shards than average repeats some of its own samples inside the epoch.
 - **Validation and test** let every worker drain its shards once, so the split is scored exactly once with nothing repeated or dropped. Those loaders report no length, so their progress bar shows no total.
 
 The test stage uses a packed `test` split when the directory has one, and falls back to `val` with a log line when it does not — a shard directory only has a split someone packed deliberately.
@@ -471,7 +473,7 @@ Aim for a shard count that divides `world_size × num_workers`, or simply for ma
 
 ### Shuffling
 
-Shard visiting order is shuffled, and samples are shuffled again in a reservoir buffer as they stream. That is a local shuffle, not the global permutation `shuffle=True` gives a map-style loader: two samples in the same shard stay more likely to land in the same epoch region. Both are reseeded every epoch from PyTorch's own per-epoch worker seeding, so `seed_everything` governs them the same way it governs the rest of training.
+Shard visiting order is shuffled, and samples are shuffled again in a reservoir buffer as they stream. That is a local shuffle, not the global permutation `shuffle=True` gives a map-style loader: two samples in the same shard stay more likely to land in the same epoch region. The loader uses a dedicated generator initialized from the dataset seed on every rank, so rank-local random draws cannot change the shared pre-split shard permutation. Restarted workers receive the next generator seed; persistent workers retain their initial seed and advance a local epoch counter. Augmentation and reservoir seeds remain rank- and worker-specific. All ranks must use the same dataset seed, worker configuration and epoch sequence. This does not guarantee identical sample order across worker configurations or checkpoint-resumed runs.
 
 ### Not covered
 

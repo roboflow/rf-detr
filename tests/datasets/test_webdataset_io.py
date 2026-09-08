@@ -787,8 +787,16 @@ def _rewrite_shard_without(shard: Path, extension: str) -> None:
     """Rewrite *shard* in place, dropping every member with the given extension.
 
     Examples:
-        >>> _rewrite_shard_without  # doctest: +SKIP
-        Operates on a packed shard produced by a fixture, so it cannot run standalone.
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as temporary:
+        ...     shard = Path(temporary) / "sample.tar"
+        ...     with tarfile.open(shard, "w") as archive:
+        ...         archive.addfile(tarfile.TarInfo("sample.jpg"), io.BytesIO())
+        ...         archive.addfile(tarfile.TarInfo("sample.json"), io.BytesIO())
+        ...     _rewrite_shard_without(shard, "json")
+        ...     with tarfile.open(shard) as archive:
+        ...         archive.getnames()
+        ['sample.jpg']
     """
     with tarfile.open(shard) as tar:
         kept = [(member, tar.extractfile(member).read()) for member in tar.getmembers()]  # type: ignore[union-attr]
@@ -801,6 +809,37 @@ def _rewrite_shard_without(shard: Path, extension: str) -> None:
 
 class TestStreamingShuffle:
     """Shard-order shuffling has to stay a partition within an epoch and change between epochs."""
+
+    @pytest.mark.parametrize("persistent_workers", [False, True])
+    def test_rank_partition_survives_distinct_rngs(self, tmp_path: Path, persistent_workers: bool) -> None:
+        """Real workers must share a global shard permutation despite rank-local RNG state."""
+        shard_dir = _pack(tmp_path, count=24)
+        loaders = []
+        for rank in range(2):
+            torch.manual_seed(42 + rank)
+            dataset = WebDatasetDetection(shard_dir, "train", None, shard_shuffle=100, seed=42)
+            loaders.append(
+                build_webdataset_loader(
+                    dataset,
+                    batch_size=2,
+                    collate_fn=_id_collate,
+                    num_workers=1,
+                    persistent_workers=persistent_workers,
+                    world_size=2,
+                    rank=rank,
+                )
+            )
+        epochs = []
+        for epoch in range(2):
+            rank_ids = []
+            for rank, loader in enumerate(loaders):
+                torch.manual_seed(100 + 10 * epoch + rank)
+                rank_ids.append([image_id for batch in loader for image_id in batch])
+            assert len(rank_ids[0]) == len(rank_ids[1]) == 12
+            assert not set(rank_ids[0]) & set(rank_ids[1])
+            assert sorted(rank_ids[0] + rank_ids[1]) == list(range(1000, 1024))
+            epochs.append(rank_ids)
+        assert set(epochs[0][0]) != set(epochs[1][0])
 
     @pytest.fixture(autouse=True)
     def _require_webdataset(self) -> None:
@@ -875,7 +914,7 @@ class TestStreamingShuffle:
         monkeypatch.setattr(
             torch.utils.data,
             "get_worker_info",
-            lambda: types.SimpleNamespace(id=0, num_workers=4),
+            lambda: types.SimpleNamespace(id=0, num_workers=4, seed=42),
         )
         first_epoch = frozenset(target["image_id"] for _, target in dataset)
         second_epoch = frozenset(target["image_id"] for _, target in dataset)
@@ -900,7 +939,10 @@ class TestPlanSamplesPerWorker:
             pytest.param(1000, 16, 3, 1, 1, 320, id="floors-to-batch-multiple"),
             pytest.param(1000, 4, 2, 2, 1, 248, id="splits-across-ranks"),
             pytest.param(1000, 4, 0, 1, 1, 1000, id="zero-workers-counts-as-one"),
-            pytest.param(1000, 4, 2, 1, 8, 480, id="floors-to-accumulation-window"),
+            pytest.param(1000, 4, 2, 1, 8, 496, id="floors-to-accumulation-window"),
+            pytest.param(8, 4, 2, 1, 2, 4, id="workers-share-window"),
+            pytest.param(48, 4, 3, 1, 4, 16, id="coprime-worker-window"),
+            pytest.param(64, 4, 4, 1, 6, 12, id="common-divisor-window"),
         ],
     )
     def test_plan_is_a_whole_number_of_batches(
@@ -914,7 +956,8 @@ class TestPlanSamplesPerWorker:
             grad_accum_steps=grad_accum_steps,
         )
         assert planned == expected
-        assert planned % (batch_size * grad_accum_steps) == 0
+        assert planned % batch_size == 0
+        assert (planned // batch_size * max(1, num_workers)) % grad_accum_steps == 0
 
     def test_split_too_small_for_one_batch_per_worker_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="cannot fill one accumulation window"):
@@ -922,7 +965,7 @@ class TestPlanSamplesPerWorker:
 
     def test_split_too_small_for_one_accumulation_window_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="cannot fill one accumulation window"):
-            plan_samples_per_worker(100, batch_size=4, num_workers=2, grad_accum_steps=20)
+            plan_samples_per_worker(79, batch_size=4, num_workers=2, grad_accum_steps=20)
 
 
 class TestBuildWebdatasetLoader:
@@ -1069,7 +1112,7 @@ class TestBuildWebdatasetLoader:
             monkeypatch.setattr(
                 torch.utils.data,
                 "get_worker_info",
-                lambda: types.SimpleNamespace(id=worker_id, num_workers=2),
+                lambda: types.SimpleNamespace(id=worker_id, num_workers=2, seed=42 + worker_id),
             )
             return frozenset(int(target["image_id"]) for _, target in dataset)
 

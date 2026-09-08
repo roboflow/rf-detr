@@ -50,9 +50,12 @@ import tempfile
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from functools import partial
+from math import gcd
 from pathlib import Path, PurePath
 from typing import Any, Literal
 
+import numpy as np
 import torch
 import torch.utils.data
 from PIL import Image
@@ -227,10 +230,10 @@ def _resolve_within(base: Path, name: str) -> Path:
     Examples:
         >>> _resolve_within(Path("/data/shards"), "train-000000.tar").name
         'train-000000.tar'
-        >>> _resolve_within(Path("/data/shards"), "../../etc/passwd")
+        >>> _resolve_within(Path("/data/shards"), "../../etc/passwd")  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
-        ValueError: shard entry '../../etc/passwd' resolves outside /data/shards.
+        ValueError: shard entry '../../etc/passwd' resolves outside ...shards.
     """
     base_resolved = base.resolve()
     candidate = (base / name).resolve()
@@ -850,8 +853,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         shard_shuffle: Shards held in the shard-order shuffle buffer; ``0`` visits shards in packing order.
             Together with *shuffle_buffer* this is the streaming counterpart of ``shuffle=True`` on a map-style
             loader — a local shuffle, not a global permutation.
-        seed: Base seed, used directly only when the dataset iterates in the main process. Under DataLoader workers
-            the per-epoch seed comes from PyTorch's own per-epoch worker seeding; see :meth:`_epoch_seeds`.
+        seed: Rank-independent base seed for shard order. The loader uses a dedicated generator so rank-local
+            random draws cannot change the pre-split permutation; see :meth:`_epoch_seeds`.
         draft_size: Smallest source extent the transform pipeline can consume without upscaling, passed to
             ``PIL.Image.draft`` the same way :meth:`~rfdetr.datasets.coco.CocoDetection._decode_image` does, or
             ``None`` to decode at full resolution. See :func:`~rfdetr.datasets.coco.draft_size_for_transforms`
@@ -970,22 +973,14 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     def _epoch_seeds(self) -> tuple[int, int]:
         """Return this epoch's ``(shard_order_seed, buffer_seed)``.
 
-        Every worker of one epoch has to draw the same shard-order permutation or the split stops being a
-        partition — while a seed that never changes would replay one sample order every epoch. Under DataLoader
-        workers, ``torch.initial_seed()`` only changes epoch to epoch
-        when the loader restarts its worker processes: with ``persistent_workers=False`` PyTorch draws a fresh base
-        seed and hands worker *i* ``base_seed + i`` every time it spawns them, but with ``persistent_workers=True``
-        — the DataModule's own default whenever ``num_workers > 0`` — the same worker process stays alive across
-        every epoch and keeps the seed it was started with. ``__iter__`` still runs once per worker per epoch either
-        way (PyTorch calls it fresh at every epoch boundary, even for a persistent worker), so ``self`` survives
-        inside that worker across epochs and a plain counter incremented there is exact regardless of restart
-        policy: added to the worker's base seed, it changes the draw every epoch even when the seed itself does not.
-        Iterating in the main process has no ``torch.initial_seed()`` per-epoch signal at all, so the same counter
-        stands in for the whole seed there too.
+        The loader's dedicated generator starts identically on every rank. Restarted workers receive its next
+        base seed; persistent workers retain their original WorkerInfo seed and advance a local epoch counter.
+        Removing the worker ID from that immutable seed recovers the same pre-split permutation on all ranks.
+        The initialization hook changes torch's current seed for rank-specific augmentation and buffer randomness
+        without changing WorkerInfo. Main-process iteration instead advances the dataset's own base seed.
 
-        The shared seed is used to shuffle the full shard-URL list, identically on every worker, *before*
-        ``webdataset``'s own ``nodesplitter``/``workersplitter`` see it: see :meth:`__iter__` for why the order
-        of those two steps, not just the seed, is what makes the shard-to-worker assignment rotate every epoch.
+        All ranks must iterate the same epochs with the same worker configuration. Direct DataLoader users must
+        likewise supply synchronized generators; build_webdataset_loader establishes this contract automatically.
 
         Returns:
             Seed shared by every worker this epoch, and a seed unique to this worker.
@@ -995,9 +990,10 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         if worker_info is None:
             shared = (self._seed + self._epoch_counter) % (2**31)
             return shared, shared
-        base_seed = (torch.initial_seed() - worker_info.id) % (2**31)
+        # WorkerInfo retains the loader seed even after the rank-specific augmentation initializer runs.
+        base_seed = (worker_info.seed - worker_info.id) % (2**31)
         shared = (base_seed + self._epoch_counter) % (2**31)
-        return shared, (shared + worker_info.id) % (2**31)
+        return shared, (torch.initial_seed() + self._epoch_counter) % (2**31)
 
     def _decode(self, sample: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         """Turn one raw WebDataset sample into the ``(image, target)`` pair the transform pipeline expects.
@@ -1111,10 +1107,10 @@ def plan_samples_per_worker(
 ) -> int:
     """Return the per-worker epoch length that makes every emitted batch full.
 
-    Flooring to a multiple of ``batch_size * grad_accum_steps`` is what keeps the reported length exact — and, with
-    ``grad_accum_steps > 1``, what keeps every accumulation window complete: a worker that would end its epoch
-    mid-batch or mid-window is asked for fewer samples instead, so ``drop_last=True`` never actually drops anything
-    and PTL never fires the optimizer on a partial accumulation window
+    Each worker emits full micro-batches; accumulation windows belong to the rank, not each worker. Flooring to
+    ``batch_size * grad_accum_steps / gcd(workers, grad_accum_steps)`` makes the aggregate rank batch count a
+    multiple of the accumulation factor, so ``drop_last=True`` never actually drops anything and PTL never
+    fires the optimizer on a partial accumulation window
     (https://github.com/Lightning-AI/pytorch-lightning/issues/19987) — the streaming counterpart of what
     :class:`~rfdetr.training.module_data.GradAccumAlignedDataset` pads the map-style loader to.
 
@@ -1129,7 +1125,7 @@ def plan_samples_per_worker(
         Samples each worker yields per epoch.
 
     Raises:
-        ValueError: If the split cannot fill one accumulation window per worker.
+        ValueError: If the split cannot fill full worker batches and complete rank accumulation windows.
 
     Examples:
         >>> plan_samples_per_worker(1000, batch_size=4, num_workers=2)
@@ -1137,20 +1133,38 @@ def plan_samples_per_worker(
         >>> plan_samples_per_worker(1000, batch_size=16, num_workers=3)
         320
         >>> plan_samples_per_worker(1000, batch_size=4, num_workers=2, grad_accum_steps=8)
-        480
+        496
     """
     workers = max(1, num_workers)
-    window = batch_size * max(1, grad_accum_steps)
+    accumulation = max(1, grad_accum_steps)
+    window = batch_size * (accumulation // gcd(workers, accumulation))
     per_worker = total_samples // (max(1, world_size) * workers)
     per_worker -= per_worker % window
     if per_worker < window:
         raise ValueError(
-            f"A split of {total_samples} samples cannot fill one accumulation window of {window} samples "
-            f"(batch_size={batch_size} x grad_accum_steps={grad_accum_steps}) per worker across {world_size} "
+            f"A split of {total_samples} samples cannot fill one accumulation window across workers: "
+            f"each worker needs a multiple of {window} samples "
+            f"(batch_size={batch_size}, grad_accum_steps={grad_accum_steps}) across {world_size} "
             f"rank(s) x {workers} worker(s). Lower num_workers, batch_size or grad_accum_steps, or pack more "
             "samples."
         )
     return per_worker
+
+
+def _seed_streaming_worker(
+    worker_id: int, *, rank: int, workers: int, initialize: Callable[[int], None] | None
+) -> None:
+    """Separate rank-local augmentation RNGs from the loader's shared shard-order seed.
+
+    PyTorch stores its original seed in WorkerInfo before this callback. Preserve that immutable value for shard
+    partitioning, then seed torch, NumPy and random for this global worker and invoke the caller's hook last.
+    """
+    seed = (torch.initial_seed() + rank * workers) % (2**64)
+    torch.manual_seed(seed)
+    np.random.seed(seed % (2**32))
+    random.seed(seed)
+    if initialize is not None:
+        initialize(worker_id)
 
 
 def build_webdataset_loader(
@@ -1352,7 +1366,11 @@ def build_webdataset_loader(
         "collate_fn": collate_fn,
         "num_workers": num_workers,
         "pin_memory": pin_memory,
-        "worker_init_fn": worker_init_fn,
+        "worker_init_fn": partial(
+            _seed_streaming_worker, rank=resolved_rank, workers=max(1, num_workers), initialize=worker_init_fn
+        ),
+        # All ranks draw the same worker base seed even when their global RNG states differ.
+        "generator": torch.Generator().manual_seed(dataset._seed),
     }
     if num_workers > 0:
         loader_kwargs["persistent_workers"] = persistent_workers

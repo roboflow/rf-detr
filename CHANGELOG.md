@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- WebDataset training keeps shard permutations consistent across ranks with real DataLoader workers, aligns accumulation at rank level, and sizes raw-label heads from all declared categories. Repacking is documented as offline-only; path and shard-helper doctests are portable and executable.
+
 - TFLite INT8 documentation and warnings now reflect that dynamic-range quantization needs no calibration data. ([#1363](https://github.com/roboflow/rf-detr/issues/1363))
 
 ### Breaking Changes

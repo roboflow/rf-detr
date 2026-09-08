@@ -1822,6 +1822,13 @@ class TestDetectNumClassesWebDataset:
         pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train", category_ids="raw")
         assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
 
+    def test_raw_policy_retains_unannotated_declared_category(self, tmp_path: Path) -> None:
+        """Evaluation may contain the highest declared category even when training has no instance of it."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1])
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, category_ids="raw")
+        assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
+
     def test_keypoint_mode_does_not_read_the_shard_index(self, tmp_path: Path) -> None:
         """Keypoint training never reaches the webdataset branch: that format rejects keypoints outright."""
         ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])

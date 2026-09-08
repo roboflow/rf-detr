@@ -2081,7 +2081,7 @@ class RFDETR:
                 pass
             else:
                 if train_index.category_ids == "raw":
-                    return max(train_index.annotated_category_ids, default=-1) + 1
+                    return max((int(category["id"]) for category in train_index.categories), default=-1) + 1
                 return len(train_index.cat2label() or {})
 
         return len(RFDETR._load_classes(dataset_dir))
