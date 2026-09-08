@@ -60,9 +60,11 @@ from torch.utils.data import DataLoader
 
 from rfdetr.datasets.coco import (
     ConvertCoco,
+    draft_size_for_transforms,
     filter_parent_categories,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
+    scale_coco_annotation,
 )
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.utilities.logger import get_logger
@@ -797,6 +799,10 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             loader — a local shuffle, not a global permutation.
         seed: Base seed, used directly only when the dataset iterates in the main process. Under DataLoader workers
             the per-epoch seed comes from PyTorch's own per-epoch worker seeding; see :meth:`_epoch_seeds`.
+        draft_size: Smallest source extent the transform pipeline can consume without upscaling, passed to
+            ``PIL.Image.draft`` the same way :meth:`~rfdetr.datasets.coco.CocoDetection._decode_image` does, or
+            ``None`` to decode at full resolution. See :func:`~rfdetr.datasets.coco.draft_size_for_transforms`
+            for when a non-``None`` value is actually correct — only the train split, never a mask dataset.
     """
 
     def __init__(
@@ -810,6 +816,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         shuffle_buffer: int = 0,
         shard_shuffle: int = 0,
         seed: int = 0,
+        draft_size: int | None = None,
     ) -> None:
         super().__init__()
         self._shard_dir = Path(shard_dir)
@@ -818,6 +825,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         self._shuffle_buffer = shuffle_buffer
         self._shard_shuffle = shard_shuffle
         self._seed = seed
+        self._draft_size = draft_size
         self.index = read_shard_index(self._shard_dir, split)
         self.cat2label = self.index.cat2label() if cat2label is None else dict(cat2label)
         self.label2cat = None if self.cat2label is None else {label: cat_id for cat_id, label in self.cat2label.items()}
@@ -941,6 +949,11 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     def _decode(self, sample: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         """Turn one raw WebDataset sample into the ``(image, target)`` pair the transform pipeline expects.
 
+        Mirrors :meth:`~rfdetr.datasets.coco.CocoDetection._decode_image`'s ``PIL.Image.draft`` reduced-scale
+        decode when ``self._draft_size`` is set (train split only — see :func:`draft_size_for_transforms`), so
+        this reader reproduces the same decode work and, when a draft actually reduces the image, the same
+        annotation rescale the loose-file training path applies.
+
         Args:
             sample: Raw sample dict keyed by member extension.
 
@@ -961,9 +974,16 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             raise KeyError(f"WebDataset sample {sample.get('__key__', '?')} has no 'json' annotation sidecar.")
 
         with Image.open(io.BytesIO(sample[extension])) as handle:
+            full_width, full_height = handle.width, handle.height
+            if self._draft_size is not None:
+                handle.draft("RGB", (self._draft_size, self._draft_size))
             image = handle.convert("RGB")
+        x_scale, y_scale = image.width / full_width, image.height / full_height
         metadata = json.loads(sample["json"])
-        target: dict[str, Any] = {"image_id": metadata["image_id"], "annotations": metadata["annotations"]}
+        annotations = metadata["annotations"]
+        if (x_scale, y_scale) != (1.0, 1.0):
+            annotations = [scale_coco_annotation(annotation, x_scale, y_scale) for annotation in annotations]
+        target: dict[str, Any] = {"image_id": metadata["image_id"], "annotations": annotations}
         image, target = self.prepare(image, target)
         if self._transforms is not None:
             image, target = self._transforms(image, target)
@@ -1344,6 +1364,16 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
                 "with the same --category-ids."
             )
         cat2label = train_index.cat2label()
+    draft_size = draft_size_for_transforms(
+        image_set,
+        resolution,
+        multi_scale=getattr(args, "multi_scale", False),
+        expanded_scales=getattr(args, "expanded_scales", False),
+        patch_size=getattr(args, "patch_size", 16),
+        num_windows=getattr(args, "num_windows", 4),
+        scale_jitter=scale_jitter,
+        include_masks=include_masks,
+    )
     logger.info("Building WebDataset %s dataset at resolution %d from %s", image_set, resolution, root)
     return WebDatasetDetection(
         root,
@@ -1354,6 +1384,7 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
         shuffle_buffer=DEFAULT_SHUFFLE_BUFFER if is_train else 0,
         shard_shuffle=DEFAULT_SHARD_SHUFFLE if is_train else 0,
         seed=int(getattr(args, "seed", 0) or 0),
+        draft_size=draft_size,
     )
 
 

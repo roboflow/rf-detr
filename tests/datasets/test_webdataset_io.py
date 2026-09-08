@@ -573,6 +573,61 @@ class TestWebDatasetDetection:
             assert torch.equal(target["boxes"], reference_target["boxes"])
             assert torch.equal(target["labels"], reference_target["labels"])
 
+    def test_draft_size_matches_the_loose_file_decode_and_rescales_annotations(self, tmp_path: Path) -> None:
+        """A ``draft_size``-reduced decode matches ``CocoDetection``'s training decode path, boxes included.
+
+        Regression test: the reader always fully decoded JPEGs regardless of ``draft_size``, so it did not
+        reproduce the actual loose-file training decode (``CocoDetection._decode_image``'s ``PIL.Image.draft``
+        plus annotation rescale) the PR's parity claim rested on. The existing parity test above uses
+        ``make_coco_transforms("val", ...)``, where drafting is intentionally disabled, so it could not catch
+        this; this test forces a real draft reduction with a large source image and a small ``draft_size``.
+        """
+        image_dir = tmp_path / "images"
+        image_dir.mkdir()
+        rng = np.random.default_rng(0)
+        Image.fromarray(rng.integers(0, 255, (512, 512, 3), dtype=np.uint8)).save(
+            image_dir / "img_0000.jpg", quality=90
+        )
+        payload = {
+            "images": [{"id": 1000, "file_name": "img_0000.jpg", "height": 512, "width": 512}],
+            "annotations": [
+                {
+                    "id": 0,
+                    "image_id": 1000,
+                    "category_id": 3,
+                    "bbox": [40.0, 40.0, 160.0, 120.0],
+                    "area": 19200.0,
+                    "iscrowd": 0,
+                }
+            ],
+            "categories": list(_CATEGORIES),
+        }
+        annotations = tmp_path / "annotations.json"
+        annotations.write_text(json.dumps(payload), encoding="utf-8")
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+
+        draft_size = 128
+        transforms = make_coco_transforms("val", 224)
+        streamed = list(
+            WebDatasetDetection(
+                shard_dir, "train", transforms=transforms, cat2label={3: 0, 9: 1}, draft_size=draft_size
+            )
+        )
+        loose = CocoDetection(
+            image_dir,
+            annotations,
+            transforms=transforms,
+            remap_category_ids=True,
+            cat2label={3: 0, 9: 1},
+            draft_size=draft_size,
+        )
+        assert len(streamed) == len(loose) == 1
+        streamed_image, streamed_target = streamed[0]
+        loose_image, loose_target = loose[0]
+        assert torch.equal(streamed_image, loose_image)
+        assert torch.equal(streamed_target["boxes"], loose_target["boxes"])
+
     def test_segmentation_masks_match_the_loose_file_dataset(self, tmp_path: Path) -> None:
         image_dir, annotations = _build_coco_split(tmp_path, count=4, segmentation=True)
         shard_dir = tmp_path / "shards"
@@ -743,9 +798,10 @@ class TestStreamingShuffle:
         Regression test for the root cause behind the PR's own reported 2-3x seed-to-seed accuracy variance:
         ``webdataset``'s ``nodesplitter``/``workersplitter`` run on the shard-URL list's existing order, *before* its
         own shard-order shuffler (verified against the pinned ``webdataset==1.0.2`` source), so leaving that list
-        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed subset
-        varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it cannot
-        tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not change.
+        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed
+        subset varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it
+        cannot tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not
+        change.
         """
         dataset = WebDatasetDetection(_pack(tmp_path, count=24), "train", transforms=None, shard_shuffle=4)
         monkeypatch.setattr(
