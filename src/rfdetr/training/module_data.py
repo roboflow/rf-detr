@@ -394,6 +394,7 @@ class RFDETRDataModule(LightningDataModule):
             The streaming DataLoader.
         """
         world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
+        rank: int = getattr(self.trainer, "global_rank", 0) if self.trainer else 0
         return build_webdataset_loader(
             dataset,
             batch_size=batch_size,
@@ -405,6 +406,7 @@ class RFDETRDataModule(LightningDataModule):
             worker_init_fn=_worker_init_fn,
             fixed_epoch=fixed_epoch,
             world_size=world_size,
+            rank=rank,
             grad_accum_steps=self.train_config.grad_accum_steps if fixed_epoch else 1,
         )
 

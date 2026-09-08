@@ -701,6 +701,43 @@ def _distributed_world_size() -> int:
     return 1
 
 
+def _distributed_rank() -> int:
+    """Return the distributed rank, or ``0`` outside an initialised process group."""
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        return int(torch.distributed.get_rank())
+    return 0
+
+
+def _fixed_node_splitter(rank: int, world_size: int) -> Callable[[Iterator[Any]], Iterator[Any]]:
+    """Return a ``webdataset`` ``nodesplitter`` fixed to *rank* and *world_size* at closure-creation time.
+
+    ``webdataset.split_by_node`` re-resolves rank and world size inside whichever process calls it, preferring
+    the ``RANK``/``WORLD_SIZE`` environment variables and falling back to ``torch.distributed`` only when those
+    are unset. Under a ``spawn``-started DataLoader worker (a fresh interpreter, distributed not yet initialised
+    in the child) combined with a launcher that exports neither variable, that resolution can silently disagree
+    with the world size this module's own epoch planning already used in the main process — every rank then
+    streams the entire split, duplicated, with no error. Capturing the value the loader already resolved and
+    applying it with a plain positional stride removes that second, independently-resolved source of truth.
+
+    Args:
+        rank: This process's rank, resolved once when the loader is built.
+        world_size: Total ranks sharing the split, resolved once when the loader is built.
+
+    Returns:
+        A splitter usable as ``webdataset.WebDataset(..., nodesplitter=...)``.
+    """
+
+    def _split(source: Iterator[Any]) -> Iterator[Any]:
+        if world_size > 1:
+            for index, item in enumerate(source):
+                if index % world_size == rank:
+                    yield item
+        else:
+            yield from source
+
+    return _split
+
+
 def _shard_url(path: PurePath) -> str:
     """Return the ``file:`` URL naming *path* to ``webdataset``'s shard opener.
 
@@ -788,6 +825,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         self._samples_per_worker: int | None = None
         self._planned_workers = 1
         self._epoch_counter = -1
+        self._rank: int | None = None
+        self._world_size: int | None = None
 
     @property
     def total_samples(self) -> int:
@@ -838,6 +877,20 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             raise ValueError(f"num_workers must be >= 1, got {num_workers}.")
         self._samples_per_worker = samples_per_worker
         self._planned_workers = num_workers
+
+    def configure_distribution(self, *, rank: int, world_size: int) -> None:
+        """Fix this dataset's node split to a *rank*/*world_size* resolved once, in the main process.
+
+        Not required for single-process use: :meth:`__iter__` falls back to ``webdataset.split_by_node``'s own
+        per-process resolution when this is never called. See :func:`_fixed_node_splitter` for why a distributed
+        loader should call this instead of relying on that per-process resolution.
+
+        Args:
+            rank: This process's rank.
+            world_size: Total ranks sharing the split.
+        """
+        self._rank = rank
+        self._world_size = world_size
 
     def __len__(self) -> int:
         """Return the planned per-epoch sample count for this rank.
@@ -954,6 +1007,11 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             # Only when shard-order shuffling was actually requested: shard_shuffle=0 (evaluation) keeps its
             # documented contract of visiting shards in packing order, deterministic run to run.
             random.Random(shard_seed).shuffle(urls)
+        nodesplitter = (
+            wds.split_by_node
+            if self._rank is None or self._world_size is None
+            else _fixed_node_splitter(self._rank, self._world_size)
+        )
         pipeline = wds.WebDataset(
             urls,
             # A split with fewer shards than workers legitimately leaves some workers with nothing to read;
@@ -962,7 +1020,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             # its repetition loop as soon as one pass yields nothing.
             empty_check=False,
             shardshuffle=self._shard_shuffle,
-            nodesplitter=wds.split_by_node,
+            nodesplitter=nodesplitter,
             workersplitter=wds.split_by_worker,
             seed=shard_seed,
         )
@@ -1034,6 +1092,7 @@ def build_webdataset_loader(
     worker_init_fn: Callable[[int], None] | None = None,
     fixed_epoch: bool = True,
     world_size: int | None = None,
+    rank: int | None = None,
     grad_accum_steps: int = 1,
 ) -> DataLoader[Any]:
     """Build the loader that streams *dataset*.
@@ -1063,6 +1122,9 @@ def build_webdataset_loader(
         fixed_epoch: Plan a fixed-length epoch and drop partial batches. ``True`` for training, where a known length
             drives the LR schedule; ``False`` for evaluation, where every sample must be seen exactly once.
         world_size: Distributed ranks sharing the split. ``None`` reads it from the active process group.
+        rank: This process's rank. ``None`` reads it from the active process group. See
+            :func:`_fixed_node_splitter` for why the loader resolves this once here rather than letting each
+            DataLoader worker re-resolve it independently.
         grad_accum_steps: Micro-batches accumulated per optimizer step. Only used when *fixed_epoch* is ``True``;
             see :func:`plan_samples_per_worker`.
 
@@ -1075,6 +1137,8 @@ def build_webdataset_loader(
     """
     _require_webdataset()
     ranks = _distributed_world_size() if world_size is None else world_size
+    resolved_rank = _distributed_rank() if rank is None else rank
+    dataset.configure_distribution(rank=resolved_rank, world_size=ranks)
     shard_count = len(dataset.index.shards)
     if ranks > shard_count:
         # An empty DataLoader *worker* is harmless; an entirely empty *rank* is not. split_by_node would leave
@@ -1137,6 +1201,31 @@ def build_webdataset_loader(
             ),
             num_workers=max(1, num_workers),
         )
+    elif ranks > 1:
+        # Every rank has at least one shard (checked above), so this alone cannot deadlock the way the
+        # empty-rank case does — but an uneven split still gives ranks different per-rank batch counts, and a
+        # rank that finishes its evaluation loop and reaches epoch-end collectives (DDP forward, sync_dist=True
+        # logging) before its busiest sibling can wait indefinitely there instead. Equalizing per-rank
+        # evaluation batch counts (or another coordinated uneven-input strategy) is not implemented here; this
+        # only surfaces the risk so a stuck evaluation run has a documented, checkable cause.
+        per_shard = dataset.index.samples_per_shard
+        if len(per_shard) == shard_count:
+            rank_totals = [sum(per_shard[position::ranks]) for position in range(ranks)]
+            busiest, quietest = max(rank_totals), min(rank_totals)
+            if busiest > 0 and (busiest - quietest) / busiest > SHARD_SKEW_WARN_FRACTION:
+                logger.warning(
+                    "Split %r has an uneven per-rank sample split for evaluation across %d rank(s): the "
+                    "busiest rank holds %d samples against the quietest rank's %d, so they produce different "
+                    "numbers of evaluation batches. This module does not equalize per-rank evaluation batch "
+                    "counts, so a rank that reaches epoch-end collectives before its busiest sibling can wait "
+                    "indefinitely there. Re-pack with a smaller --max-shard-mb (aim for a shard count that "
+                    "divides %d) to reduce the imbalance.",
+                    dataset.index.split,
+                    ranks,
+                    busiest,
+                    quietest,
+                    ranks,
+                )
     loader_kwargs: dict[str, Any] = {
         "batch_size": batch_size,
         "drop_last": fixed_epoch,

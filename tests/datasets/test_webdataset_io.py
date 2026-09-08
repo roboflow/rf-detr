@@ -880,6 +880,45 @@ class TestBuildWebdatasetLoader:
                 world_size=shards + 1,
             )
 
+    def test_explicit_world_size_and_rank_are_honored_even_without_env_vars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The node split uses the rank/world_size the loader resolved once, not each worker's own env guess.
+
+        Regression test: ``webdataset.split_by_node`` re-resolves rank and world size inside whichever process
+        calls it, preferring ``RANK``/``WORLD_SIZE`` environment variables and falling back to
+        ``torch.distributed`` only if those are unset. With neither set and no process group initialised (as in
+        this test, and as a ``spawn``-started worker with a launcher that exports neither would see it), that
+        resolution used to silently give ``world_size=1`` regardless of what the loader was told, so every rank
+        streamed the entire split, duplicated.
+        """
+        monkeypatch.delenv("RANK", raising=False)
+        monkeypatch.delenv("WORLD_SIZE", raising=False)
+        shard_dir = _pack(tmp_path, count=24)
+        loader0 = build_webdataset_loader(
+            WebDatasetDetection(shard_dir, "train", transforms=None),
+            batch_size=2,
+            collate_fn=_id_collate,
+            num_workers=0,
+            fixed_epoch=False,
+            world_size=2,
+            rank=0,
+        )
+        loader1 = build_webdataset_loader(
+            WebDatasetDetection(shard_dir, "train", transforms=None),
+            batch_size=2,
+            collate_fn=_id_collate,
+            num_workers=0,
+            fixed_epoch=False,
+            world_size=2,
+            rank=1,
+        )
+        ids0 = {image_id for batch in loader0 for image_id in batch}
+        ids1 = {image_id for batch in loader1 for image_id in batch}
+        assert ids0 and ids1
+        assert ids0.isdisjoint(ids1)
+        assert ids0 | ids1 == set(range(1000, 1024))
+
     def test_more_workers_than_shards_is_rejected_for_training(self, tmp_path: Path) -> None:
         image_dir, annotations = _build_coco_split(tmp_path, count=16)
         shard_dir = tmp_path / "shards"
@@ -931,6 +970,31 @@ class TestBuildWebdatasetLoader:
 
     def test_skew_threshold_is_a_fraction(self) -> None:
         assert 0.0 < SHARD_SKEW_WARN_FRACTION < 1.0
+
+    @pytest.mark.parametrize(
+        ("samples_per_shard", "expect_warning"),
+        [
+            pytest.param((980, 20), True, id="uneven-split-warns"),
+            pytest.param((500, 500), False, id="even-split-is-quiet"),
+        ],
+    )
+    def test_uneven_eval_split_across_ranks_is_reported(
+        self, tmp_path: Path, capsys: Any, samples_per_shard: tuple[int, int], expect_warning: bool
+    ) -> None:
+        """An uneven per-rank evaluation split is surfaced, since every rank still gets a shard but a different number
+        of batches -- the follow-on deadlock risk fewer-shards-than-ranks alone does not cover."""
+        dataset = WebDatasetDetection(_pack(tmp_path, count=4), "train", transforms=None)
+        dataset.index = replace(
+            dataset.index,
+            shards=("a.tar", "b.tar"),
+            num_samples=sum(samples_per_shard),
+            samples_per_shard=samples_per_shard,
+        )
+        capsys.readouterr()
+        build_webdataset_loader(
+            dataset, batch_size=1, collate_fn=_count_collate, num_workers=1, fixed_epoch=False, world_size=2
+        )
+        assert ("different numbers of evaluation batches" in capsys.readouterr().err) is expect_warning
 
     def test_batches_collate_into_the_model_input_contract(self, tmp_path: Path) -> None:
         transforms = make_coco_transforms("val", 224)
