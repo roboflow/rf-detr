@@ -2809,35 +2809,84 @@ class RFDETR:
             # fed `score_threshold=threshold` above. The seg path drops below-threshold masks before
             # upsampling on the strength of that match; diverging here (e.g. `>=`, per-class, top-k)
             # would make it silently drop rows this filter keeps — a behaviour change with no failing test.
-            keep = scores > threshold
-            scores = scores[keep]
-            labels = labels[keep]
-            boxes = boxes[keep]
-            keypoints_array = None
-            if "keypoints" in result:
-                keypoints = result["keypoints"][keep]
-                keypoints_array = keypoints.float().cpu().numpy()
+            # Materialized as an index vector (not a bool mask) so the bool-mask advanced-indexing
+            # sync below runs once per image instead of once per kept tensor: `t[bool_mask]` re-derives
+            # its output size via `nonzero(bool_mask)` on every call (a documented CUDA host-device
+            # sync), while `t[int64_index]` is index_select-shaped and needs no further sync. Row order
+            # is unaffected — `nonzero` returns ascending indices, identical to bool-mask selection order.
+            keep_idx = (scores > threshold).nonzero(as_tuple=True)[0]
+            scores = scores[keep_idx]
+            labels = labels[keep_idx]
+            boxes = boxes[keep_idx]
+            has_keypoints_result = "keypoints" in result
+            has_masks = "masks" in result
+            has_kp_precision = "keypoint_precision_cholesky" in result
+            # Bound unconditionally (None when absent) rather than left unbound under a guard: these
+            # locals live inside `for i, result in enumerate(results)`, so a guard that silently
+            # diverges from its transfer/consume counterparts would otherwise carry the *previous*
+            # image's tensor forward instead of raising. Rebinding every iteration makes that failure
+            # mode a loud AttributeError/TypeError on the stale `None` instead of a silent wrong value.
+            keypoints = result["keypoints"][keep_idx] if has_keypoints_result else None
+            masks = result["masks"][keep_idx] if has_masks else None
+            keypoint_precision = result["keypoint_precision_cholesky"][keep_idx] if has_kp_precision else None
+
+            # PERF: queue every GPU->CPU transfer for this image as non_blocking, then
+            # synchronize ONCE instead of once per tensor. Each bare `.cpu()` call below
+            # used to impose its own stream synchronization -- up to 4 (5 with keypoints,
+            # 6 with keypoint precision) sequential blocking round-trips per image, scaling
+            # with the number of kept detections (the mask tensor especially, since it is
+            # by far the largest of the group in a crowded/high-detection-count frame).
+            # Queuing the copies together lets them share the copy stream and collapses
+            # the wait to a single barrier; `.numpy()` is only called after that barrier,
+            # so every array below is fully populated exactly as before.
+            #
+            # Restrict the async path to CUDA and synchronize the tensors' own device's
+            # current stream (not the whole device, and not "the current device") -- a bare
+            # `torch.cuda.synchronize()` waits on every stream on `torch.cuda.current_device()`,
+            # which can differ from `boxes.device` on a multi-GPU setup with a model on a
+            # non-default device (e.g. `cuda:1`), and non-CUDA accelerators (e.g. MPS) have
+            # no synchronization here at all, so a `non_blocking=True` copy there could be
+            # read before it lands. Falling back to the original blocking transfer for
+            # non-CUDA devices keeps every other backend exactly as correct as before this
+            # change; the coalesced-sync optimization is only claimed for CUDA in the first
+            # place.
+            # INVARIANT: keypoints/masks/keypoint_precision above all come from this same
+            # `result` dict, i.e. one `postprocess()` call on one device — so `is_cuda`,
+            # derived from `boxes` alone, applies identically to every field below, and the
+            # single stream sync a few lines down (scoped to `boxes.device`) covers all of
+            # them. Not enforced here (would be hot-loop validation for a condition that
+            # can't happen with today's callers) — holds only as long as `postprocess()`
+            # never returns fields split across devices.
+            is_cuda = boxes.is_cuda
+            boxes_cpu = boxes.float().to("cpu", non_blocking=is_cuda)
+            scores_cpu = scores.float().to("cpu", non_blocking=is_cuda)
+            labels_cpu = labels.to("cpu", non_blocking=is_cuda)
+            keypoints_cpu = keypoints.float().to("cpu", non_blocking=is_cuda) if keypoints is not None else None
+            masks_cpu = masks.squeeze(1).to("cpu", non_blocking=is_cuda) if masks is not None else None
+            keypoint_precision_cpu = (
+                keypoint_precision.float().to("cpu", non_blocking=is_cuda) if keypoint_precision is not None else None
+            )
+            if is_cuda:
+                torch.cuda.current_stream(boxes.device).synchronize()
+
+            keypoints_array = keypoints_cpu.numpy() if keypoints_cpu is not None else None
             has_keypoints = keypoints_array is not None
 
-            if "masks" in result:
-                masks = result["masks"]
-                masks = masks[keep]
-
+            if masks_cpu is not None:
                 detections = Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
-                    mask=masks.squeeze(1).cpu().numpy(),
+                    xyxy=boxes_cpu.numpy(),
+                    confidence=scores_cpu.numpy(),
+                    class_id=labels_cpu.numpy(),
+                    mask=masks_cpu.numpy(),
                 )
             else:
                 detections = Detections(
-                    xyxy=boxes.float().cpu().numpy(),
-                    confidence=scores.float().cpu().numpy(),
-                    class_id=labels.cpu().numpy(),
+                    xyxy=boxes_cpu.numpy(),
+                    confidence=scores_cpu.numpy(),
+                    class_id=labels_cpu.numpy(),
                 )
-            if "keypoint_precision_cholesky" in result:
-                keypoint_precision = result["keypoint_precision_cholesky"][keep]
-                detections.data["keypoint_precision_cholesky"] = keypoint_precision.float().cpu().numpy()
+            if keypoint_precision_cpu is not None:
+                detections.data["keypoint_precision_cholesky"] = keypoint_precision_cpu.numpy()
 
             if include_source_image:
                 detections.metadata["source_image"] = source_images[i]  # type: ignore[index]
