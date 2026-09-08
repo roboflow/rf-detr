@@ -1323,8 +1323,18 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
         # Both indexes are read so a policy mismatch is refused rather than silently honoured. Passing None for a
         # "raw" train split would let this split derive its own mapping from its own index, so a train split
         # packed "raw" beside a val split packed "remap" would evaluate remapped labels against raw-trained
-        # predictions — wrong numbers, no error.
-        train_index = read_shard_index(root, "train")
+        # predictions — wrong numbers, no error. This makes a packed 'train' index mandatory even to evaluate a
+        # shard directory that only ever packed val/test — the exception below exists so that requirement
+        # surfaces as its own clear message rather than as "No WebDataset index for split 'train'", which reads
+        # as though 'train' itself were the split being requested.
+        try:
+            train_index = read_shard_index(root, "train")
+        except WebDatasetSplitUnavailableError as exc:
+            raise WebDatasetSplitUnavailableError(
+                f"Evaluating split {split!r} needs a packed 'train' index in {root} to adopt its label space "
+                f"(category_ids policy) — {split!r} being packed is not enough by itself. Pack 'train' too, or "
+                f"pass cat2label explicitly to WebDatasetDetection to bypass this adoption."
+            ) from exc
         split_index = read_shard_index(root, split)
         if split_index.category_ids != train_index.category_ids:
             raise ValueError(
