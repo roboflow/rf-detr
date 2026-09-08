@@ -680,9 +680,7 @@ def build_trainer(
                 )
         _logger.info(
             "Keypoint model + distributed execution (strategy=%r, devices=%r, num_nodes=%r) → "
-            "DDP with manual optimization. For best throughput on multi-GPU keep grad_accum_steps=1: "
-            "the manual-optimization path synchronizes gradients on every microbatch, so "
-            "grad_accum_steps>1 is correct but performs redundant all-reduces.",
+            "DDP with manual optimization. Accumulated gradients synchronize only when the optimizer steps.",
             strategy,
             devices,
             num_nodes,

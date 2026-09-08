@@ -12,6 +12,7 @@ import inspect
 import math
 import random
 import warnings
+from contextlib import nullcontext
 from typing import Any, Callable, cast
 
 import torch
@@ -622,8 +623,17 @@ class RFDETRModelModule(LightningModule):
             # loss_for_backward is only None in the automatic-optimization branch above,
             # which is mutually exclusive with _use_manual_optimization.
             assert loss_for_backward is not None
-            self.manual_backward(loss_for_backward)
-            if self._should_step_optimizer(batch_idx):
+            should_step = self._should_step_optimizer(batch_idx)
+            # LightningOptimizer maps sync_grad=False to DDP's no_sync context. Intermediate
+            # microbatches accumulate locally; the closing backward reduces the whole window.
+            sync_context = (
+                optimizer.toggle_model(sync_grad=should_step)
+                if isinstance(optimizer, LightningOptimizer)
+                else nullcontext()
+            )
+            with sync_context:
+                self.manual_backward(loss_for_backward)
+            if should_step:
                 self._step_optimizer(optimizer)
         if self.train_config.compute_train_metrics:
             with torch.no_grad():

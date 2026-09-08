@@ -249,7 +249,7 @@ model.train(
     dataset_dir="path/to/keypoint-dataset",
     epochs=100,
     batch_size=2,  # per-GPU batch size
-    grad_accum_steps=1,  # recommended on multi-GPU — see note below
+    grad_accum_steps=1,  # see note below for multi-GPU accumulation behavior
     lr=1e-4,
     output_dir="output",
     devices="auto",  # or devices=8
@@ -260,9 +260,9 @@ model.train(
 torchrun --nproc_per_node=8 train_pose.py
 ```
 
-!!! note "Prefer `grad_accum_steps=1` on multi-GPU for keypoints"
+!!! note "Gradient accumulation on multi-GPU keypoint training"
 
-    Keypoint models use **manual optimization** so the per-step box-count loss normalization is computed over the full accumulated batch. As a result, gradients synchronize on **every** microbatch rather than only at the end of an accumulation window. Training with `grad_accum_steps > 1` on multiple GPUs is still numerically correct, but performs one `all_reduce` per microbatch (i.e. `grad_accum_steps`× the necessary communication). For best throughput, scale with more GPUs / a larger per-GPU `batch_size` and keep `grad_accum_steps=1`.
+    Keypoint models use **manual optimization** so the per-step box-count loss normalization is computed over the full accumulated batch. Intermediate microbatches accumulate gradients locally on each rank. The backward pass that closes the accumulation window synchronizes the full accumulated gradient before the optimizer step, avoiding redundant DDP reductions while preserving full-effective-batch normalization.
 
     Sharded strategies (FSDP / DeepSpeed) are **not** supported for keypoint models — use `ddp` (or `strategy="auto"` with `devices > 1`).
 
