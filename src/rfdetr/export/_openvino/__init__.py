@@ -5,10 +5,7 @@
 # ------------------------------------------------------------------------
 """OpenVINO IR export: direct PyTorch -> OpenVINO IR (``.xml``/``.bin``) conversion."""
 
-from rfdetr.export._openvino.exporter import (
-    _check_openvino_available,
-    export_openvino,
-)
+from rfdetr.export._openvino.exporter import _check_openvino_available
 
 try:
     _check_openvino_available()
@@ -16,4 +13,4 @@ try:
 except ImportError:
     _IS_OPENVINO_AVAILABLE = False
 
-__all__ = ["export_openvino", "_IS_OPENVINO_AVAILABLE"]
+__all__ = ["_IS_OPENVINO_AVAILABLE"]

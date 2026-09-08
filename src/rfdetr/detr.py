@@ -41,8 +41,6 @@ from rfdetr.datasets._keypoint_schema import (
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
-from rfdetr.models.backbone.backbone import Backbone
-from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.utilities.distributed import is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
@@ -1780,45 +1778,41 @@ class RFDETR:
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
-        if format == "trt":  # "trt" is an alias for "tensorrt"
-            format = "tensorrt"
-        if format == "pte":  # "pte" is an alias for "executorch"
-            format = "executorch"
-        from rfdetr.export._backend import _BackboneExport, _resolve_export_backend, preload_tensorflow_before_onnx
+        from rfdetr.export._backend import _resolve_export_backend
+        from rfdetr.export.base import build_export_config, reject_unsupported_dynamic_batch
+        from rfdetr.export.prepare import prepare_export_graph
+        from rfdetr.export.registry import normalize_format, resolve_exporter
 
-        if format == "tflite":
-            # Must run before the ONNX export imports onnx's C extension: onnx and TensorFlow share weakly-exported
-            # Abseil symbols, and the wrong load order deadlocks TFLite conversion.
-            preload_tensorflow_before_onnx()
-
+        format = normalize_format(format)
         backend, soc = _resolve_export_backend(format, backend, soc)
-        # Fail fast: dynamic_batch is statically incompatible with ExecuTorch / CoreML; refuse before any forward
-        # pass so the user doesn't pay the full DINOv2 forward (seconds + GBs) before seeing the error. These are
-        # intentional early checks before heavy optional imports (ExecuTorch also checks in the converter).
-        if dynamic_batch and format == "executorch":
-            raise NotImplementedError(
-                "ExecuTorch export does not support dynamic_batch (see export_executorch for details). "
-                "Export one .pte per batch size instead."
-            )
-        if dynamic_batch and format == "coreml":
-            raise NotImplementedError(
-                "CoreML export does not support dynamic_batch (fixed shapes are required for reliable "
-                "ANE / GPU scheduling). Export one .mlpackage per batch size instead."
-            )
-        if dynamic_batch and format == "openvino":
-            raise NotImplementedError(
-                "OpenVINO export does not support dynamic_batch (the IR graph bakes a fixed input shape). "
-                "Export one model per batch size instead."
-            )
+        # Refuse a statically impossible request from the registry's own capability data, before resolving the
+        # exporter imports the format's heavy optional dependency (coremltools, executorch, openvino, ...) and long
+        # before the user pays for a full DINOv2 forward pass.
+        reject_unsupported_dynamic_batch(format, dynamic_batch=dynamic_batch)
+        exporter_class = resolve_exporter(format)
+        config = build_export_config(
+            format,
+            output_dir=Path(output_dir),
+            output_name=output_name,
+            variant_name=getattr(self, "size", None),
+            backbone_only=backbone_only,
+            dynamic_batch=dynamic_batch,
+            verbose=verbose,
+            notes=notes,
+            opset_version=opset_version,
+            backend=backend,
+            soc=soc,
+            fp16=fp16,
+            coreml_precision=coreml_precision,
+            openvino_precision=openvino_precision,
+            quantization=quantization,
+            calibration_data=calibration_data,
+            max_images=max_images,
+        )
+        # Constructing the exporter validates the request against the format's capabilities — an unsupported
+        # dynamic_batch is refused here, before the user pays for a full DINOv2 forward pass (seconds + GBs).
+        exporter = exporter_class(config)
         logger.info(f"Exporting model to {format} format")
-        try:
-            from rfdetr.export.main import export_onnx, make_infer_image
-        except ImportError:
-            logger.error(
-                "It seems some dependencies for ONNX export are missing."
-                " Please run `pip install rfdetr[onnx]` and try again.",
-            )
-            raise
 
         device = self.model.device
 
@@ -1836,7 +1830,6 @@ class RFDETR:
         model.to(device)
         try:
             os.makedirs(output_dir, exist_ok=True)
-            output_dir_path = Path(output_dir)
             patch_size = _resolve_patch_size(patch_size, self.model_config, "export")
             num_windows = getattr(self.model_config, "num_windows", 1)
             if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
@@ -1853,156 +1846,17 @@ class RFDETR:
             else:
                 shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
 
-            # Freeze the backbone's position embeddings to the export shape before tracing. Without this, a
-            # `shape` that differs from the model's native resolution forces the traced forward pass through
-            # DINOv2's antialiased bicubic interpolation, which has no ONNX symbolic (`aten::_upsample_bicubic2d_aa`
-            # is unsupported). Precomputing here (outside the trace) keeps that op out of the traced graph.
-            for backbone_module in model.modules():
-                if isinstance(backbone_module, DinoV2):
-                    backbone_module.shape = shape
-                    backbone_module.export()
-
-            input_tensors = make_infer_image(
-                infer_dir, shape, batch_size, device, num_channels=self.model_config.num_channels
-            ).to(device)
-            input_names = ["input"]
-            export_model: torch.nn.Module = model
-            if backbone_only:
-                backbone = cast(Backbone, model.backbone[0])
-                backbone.export()
-                export_model = _BackboneExport(backbone)
-                output_names = [
-                    "features" if index == 0 else f"features_{index}"
-                    for index in range(len(self.model_config.projector_scale))
-                ]
-                if backbone.cross_attn_projector is not None:
-                    output_names.extend(
-                        "cross_attn_features" if index == 0 else f"cross_attn_features_{index}"
-                        for index in range(len(self.model_config.projector_scale))
-                    )
-            elif self.model_config.segmentation_head:
-                output_names = ["dets", "labels", "masks"]
-            elif self.model_config.use_grouppose_keypoints:
-                output_names = ["dets", "labels", "keypoints"]
-            else:
-                output_names = ["dets", "labels"]
-
-            if dynamic_batch:
-                dynamic_axes = {name: {0: "batch"} for name in input_names + output_names}
-            else:
-                dynamic_axes = None
-            export_model.eval()
-            with torch.no_grad():
-                if backbone_only:
-                    features = export_model(input_tensors)
-                    logger.debug(f"PyTorch backbone output shapes: {[feature.shape for feature in features]}")
-                elif self.model_config.segmentation_head:
-                    outputs = export_model(input_tensors)
-                    dets = outputs["pred_boxes"]
-                    labels = outputs["pred_logits"]
-                    masks = outputs["pred_masks"]
-                    if isinstance(masks, torch.Tensor):
-                        logger.debug(
-                            f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
-                            f"Masks: {masks.shape}",
-                        )
-                    else:
-                        logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
-                elif self.model_config.use_grouppose_keypoints:
-                    outputs = export_model(input_tensors)
-                    dets = outputs["pred_boxes"]
-                    labels = outputs["pred_logits"]
-                    keypoints = outputs["pred_keypoints"]
-                    logger.debug(
-                        f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}, "
-                        f"Keypoints: {keypoints.shape}",
-                    )
-                else:
-                    outputs = export_model(input_tensors)
-                    dets = outputs["pred_boxes"]
-                    labels = outputs["pred_logits"]
-                    logger.debug(f"PyTorch inference output shapes - Boxes: {dets.shape}, Labels: {labels.shape}")
-
-            model.cpu()
-            input_tensors = input_tensors.cpu()
-
-            if format == "openvino":
-                from rfdetr.export._backend import _export_openvino_format
-
-                return _export_openvino_format(
-                    export_model,
-                    input_tensors,
-                    output_dir_path,
-                    backbone_only=backbone_only,
-                    verbose=verbose,
-                    variant_name=getattr(self, "size", None),
-                    dynamic_batch=dynamic_batch,
-                    notes=notes,
-                    precision=openvino_precision,
-                    output_name=output_name,
-                )
-
-            if format == "executorch":
-                from rfdetr.export._backend import _export_executorch_format
-
-                return _export_executorch_format(
-                    export_model,
-                    input_tensors,
-                    output_dir_path,
-                    backend=backend,
-                    soc=soc,
-                    variant_name=getattr(self, "size", None),
-                    dynamic_batch=dynamic_batch,
-                    notes=notes,
-                    output_name=output_name,
-                    backbone_only=backbone_only,
-                )
-
-            if format == "coreml":
-                from rfdetr.export._backend import _export_coreml_format
-
-                return _export_coreml_format(
-                    export_model,
-                    input_tensors,
-                    output_dir_path,
-                    variant_name=getattr(self, "size", None),
-                    verbose=verbose,
-                    notes=notes,
-                    compute_precision=coreml_precision,
-                    output_name=output_name,
-                    backbone_only=backbone_only,
-                )
-
-            output_file = export_onnx(
-                output_dir=str(output_dir_path),
-                model=export_model,
-                input_names=input_names,
-                input_tensors=input_tensors,
-                output_names=output_names,
-                dynamic_axes=dynamic_axes,
+            graph = prepare_export_graph(
+                model,
+                self.model_config,
+                shape=shape,
+                device=device,
+                infer_dir=infer_dir,
+                batch_size=batch_size,
+                dynamic_batch=dynamic_batch,
                 backbone_only=backbone_only,
-                verbose=verbose,
-                opset_version=opset_version,
-                variant_name=getattr(self, "size", None),
-                notes=notes,
-                output_name=output_name,
             )
-
-            logger.info(f"Successfully exported ONNX model to: {output_file}")
-
-            from rfdetr.export.main import _convert_onnx_export
-
-            return _convert_onnx_export(
-                output_file,
-                format,
-                output_dir_path,
-                quantization=quantization,
-                calibration_data=calibration_data,
-                max_images=max_images,
-                verbose=verbose,
-                fp16=fp16,
-                output_name=Path(output_file).stem if backbone_only and output_name else output_name,
-            )
+            return exporter(graph)
         finally:
             self.model.model = self.model.model.to(device)
 

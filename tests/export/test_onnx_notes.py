@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for the ``notes`` parameter in :func:`~rfdetr.export._onnx.exporter.export_onnx`."""
+"""Tests for the ``notes`` setting on :class:`~rfdetr.export.base.OnnxConfig`, embedded by ``OnnxExporter``."""
 
 import json
 from pathlib import Path
@@ -15,7 +15,9 @@ import torch.nn as nn
 onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX notes tests")
 
 
-from rfdetr.export._onnx.exporter import export_onnx  # noqa: E402
+from rfdetr.export._onnx.exporter import OnnxExporter  # noqa: E402
+from rfdetr.export.base import OnnxConfig  # noqa: E402
+from rfdetr.export.prepare import ExportGraph  # noqa: E402
 
 
 class _TinyModel(nn.Module):
@@ -53,16 +55,16 @@ def _export_tiny_model(tmp_path: Path, notes: object = None) -> str:
     """
     model = _TinyModel().eval()
     input_tensor = torch.randn(1, 3, 32, 32)
-    return export_onnx(
-        output_dir=str(tmp_path),
+    graph = ExportGraph(
         model=model,
-        input_names=["input"],
         input_tensors=input_tensor,
-        output_names=["output"],
+        input_names=("input",),
+        output_names=("output",),
         dynamic_axes=None,
-        verbose=False,
-        notes=notes,
+        shape=(32, 32),
+        backbone_only=False,
     )
+    return str(OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False, notes=notes))(graph))
 
 
 class TestExportOnnxNotes:
@@ -147,22 +149,3 @@ class TestExportOnnxNotes:
         """Non-finite float notes raise ValueError (allow_nan=False)."""
         with pytest.raises(ValueError):
             _export_tiny_model(tmp_path, notes=float("nan"))
-
-    def test_notes_is_keyword_only(self, tmp_path: Path) -> None:
-        """Notes must be passed as a keyword argument; positional use raises TypeError."""
-        model = _TinyModel().eval()
-        input_tensor = torch.randn(1, 3, 32, 32)
-        with pytest.raises(TypeError):
-            export_onnx(  # type: ignore[call-arg]
-                str(tmp_path),
-                model,
-                ["input"],
-                input_tensor,
-                ["output"],
-                None,
-                False,
-                False,
-                17,
-                None,
-                "positional_notes_value",
-            )

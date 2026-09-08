@@ -12,7 +12,7 @@ import inspect
 import json
 import os
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from os import PathLike
 from typing import Any, Protocol, TypeVar, cast
@@ -20,8 +20,10 @@ from typing import Any, Protocol, TypeVar, cast
 import numpy as np
 import torch
 
-from rfdetr.export._naming import resolve_export_stem
+from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
+from rfdetr.export.base import Exporter, OnnxConfig
+from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
 _DependencyT = TypeVar("_DependencyT")
@@ -151,109 +153,6 @@ def _require_onnx_optimizer_dependencies() -> tuple[
         _require_dependency(graphsurgeon_logger, "onnx_graphsurgeon"),
         _require_dependency(constant_folder, "polygraphy.backend.onnx.loader.fold_constants"),
     )
-
-
-# ---------------------------------------------------------------------------
-# ONNX export helpers (moved from export/export.py)
-# ---------------------------------------------------------------------------
-
-
-def export_onnx(
-    output_dir: str | PathLike[str],
-    model: torch.nn.Module,
-    input_names: Sequence[str],
-    input_tensors: torch.Tensor | Sequence[torch.Tensor],
-    output_names: Sequence[str],
-    dynamic_axes: Mapping[str, Mapping[int, str]] | None,
-    backbone_only: bool = False,
-    verbose: bool = True,
-    opset_version: int = 17,
-    variant_name: str | None = None,
-    *,
-    notes: object = None,
-    output_name: str | None = None,
-) -> str:
-    """Export a model to ONNX.
-
-    Args:
-        output_dir: Directory where the ONNX file will be written.
-        model: Model to export.
-        input_names: Names of model inputs in ONNX graph.
-        input_tensors: Example model input tensor(s) for tracing.
-        output_names: Names of model outputs in ONNX graph.
-        dynamic_axes: Optional dynamic axis configuration for ONNX export.
-        backbone_only: Whether to export backbone-only graph naming.
-        verbose: Whether ONNX exporter should emit verbose logs.
-        opset_version: ONNX opset version.
-        variant_name: Model variant identifier (e.g. ``"rfdetr-medium"``).
-            When provided, the exported file is named ``{variant_name}.onnx`` or ``{variant_name}-backbone.onnx`` (when
-            ``backbone_only=True``) instead of the generic ``inference_model.onnx`` or ``backbone_model.onnx``.
-        notes: Optional user-defined metadata (string, dict, list, or any
-            JSON-serialisable value) to embed in the exported ONNX model under the ``"rfdetr_notes"`` metadata property.
-            Ignored when ``None``. String values are stored verbatim; all other types are JSON-encoded, so consumers
-            must call ``json.loads()`` to recover a dict or list.
-        output_name: Full filename override (without extension), e.g. ``"my-model"``. Takes precedence over
-            *variant_name* — the exported file is named ``{output_name}.onnx`` (or ``{output_name}-backbone.onnx``
-            when ``backbone_only=True``) verbatim, ignoring *variant_name*.
-
-    Returns:
-        Path to the exported ONNX model.
-    """
-    stem, _ = resolve_export_stem(
-        variant_name,
-        output_name,
-        default="backbone_model" if backbone_only else "inference_model",
-    )
-    # "-backbone" is a structural marker (distinct model graph), not a precision/backend
-    # detail — it is appended whenever a name was supplied, custom or variant-derived, but
-    # not onto the bare "backbone_model" default (which already spells it out).
-    export_name = f"{stem}-backbone" if backbone_only and (variant_name or output_name) else stem
-    output_file = os.path.join(output_dir, f"{export_name}.onnx")
-
-    # Prepare model for export
-    export_method = getattr(model, "export", None)
-    if callable(export_method):
-        export_method()
-
-    export_kwargs: dict[str, Any] = {}
-    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
-        # Torch 2.10+ may default to the dynamo exporter which requires extra deps
-        # (e.g. onnxscript). Use the legacy path for compatibility.
-        export_kwargs["dynamo"] = False
-
-    torch.onnx.export(
-        model,
-        (input_tensors,) if isinstance(input_tensors, torch.Tensor) else tuple(input_tensors),
-        output_file,
-        input_names=input_names,
-        output_names=output_names,
-        export_params=True,
-        keep_initializers_as_inputs=False,
-        do_constant_folding=True,
-        verbose=verbose,
-        opset_version=opset_version,
-        dynamic_axes=dynamic_axes,
-        **export_kwargs,
-    )
-
-    if notes is not None and onnx is not None:
-        # torch.onnx.export writes to disk only; no in-memory handle is available,
-        # so we reload and resave to inject metadata (~1-2 s on large models).
-        onnx_model = onnx.load(output_file)
-        # Strings stored as-is so readers can consume without JSON-decoding;
-        # non-strings go through json.dumps to survive the round-trip.
-        notes_value = notes if isinstance(notes, str) else json.dumps(notes, allow_nan=False)
-        existing = next((p for p in onnx_model.metadata_props if p.key == "rfdetr_notes"), None)
-        if existing is not None:
-            existing.value = notes_value
-        else:
-            meta = onnx_model.metadata_props.add()
-            meta.key = "rfdetr_notes"
-            meta.value = notes_value
-        onnx.save(onnx_model, output_file)
-
-    logger.info(f"\nSuccessfully exported ONNX model: {output_file}")
-    return output_file
 
 
 def onnx_simplify(
@@ -1017,3 +916,110 @@ class OnnxOptimizer:
         while self.fuse_qkv_insert_fmha(num_heads, mha_index):
             mha_index += 1
         return mha_index
+
+
+class OnnxExporter(Exporter[OnnxConfig]):
+    """Export a prepared graph to ONNX.
+
+    The only format with no optional runtime of its own, and the one both two-stage formats export through, so it is
+    also the only one supporting a dynamic batch dimension together with embedded *notes* metadata.
+
+    The conversion runs in three steps, each its own method: resolve the output filename, trace the graph with
+    ``torch.onnx.export``, then — only when the caller supplied *notes* — reopen the written file to inject them.
+
+    Examples:
+        Requires a prepared graph, so this is documentation only (not a doctest):
+
+        ```python
+        OnnxExporter(OnnxConfig(output_dir=Path("output"), variant_name="rfdetr-small"))(graph)
+        # -> PosixPath('output/rfdetr-small.onnx')
+        ```
+    """
+
+    format = "onnx"
+    display_name = "ONNX"
+    supports_dynamic_batch = True
+    supports_notes = True
+    pip_extra = "onnx"
+
+    def _resolve_output_file(self, *, backbone_only: bool) -> str:
+        """Return the path the ``.onnx`` file is written to.
+
+        Args:
+            backbone_only: Whether the graph is a backbone-only export.
+
+        Returns:
+            Absolute or relative path of the ``.onnx`` file, inside the configured output directory.
+        """
+        stem, _ = resolve_export_stem(
+            self.config.variant_name,
+            self.config.output_name,
+            default="backbone_model" if backbone_only else "inference_model",
+        )
+        export_name = append_backbone_marker(
+            stem,
+            backbone_only=backbone_only,
+            named=bool(self.config.variant_name or self.config.output_name),
+        )
+        return os.path.join(str(self.config.output_dir), f"{export_name}.onnx")
+
+    def _trace(self, graph: ExportGraph, output_file: str) -> None:
+        """Trace *graph* with ``torch.onnx.export`` and write the result to *output_file*.
+
+        Args:
+            graph: The prepared model and its graph metadata.
+            output_file: Destination path for the traced model.
+        """
+        export_kwargs: dict[str, Any] = {}
+        if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+            # Torch 2.10+ may default to the dynamo exporter which requires extra deps
+            # (e.g. onnxscript). Use the legacy path for compatibility.
+            export_kwargs["dynamo"] = False
+
+        input_tensors = graph.input_tensors
+        torch.onnx.export(
+            graph.model,
+            (input_tensors,) if isinstance(input_tensors, torch.Tensor) else tuple(input_tensors),
+            output_file,
+            input_names=list(graph.input_names),
+            output_names=list(graph.output_names),
+            export_params=True,
+            keep_initializers_as_inputs=False,
+            do_constant_folding=True,
+            verbose=self.config.verbose,
+            opset_version=self.config.opset_version,
+            dynamic_axes=graph.dynamic_axes,
+            **export_kwargs,
+        )
+
+    def _embed_notes(self, output_file: str) -> None:
+        """Write the configured *notes* into the already-exported file's ``rfdetr_notes`` metadata property.
+
+        ``torch.onnx.export`` writes to disk only and hands back no in-memory handle, so the model is reloaded and
+        resaved (~1-2 s on large models). Does nothing when no notes were supplied, or when ``onnx`` is unavailable.
+
+        Args:
+            output_file: Path of the exported model to annotate.
+        """
+        if self.config.notes is None or onnx is None:
+            return
+        onnx_model = onnx.load(output_file)
+        # Strings stored as-is so readers can consume without JSON-decoding;
+        # non-strings go through json.dumps to survive the round-trip.
+        notes = self.config.notes
+        notes_value = notes if isinstance(notes, str) else json.dumps(notes, allow_nan=False)
+        existing = next((prop for prop in onnx_model.metadata_props if prop.key == "rfdetr_notes"), None)
+        if existing is not None:
+            existing.value = notes_value
+        else:
+            meta = onnx_model.metadata_props.add()
+            meta.key = "rfdetr_notes"
+            meta.value = notes_value
+        onnx.save(onnx_model, output_file)
+
+    def _convert(self, graph: ExportGraph) -> str:
+        """Write the ``.onnx`` file and return its path."""
+        output_file = self._resolve_output_file(backbone_only=graph.backbone_only)
+        self._trace(graph, output_file)
+        self._embed_notes(output_file)
+        return output_file

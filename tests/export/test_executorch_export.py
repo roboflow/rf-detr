@@ -7,7 +7,7 @@
 
 Tests cover:
 * ``_resolve_export_backend``: the ``format`` / ``backend`` / ``soc`` validation, its warnings and errors.
-* ``export_executorch()`` argument validation and the missing-dependency error path (no ``executorch`` needed).
+* ``ExecuTorchExporter`` configuration validation and the missing-dependency error path (no ``executorch`` needed).
 * ``format="executorch"`` + ``backend`` / ``soc`` wiring through ``RFDETR.export()`` (heavy deps mocked, fast).
 * A real end-to-end export + numerical-parity check, gated behind the ``executorch`` marker so it only runs where the
   ``executorch`` package is installed.
@@ -29,15 +29,45 @@ import torch
 
 from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
-from rfdetr.export._executorch.converter import (
+from rfdetr.export._executorch.exporter import (
     _VALID_BACKENDS,
+    ExecuTorchExporter,
     _check_executorch_available,
-    export_executorch,
 )
+from rfdetr.export.base import ExecutorchConfig
+from rfdetr.export.prepare import ExportGraph
 from tests._online import is_online
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
+
+
+def _export_graph(*, backbone_only: bool = False) -> ExportGraph:
+    """Build a throwaway :class:`ExportGraph` for exporter calls that never trace a real model.
+
+    The model is a ``MagicMock``: every test using this graph either fails before lowering or mocks
+    ``torch.export.export``, so nothing ever runs a forward pass.
+
+    Args:
+        backbone_only: Whether the graph is a backbone-only export, which the artifact filename marks.
+
+    Returns:
+        A graph carrying a tiny example input and the metadata the ExecuTorch exporter reads.
+
+    Examples:
+        >>> graph = _export_graph()
+        >>> tuple(graph.input_tensors.shape), graph.backbone_only
+        ((1, 3, 8, 8), False)
+    """
+    return ExportGraph(
+        model=mock.MagicMock(),
+        input_tensors=torch.zeros(1, 3, 8, 8),
+        input_names=("input",),
+        output_names=("output",),
+        dynamic_axes=None,
+        shape=(8, 8),
+        backbone_only=backbone_only,
+    )
 
 
 def _executorch_runtime_tensors(pte_path: Path, example: torch.Tensor) -> list[torch.Tensor]:
@@ -154,17 +184,14 @@ class TestResolveExportBackend:
 # ---------------------------------------------------------------------------
 
 
-class TestExportExecutorchValidation:
-    """Argument validation and dependency-error behaviour of ``export_executorch``."""
+class TestExecuTorchExporterValidation:
+    """Configuration validation and dependency-error behaviour of ``ExecuTorchExporter``."""
 
     def test_unsupported_backend_raises_value_error(self, tmp_path: Path) -> None:
+        """An unknown delegation backend is rejected when the graph is converted."""
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="vulkan"))
         with pytest.raises(ValueError, match="Unsupported ExecuTorch backend"):
-            export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="vulkan",
-            )
+            exporter(_export_graph())
 
     def test_supported_backend_set_is_exact(self) -> None:
         """``_VALID_BACKENDS`` is exactly ``{"xnnpack", "coreml", "qnn"}`` -- no more, no fewer."""
@@ -172,15 +199,13 @@ class TestExportExecutorchValidation:
 
     @pytest.mark.parametrize("backend", ["xnnpack", "coreml", "qnn"])
     def test_dynamic_batch_not_supported_raises(self, tmp_path: Path, backend: str) -> None:
-        """``dynamic_batch`` is refused up front on executorch 1.3.1 (runtime can't resize windowed reshapes)."""
+        """``dynamic_batch`` is refused on executorch 1.3.1 (runtime can't resize windowed reshapes).
+
+        The refusal now fires while the exporter is constructed, before a graph is ever prepared -- the base
+        ``Exporter`` checks the format's declared capabilities in ``__init__``.
+        """
         with pytest.raises(NotImplementedError, match="dynamic_batch"):
-            export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend=backend,
-                dynamic_batch=True,
-            )
+            ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend=backend, dynamic_batch=True))
 
     def test_coreml_backend_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
         """Without ``coremltools`` (or the ``executorch`` package), the coreml backend raises an actionable hint."""
@@ -190,13 +215,9 @@ class TestExportExecutorchValidation:
             pass
         else:
             pytest.skip("ExecuTorch CoreML backend is available; missing-dependency path not exercised here")
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="coreml"))
         with pytest.raises(ImportError, match=r"coremltools|executorch"):
-            export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="coreml",
-            )
+            exporter(_export_graph())
 
     def test_qnn_backend_missing_delegate_raises_import_error(self, tmp_path: Path) -> None:
         """Without an ExecuTorch source build against the QNN SDK, the qnn backend raises an actionable hint."""
@@ -206,13 +227,9 @@ class TestExportExecutorchValidation:
             pass
         else:
             pytest.skip("ExecuTorch QNN backend is available; missing-delegate path not exercised here")
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="qnn"))
         with pytest.raises(ImportError, match=r"QNN|executorch"):
-            export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="qnn",
-            )
+            exporter(_export_graph())
 
     def test_check_executorch_available_raises_when_missing(self) -> None:
         """``_check_executorch_available`` should raise an actionable ImportError when executorch is absent."""
@@ -277,16 +294,12 @@ class TestExportExecutorchValidation:
             with mock.patch("importlib.metadata.version", return_value="1.3.1"):
                 _check_executorch_available(require_runtime=True)  # must not raise
 
-    def test_export_executorch_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
-        """``export_executorch`` raises ImportError with install hint when executorch is absent."""
+    def test_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
+        """The exporter raises ImportError with an install hint when executorch is absent."""
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="xnnpack"))
         with mock.patch.dict(sys.modules, {"executorch": None}):
             with pytest.raises(ImportError, match=r"pip install rfdetr\[executorch\]"):
-                export_executorch(
-                    model=mock.MagicMock(),
-                    input_tensors=torch.zeros(1, 3, 8, 8),
-                    output_dir=tmp_path,
-                    backend="xnnpack",
-                )
+                exporter(_export_graph())
 
     def test_output_dir_is_used_as_provided(self, tmp_path: Path) -> None:
         """output_dir is passed through to the exporter; caller is responsible for sanitizing it.
@@ -295,14 +308,12 @@ class TestExportExecutorchValidation:
         This test documents that output_dir is caller-owned — the exporter trusts it.
         The ImportError fires before any mkdir, so output_dir is irrelevant on the missing-dep path.
         """
+        exporter = ExecuTorchExporter(
+            ExecutorchConfig(output_dir=tmp_path / "some" / "nested" / "dir", backend="xnnpack")
+        )
         with mock.patch.dict(sys.modules, {"executorch": None}):
             with pytest.raises(ImportError, match=r"pip install rfdetr\[executorch\]"):
-                export_executorch(
-                    model=mock.MagicMock(),
-                    input_tensors=torch.zeros(1, 3, 8, 8),
-                    output_dir=tmp_path / "some" / "nested" / "dir",
-                    backend="xnnpack",
-                )
+                exporter(_export_graph())
         # If executorch is absent the ImportError fires before any filesystem operation,
         # confirming that output_dir sanitization is caller responsibility.
         assert not (tmp_path / "some").exists()
@@ -327,20 +338,25 @@ class TestExportFormatParameter:
         # make_infer_image returns a small tensor instead of building a real image.
         self._mock_stack.enter_context(
             mock.patch(
-                "rfdetr.export.main.make_infer_image",
+                "rfdetr.export.prepare.make_infer_image",
                 return_value=torch.zeros(1, 3, 560, 560),
             )
         )
-        # Mock the converter so no torch.export / executorch work happens.
-        self._mock_export_executorch = self._mock_stack.enter_context(
+        # Mock the conversion so no torch.export / executorch work happens. autospec keeps the exporter instance
+        # as the first positional argument, which is how the tests below read back the resolved configuration.
+        self._mock_executorch_convert = self._mock_stack.enter_context(
             mock.patch(
-                "rfdetr.export._executorch.converter.export_executorch",
+                "rfdetr.export._executorch.exporter.ExecuTorchExporter._convert",
+                autospec=True,
                 return_value=pte_out,
             )
         )
         # Mock export_onnx so the ONNX-format branch is also dependency-free.
         self._mock_export_onnx = self._mock_stack.enter_context(
-            mock.patch("rfdetr.export.main.export_onnx", return_value=str(tmp_path / "inference_model.onnx"))
+            mock.patch(
+                "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+                return_value=str(tmp_path / "inference_model.onnx"),
+            )
         )
         yield
         self._mock_stack.close()
@@ -369,12 +385,12 @@ class TestExportFormatParameter:
             pytest.param("pte", id="alias"),
         ],
     )
-    def test_executorch_format_calls_export_executorch(self, export_format: str) -> None:
-        """``format="executorch"`` — and its ``"pte"`` alias — trigger export_executorch and warn (experimental)."""
+    def test_executorch_format_calls_exporter(self, export_format: str) -> None:
+        """``format="executorch"`` — and its ``"pte"`` alias — run the ExecuTorch exporter and warn (experimental)."""
         obj = self._make_rfdetr()
         with pytest.warns(UserWarning, match="experimental"):
             obj.export(format=export_format, backend="xnnpack", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_executorch.assert_called_once()
+        self._mock_executorch_convert.assert_called_once()
 
     def test_notes_ignored_with_warning_for_executorch_format(self) -> None:
         """``notes`` has no metadata slot in ``.pte``; passing it with ``format="executorch"`` warns and is dropped."""
@@ -403,32 +419,32 @@ class TestExportFormatParameter:
     def test_backend_forwarded_to_converter(self, backend: str, soc: str | None) -> None:
         obj = self._make_rfdetr()
         obj.export(format="executorch", backend=backend, soc=soc, output_dir=str(self._tmp_path / "out"))
-        assert self._mock_export_executorch.call_args.kwargs.get("backend") == backend
+        assert self._mock_executorch_convert.call_args.args[0].config.backend == backend
 
     def test_soc_forwarded_to_converter(self) -> None:
         obj = self._make_rfdetr()
         obj.export(format="executorch", backend="qnn", soc="SM8750", output_dir=str(self._tmp_path / "out"))
-        assert self._mock_export_executorch.call_args.kwargs.get("soc") == "SM8750"
+        assert self._mock_executorch_convert.call_args.args[0].config.soc == "SM8750"
 
     def test_non_qnn_backend_does_not_forward_soc(self) -> None:
-        """Xnnpack/coreml bake in no SoC, so the converter is called without a ``soc`` kwarg."""
+        """Xnnpack/coreml bake in no SoC, so the exporter is configured without one and its default wins."""
         obj = self._make_rfdetr()
         obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
-        assert "soc" not in self._mock_export_executorch.call_args.kwargs
+        assert self._mock_executorch_convert.call_args.args[0].config.soc is None
 
     def test_dynamic_batch_raises_before_converter(self) -> None:
-        """dynamic_batch=True is refused by RFDETR.export() before the converter is invoked."""
+        """dynamic_batch=True is refused by RFDETR.export() before the conversion is invoked."""
         obj = self._make_rfdetr()
         with pytest.raises(NotImplementedError, match="dynamic_batch"):
             obj.export(
                 format="executorch", backend="xnnpack", dynamic_batch=True, output_dir=str(self._tmp_path / "out")
             )
-        self._mock_export_executorch.assert_not_called()
+        self._mock_executorch_convert.assert_not_called()
 
-    def test_onnx_format_does_not_call_export_executorch(self) -> None:
+    def test_onnx_format_does_not_call_executorch_exporter(self) -> None:
         obj = self._make_rfdetr()
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_executorch.assert_not_called()
+        self._mock_executorch_convert.assert_not_called()
 
     def test_invalid_format_raises_value_error(self) -> None:
         obj = self._make_rfdetr()
@@ -441,7 +457,7 @@ class TestExportFormatParameter:
         # Bypass _resolve_export_backend's own converter import, then make the dispatch-site import fail.
         with (
             mock.patch("rfdetr.export._backend._resolve_export_backend", return_value=("xnnpack", None)),
-            mock.patch.dict(sys.modules, {"rfdetr.export._executorch.converter": None}),
+            mock.patch.dict(sys.modules, {"rfdetr.export._executorch.exporter": None}),
         ):
             with pytest.raises(ImportError):
                 obj.export(format="executorch", backend="xnnpack", output_dir=str(self._tmp_path / "out"))
@@ -502,7 +518,7 @@ class TestBuildPartitioner:
         ],
     )
     def test_returns_partitioner(self, backend: str, leaf: str, cls: str) -> None:
-        from rfdetr.export._executorch.converter import _build_partitioner
+        from rfdetr.export._executorch.exporter import _build_partitioner
 
         sentinel = object()
         mods = _fake_executorch_tree({leaf: {cls: mock.MagicMock(return_value=sentinel)}})
@@ -517,14 +533,14 @@ class TestBuildPartitioner:
         ],
     )
     def test_missing_extension_raises_import_error(self, backend: str, leaf: str) -> None:
-        from rfdetr.export._executorch.converter import _build_partitioner
+        from rfdetr.export._executorch.exporter import _build_partitioner
 
         with mock.patch.dict(sys.modules, {leaf: None}):
             with pytest.raises(ImportError):
                 _build_partitioner(backend)
 
     def test_unknown_backend_raises_value_error(self) -> None:
-        from rfdetr.export._executorch.converter import _build_partitioner
+        from rfdetr.export._executorch.exporter import _build_partitioner
 
         with pytest.raises(ValueError, match="Unsupported ExecuTorch backend"):
             _build_partitioner("bogus")
@@ -562,7 +578,7 @@ class TestLowerQnn:
         return mods, program, edge
 
     def test_success_returns_executorch_program(self) -> None:
-        from rfdetr.export._executorch.converter import _lower_qnn
+        from rfdetr.export._executorch.exporter import _lower_qnn
 
         mods, program, edge = self._qnn_modules()
 
@@ -581,7 +597,7 @@ class TestLowerQnn:
     def test_op_support_exception_is_treated_as_unsupported(self) -> None:
         """A QnnOperatorSupport.is_node_supported that raises (no HTP visitor / weightless LayerNorm) is caught and the
         node is left on CPU instead of aborting the lowering; the original method is restored after."""
-        from rfdetr.export._executorch.converter import _lower_qnn
+        from rfdetr.export._executorch.exporter import _lower_qnn
 
         mods, program, edge = self._qnn_modules()
         qnn_support_cls = mods["executorch.backends.qualcomm.partition.qnn_partitioner"].QnnOperatorSupport
@@ -607,7 +623,7 @@ class TestLowerQnn:
         assert qnn_support_cls.is_node_supported is original  # restored after lowering
 
     def test_unknown_soc_raises_value_error(self) -> None:
-        from rfdetr.export._executorch.converter import _lower_qnn
+        from rfdetr.export._executorch.exporter import _lower_qnn
 
         mods, _, _ = self._qnn_modules()
         with mock.patch.dict(sys.modules, mods):
@@ -615,15 +631,15 @@ class TestLowerQnn:
                 _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="SM9999")
 
     def test_missing_delegate_raises_import_error(self) -> None:
-        from rfdetr.export._executorch.converter import _lower_qnn
+        from rfdetr.export._executorch.exporter import _lower_qnn
 
         with mock.patch.dict(sys.modules, {"executorch.backends.qualcomm.serialization.qc_schema": None}):
             with pytest.raises(ImportError, match=r"QNN|executorch"):
                 _lower_qnn(mock.MagicMock(), torch.zeros(1, 3, 8, 8), soc_model="SM8650")
 
 
-class TestExportExecutorchBody:
-    """``export_executorch`` lowering dispatch + ``.pte`` writing, with executorch and its backends mocked."""
+class TestExecuTorchExporterBody:
+    """``ExecuTorchExporter`` lowering dispatch + ``.pte`` writing, with executorch and its backends mocked."""
 
     @staticmethod
     def _generic_modules(buffer: bytes = b"PTEBYTES") -> dict[str, Any]:
@@ -644,13 +660,9 @@ class TestExportExecutorchBody:
 
     @pytest.mark.parametrize("backend", [pytest.param("xnnpack", id="xnnpack"), pytest.param("coreml", id="coreml")])
     def test_generic_backend_writes_pte(self, tmp_path: Path, backend: str) -> None:
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend=backend))
         with mock.patch.dict(sys.modules, self._generic_modules(b"PTE")), mock.patch("torch.export.export"):
-            out = export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend=backend,
-            )
+            out = exporter(_export_graph())
         assert out.name == f"inference_model_{backend}.pte"
         assert out.read_bytes() == b"PTE"
 
@@ -665,39 +677,28 @@ class TestExportExecutorchBody:
         """
         mods = self._generic_modules()
         transform_cls = mods["executorch.backends.transforms.addmm_mm_to_linear"].AddmmToLinearTransform
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend=backend))
         with mock.patch.dict(sys.modules, mods), mock.patch("torch.export.export"):
-            export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend=backend,
-            )
+            exporter(_export_graph())
         lower_kwargs = mods["executorch.exir"].to_edge_transform_and_lower.call_args.kwargs
         assert lower_kwargs.get("transform_passes") == [transform_cls.return_value]
 
     def test_variant_name_sanitized_to_basename(self, tmp_path: Path) -> None:
         """A path-like ``variant_name`` is reduced to its basename stem (mirrors the ONNX exporter)."""
+        exporter = ExecuTorchExporter(
+            ExecutorchConfig(output_dir=tmp_path, backend="xnnpack", variant_name="sub/dir/rfdetr-nano.pte")
+        )
         with mock.patch.dict(sys.modules, self._generic_modules()), mock.patch("torch.export.export"):
-            out = export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="xnnpack",
-                variant_name="sub/dir/rfdetr-nano.pte",
-            )
+            out = exporter(_export_graph())
         assert out.name == "rfdetr-nano_xnnpack.pte"
 
     def test_output_name_overrides_and_suppresses_backend_suffix(self, tmp_path: Path) -> None:
         """``output_name`` names the ``.pte`` verbatim, suppressing the ``_{backend}`` suffix."""
+        exporter = ExecuTorchExporter(
+            ExecutorchConfig(output_dir=tmp_path, backend="xnnpack", variant_name="rfdetr-nano", output_name="my-model")
+        )
         with mock.patch.dict(sys.modules, self._generic_modules()), mock.patch("torch.export.export"):
-            out = export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="xnnpack",
-                variant_name="rfdetr-nano",
-                output_name="my-model",
-            )
+            out = exporter(_export_graph())
         assert out.name == "my-model.pte"
 
     @pytest.mark.parametrize("output_name", [None, "custom"])
@@ -707,25 +708,15 @@ class TestExportExecutorchBody:
         output_name: str | None,
     ) -> None:
         """Backbone export leaves the full detector artifact intact for variant and custom names."""
+        exporter = ExecuTorchExporter(
+            ExecutorchConfig(
+                output_dir=tmp_path, backend="xnnpack", variant_name="rfdetr-nano", output_name=output_name
+            )
+        )
         with mock.patch.dict(sys.modules, self._generic_modules(b"FULL")), mock.patch("torch.export.export"):
-            full_out = export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="xnnpack",
-                variant_name="rfdetr-nano",
-                output_name=output_name,
-            )
+            full_out = exporter(_export_graph())
         with mock.patch.dict(sys.modules, self._generic_modules(b"BACKBONE")), mock.patch("torch.export.export"):
-            backbone_out = export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="xnnpack",
-                variant_name="rfdetr-nano",
-                output_name=output_name,
-                backbone_only=True,
-            )
+            backbone_out = exporter(_export_graph(backbone_only=True))
 
         assert full_out != backbone_out
         assert backbone_out.name == ("custom-backbone.pte" if output_name else "rfdetr-nano_xnnpack-backbone.pte")
@@ -735,42 +726,28 @@ class TestExportExecutorchBody:
     def test_backbone_only_bare_default_uses_backbone_model_stem(self, tmp_path: Path) -> None:
         """Without a variant/output_name, ``backbone_only=True`` falls back to ``backbone_model`` (mirrors the ONNX
         exporter) instead of appending a redundant ``-backbone`` marker onto the generic default."""
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="xnnpack"))
         with mock.patch.dict(sys.modules, self._generic_modules()), mock.patch("torch.export.export"):
-            out = export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="xnnpack",
-                backbone_only=True,
-            )
+            out = exporter(_export_graph(backbone_only=True))
         assert out.name == "backbone_model_xnnpack.pte"
 
     def test_lowering_failure_wrapped_as_runtime_error(self, tmp_path: Path) -> None:
         mods = self._generic_modules()
         mods["executorch.exir"].to_edge_transform_and_lower.side_effect = RuntimeError("boom")
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="xnnpack"))
         with mock.patch.dict(sys.modules, mods), mock.patch("torch.export.export"):
             with pytest.raises(RuntimeError, match="ExecuTorch export failed"):
-                export_executorch(
-                    model=mock.MagicMock(),
-                    input_tensors=torch.zeros(1, 3, 8, 8),
-                    output_dir=tmp_path,
-                    backend="xnnpack",
-                )
+                exporter(_export_graph())
 
     def test_qnn_backend_dispatches_to_lower_qnn(self, tmp_path: Path) -> None:
         program = mock.MagicMock()
         program.buffer = b"QNN"
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="qnn", soc="SM8650"))
         with (
             mock.patch.dict(sys.modules, self._generic_modules()),
-            mock.patch("rfdetr.export._executorch.converter._lower_qnn", return_value=program) as mock_lower,
+            mock.patch("rfdetr.export._executorch.exporter._lower_qnn", return_value=program) as mock_lower,
         ):
-            out = export_executorch(
-                model=mock.MagicMock(),
-                input_tensors=torch.zeros(1, 3, 8, 8),
-                output_dir=tmp_path,
-                backend="qnn",
-                soc="SM8650",
-            )
+            out = exporter(_export_graph())
         mock_lower.assert_called_once()
         assert out.read_bytes() == b"QNN"
         assert out.name == "inference_model_qnn_SM8650.pte"
@@ -815,7 +792,7 @@ class TestPackageAvailabilityFlag:
         import importlib
 
         import rfdetr.export._executorch as pkg
-        import rfdetr.export._executorch.converter as conv
+        import rfdetr.export._executorch.exporter as conv
 
         with mock.patch.object(conv, "_check_executorch_available", side_effect=ImportError("no executorch")):
             reloaded = importlib.reload(pkg)

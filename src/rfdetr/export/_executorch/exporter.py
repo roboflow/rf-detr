@@ -40,7 +40,7 @@ Vulkan is not exposed. It was evaluated end-to-end and rejected because it fails
 XNNPACK covers portable CPU; QNN and CoreML cover the mobile accelerators.
 
 RF-DETR's detection graph exports cleanly once the deformable-attention modules are switched into their export-friendly
-path (handled by :meth:`model.export`, which the caller invokes before reaching this function).  This module only
+path (handled by :meth:`model.export`, which the caller invokes before reaching this exporter).  This module only
 performs the conversion; numerical parity against eager PyTorch is checked by the test suite (mirroring the ONNX and
 TFLite exporters, which likewise convert without an in-library validation step).
 
@@ -52,19 +52,20 @@ Note:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import torch
 from torch import nn
 
-from rfdetr.export._naming import resolve_export_stem
+from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export.base import ExecutorchConfig, Exporter
+from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-# Backends accepted by :func:`export_executorch`.  XNNPACK (portable CPU, fp32) and CoreML (Apple devices, fp16) are
+# Backends accepted by :class:`ExecuTorchExporter`.  XNNPACK (portable CPU, fp32) and CoreML (Apple devices, fp16) are
 # validated end-to-end.  Qualcomm QNN (Snapdragon HTP/NPU, fp16) lowers cleanly and delegates
 # the bulk of the network to the HTP -- but its delegate ships neither in the ``executorch`` wheel nor runs off a
 # Snapdragon device, so it requires a source build of ExecuTorch against the Qualcomm AI Engine Direct SDK.  Vulkan is
@@ -81,6 +82,11 @@ _SOC_BACKENDS: frozenset[str] = frozenset({"qnn"})
 # Public aliases so detr.py can import these without crossing a private-name boundary.
 VALID_BACKENDS: frozenset[str] = _VALID_BACKENDS
 SOC_BACKENDS: frozenset[str] = _SOC_BACKENDS
+
+# SoC assumed when a SoC-locked backend is exported without one.  ``_resolve_export_backend`` requires the public
+# :meth:`rfdetr.detr.RFDETR.export` caller to pass ``soc`` for those backends, so this only backs a direct
+# construction of the exporter.  "SM8650" is Snapdragon 8 Gen 3.
+_DEFAULT_SOC = "SM8650"
 
 _INSTALL_HINT = "ExecuTorch export requires the `executorch` package. Install it with: pip install rfdetr[executorch]"
 _COREML_HINT = "CoreML export requires `coremltools`. Install it with: pip install coremltools"
@@ -122,7 +128,7 @@ def _check_executorch_available(*, require_runtime: bool = False) -> None:
 
     Args:
         require_runtime: Also verify that ``executorch.runtime`` (the on-host ``.pte`` loader/runner)
-            imports cleanly. :func:`export_executorch` itself never touches ``executorch.runtime``, so
+            imports cleanly. The export itself never touches ``executorch.runtime``, so
             this defaults to ``False`` and does not gate export capability. Set ``True`` only when the
             caller intends to load and run a ``.pte`` locally (e.g. a parity/verification check) — a
             torch/executorch ABI mismatch breaks only this submodule, not AOT export.
@@ -238,7 +244,7 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
 
     # ExecuTorch 1.3.1's to_edge_transform_and_lower_to_qnn exports with strict=True, which lifts RF-DETR's
     # spatial-shape constant into the `transformer` submodule and then trips an un-lift bug (the same one the
-    # XNNPACK/CoreML path avoids by exporting non-strict; see export_executorch). Force the wrapper's internal
+    # XNNPACK/CoreML path avoids by exporting non-strict; see ExecuTorchExporter._lower_generic). Force the internal
     # torch.export to strict=False -- the captured graph is identical -- restoring the original afterwards.
     import torch.export as _torch_export
 
@@ -275,170 +281,237 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
     return edge_program.to_executorch()
 
 
-def export_executorch(
-    model: nn.Module,
-    input_tensors: torch.Tensor,
-    output_dir: str | os.PathLike[str],
-    *,
-    backend: Literal["xnnpack", "coreml", "qnn"] = "xnnpack",
-    variant_name: str | None = None,
-    soc: str = "SM8650",
-    dynamic_batch: bool = False,
-    output_name: str | None = None,
-    backbone_only: bool = False,
-) -> Path:
-    """Export an RF-DETR model to an ExecuTorch ``.pte`` file.
+class ExecuTorchExporter(Exporter[ExecutorchConfig]):
+    """Lower a prepared graph to an ExecuTorch ``.pte`` for the configured delegation backend.
 
-    The model must already be switched into export mode (``model.export()``) and moved to CPU by the caller -- the
-    public :meth:`rfdetr.detr.RFDETR.export` entry point handles both.
+    The conversion runs in five steps, each its own method: validate the delegation backend, check the ``executorch``
+    dependency and create the output directory, resolve the artifact filename, lower the graph (QNN through its own
+    entry point, XNNPACK and CoreML through the generic partitioner), then write the ``.pte`` bytes.
 
-    The ``backend``/``soc`` defaults below are a convenience for direct/internal calls only; the public
-    :meth:`rfdetr.detr.RFDETR.export` contract requires ``backend`` to be passed explicitly (and ``soc`` for
-    SoC-locked backends) -- it never relies on these defaults.
+    The graph arrives already switched into its export-friendly forward and on CPU: the base
+    :class:`~rfdetr.export.base.Exporter` and the public :meth:`rfdetr.detr.RFDETR.export` entry point handle both
+    before :meth:`_convert` runs.
 
-    Args:
-        model: The RF-DETR PyTorch module to export, in export mode and on CPU.
-        input_tensors: Example input tensor ``(batch, channels, height, width)`` used to trace the graph.  Its shape is
-            baked into the exported program.
-        output_dir: Directory where the ``.pte`` file is written.
-        backend: ExecuTorch delegation backend.  One of ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple
-            devices, fp16; requires ``coremltools``), or ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an
-            ExecuTorch source build against the QNN SDK).
-        variant_name: Model variant identifier (e.g. ``"rfdetr-nano"``).  When provided, the file is named
-            ``{variant_name}_{backend}.pte`` (``{variant_name}_qnn_{soc}.pte`` for the SoC-locked ``qnn`` backend)
-            instead of the generic ``inference_model_{backend}.pte`` -- the backend (and SoC, for ``qnn``) is always
-            encoded since it determines which hardware/runtime can load the file.
-        soc: Target SoC for backends that compile for a specific chip (currently ``"qnn"``), a ``QcomChipset`` name
-            (default ``"SM8650"`` = Snapdragon 8 Gen 3).  Ignored for backends that do not target a specific SoC.
-        dynamic_batch: Variable batch size at runtime.  Not supported on executorch 1.3.1 (raises
-            ``NotImplementedError``): ``torch.export`` keeps the batch axis symbolic, but the runtime cannot resize
-            RF-DETR's windowed-attention reshapes, so a dynamic ``.pte`` runs only at the traced batch.  Export one
-            ``.pte`` per batch size for now.
-        output_name: Full filename override (without extension). Takes precedence over *variant_name* and
-            suppresses the ``_{backend}``/``_qnn_{soc}`` suffix -- the file is named ``{output_name}.pte`` before
-            the optional ``-backbone`` marker.
-        backbone_only: Whether *model* is a backbone-only export graph. When ``True`` and a name was supplied
-            (*variant_name* or *output_name*), a ``-backbone`` marker is appended to the filename so a backbone
-            export never collides with a full-detector export of the same variant/backend -- matching the ONNX
-            exporter's ``{stem}-backbone.onnx`` convention. Not appended onto the bare ``backbone_model`` default,
-            which already spells it out.
-
-    Returns:
-        Path to the exported ``.pte`` file.
-
-    Raises:
-        ImportError: If ``executorch`` (or the backend extension) is not installed.
-        ValueError: If *backend* is not supported.
-        NotImplementedError: If *dynamic_batch* is requested (unsupported on executorch 1.3.1).
-        RuntimeError: If ``torch.export`` or ExecuTorch lowering fails.
+    The artifact is named ``{stem}_{backend}.pte`` -- ``{stem}_qnn_{soc}.pte`` for the SoC-locked ``qnn`` backend --
+    because the backend, and the SoC it compiles for, decides which hardware and runtime can load the file. A
+    configured ``output_name`` names the file verbatim and suppresses that token; a backbone-only graph carries a
+    trailing ``-backbone`` marker so it never overwrites a full-detector export of the same name.
 
     Examples:
-        Export for portable CPU inference (XNNPACK, fp32)::
+        Requires the optional ``executorch`` dependency and a prepared graph, so this is documentation only
+        (not a doctest):
 
-            pte_path = export_executorch(model, input_tensor, "output/", backend="xnnpack")
-
-        Export for Apple Neural Engine (CoreML, fp16; detections correct, raw diffs from fp16 expected)::
-
-            pte_path = export_executorch(model, input_tensor, "output/", backend="coreml")
-
-        Export for Qualcomm HTP (QNN, fp16; requires ExecuTorch source build against QAIRT SDK)::
-
-            pte_path = export_executorch(model, input_tensor, "output/", backend="qnn", soc="SM8650")
+        ```python
+        ExecuTorchExporter(ExecutorchConfig(backend="xnnpack", variant_name="rfdetr-small"))(graph)
+        # -> PosixPath('output/rfdetr-small_xnnpack.pte')
+        ```
     """
-    backend_name: str = backend.lower()
-    if backend_name not in _VALID_BACKENDS:
-        raise ValueError(f"Unsupported ExecuTorch backend {backend_name!r}. Choose from: {sorted(_VALID_BACKENDS)}.")
-    if dynamic_batch:
-        # torch.export keeps the batch dim symbolic (verified: range stays [1, N] through export), but ExecuTorch
-        # 1.3.1 cannot carry it through lowering, for two independent reasons:
-        #   1. to_edge's IR-validity check (EdgeOpArgValidator) calls len() on a Tensor[]-returning op's first
-        #      result (RF-DETR's deformable-attention value.split(...)), which guards the batch to the example
-        #      value and bakes a fixed-batch .pte.
-        #   2. even with that check disabled, the windowed-attention reshapes (B <-> B*num_windows**2) lower to
-        #      view_copy/et_view ops the runtime cannot resize for a dynamic batch (check_view_copy_args fails).
-        # The resulting .pte runs only at the traced batch and silently mis-computes others, so it is refused
-        # rather than shipped. (QNN additionally compiles a fixed-shape, SoC-locked binary.) Revisit on an
-        # ExecuTorch release that fixes the verifier specialization and dynamic view resize.
-        raise NotImplementedError(
-            "ExecuTorch export does not support dynamic_batch on executorch 1.3.1 (the edge verifier specializes "
-            "the batch dim and the runtime cannot resize the windowed-attention reshapes). Export one .pte per "
-            "batch size instead."
+
+    format = "executorch"
+    display_name = "ExecuTorch"
+    experimental = True
+    pip_extra = "executorch"
+    # torch.export keeps the batch dim symbolic (verified: range stays [1, N] through export), but ExecuTorch 1.3.1
+    # cannot carry it through lowering, for two independent reasons:
+    #   1. to_edge's IR-validity check (EdgeOpArgValidator) calls len() on a Tensor[]-returning op's first result
+    #      (RF-DETR's deformable-attention value.split(...)), which guards the batch to the example value and bakes a
+    #      fixed-batch .pte.
+    #   2. even with that check disabled, the windowed-attention reshapes (B <-> B*num_windows**2) lower to
+    #      view_copy/et_view ops the runtime cannot resize for a dynamic batch (check_view_copy_args fails).
+    # The resulting .pte runs only at the traced batch and silently mis-computes others, so it is refused rather than
+    # shipped. (QNN additionally compiles a fixed-shape, SoC-locked binary.) Revisit on an ExecuTorch release that
+    # fixes the verifier specialization and dynamic view resize.
+    notes_reason = "ExecuTorch .pte has no metadata slot"
+
+    def _resolve_backend(self) -> str:
+        """Return the configured delegation backend, lowercased and checked against the supported set.
+
+        Returns:
+            The backend name in lowercase, one of :data:`_VALID_BACKENDS`.
+
+        Raises:
+            ValueError: If the configured backend is not one ExecuTorch export supports.
+        """
+        backend_name = self.config.backend.lower()
+        if backend_name not in _VALID_BACKENDS:
+            raise ValueError(
+                f"Unsupported ExecuTorch backend {backend_name!r}. Choose from: {sorted(_VALID_BACKENDS)}."
+            )
+        return backend_name
+
+    def _resolve_soc(self) -> str:
+        """Return the target SoC for a backend that compiles ahead-of-time for one chip.
+
+        :func:`rfdetr.export._backend._resolve_export_backend` requires the public entry point to supply a ``soc`` for
+        those backends and leaves it ``None`` for every other one, so the fallback below only ever backs a directly
+        constructed exporter.
+
+        Returns:
+            The configured SoC, or :data:`_DEFAULT_SOC` when none was configured.
+        """
+        return self.config.soc if self.config.soc is not None else _DEFAULT_SOC
+
+    def _prepare_output_dir(self) -> Path:
+        """Check the ExecuTorch dependency, then create and return the configured output directory.
+
+        Returns:
+            The output directory, created if it did not already exist.
+
+        Raises:
+            ImportError: If ``executorch`` is missing, older than 1.3, or ships without ``executorch.exir``.
+        """
+        _check_executorch_available()
+        # Probed here rather than at the lowering step: `executorch` can import while `executorch.exir` -- the entry
+        # point the delegated path lowers through -- does not, and that has always failed before anything is written.
+        from executorch.exir import to_edge_transform_and_lower  # noqa: F401
+
+        output_dir = Path(self.config.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return output_dir
+
+    def _resolve_output_file(self, output_dir: Path, backend: str, *, backbone_only: bool) -> Path:
+        """Return the path the ``.pte`` file is written to.
+
+        Args:
+            output_dir: Directory the artifact is written into.
+            backend: Resolved delegation backend name.
+            backbone_only: Whether the graph is a backbone-only export.
+
+        Returns:
+            Full path of the ``.pte`` file, inside *output_dir*.
+        """
+        stem, is_custom = resolve_export_stem(
+            self.config.variant_name,
+            self.config.output_name,
+            default="backbone_model" if backbone_only else "inference_model",
         )
+        if is_custom:
+            export_name = stem
+        else:
+            # backend (+ SoC for qnn) determines what can load the file -- always encode it.
+            backend_token = f"qnn_{self._resolve_soc()}" if backend == "qnn" else backend
+            export_name = f"{stem}_{backend_token}"
+        export_name = append_backbone_marker(
+            export_name,
+            backbone_only=backbone_only,
+            named=bool(self.config.variant_name or self.config.output_name),
+        )
+        return output_dir / f"{export_name}.pte"
 
-    _check_executorch_available()
-    from executorch.exir import to_edge_transform_and_lower
+    def _lower_generic(self, model: nn.Module, input_tensors: torch.Tensor, backend: str) -> Any:
+        """Lower *model* through ``torch.export`` and ExecuTorch's generic partitioner path (XNNPACK / CoreML).
 
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    stem, is_custom = resolve_export_stem(
-        variant_name, output_name, default="backbone_model" if backbone_only else "inference_model"
-    )
-    if is_custom:
-        export_name = stem
-    else:
-        # backend (+ SoC for qnn) determines what can load the file -- always encode it.
-        backend_token = f"qnn_{soc}" if backend_name == "qnn" else backend_name
-        export_name = f"{stem}_{backend_token}"
-    # "-backbone" is a structural marker (distinct model graph), not a backend/SoC detail -- it is
-    # appended whenever a name was supplied, custom or variant-derived, but not onto the bare
-    # "backbone_model" default (which already spells it out). Mirrors export_onnx's convention;
-    # without it, a backbone export silently overwrites a full-detector export of the same
-    # variant/backend/output_name.
-    if backbone_only and (variant_name or output_name):
-        export_name = f"{export_name}-backbone"
-    output_file = output_dir / f"{export_name}.pte"
+        Args:
+            model: The module to trace, in export mode, eval mode, and on CPU.
+            input_tensors: Example input ``(batch, channels, height, width)``; its shape is baked in.
+            backend: Resolved delegation backend name, selecting the partitioner.
 
-    model = model.eval()
-    logger.info(f"Exporting model to ExecuTorch ({backend_name}) format: {output_file}")
-    try:
-        with torch.no_grad():
-            if backend_name == "qnn":
-                # QNN has its own lowering entry point + workarounds; see _lower_qnn.
-                logger.warning(
-                    "ExecuTorch QNN export is EXPERIMENTAL. It requires a source build of ExecuTorch "
-                    "against the QAIRT SDK (not the pip wheel) and so cannot be CI-tested. Validated "
-                    "on-device on the Snapdragon HTP: top detections match the "
-                    "PyTorch model to sub-pixel accuracy, with the two-stage selection ops (topk/max.dim) "
-                    "kept on CPU -- the HTP fp16 path computes wrong indices for them (see "
-                    "_QNN_CPU_FALLBACK_OPS). Remaining differences are fp16-level; validate detections on "
-                    "your target Snapdragon before relying on this export."
-                )
-                executorch_program = _lower_qnn(model, input_tensors, soc_model=soc)
-            else:
-                # strict=False (non-strict capture). strict=True is the forward-looking default and captures this
-                # model fine, but the resulting program lifts a small spatial-shape constant (spatial_shapes /
-                # level_start_index) into the `transformer` submodule, and ExecuTorch 1.3.1's un-lift step
-                # (torch/export/_unlift.py) cannot resolve a submodule-qualified lift_fresh_copy constant ->
-                # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
-                # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
-                exported_program = torch.export.export(model, (input_tensors,), strict=False)
-                # Imported in the non-QNN path only: the qnn backend never uses this transform, and
-                # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
-                # they never needed.
-                try:
-                    from executorch.backends.transforms.addmm_mm_to_linear import AddmmToLinearTransform
-                except ImportError as exc:
-                    raise ImportError(
-                        "AddmmToLinearTransform is unavailable in this ExecuTorch install; upgrade "
-                        "executorch to a version shipping executorch.backends.transforms.addmm_mm_to_linear."
-                    ) from exc
-                # AddmmToLinearTransform recombines the addmm/mm ops that torch.export decomposes
-                # nn.Linear into, back into aten.linear. The handful the partitioner leaves un-delegated (the
-                # two-stage encoder-output projections over the full token sequence) otherwise run on the
-                # portable addmm.out kernel, which is ~2 orders of magnitude slower than linear.out:
-                # 111 ms -> 44 ms end-to-end on RFDETRNano/XNNPACK, outputs identical to ~1e-5.
-                edge_program = to_edge_transform_and_lower(
-                    exported_program,
-                    transform_passes=[AddmmToLinearTransform()],
-                    partitioner=_build_partitioner(backend_name),
-                )
-                executorch_program = edge_program.to_executorch()
-    except (ImportError, ValueError):
-        raise
-    except Exception as exc:
-        logger.exception("ExecuTorch export failed")
-        raise RuntimeError(f"ExecuTorch export failed: {exc}") from exc
+        Returns:
+            An ExecuTorch program manager (``.buffer`` holds the ``.pte`` bytes).
 
-    output_file.write_bytes(executorch_program.buffer)
-    logger.info(f"Successfully exported ExecuTorch model to: {output_file}")
-    return output_file
+        Raises:
+            ImportError: If the backend's ExecuTorch extension, or ``AddmmToLinearTransform``, is unavailable.
+        """
+        from executorch.exir import to_edge_transform_and_lower
+
+        # strict=False (non-strict capture). strict=True is the forward-looking default and captures this
+        # model fine, but the resulting program lifts a small spatial-shape constant (spatial_shapes /
+        # level_start_index) into the `transformer` submodule, and ExecuTorch 1.3.1's un-lift step
+        # (torch/export/_unlift.py) cannot resolve a submodule-qualified lift_fresh_copy constant ->
+        # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
+        # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
+        exported_program = torch.export.export(model, (input_tensors,), strict=False)
+        # Imported in the non-QNN path only: the qnn backend never uses this transform, and
+        # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
+        # they never needed.
+        try:
+            from executorch.backends.transforms.addmm_mm_to_linear import AddmmToLinearTransform
+        except ImportError as exc:
+            raise ImportError(
+                "AddmmToLinearTransform is unavailable in this ExecuTorch install; upgrade "
+                "executorch to a version shipping executorch.backends.transforms.addmm_mm_to_linear."
+            ) from exc
+        # AddmmToLinearTransform recombines the addmm/mm ops that torch.export decomposes
+        # nn.Linear into, back into aten.linear. The handful the partitioner leaves un-delegated (the
+        # two-stage encoder-output projections over the full token sequence) otherwise run on the
+        # portable addmm.out kernel, which is ~2 orders of magnitude slower than linear.out:
+        # 111 ms -> 44 ms end-to-end on RFDETRNano/XNNPACK, outputs identical to ~1e-5.
+        edge_program = to_edge_transform_and_lower(
+            exported_program,
+            transform_passes=[AddmmToLinearTransform()],
+            partitioner=_build_partitioner(backend),
+        )
+        return edge_program.to_executorch()
+
+    def _lower(self, graph: ExportGraph, backend: str, output_file: Path) -> Any:
+        """Switch *graph* into eval mode and lower it for *backend*, normalizing converter failures.
+
+        Args:
+            graph: The prepared model and its graph metadata.
+            backend: Resolved delegation backend name.
+            output_file: Destination the lowered program will be written to; named in the progress log.
+
+        Returns:
+            An ExecuTorch program manager (``.buffer`` holds the ``.pte`` bytes).
+
+        Raises:
+            ImportError: If ``executorch``'s backend extension is not installed.
+            ValueError: If a SoC-locked backend was given a SoC ExecuTorch does not know.
+            RuntimeError: If ``torch.export`` or ExecuTorch lowering fails for any other reason.
+        """
+        model = graph.model.eval()
+        logger.info(f"Exporting model to ExecuTorch ({backend}) format: {output_file}")
+        try:
+            with torch.no_grad():
+                if backend == "qnn":
+                    # QNN has its own lowering entry point + workarounds; see _lower_qnn.
+                    logger.warning(
+                        "ExecuTorch QNN export is EXPERIMENTAL. It requires a source build of ExecuTorch "
+                        "against the QAIRT SDK (not the pip wheel) and so cannot be CI-tested. Validated "
+                        "on-device on the Snapdragon HTP: top detections match the "
+                        "PyTorch model to sub-pixel accuracy, with the two-stage selection ops (topk/max.dim) "
+                        "kept on CPU -- the HTP fp16 path computes wrong indices for them (see "
+                        "_QNN_CPU_FALLBACK_OPS). Remaining differences are fp16-level; validate detections on "
+                        "your target Snapdragon before relying on this export."
+                    )
+                    return _lower_qnn(model, graph.input_tensors, soc_model=self._resolve_soc())
+                return self._lower_generic(model, graph.input_tensors, backend)
+        except (ImportError, ValueError):
+            raise
+        except Exception as exc:
+            logger.exception("ExecuTorch export failed")
+            raise RuntimeError(f"ExecuTorch export failed: {exc}") from exc
+
+    def _write(self, program: Any, output_file: Path) -> Path:
+        """Write the lowered program's serialized bytes to *output_file*.
+
+        Args:
+            program: ExecuTorch program manager returned by the lowering step.
+            output_file: Destination ``.pte`` path.
+
+        Returns:
+            *output_file*, now holding the serialized program.
+        """
+        output_file.write_bytes(program.buffer)
+        logger.info(f"Successfully exported ExecuTorch model to: {output_file}")
+        return output_file
+
+    def _convert(self, graph: ExportGraph) -> Path:
+        """Write the ``.pte`` file and return its path.
+
+        Args:
+            graph: The prepared model and its graph metadata.
+
+        Returns:
+            Path to the exported ``.pte`` file.
+
+        Raises:
+            ImportError: If ``executorch`` or the backend's extension is not installed.
+            ValueError: If the configured backend, or the SoC a SoC-locked backend compiles for, is not supported.
+            RuntimeError: If ``torch.export`` or ExecuTorch lowering fails.
+        """
+        backend = self._resolve_backend()
+        output_dir = self._prepare_output_dir()
+        output_file = self._resolve_output_file(output_dir, backend, backbone_only=graph.backbone_only)
+        program = self._lower(graph, backend, output_file)
+        return self._write(program, output_file)
