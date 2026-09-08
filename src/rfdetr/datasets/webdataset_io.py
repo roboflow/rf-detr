@@ -89,6 +89,15 @@ asks of it: it wraps and repeats its own while better-supplied workers leave som
 re-packing the same split into 290 shards (0.6% short) closed it.
 """
 
+SHARD_SKEW_RAISE_FRACTION = 0.30
+"""Raise instead of warn when the smallest worker's shard share falls this far below the average.
+
+Every degradation mode this module can measure is otherwise silent past a warning nobody watches live in a training log:
+a skew this severe is no longer a tuning nuisance worth a log line — it is close enough to a worker seeing a small
+fraction of its assigned share that failing the run before it starts is cheaper than discovering it from a degraded
+metric hours later. Must stay above :data:`SHARD_SKEW_WARN_FRACTION`.
+"""
+
 DEFAULT_SHARD_SHUFFLE = 100
 """Shards held in the training shard-order shuffle buffer.
 
@@ -1196,6 +1205,15 @@ def build_webdataset_loader(
             # assuming every shard carries the same number of samples, which is only an approximation.
             deficit = 1.0 - (shards // slots) / (shards / slots)
             measured = False
+        if deficit > SHARD_SKEW_RAISE_FRACTION:
+            raise ValueError(
+                f"Split {dataset.index.split!r} has {shards} shard(s) for {ranks} rank(s) x "
+                f"{max(1, num_workers)} worker(s), so the worst-served worker holds "
+                f"{'' if measured else 'an estimated '}{deficit * 100:.0f}% fewer samples than the epoch asks of "
+                f"it — past {SHARD_SKEW_RAISE_FRACTION:.0%}, this is no longer a tuning nuisance worth a log "
+                "line nobody watches live. Re-pack with a smaller --max-shard-mb (aim for a shard count that "
+                "divides the rank/worker count, or simply many more shards than workers)."
+            )
         if deficit > SHARD_SKEW_WARN_FRACTION:
             logger.warning(
                 "Split %r has %d shards for %d rank(s) x %d worker(s), so the worst-served worker holds "
@@ -1217,6 +1235,20 @@ def build_webdataset_loader(
             num_workers=num_workers,
             world_size=ranks,
             grad_accum_steps=grad_accum_steps,
+        )
+        # Unconditional, at INFO: every degradation mode this loader can measure is otherwise silent past
+        # whichever warning threshold it happens to clear (or does not), so a run that stays under every
+        # threshold still leaves no record of what the plan actually was. This line is that record.
+        logger.info(
+            "Split %r: fixed training epoch plans %d sample(s)/worker x %d slot(s) = %d of %d total "
+            "sample(s) seen this epoch (batch_size=%d x grad_accum_steps=%d).",
+            dataset.index.split,
+            samples_per_worker,
+            slots,
+            samples_per_worker * slots,
+            dataset.total_samples,
+            batch_size,
+            grad_accum_steps,
         )
         seen = samples_per_worker * slots
         # The map-style path (GradAccumAlignedDataset) pads to the same accumulation-window boundary this

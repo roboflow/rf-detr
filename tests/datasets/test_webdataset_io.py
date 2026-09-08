@@ -32,6 +32,7 @@ from rfdetr.datasets.coco import CocoDetection, make_coco_transforms
 from rfdetr.datasets.webdataset_io import (
     DEFAULT_MAX_SHARD_BYTES,
     INDEX_VERSION,
+    SHARD_SKEW_RAISE_FRACTION,
     SHARD_SKEW_WARN_FRACTION,
     ShardIndex,
     WebDatasetDetection,
@@ -798,10 +799,9 @@ class TestStreamingShuffle:
         Regression test for the root cause behind the PR's own reported 2-3x seed-to-seed accuracy variance:
         ``webdataset``'s ``nodesplitter``/``workersplitter`` run on the shard-URL list's existing order, *before* its
         own shard-order shuffler (verified against the pinned ``webdataset==1.0.2`` source), so leaving that list
-        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed
-        subset varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it
-        cannot tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not
-        change.
+        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed subset
+        varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it cannot
+        tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not change.
         """
         dataset = WebDatasetDetection(_pack(tmp_path, count=24), "train", transforms=None, shard_shuffle=4)
         monkeypatch.setattr(
@@ -1038,17 +1038,44 @@ class TestBuildWebdatasetLoader:
         """Regression test: shards are cut by byte size, so a count-only estimate can miss a real skew entirely.
 
         Two shards split evenly by *count* (one per worker) would score 0% deficit under a shard-count-only estimate,
-        yet here one shard carries 98% of the samples: the real per-shard counts the packer now records have to be what
-        drives the warning.
+        yet here one shard carries 60% of the samples (20% worse than average): the real per-shard counts the packer now
+        records have to be what drives the warning. Deficit stays below SHARD_SKEW_RAISE_FRACTION on purpose, so this
+        exercises the warning path, not the raise path below.
         """
         dataset = WebDatasetDetection(_pack(tmp_path, count=4), "train", transforms=None)
-        dataset.index = replace(dataset.index, shards=("a.tar", "b.tar"), num_samples=1000, samples_per_shard=(980, 20))
+        dataset.index = replace(
+            dataset.index, shards=("a.tar", "b.tar"), num_samples=1000, samples_per_shard=(600, 400)
+        )
         capsys.readouterr()
         build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=2, world_size=1)
         assert "fewer samples than the epoch asks" in capsys.readouterr().err
 
+    def test_extreme_shard_skew_raises_instead_of_warning(self, tmp_path: Path) -> None:
+        """A skew far past the warning threshold raises instead of logging a line nobody watches live.
+
+        Every degradation mode this loader can measure is otherwise silent past a warning in a training log; a 98%/2%
+        split is not a tuning nuisance worth a log line, it is close enough to one worker seeing almost none of its
+        assigned share that failing fast is cheaper than discovering it from a degraded metric hours into a run.
+        """
+        dataset = WebDatasetDetection(_pack(tmp_path, count=4), "train", transforms=None)
+        dataset.index = replace(dataset.index, shards=("a.tar", "b.tar"), num_samples=1000, samples_per_shard=(980, 20))
+        with pytest.raises(ValueError, match="no longer a tuning nuisance"):
+            build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=2, world_size=1)
+
+    def test_epoch_plan_is_logged_unconditionally(self, tmp_path: Path, capsys: Any) -> None:
+        """The planned-vs-total sample count is always logged at INFO, not only when something looks wrong.
+
+        Regression test: every degradation mode was otherwise silent unless it happened to cross a warning
+        threshold, so a run that stays under every threshold still left no record of what the fixed-epoch plan
+        actually was.
+        """
+        dataset = WebDatasetDetection(_pack(tmp_path, count=24), "train", transforms=None)
+        capsys.readouterr()
+        build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=1, world_size=1)
+        assert "fixed training epoch plans" in capsys.readouterr().out
+
     def test_skew_threshold_is_a_fraction(self) -> None:
-        assert 0.0 < SHARD_SKEW_WARN_FRACTION < 1.0
+        assert 0.0 < SHARD_SKEW_WARN_FRACTION < SHARD_SKEW_RAISE_FRACTION < 1.0
 
     @pytest.mark.parametrize(
         ("samples_per_shard", "expect_warning"),
