@@ -163,6 +163,39 @@ def _shard_name(split: str, index: int, generation: str | None = None) -> str:
     return f"{split}-{generation}-{index:06d}.tar"
 
 
+def _resolve_within(base: Path, name: str) -> Path:
+    """Resolve *name* as a path component under *base*, rejecting any attempt to escape it.
+
+    Shard file names come from a shard index, which is ordinary on-disk JSON: a tampered or corrupted index can
+    carry an absolute path or a ``../``-laden entry. Two callers trust index entries without this check today —
+    opening a shard for reading and unlinking a stale shard during republish — and both would otherwise follow
+    the entry wherever it points.
+
+    Args:
+        base: Directory *name* must resolve inside.
+        name: Untrusted path-like string taken from a shard index.
+
+    Returns:
+        The resolved, absolute path to *name* under *base*.
+
+    Raises:
+        ValueError: If *name* is absolute or resolves outside *base*.
+
+    Examples:
+        >>> _resolve_within(Path("/data/shards"), "train-000000.tar").name
+        'train-000000.tar'
+        >>> _resolve_within(Path("/data/shards"), "../../etc/passwd")
+        Traceback (most recent call last):
+            ...
+        ValueError: shard entry '../../etc/passwd' resolves outside /data/shards.
+    """
+    base_resolved = base.resolve()
+    candidate = (base / name).resolve()
+    if not candidate.is_relative_to(base_resolved):
+        raise ValueError(f"shard entry {name!r} resolves outside {base}.")
+    return candidate
+
+
 def index_name(split: str) -> str:
     """Return the file name of the shard index of *split*.
 
@@ -471,7 +504,6 @@ def pack_coco_to_shards(
     _validate_split_name(split)
 
     image_root = Path(image_dir)
-    image_root_resolved = image_root.resolve()
     annotations_path = Path(annotations_file)
     if not annotations_path.exists():
         raise FileNotFoundError(f"COCO annotation file {annotations_path} does not exist.")
@@ -508,13 +540,19 @@ def pack_coco_to_shards(
 
     try:
         for position, image_entry in enumerate(images):
-            source = image_root / str(image_entry["file_name"])
-            resolved_source = source.resolve()
-            if not resolved_source.is_relative_to(image_root_resolved):
+            file_name = str(image_entry["file_name"])
+            candidate = PurePath(file_name)
+            if candidate.is_absolute() or ".." in candidate.parts:
+                # Lexical check only, deliberately not `.resolve()` + `is_relative_to`: `.resolve()` follows
+                # symlinks, and a legitimately symlinked image tree (the standard way a large COCO-scale split is
+                # shared on a cluster without duplicating storage) would then resolve outside `image_root` and be
+                # rejected even though `file_name` itself never leaves it. The actual threat is a crafted
+                # `file_name` string, which is lexical by construction.
                 raise ValueError(
-                    f"Image file_name {image_entry['file_name']!r} in {annotations_path} resolves outside "
-                    f"{image_root}; refusing to read a file the split's image directory does not own."
+                    f"Image file_name {file_name!r} in {annotations_path} is absolute or escapes {image_root} "
+                    "via '..'; refusing to read a file the split's image directory does not own."
                 )
+            source = image_root / file_name
             if not source.exists():
                 raise FileNotFoundError(
                     f"Image {source} listed in {annotations_path} does not exist; "
@@ -605,7 +643,7 @@ def pack_coco_to_shards(
         staged_index.write_bytes(index_bytes)
         staged_index.replace(destination / index_name(split))
         for name in previous - set(shard_names):
-            (destination / name).unlink(missing_ok=True)
+            _resolve_within(destination, name).unlink(missing_ok=True)
     finally:
         if tar is not None:
             tar.close()
@@ -853,12 +891,17 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     def _shard_urls(self) -> list[str]:
         """Return this split's shards as ``file:`` URLs.
 
-        See :func:`_shard_url` for why a shard is named as a ``file:`` URL rather than by its plain path.
+        See :func:`_shard_url` for why a shard is named as a ``file:`` URL rather than by its plain path, and
+        :func:`_resolve_within` for why each entry is validated against ``self._shard_dir`` before being opened —
+        the index is on-disk JSON, not a trusted value.
 
         Returns:
             One ``file:`` URL per shard, in index order.
+
+        Raises:
+            ValueError: If a shard entry is absolute or resolves outside ``self._shard_dir``.
         """
-        return [_shard_url(self._shard_dir / shard) for shard in self.index.shards]
+        return [_shard_url(_resolve_within(self._shard_dir, shard)) for shard in self.index.shards]
 
     def __iter__(self) -> Iterator[tuple[Any, Any]]:
         """Iterate this worker's share of the split.

@@ -37,6 +37,7 @@ from rfdetr.datasets.webdataset_io import (
     WebDatasetDetection,
     WebDatasetSplitUnavailableError,
     _pack_generation,
+    _resolve_within,
     _shard_url,
     _validate_split_name,
     build_webdataset,
@@ -299,8 +300,23 @@ class TestPackCocoToShardsFailures:
         payload["images"][0]["file_name"] = "../escape.jpg"
         annotations.write_text(json.dumps(payload), encoding="utf-8")
         (image_dir.parent / "escape.jpg").write_bytes(b"not a real image")
-        with pytest.raises(ValueError, match="resolves outside"):
+        with pytest.raises(ValueError, match="escapes"):
             pack_coco_to_shards(image_dir, annotations, tmp_path / "shards")
+
+    def test_symlinked_image_directory_is_accepted(self, tmp_path: Path) -> None:
+        """Packing an image directory reached through a symlink succeeds.
+
+        Per-file or per-subdirectory symlinks into a shared pool is the standard way a large COCO-scale dataset is
+        shared on a cluster without duplicating storage, and the loose-file loader opens these files today. A prior
+        implementation resolved ``file_name`` through the symlink before checking containment, so a legitimately
+        symlinked tree failed to pack with a security-flavored error; the traversal threat is a crafted ``file_name``
+        string, which is lexical, not a symlink target.
+        """
+        real_dir, annotations = _build_coco_split(tmp_path, count=2)
+        symlinked_dir = tmp_path / "images_via_symlink"
+        symlinked_dir.symlink_to(real_dir, target_is_directory=True)
+        index = pack_coco_to_shards(symlinked_dir, annotations, tmp_path / "shards")
+        assert index.num_samples == 2
 
     def test_split_with_path_separator_is_rejected(self, tmp_path: Path) -> None:
         image_dir, annotations = _build_coco_split(tmp_path, count=1)
@@ -391,6 +407,67 @@ class TestShardIndex:
     def test_split_with_path_separator_is_rejected_on_read(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="path separator"):
             read_shard_index(tmp_path, "../escape")
+
+
+class TestShardPathValidation:
+    """A shard index is on-disk JSON, not a trusted value; every shard entry is validated before use.
+
+    Covers both consumers that previously joined an index entry onto a directory with no check: opening a shard
+    for reading (:meth:`WebDatasetDetection._shard_urls`) and unlinking a stale shard during republish
+    (:func:`pack_coco_to_shards`'s cleanup loop).
+    """
+
+    def test_resolve_within_accepts_a_shard_under_base(self, tmp_path: Path) -> None:
+        """An ordinary shard file name resolves to the expected path under the base directory."""
+        assert _resolve_within(tmp_path, "train-000000.tar") == (tmp_path / "train-000000.tar").resolve()
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            pytest.param("../../etc/passwd", id="relative-traversal"),
+            pytest.param("/etc/passwd", id="absolute-path"),
+        ],
+    )
+    def test_resolve_within_rejects_an_escaping_entry(self, tmp_path: Path, entry: str) -> None:
+        """A shard entry that resolves outside the base directory is rejected rather than followed.
+
+        An index entry is untrusted on-disk JSON: a tampered or corrupted index could name a path anywhere on
+        the filesystem, and every caller that joins an entry onto a base directory must reject that instead of
+        opening or deleting whatever it points at.
+        """
+        with pytest.raises(ValueError, match="resolves outside"):
+            _resolve_within(tmp_path, entry)
+
+    def test_shard_urls_rejects_a_malicious_index_entry(self, tmp_path: Path) -> None:
+        """Reading shard URLs rejects an index whose ``shards`` list was tampered with a traversal entry.
+
+        A prior implementation joined ``index.shards`` entries onto ``shard_dir`` with no validation, so a
+        corrupted index could hand ``webdataset`` a ``file:`` URL to any file the training process can read.
+        """
+        shard_dir = _pack(tmp_path, count=2)
+        payload = json.loads((shard_dir / index_name("train")).read_text(encoding="utf-8"))
+        payload["shards"] = ["../../escape.tar"]
+        (shard_dir / index_name("train")).write_text(json.dumps(payload), encoding="utf-8")
+        dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
+        with pytest.raises(ValueError, match="resolves outside"):
+            dataset._shard_urls()
+
+    def test_republish_cleanup_rejects_a_malicious_previous_index_entry(self, tmp_path: Path) -> None:
+        """Re-packing a split refuses to delete a stale-shard entry that escapes the shard directory.
+
+        A prior implementation read the previously published index's ``shards`` list with no validation and unlinked
+        whatever path each entry named; a tampered on-disk index could therefore make the next re-pack of that split
+        silently delete an arbitrary file.
+        """
+        image_dir, annotations = _build_coco_split(tmp_path, count=2)
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        index_path = shard_dir / index_name("train")
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        payload["shards"] = [*payload["shards"], "../escape.tar"]
+        index_path.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(ValueError, match="resolves outside"):
+            pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
 
 
 def _pack(tmp_path: Path, **kwargs: Any) -> Path:
