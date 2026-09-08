@@ -80,7 +80,7 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``HorizontalFlip`` | ``K.RandomHorizontalFlip`` | Direct |
 | ``VerticalFlip`` | ``K.RandomVerticalFlip`` | Direct |
 | ``Rotate`` | ``K.RandomRotation`` | ``limit`` may be scalar or tuple |
-| ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` treated as fraction |
+| ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` fraction; scalar -> both axes; scalar scale -> ``(v, v)`` |
 | ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
 | ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, 3 channels; only ``p`` honored, method/num_output_channels ignored |
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |

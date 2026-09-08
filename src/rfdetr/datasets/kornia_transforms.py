@@ -397,26 +397,30 @@ def _make_rotate(params: dict[str, Any]) -> Any:
 def _make_affine(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomAffine`` from aug_config params.
 
-    Albumentations ``translate_percent`` is a ``(min, max)`` signed range (e.g. ``(-0.1, 0.1)``).  Kornia ``translate``
-    is a non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``.  The
-    conversion takes ``max(|min|, |max|)`` for each axis, producing a symmetric range that matches the intent.
+    Albumentations ``translate_percent`` accepts a scalar or a ``(min, max)`` signed range. Kornia ``translate`` is a
+    non-negative per-axis max fraction ``(tx, ty)`` where translation is sampled from ``[-tx, tx]``. The conversion
+    takes ``max(|min|, |max|)`` for each axis, producing a symmetric range that matches the intent. Albumentations
+    ``scale`` also accepts a scalar, while Kornia requires a range, so scalars become ``(v, v)``.
     """
     from kornia.augmentation import RandomAffine
 
     translate_percent = params.get("translate_percent")
-    if translate_percent is not None:
-        if isinstance(translate_percent, (list, tuple)) and len(translate_percent) == 2:
-            t = max(abs(translate_percent[0]), abs(translate_percent[1]))
-            translate: float | tuple[float, float] | None = (t, t)
-        else:
-            translate = translate_percent
+    if isinstance(translate_percent, (int, float)) and not isinstance(translate_percent, bool):
+        translate_percent = _as_symmetric_range(translate_percent)
+    if isinstance(translate_percent, (list, tuple)) and len(translate_percent) == 2:
+        magnitude = max(abs(translate_percent[0]), abs(translate_percent[1]))
+        translate: float | tuple[float, float] | list[float] | None = (magnitude, magnitude)
     else:
-        translate = None
+        translate = translate_percent
+
+    scale = params.get("scale")
+    if isinstance(scale, (int, float)) and not isinstance(scale, bool):
+        scale = _as_range(scale)
 
     return RandomAffine(
         degrees=params.get("rotate", (-15, 15)),
         translate=translate,
-        scale=params.get("scale"),
+        scale=scale,
         shear=params.get("shear"),
         p=params.get("p", 0.5),
     )
