@@ -285,8 +285,39 @@ class TestPackCocoToShardsFailures:
         first = pack_coco_to_shards(image_dir, annotations, tmp_path / "a", split="train")
         second = pack_coco_to_shards(image_dir, annotations, tmp_path / "b", split="train")
         assert first.shards == second.shards
-        assert _pack_generation({"x": 1}, [2]) == _pack_generation({"x": 1}, [2])
-        assert _pack_generation({"x": 1}, [2]) != _pack_generation({"x": 2}, [2])
+        assert _pack_generation({"x": 1}, ["aa"]) == _pack_generation({"x": 1}, ["aa"])
+        assert _pack_generation({"x": 1}, ["aa"]) != _pack_generation({"x": 2}, ["aa"])
+
+    def test_generation_changes_when_shard_content_changes_at_the_same_size(self, tmp_path: Path) -> None:
+        """A re-pack whose shard bytes differ gets a new generation even if the padded shard size is unchanged.
+
+        Regression test: the generation token used to hash only the shard byte *size*, not its content, so two
+        structurally-identical packs with genuinely different bytes (same sample/category counts, same
+        per-shard sizes) could reuse the live generation name and publication could overwrite a shard the
+        current index still points at, mid-epoch.
+        """
+        assert _pack_generation({"x": 1}, ["aaaa"]) != _pack_generation({"x": 1}, ["bbbb"])
+
+    def test_republish_detects_a_same_length_image_content_change(self, tmp_path: Path) -> None:
+        """Re-packing after an image's bytes change, at an unchanged file length, still writes a fresh shard.
+
+        End-to-end regression test for the same bug at the ``pack_coco_to_shards`` level: flipping one interior byte of
+        the source image changes its content without changing its length, so the old size-only generation hash would
+        have reused the live generation name and republished over the shard the current index still points at.
+        """
+        image_dir, annotations = _build_coco_split(tmp_path, count=1)
+        shard_dir = tmp_path / "shards"
+        first = pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        first_bytes = (shard_dir / first.shards[0]).read_bytes()
+
+        image_path = next(image_dir.iterdir())
+        data = bytearray(image_path.read_bytes())
+        data[len(data) // 2] ^= 0xFF
+        image_path.write_bytes(bytes(data))
+
+        second = pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        assert first.shards != second.shards
+        assert (shard_dir / second.shards[0]).read_bytes() != first_bytes
 
     @pytest.mark.parametrize("max_shard_bytes", [pytest.param(0, id="zero"), pytest.param(-1, id="negative")])
     def test_non_positive_shard_size_is_rejected(self, tmp_path: Path, max_shard_bytes: int) -> None:

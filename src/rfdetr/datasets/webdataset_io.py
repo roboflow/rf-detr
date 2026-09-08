@@ -406,29 +406,48 @@ def _annotations_by_image(coco_data: dict[str, Any]) -> dict[Any, list[dict[str,
     return grouped
 
 
-def _pack_generation(payload: dict[str, Any], shard_sizes: list[int]) -> str:
+def _shard_content_digest(path: Path) -> str:
+    """Return a streamed SHA-256 hex digest of *path*'s bytes.
+
+    Args:
+        path: Shard file to digest.
+
+    Returns:
+        Full 64-character hex digest.
+    """
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _pack_generation(payload: dict[str, Any], shard_digests: list[str]) -> str:
     """Derive a short generation token from what was packed.
 
     Deterministic on purpose: the same split packed twice produces the same token, so re-packing unchanged data
     reproduces the same file names rather than churning the directory. Any change to the sample count, the
-    category set, the per-shard sample counts or the shard byte sizes changes the token, which is what keeps a
-    re-pack from writing over the shards a currently published index still references.
+    category set, the per-shard sample counts or a shard's actual bytes changes the token, which is what keeps
+    a re-pack from writing over the shards a currently published index still references — including the case a
+    byte size alone would miss: a changed image or annotation whose re-encoded shard happens to land on the same
+    padded tar size as the one it replaces.
 
     Args:
         payload: The index mapping for this pack, excluding the shard names it is about to name.
-        shard_sizes: Byte size of each staged shard, in order.
+        shard_digests: SHA-256 hex digest of each staged shard's content, in order (see
+            :func:`_shard_content_digest`).
 
     Returns:
         Eight hex characters.
 
     Examples:
-        >>> a = _pack_generation({"split": "train", "num_samples": 2}, [10, 20])
-        >>> a == _pack_generation({"split": "train", "num_samples": 2}, [10, 20])
+        >>> a = _pack_generation({"split": "train", "num_samples": 2}, ["aa", "bb"])
+        >>> a == _pack_generation({"split": "train", "num_samples": 2}, ["aa", "bb"])
         True
-        >>> a == _pack_generation({"split": "train", "num_samples": 3}, [10, 20])
+        >>> a == _pack_generation({"split": "train", "num_samples": 2}, ["aa", "cc"])
         False
     """
-    material = json.dumps({"index": payload, "sizes": shard_sizes}, sort_keys=True).encode("utf-8")
+    material = json.dumps({"index": payload, "digests": shard_digests}, sort_keys=True).encode("utf-8")
     return hashlib.sha256(material).hexdigest()[:8]
 
 
@@ -603,7 +622,7 @@ def pack_coco_to_shards(
             shard_sample_counts.append(shard_samples)
 
         provisional = list(shard_names)
-        shard_sizes = [(work_dir / name).stat().st_size for name in provisional]
+        shard_digests = [_shard_content_digest(work_dir / name) for name in provisional]
         generation = _pack_generation(
             {
                 "split": split,
@@ -613,7 +632,7 @@ def pack_coco_to_shards(
                 "category_ids": category_ids,
                 "samples_per_shard": shard_sample_counts,
             },
-            shard_sizes,
+            shard_digests,
         )
         shard_names = [_shard_name(split, position, generation) for position in range(len(provisional))]
         index = ShardIndex(
@@ -631,12 +650,16 @@ def pack_coco_to_shards(
         # this run does not reproduce (e.g. it produced fewer of them) are removed too, so no stale, unindexed
         # shard is left behind. The index is written last, so a reader can never observe an index whose shard
         # list is only partially on disk.
-        # Shard names carry this run's generation token, so moving them in cannot overwrite a shard the
-        # published index still points at. Publication is therefore: move this generation's shards in, swap the
-        # index with os.replace (atomic on POSIX), then drop the shards only the previous index referenced. A
-        # reader that opened the old index keeps a complete pack until that last step; one that opens the new
-        # index sees this generation in full. The window where a reader loses files it is mid-way through is
-        # narrowed to the cleanup, not the whole re-pack.
+        # Shard names carry this run's generation token (content-derived, see _pack_generation), so moving them
+        # in cannot overwrite a shard the published index still points at. Publication is therefore: move this
+        # generation's shards in, swap the index with os.replace (atomic on POSIX), then drop the shards only
+        # the previous index referenced. A reader that opened the old index keeps a complete pack until that
+        # last step; one that opens the new index sees this generation in full.
+        # This narrows, but does not close, the window where a concurrent reader loses files mid-epoch: a
+        # reader that opened the old index and has not yet finished reading every shard it names can still hit
+        # a missing file once the cleanup step below runs. Closing that fully needs reference-counted or
+        # TTL-based garbage collection of old generations across active readers, which is a design decision
+        # beyond what this module tracks today (no reader registry exists to know when it is safe to delete).
         previous = _published_shard_names(destination, split)
         for staged, published in zip(provisional, shard_names):
             (work_dir / staged).replace(destination / published)
