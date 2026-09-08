@@ -183,13 +183,19 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 ### Python API Conversion
 
 ```python
-from rfdetr.export._tensorrt import build_engine
+from rfdetr.export._tensorrt.exporter import TensorRTExporter
+from rfdetr.export.base import TensorRTConfig
 
-engine_path = build_engine("output/inference_model.onnx", fp16=True)
+exporter = TensorRTExporter(TensorRTConfig(fp16=True))
+engine_path = exporter.build_engine("output/inference_model.onnx")
 # -> "output/inference_model_fp16.trt"
 ```
 
-`build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file. Pass `output_name="my-engine"` to write `output/my-engine.trt` verbatim instead.
+`TensorRTExporter.build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file. Precision and progress logging come from the `TensorRTConfig` the exporter is constructed with — pass `TensorRTConfig(output_name="my-engine")` to write `output/my-engine.trt` verbatim instead.
+
+!!! warning "Internal API"
+
+    `rfdetr.export._tensorrt.exporter` is a private module (note the leading underscore) and its contents may change between releases without notice. Prefer `model.export(format="tensorrt")` above unless you need to convert an already-exported `.onnx` file.
 
 ## Run Inference with `inference-models`
 

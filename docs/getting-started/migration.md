@@ -7,10 +7,38 @@ description: Per-version migration guide for RF-DETR. Covers breaking changes an
 Read each section between your current version and your target — every section covers only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10  →  1.11
 ```
 
 You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning`, while deprecated configuration fields emit a `FutureWarning`, until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+
+---
+
+## Upgrade 1.10 → 1.11
+
+### Breaking changes
+
+!!! warning "Breaking: the export internals are now exporter classes"
+
+    Each export format is written by a `<Format>Exporter` class built from that format's configuration, and `RFDETR.export()` is a facade over them. Its own signature and return value are unchanged — only the internal modules moved. Public exports are unaffected; this matters only if you imported the converter functions directly.
+
+    | Removed                                                                        | Replacement                                                                               |
+    | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+    | `rfdetr.export.main` (whole module, including `main()` and `make_infer_image`) | `rfdetr.export.prepare.make_infer_image`; the `main()` CLI had no entry point and is gone |
+    | `rfdetr.export.protocols.ExporterProtocol`                                     | `rfdetr.export.base.Exporter`                                                             |
+    | `rfdetr.export._onnx.exporter.export_onnx`                                     | `rfdetr.export._onnx.exporter.OnnxExporter`                                               |
+    | `rfdetr.export._openvino.exporter.export_openvino`                             | `rfdetr.export._openvino.exporter.OpenVINOExporter`                                       |
+    | `rfdetr.export._coreml.converter.export_coreml`                                | `rfdetr.export._coreml.exporter.CoreMLExporter`                                           |
+    | `rfdetr.export._executorch.converter.export_executorch`                        | `rfdetr.export._executorch.exporter.ExecuTorchExporter`                                   |
+    | `rfdetr.export._tflite.converter.export_tflite`                                | `rfdetr.export._tflite.exporter.TFLiteExporter`                                           |
+    | `rfdetr.export._tensorrt.build_engine`                                         | `rfdetr.export._tensorrt.exporter.TensorRTExporter`                                       |
+    | `rfdetr.export.benchmark.TRTInference`                                         | `rfdetr.export._tensorrt.inference.TRTInference`                                          |
+
+    Every path with a leading underscore was already internal and carried no stability guarantee; they are listed so the move is discoverable rather than a silent break. Prefer `RFDETR.export(format=...)`.
+
+!!! warning "Breaking: `format=\"tensorrt\"` with `backbone_only=True` and `output_name` now marks the engine"
+
+    The engine is named `{output_name}-backbone.trt` instead of `{output_name}.trt`, matching what `RFDETR.export()`'s documentation already described and what every other format does. Without the marker a backbone engine silently overwrites a full-detector engine exported under the same name. Scripts that rebuilt the path from `output_name` need the suffix added.
 
 ---
 
@@ -150,7 +178,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     # These imports now raise ImportError; update to the canonical paths
     from rfdetr.util.coco_classes import COCO_CLASSES  # → rfdetr.assets.coco_classes
     from rfdetr.util.misc import get_rank  # → rfdetr.utilities
-    from rfdetr.deploy import export_onnx  # → rfdetr.export.main
+    from rfdetr.deploy import export_onnx  # → RFDETR.export(format="onnx")
     ```
 
 !!! warning "Removed: `build_namespace(model_config, train_config)`"
@@ -524,7 +552,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     from rfdetr.training.param_groups import get_param_dict
     from rfdetr.training.drop_schedule import drop_scheduler
     from rfdetr.visualize.data import save_gt_predictions_visualization
-    from rfdetr.export.main import export_onnx
+    from rfdetr.export._onnx.exporter import OnnxExporter  # export_onnx in v1.9; see Upgrade 1.10 → 1.11
     from rfdetr.models.heads.segmentation import SegmentationHead
     ```
 
