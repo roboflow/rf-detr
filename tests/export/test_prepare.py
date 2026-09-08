@@ -72,8 +72,8 @@ class TestResolveOutputNames:
     def test_full_detector_names_its_task_specific_output(self, config_kwargs: dict, expected: list[str]) -> None:
         """A full-detector export names ``dets``/``labels`` plus the output its task adds.
 
-        Consumers of an exported model match outputs by name (ONNX/TFLite) or by position (CoreML/OpenVINO), so
-        losing the third name silently mislabels masks or keypoints as something else — for every format at once.
+        Consumers of an exported model match outputs by name (ONNX/TFLite) or by position (CoreML/OpenVINO), so losing
+        the third name silently mislabels masks or keypoints as something else — for every format at once.
         """
         assert resolve_output_names(_make_model_config(**config_kwargs), backbone_only=False, backbone=None) == expected
 
@@ -140,9 +140,9 @@ class TestPrepareExportGraph:
     def test_falls_back_to_cpu_when_cuda_is_requested_but_absent(self) -> None:
         """Requesting CUDA on a machine without it falls back to CPU (with a warning) instead of raising.
 
-        The fallback has to happen before the example input is allocated, not just before the sanity pass: allocating
-        on an unavailable device surfaces as a bare ``Torch not compiled with CUDA enabled`` from deep inside torch,
-        which tells the user nothing about the export they asked for.
+        The fallback has to happen before the example input is allocated, not just before the sanity pass: allocating on
+        an unavailable device surfaces as a bare ``Torch not compiled with CUDA enabled`` from deep inside torch, which
+        tells the user nothing about the export they asked for.
         """
         graph = prepare_export_graph(_DetectorStub(), _make_model_config(), shape=(16, 16), device="cuda")
 

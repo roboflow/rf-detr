@@ -5,9 +5,9 @@
 # ------------------------------------------------------------------------
 """Tests for the export format registry and the per-format configuration it is paired with.
 
-The registry is the only thing that knows a format exists before that format's optional dependency is imported, so
-these tests cover both what it answers without importing (aliases, capabilities, unknown formats) and that those
-answers still agree with the exporter classes once they are imported.
+The registry is the only thing that knows a format exists before that format's optional dependency is imported, so these
+tests cover both what it answers without importing (aliases, capabilities, unknown formats) and that those answers still
+agree with the exporter classes once they are imported.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from rfdetr.export import registry as registry_module
 from rfdetr.export.base import (
     CoreMLConfig,
     ExecutorchConfig,
@@ -30,7 +31,6 @@ from rfdetr.export.base import (
     build_export_config,
     reject_unsupported_dynamic_batch,
 )
-from rfdetr.export import registry as registry_module
 from rfdetr.export.registry import ALIASES, REGISTRY, normalize_format, resolve_exporter
 
 
@@ -66,9 +66,9 @@ class TestResolveExporter:
     def test_missing_optional_dependency_reports_the_install_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A format whose module cannot be imported re-raises, after naming the extra that installs it.
 
-        Every optional dependency is imported lazily, so this is the one place a user finds out which
-        ``pip install rfdetr[...]`` they are missing; swallowing the hint would leave them with a bare ImportError
-        naming a third-party module they never asked for.
+        Every optional dependency is imported lazily, so this is the one place a user finds out which ``pip install
+        rfdetr[...]`` they are missing; swallowing the hint would leave them with a bare ImportError naming a third-
+        party module they never asked for.
         """
         entry = REGISTRY["coreml"]
         monkeypatch.setitem(REGISTRY, "coreml", replace(entry, module="rfdetr.export._nonexistent_module"))
@@ -84,8 +84,8 @@ class TestResolveExporter:
     def test_registry_capabilities_match_the_exporter_class(self, format: str) -> None:
         """The registry's pre-import copy of a format's capabilities must agree with the class it names.
 
-        The duplication exists so an impossible request can be refused before importing a heavy optional dependency.
-        It is only safe while the two stay in sync, and nothing but this test enforces that.
+        The duplication exists so an impossible request can be refused before importing a heavy optional dependency. It
+        is only safe while the two stay in sync, and nothing but this test enforces that.
         """
         entry = REGISTRY[format]
         try:
@@ -137,17 +137,15 @@ class TestBuildExportConfig:
             pytest.param("tensorrt", TensorRTConfig, id="tensorrt"),
         ],
     )
-    def test_builds_the_configuration_class_registered_for_the_format(
-        self, format: str, expected_type: type
-    ) -> None:
+    def test_builds_the_configuration_class_registered_for_the_format(self, format: str, expected_type: type) -> None:
         """Each format gets its own configuration type, so a knob belonging to another format cannot be set."""
         assert isinstance(build_export_config(format, output_dir=Path("out")), expected_type)
 
     def test_executorch_requires_a_backend(self) -> None:
         """``format="executorch"`` without a resolved backend is an error, not a silent xnnpack default.
 
-        The backend decides what hardware can load the ``.pte``, so defaulting quietly would hand back an artifact
-        for the wrong target instead of failing.
+        The backend decides what hardware can load the ``.pte``, so defaulting quietly would hand back an artifact for
+        the wrong target instead of failing.
         """
         with pytest.raises(ValueError, match="requires a backend"):
             build_export_config("executorch", output_dir=Path("out"))
@@ -218,8 +216,8 @@ class TestOnnxStageHandoff:
     def test_every_shared_setting_survives_the_handoff(self, config: TFLiteConfig | TensorRTConfig) -> None:
         """The ONNX stage inherits naming, shape, verbosity and notes from the format that runs it.
 
-        The intermediate ``.onnx`` is what the second stage reads and names its own artifact after, so a setting
-        dropped here changes the final filename or silently strips the user's embedded provenance metadata.
+        The intermediate ``.onnx`` is what the second stage reads and names its own artifact after, so a setting dropped
+        here changes the final filename or silently strips the user's embedded provenance metadata.
         """
         stage = config.onnx_stage()
 
@@ -277,8 +275,8 @@ class TestExporterCapabilityChecks:
     def test_experimental_formats_warn_on_construction(self) -> None:
         """A format marked experimental says so, including the note explaining what is unstable about it.
 
-        The warning is the only signal a user gets that an artifact comes from a work-in-progress path; it moved to
-        the shared base class in this refactor, so nothing per-format covers it any more.
+        The warning is the only signal a user gets that an artifact comes from a work-in-progress path; it moved to the
+        shared base class in this refactor, so nothing per-format covers it any more.
         """
 
         class _ExperimentalProbe(_CapabilityProbe):

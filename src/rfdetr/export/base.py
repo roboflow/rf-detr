@@ -400,9 +400,7 @@ class Exporter(ABC, Generic[_ConfigT]):
         """
         if self.config.dynamic_batch and not self.supports_dynamic_batch:
             raise NotImplementedError(
-                _dynamic_batch_message(
-                    self.display_name or self.format, _DYNAMIC_BATCH_REASONS.get(self.format, "")
-                )
+                _dynamic_batch_message(self.display_name or self.format, _DYNAMIC_BATCH_REASONS.get(self.format, ""))
             )
         # stacklevel=4, not 3: the warning is raised two frames below the public entry point
         # (_check_capabilities -> __init__ -> RFDETR.export -> the user's call), and pointing at RFDETR.export
