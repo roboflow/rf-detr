@@ -8,7 +8,9 @@
 import copy
 import pickle
 import sys
+from types import ModuleType
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -122,3 +124,16 @@ class TestUltrafastMetric:
         monkeypatch.setitem(sys.modules, "ultrafast_pycocotools.integrations.rfdetr", None)
         with pytest.raises(ModuleNotFoundError, match=r"rfdetr\[ultrafast\]"):
             OnePassCocoMeanAveragePrecision(backend="ultrafast")
+
+    def test_backend_dependency_error_is_preserved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Preserve a backend dependency failure instead of suggesting the optional extra."""
+        module_name = "ultrafast_pycocotools.integrations.rfdetr"
+        module = ModuleType(module_name)
+        original_error = ModuleNotFoundError("No module named 'numpy'", name="numpy")
+        monkeypatch.setattr(module, "__getattr__", Mock(side_effect=original_error), raising=False)
+        monkeypatch.setitem(sys.modules, module_name, module)
+
+        with pytest.raises(ModuleNotFoundError) as caught:
+            OnePassCocoMeanAveragePrecision(backend="ultrafast")
+
+        assert caught.value is original_error
