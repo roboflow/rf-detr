@@ -1801,7 +1801,7 @@ class TestPhantomRootConsistency:
 class TestDetectNumClassesWebDataset:
     """A packed webdataset shard directory carries the answer directly, without a raw annotation file to read.
 
-    Regression coverage for /review finding No.28: _detect_num_classes_for_training previously had no
+    Regression coverage for class-count autodetection: _detect_num_classes_for_training previously had no
     webdataset-aware branch, so a shard directory (no train/_annotations.coco.json, no data.yaml) always fell
     through to _load_classes, raised FileNotFoundError, and was swallowed at logger.debug by the caller
     (_align_num_classes_from_dataset) -- num_classes auto-detection silently never worked for this dataset_file.

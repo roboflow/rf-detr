@@ -373,11 +373,66 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         """
         return [_shard_url(resolve_within(self._shard_dir, shard)) for shard in self.index.shards]
 
+    def _check_shard_skew(self, shard_order: list[int], num_workers: int) -> None:
+        """Reject or report imbalance in the shard order workers will actually consume.
+
+        All ranks check every slot before any data is read, so an unsafe shuffled epoch fails consistently.
+        Missing per-shard counts retain the existing shard-count estimate.
+
+        Args:
+            shard_order: Index positions in the pre-split epoch order, shared by all ranks and workers.
+            num_workers: DataLoader workers per rank; zero means the main process.
+        """
+        ranks = self._world_size if self._world_size is not None else _distributed_world_size()
+        shards = len(shard_order)
+        slots = ranks * max(1, num_workers)
+        per_shard = self.index.samples_per_shard
+        if len(per_shard) == shards:
+            # Real per-shard sample counts are available: measure the worst slot's actual share instead of
+            # assuming every shard carries the same number of samples. Shards are cut by byte size, not sample
+            # count, so that assumption can be badly wrong when image sizes vary — a byte-balanced split can still
+            # leave one worker with far fewer samples than the count-based approximation below would suggest.
+            ordered_counts = [per_shard[position] for position in shard_order]
+            slot_totals = [sum(ordered_counts[position::slots]) for position in range(slots)]
+            worst = min(slot_totals)
+            average = self.total_samples / slots
+            deficit = 1.0 - (worst / average if average > 0 else 1.0)
+            measured = True
+        else:
+            # No per-shard counts on this index (e.g. one built by hand rather than by the packer): fall back to
+            # assuming every shard carries the same number of samples, which is only an approximation.
+            deficit = 1.0 - (shards // slots) / (shards / slots)
+            measured = False
+        if deficit > SHARD_SKEW_RAISE_FRACTION:
+            raise ValueError(
+                f"Split {self.index.split!r} has {shards} shard(s) for {ranks} rank(s) x "
+                f"{max(1, num_workers)} worker(s), so the worst-served worker holds "
+                f"{'' if measured else 'an estimated '}{deficit * 100:.0f}% fewer samples than the epoch asks of "
+                f"it — past {SHARD_SKEW_RAISE_FRACTION:.0%}, this is no longer a tuning nuisance worth a log "
+                "line nobody watches live. Re-pack with a smaller --max-shard-mb (aim for a shard count that "
+                "divides the rank/worker count, or simply many more shards than workers)."
+            )
+        if deficit > SHARD_SKEW_WARN_FRACTION:
+            logger.warning(
+                "Split %r has %d shards for %d rank(s) x %d worker(s), so the worst-served worker holds "
+                "%s%.0f%% fewer samples than the epoch asks of it: it repeats some of its own while "
+                "better-supplied workers leave some unseen, which measurably costs accuracy. Re-pack with a "
+                "smaller --max-shard-mb (aim for a shard count that divides %d, or simply many more shards than "
+                "workers).",
+                self.index.split,
+                shards,
+                ranks,
+                max(1, num_workers),
+                "" if measured else "an estimated ",
+                deficit * 100,
+                slots,
+            )
+
     def __iter__(self) -> Iterator[tuple[Any, Any]]:
         """Iterate this worker's share of the split.
 
         ``webdataset``'s own pipeline applies ``nodesplitter`` and ``workersplitter`` *before* its shard-order
-        shuffler (``compat.WebDataset.__init__``, checked against the pinned ``webdataset==1.0.2`` source): the
+        shuffler (``compat.WebDataset.__init__``, checked against the installed ``webdataset==1.0.2`` source): the
         node/worker split is a plain positional stride (``islice(src, rank, None, world_size)``, then the same
         over workers) over whatever order the shard list already has, and only the surviving per-worker subset
         gets shuffled afterwards. Passing ``shardshuffle=`` to :class:`webdataset.WebDataset` therefore never
@@ -395,7 +450,11 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         if self._shard_shuffle > 0:
             # Only when shard-order shuffling was actually requested: shard_shuffle=0 (evaluation) keeps its
             # documented contract of visiting shards in packing order, deterministic run to run.
-            random.Random(shard_seed).shuffle(urls)
+            shard_order = list(range(len(urls)))
+            random.Random(shard_seed).shuffle(shard_order)
+            urls = [urls[position] for position in shard_order]
+            if self._samples_per_worker is not None:
+                self._check_shard_skew(shard_order, self._planned_workers)
         nodesplitter = (
             wds.split_by_node
             if self._rank is None or self._world_size is None
@@ -567,46 +626,8 @@ def build_webdataset_loader(
                 "nothing and silently shorten the epoch. Lower num_workers, or re-pack with a smaller "
                 "--max-shard-mb so the split has more shards."
             )
-        per_shard = dataset.index.samples_per_shard
-        if len(per_shard) == shards:
-            # Real per-shard sample counts are available: measure the worst slot's actual share instead of
-            # assuming every shard carries the same number of samples. Shards are cut by byte size, not sample
-            # count, so that assumption can be badly wrong when image sizes vary — a byte-balanced split can still
-            # leave one worker with far fewer samples than the count-based approximation below would suggest.
-            slot_totals = [sum(per_shard[position::slots]) for position in range(slots)]
-            worst = min(slot_totals)
-            average = dataset.total_samples / slots
-            deficit = 1.0 - (worst / average if average > 0 else 1.0)
-            measured = True
-        else:
-            # No per-shard counts on this index (e.g. one built by hand rather than by the packer): fall back to
-            # assuming every shard carries the same number of samples, which is only an approximation.
-            deficit = 1.0 - (shards // slots) / (shards / slots)
-            measured = False
-        if deficit > SHARD_SKEW_RAISE_FRACTION:
-            raise ValueError(
-                f"Split {dataset.index.split!r} has {shards} shard(s) for {ranks} rank(s) x "
-                f"{max(1, num_workers)} worker(s), so the worst-served worker holds "
-                f"{'' if measured else 'an estimated '}{deficit * 100:.0f}% fewer samples than the epoch asks of "
-                f"it — past {SHARD_SKEW_RAISE_FRACTION:.0%}, this is no longer a tuning nuisance worth a log "
-                "line nobody watches live. Re-pack with a smaller --max-shard-mb (aim for a shard count that "
-                "divides the rank/worker count, or simply many more shards than workers)."
-            )
-        if deficit > SHARD_SKEW_WARN_FRACTION:
-            logger.warning(
-                "Split %r has %d shards for %d rank(s) x %d worker(s), so the worst-served worker holds "
-                "%s%.0f%% fewer samples than the epoch asks of it: it repeats some of its own while "
-                "better-supplied workers leave some unseen, which measurably costs accuracy. Re-pack with a "
-                "smaller --max-shard-mb (aim for a shard count that divides %d, or simply many more shards than "
-                "workers).",
-                dataset.index.split,
-                shards,
-                ranks,
-                max(1, num_workers),
-                "" if measured else "an estimated ",
-                deficit * 100,
-                slots,
-            )
+        if dataset._shard_shuffle == 0:
+            dataset._check_shard_skew(list(range(shards)), num_workers)
         samples_per_worker = plan_samples_per_worker(
             dataset.total_samples,
             batch_size=batch_size,

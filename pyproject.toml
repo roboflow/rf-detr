@@ -79,9 +79,7 @@ data = [
     # with the standard library's tarfile, so `python -m rfdetr.cli.webdataset` runs without this extra.
     # Floored at 1.0, the series whose WebDataset(...) signature this integrates against: the loader
     # passes workersplitter, nodesplitter, empty_check and seed explicitly.
-    # Verified against the installed PyPI wheel (webdataset==1.0.2, latest on PyPI as of this pin) —
-    # upstream's GitHub tags do not reliably mirror PyPI releases, so a matching git tag was not found;
-    # source-level behavior was confirmed by reading the installed package, not a tagged commit.
+    # Integration tested against webdataset==1.0.2; the supported dependency range remains below.
     "webdataset>=1.0,<2",
 ]
 onnx = [

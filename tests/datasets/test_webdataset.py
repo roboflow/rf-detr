@@ -441,6 +441,56 @@ class TestPackCocoToShardsFailures:
         assert not any(shard_dir.glob(f"{staged_prefix}*"))
         assert not any(shard_dir.glob(".train-pack-*"))
 
+    @pytest.mark.parametrize("previous_pack", ["none", "identical", "changed"])
+    @pytest.mark.parametrize("failure_stage", ["second-shard", "index-write", "index-replace"])
+    def test_publication_failure_restores_destination(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_pack: str, failure_stage: str
+    ) -> None:
+        """A failed publication removes only its new shards and preserves every previously published byte."""
+        image_dir, annotations = _build_coco_split(tmp_path, count=3)
+        shard_dir = tmp_path / "shards"
+        shard_dir.mkdir()
+        if previous_pack != "none":
+            pack_coco_to_shards(image_dir, annotations, shard_dir, max_shard_bytes=1)
+        before = {path.name: path.read_bytes() for path in shard_dir.iterdir()}
+        if previous_pack == "changed":
+            Image.new("RGB", (64, 48), color="red").save(image_dir / "img_0000.jpg")
+        real_replace, real_write = Path.replace, Path.write_bytes
+        moved = 0
+
+        def fail_replace(path: Path, target: Path) -> Path:
+            """Inject a filesystem rename failure at the selected publication boundary.
+
+            Examples:
+                >>> fail_replace(Path("shard"), Path("target"))  # doctest: +SKIP
+                Requires the enclosing pytest scenario and its rename counter.
+            """
+            nonlocal moved
+            if target.suffix == ".tar":
+                moved += 1
+            if (failure_stage == "second-shard" and moved == 2) or (
+                failure_stage == "index-replace" and target.name == index_name("train")
+            ):
+                raise OSError("injected publication failure")
+            return real_replace(path, target)
+
+        def fail_write(path: Path, payload: bytes) -> int:
+            """Inject failure while writing the staged index.
+
+            Examples:
+                >>> fail_write(Path("index"), b"{}")  # doctest: +SKIP
+                Requires the enclosing pytest scenario.
+            """
+            if failure_stage == "index-write" and path.name.startswith(".train-index.json."):
+                raise OSError("injected publication failure")
+            return real_write(path, payload)
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+        monkeypatch.setattr(Path, "write_bytes", fail_write)
+        with pytest.raises(OSError, match="injected publication failure"):
+            pack_coco_to_shards(image_dir, annotations, shard_dir, max_shard_bytes=1)
+        assert {path.name: path.read_bytes() for path in shard_dir.iterdir()} == before
+
 
 class TestShardIndex:
     """The index carries the label space so a reader never parses the source annotation file."""
@@ -1224,6 +1274,24 @@ class TestBuildWebdatasetLoader:
         dataset.index = replace(dataset.index, shards=("a.tar", "b.tar"), num_samples=1000, samples_per_shard=(980, 20))
         with pytest.raises(ValueError, match="no longer a tuning nuisance"):
             build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=2, world_size=1)
+
+    def test_shuffled_skew_is_checked_again_on_each_epoch(self, tmp_path: Path) -> None:
+        """A balanced first permutation must not mask an unsafe assignment in a later epoch."""
+        dataset = WebDatasetDetection(_pack(tmp_path, count=4), "train", transforms=None, shard_shuffle=4, seed=0)
+        dataset.index = replace(dataset.index, num_samples=200, samples_per_shard=(90, 90, 10, 10))
+        build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=0, world_size=2, rank=0)
+        # Seed 0 assigns (100, 100); seed 1 assigns (20, 180). Validate before opening any shard.
+        iter(dataset)
+        with pytest.raises(ValueError, match="no longer a tuning nuisance"):
+            iter(dataset)
+
+    def test_shuffled_balanced_assignment_ignores_packing_order_skew(self, tmp_path: Path) -> None:
+        """An unsafe packing order must not reject a safe shuffled assignment."""
+        dataset = WebDatasetDetection(_pack(tmp_path, count=4), "train", transforms=None, shard_shuffle=4, seed=1)
+        dataset.index = replace(dataset.index, num_samples=200, samples_per_shard=(90, 10, 90, 10))
+        build_webdataset_loader(dataset, batch_size=1, collate_fn=_count_collate, num_workers=0, world_size=2, rank=0)
+        # Seed 1 assigns (100, 100), although packing-order totals are (180, 20).
+        iter(dataset)
 
     def test_epoch_plan_is_logged_unconditionally(self, tmp_path: Path, capsys: Any) -> None:
         """The planned-vs-total sample count is always logged at INFO, not only when something looks wrong.

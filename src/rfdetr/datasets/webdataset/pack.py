@@ -258,6 +258,7 @@ def pack_coco_to_shards(
     shard_samples = 0
     tar: tarfile.TarFile | None = None
     shard_bytes = 0
+    unpublished: list[Path] = []
 
     try:
         for position, image_entry in enumerate(images):
@@ -363,7 +364,10 @@ def pack_coco_to_shards(
         # beyond what this module tracks today (no reader registry exists to know when it is safe to delete).
         previous = _published_shard_names(destination, split)
         for staged, published in zip(provisional, shard_names):
-            (work_dir / staged).replace(destination / published)
+            target = destination / published
+            (work_dir / staged).replace(target)
+            if published not in previous:
+                unpublished.append(target)
         # Staged inside work_dir, not destination: work_dir was created with dir=destination (same filesystem,
         # so the replace() below stays an atomic rename), and this way a failure between write_bytes and
         # replace() leaves the partial file inside work_dir, where the finally block's rmtree cleans it up
@@ -371,9 +375,16 @@ def pack_coco_to_shards(
         staged_index = work_dir / f".{index_name(split)}.{generation}"
         staged_index.write_bytes(index_bytes)
         staged_index.replace(destination / index_name(split))
+        # The index now owns these shards; a later stale-generation cleanup failure must not remove them.
+        unpublished.clear()
         for name in previous - set(shard_names):
             resolve_within(destination, name).unlink(missing_ok=True)
     finally:
+        # Roll back only files introduced by this attempt, never a generation the previous index references.
+        if unpublished:
+            logger.warning("Rolling back %d unpublished shard(s) for split %r.", len(unpublished), split)
+        for path in unpublished:
+            path.unlink(missing_ok=True)
         if tar is not None:
             tar.close()
         shutil.rmtree(work_dir, ignore_errors=True)
