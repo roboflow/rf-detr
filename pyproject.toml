@@ -63,6 +63,8 @@ train = [
     # own COCO constructor reads back as an empty mask, collapsing mask AP to 0.0 without raising. Pinning exactly
     # makes every hotcoco release an explicit, parity-tested upgrade rather than something a user's resolver can
     # pick up unverified. Installing it also puts a generically-named `coco` console script on PATH.
+    # TODO: once a hotcoco release fixes both behaviors, drop the matching workarounds
+    # in src/rfdetr/training/coco_map.py (each carries its own TODO) and reconsider widening this to a range.
     "hotcoco==1.0.0",
     "faster-coco-eval>=1.7.2",
     "pycocotools",

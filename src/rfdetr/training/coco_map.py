@@ -140,6 +140,11 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
     the window, so no other source can be caught by it, and genuine failures still surface as exceptions rather
     than as writes to descriptor 2.
 
+    TODO: narrow or drop this once hotcoco stops reporting RF-DETR's configuration as off-reference. Two of the
+    four messages are false — the IoU and recall grids differ from the defaults only by torchmetrics' float32
+    round-trip — and a third fires on empty state after ``evaluate()`` did run. Once an upstream release stops
+    reporting them, only the genuine ``max_dets`` message remains and this can shrink to that one filter.
+
     Yields:
         Nothing; the descriptors and the warning filters are restored on exit.
     """
@@ -166,6 +171,9 @@ class _HotCocoMaskUtils:
     TorchMetrics hands ``encode`` the boolean array it gets straight from the mask tensor. faster-coco-eval accepts
     that; hotcoco's Rust binding accepts ``uint8`` only and rejects anything else with a bare
     ``TypeError: 'ndarray' object is not an instance of 'ndarray'``. Every other utility is forwarded untouched.
+
+    TODO: remove this class once hotcoco's ``mask.encode`` accepts boolean arrays. Still present in 1.0.0, and
+    the ``train`` extra pins that version, so the removal is verifiable rather than a guess.
 
     Args:
         mask_utils: hotcoco's ``mask`` module.
@@ -583,6 +591,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             # hotcoco's own `mask.encode` returns RLE counts as bytes, but its COCO constructor decodes only the
             # string form and silently treats a bytes payload as an empty mask -- mask AP collapses to 0.0 with no
             # error raised anywhere.
+            # TODO: remove once hotcoco's COCO constructor accepts bytes `counts` (or rejects them loudly).
+            # Still present in 1.0.0. Never delete this on inspection alone -- the failure is
+            # silent, and `test_hotcoco_backend_matches_faster_coco_eval_for_segmentation` is what proves it gone.
             if isinstance(segmentation["counts"], bytes):
                 segmentation["counts"] = segmentation["counts"].decode("utf-8")
         return coco_factory(dataset)
@@ -617,6 +628,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             return coco_preds
         # hotcoco copies the dictionary into its own index at construction, so the areas just written are invisible
         # to the existing dataset and the evaluator has to be handed a rebuilt one.
+        # TODO: drop the rebuild once hotcoco offers a supported way to edit an annotation field in place -- an
+        # explicit mutator, or a live `dataset` view. 1.0.0 preserves custom keys across the round-trip but
+        # still hands back a copy. The area-bucket regression test is what would prove the rebuild safe to drop.
         return self._build_coco(prediction_dataset)
 
     def _quiet_evaluation(self) -> contextlib.AbstractContextManager[Any]:
