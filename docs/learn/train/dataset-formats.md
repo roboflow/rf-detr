@@ -382,7 +382,7 @@ model.train(
 
 ## WebDataset Shards (Sequential I/O)
 
-A COCO or YOLO split stored as loose files costs one `open()` per image per epoch. Raising `num_workers` to keep a GPU fed multiplies that into thousands of concurrent random opens — cheap against a local NVMe disk, expensive against network storage, an object-store mount, or any filesystem whose metadata operations are slow.
+A COCO-format split stored as loose files costs one `open()` per image per epoch. Raising `num_workers` to keep a GPU fed multiplies that into thousands of concurrent random opens — cheap against a local NVMe disk, expensive against network storage, an object-store mount, or any filesystem whose metadata operations are slow.
 
 `dataset_file="webdataset"` reads the same images from a handful of `.tar` shards instead. Each worker walks its own shards front to back, so an epoch becomes a set of large sequential reads and one `open()` per shard rather than one per image. Augmentation is unchanged: shards decode into the same `(image, target)` pairs the loose-file loader produces, go through the same CPU Albumentations/torchvision pipeline, and reach the GPU through the same `pin_memory` hand-off and Kornia stage.
 
