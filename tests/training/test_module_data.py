@@ -935,7 +935,9 @@ class TestTrainDataloader:
                 yield [0, 1]
 
         dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
-        dm.build_train_sampler = MagicMock(return_value=_UnsizedBatchSampler(None))
+        # No constructor argument: torch dropped Sampler's deprecated `data_source` parameter, so on newer
+        # versions this subclass inherits object.__init__ and any argument raises TypeError.
+        dm.build_train_sampler = MagicMock(return_value=_UnsizedBatchSampler())
 
         assert dm.train_dataloader().batch_sampler is not None
 
