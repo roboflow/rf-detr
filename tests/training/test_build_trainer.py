@@ -6,6 +6,7 @@
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -139,6 +140,14 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._log_per_class_metrics is False
+
+    @pytest.mark.parametrize("backend", ["faster_coco_eval", "ultrafast"])
+    def test_coco_backend_config_reaches_callback(self, tmp_path: Path, backend: str) -> None:
+        """The public training configuration selects the evaluator callback's backend."""
+        config = _tc(tmp_path, use_ema=False, coco_backend=backend)
+        trainer = build_trainer(config, _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._coco_backend == backend
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""

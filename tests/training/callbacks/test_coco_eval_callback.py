@@ -124,16 +124,27 @@ class TestSetup:
         assert cb.map_metric is not first
 
     def test_detection_uses_faster_coco_eval_backend(self) -> None:
-        """Detection mode always uses faster_coco_eval backend to avoid map=-1 bug."""
+        """Detection mode defaults to the faster_coco_eval backend."""
         cb = COCOEvalCallback(segmentation=False)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
 
     def test_segmentation_uses_faster_coco_eval_backend(self) -> None:
-        """Segmentation mode always uses faster_coco_eval backend."""
+        """Segmentation mode defaults to the faster_coco_eval backend."""
         cb = COCOEvalCallback(segmentation=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
+
+    @pytest.mark.parametrize("segmentation", [False, True])
+    def test_ultrafast_reaches_regular_train_and_ema_metrics(self, segmentation: bool) -> None:
+        """Every metric track uses the selected backend, including a later EMA allocation."""
+        cb = COCOEvalCallback(segmentation=segmentation, coco_backend="ultrafast")
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer())
+        for metric in (cb.map_metric, cb.map_metric_train, cb.map_metric_ema):
+            assert metric is not None
+            assert metric._coco_backend.coco.__module__.startswith("ultrafast_pycocotools")
 
     def test_log_per_class_metrics_false_disables_class_metrics_compute(self) -> None:
         """log_per_class_metrics=False must disable torchmetrics per-class computation, not just logging.
