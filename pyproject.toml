@@ -76,7 +76,7 @@ augment = [
 ]
 data = [
     # Streaming tar-shard training input (dataset_file="webdataset"). Only the reader needs it: shards are packed
-    # with the standard library's tarfile, so `python -m rfdetr.datasets.webdataset_io` runs without this extra.
+    # with the standard library's tarfile, so `python -m rfdetr.cli.webdataset` runs without this extra.
     # Floored at 1.0, the series whose WebDataset(...) signature this integrates against: the loader
     # passes workersplitter, nodesplitter, empty_check and seed explicitly.
     # Verified against the installed PyPI wheel (webdataset==1.0.2, latest on PyPI as of this pin) —

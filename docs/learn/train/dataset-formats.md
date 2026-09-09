@@ -403,7 +403,7 @@ On full COCO 2017 that is a median 19.9 s and 2,810 MB of resident memory before
 Shards are written with the standard library, so packing needs no extra dependency:
 
 ```bash
-python -m rfdetr.datasets.webdataset_io \
+python -m rfdetr.cli.webdataset \
     --image-dir /data/coco/train2017 \
     --annotations /data/coco/annotations/instances_train2017.json \
     --output-dir /data/coco-shards \

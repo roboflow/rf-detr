@@ -477,7 +477,7 @@ class TestShardIndex:
         assert read_shard_index(tmp_path / "shards", "train").cat2label() is None
 
     def test_missing_index_names_the_packing_command(self, tmp_path: Path) -> None:
-        with pytest.raises(WebDatasetSplitUnavailableError, match="webdataset_io"):
+        with pytest.raises(WebDatasetSplitUnavailableError, match="rfdetr.cli.webdataset"):
             read_shard_index(tmp_path, "train")
 
     def test_missing_split_error_is_still_a_file_not_found(self, tmp_path: Path) -> None:

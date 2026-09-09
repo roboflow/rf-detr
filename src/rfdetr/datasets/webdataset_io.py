@@ -38,11 +38,9 @@ See https://github.com/roboflow/rf-detr/issues/1392.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import io
 import json
-import os
 import random
 import shutil
 import tarfile
@@ -397,7 +395,7 @@ def read_shard_index(shard_dir: str | Path, split: str) -> ShardIndex:
     if not path.exists():
         raise WebDatasetSplitUnavailableError(
             f"No WebDataset index for split {split!r} at {path}. "
-            f"Pack the split first: python -m rfdetr.datasets.webdataset_io --split {split} ..."
+            f"Pack the split first: python -m rfdetr.cli.webdataset --split {split} ..."
         )
     with path.open(encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -1488,37 +1486,12 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
 
 
 # ----------------------------------------------------------------------------------------------------------------
-# Packing CLI
+# Compatibility CLI entry point
 # ----------------------------------------------------------------------------------------------------------------
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
-    """Return the argument parser for the packing entry point."""
-    parser = argparse.ArgumentParser(
-        prog="python -m rfdetr.datasets.webdataset_io",
-        description="Pack a COCO-format split into WebDataset tar shards for sequential-I/O training.",
-    )
-    parser.add_argument("--image-dir", required=True, help="Directory holding the split's image files.")
-    parser.add_argument("--annotations", required=True, help="COCO-format JSON annotation file for the split.")
-    parser.add_argument("--output-dir", required=True, help="Directory to write shards and the index into.")
-    parser.add_argument("--split", default="train", help="Split name used for shard and index file names.")
-    parser.add_argument(
-        "--max-shard-mb",
-        type=float,
-        default=DEFAULT_MAX_SHARD_BYTES / (1024 * 1024),
-        help="Approximate shard size in MB.",
-    )
-    parser.add_argument(
-        "--category-ids",
-        choices=("remap", "raw"),
-        default="remap",
-        help="'remap' assigns contiguous 0-based labels; 'raw' keeps the source category_id values.",
-    )
-    return parser
-
-
 def main(argv: Sequence[str] | None = None) -> int:
-    """Pack one COCO split into shards from the command line.
+    """Preserve the original packing entry point; see :mod:`rfdetr.cli.webdataset`.
 
     Args:
         argv: Argument list, or ``None`` to read ``sys.argv``.
@@ -1526,20 +1499,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Process exit status.
     """
-    args = _build_arg_parser().parse_args(argv)
-    index = pack_coco_to_shards(
-        args.image_dir,
-        args.annotations,
-        args.output_dir,
-        split=args.split,
-        max_shard_bytes=int(args.max_shard_mb * 1024 * 1024),
-        category_ids=args.category_ids,
-    )
-    print(
-        f"{index.num_samples} samples -> {len(index.shards)} shard(s) in "
-        f"{os.fspath(Path(args.output_dir))} ({index_name(index.split)})"
-    )
-    return 0
+    # Import on invocation to avoid a cycle: the CLI imports the reusable IO functions.
+    from rfdetr.cli.webdataset import main as cli_main
+
+    return cli_main(argv)
 
 
 if __name__ == "__main__":
