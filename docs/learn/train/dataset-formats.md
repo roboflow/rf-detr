@@ -450,7 +450,7 @@ model.train(
 )
 ```
 
-Install the reader with `pip install "rfdetr[webdataset]"`.
+Install the reader with `pip install "rfdetr[data]"`.
 
 `num_classes` auto-detects from `train-index.json` when not set on the model, the same as the other formats — under `raw`, that is the **highest `id` in `categories`, plus one** (COCO's own ids run 1-90 with gaps for its 80 categories, so `len(categories)` undercounts it — the same `max_obj_id + 1` convention `dataset_file="coco"` uses); under `remap`, it is simply the number of categories left after grouping nodes are dropped. Class *names* are read from the same index, indexed by the same labels the loader emits, so checkpoints and `predict()` label output are unaffected. Pass `num_classes` explicitly to override auto-detection, e.g. to keep a pretrained head's width.
 

@@ -74,7 +74,7 @@ augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
     "kornia>=0.7,<1",                  # optional GPU-side augmentation
 ]
-webdataset = [
+data = [
     # Streaming tar-shard training input (dataset_file="webdataset"). Only the reader needs it: shards are packed
     # with the standard library's tarfile, so `python -m rfdetr.datasets.webdataset_io` runs without this extra.
     # Floored at 1.0, the series whose WebDataset(...) signature this integrates against: the loader

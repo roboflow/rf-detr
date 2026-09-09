@@ -6,7 +6,7 @@
 """Tests for the WebDataset sequential-I/O pipeline.
 
 Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind an
-``importorskip`` on the optional ``webdataset`` extra — streaming, sizing and parity against the loose-file
+``importorskip`` on the optional ``data`` extra — streaming, sizing and parity against the loose-file
 :class:`~rfdetr.datasets.coco.CocoDetection` the shards were packed from.
 """
 
@@ -588,7 +588,7 @@ class TestWebDatasetDetection:
 
     @pytest.fixture(autouse=True)
     def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``webdataset`` extra is not installed.
+        """Skip every test in this class when the optional ``data`` extra is not installed.
 
         Examples:
             >>> pass  # doctest: +SKIP
@@ -843,7 +843,7 @@ class TestStreamingShuffle:
 
     @pytest.fixture(autouse=True)
     def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``webdataset`` extra is not installed.
+        """Skip every test in this class when the optional ``data`` extra is not installed.
 
         Examples:
             >>> pass  # doctest: +SKIP
@@ -973,7 +973,7 @@ class TestBuildWebdatasetLoader:
 
     @pytest.fixture(autouse=True)
     def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``webdataset`` extra is not installed.
+        """Skip every test in this class when the optional ``data`` extra is not installed.
 
         Examples:
             >>> pass  # doctest: +SKIP
@@ -1294,7 +1294,7 @@ class TestBuildWebdataset:
 
     @pytest.fixture(autouse=True)
     def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``webdataset`` extra is not installed.
+        """Skip every test in this class when the optional ``data`` extra is not installed.
 
         Examples:
             >>> pass  # doctest: +SKIP
@@ -1362,15 +1362,39 @@ class TestBuildWebdataset:
         with pytest.raises(NotImplementedError, match="keypoint"):
             build_webdataset("train", namespace, 224)
 
-    def test_non_train_split_adopts_the_train_label_space(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("split", ["val", "test"])
+    @pytest.mark.parametrize(
+        ("category_ids", "expected_mapping", "expected_names", "expected_label"),
+        [
+            pytest.param("remap", {3: 0, 9: 1}, ["cat", "dog"], 1, id="remapped"),
+            pytest.param("raw", None, ["", "", "", "cat", "", "", "", "", "", "dog"], 9, id="raw"),
+        ],
+    )
+    def test_non_train_split_adopts_the_train_label_space(
+        self,
+        tmp_path: Path,
+        split: str,
+        category_ids: str,
+        expected_mapping: dict[int, int] | None,
+        expected_names: list[str],
+        expected_label: int,
+    ) -> None:
+        """Evaluation keeps train-owned labels and names even when its category list is incomplete."""
         image_dir, annotations = _build_coco_split(tmp_path, count=6)
         shard_dir = tmp_path / "shards"
-        pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
-        # The val split only annotates category 9, so a split-local mapping would send it to label 0.
-        val_images, val_annotations = _build_coco_split(tmp_path, count=2, categories=[_CATEGORIES[1]], subdir="val")
-        pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val")
-        dataset = build_webdataset("val", self._namespace(shard_dir), 224)
-        assert dataset.cat2label == {3: 0, 9: 1}
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", category_ids=category_ids)
+        eval_images, eval_annotations = _build_coco_split(tmp_path, count=2, categories=[_CATEGORIES[1]], subdir=split)
+        payload = json.loads(eval_annotations.read_text())
+        for annotation in payload["annotations"]:
+            annotation["category_id"] = 9
+        eval_annotations.write_text(json.dumps(payload))
+        pack_coco_to_shards(eval_images, eval_annotations, shard_dir, split=split, category_ids=category_ids)
+        dataset = build_webdataset(split, self._namespace(shard_dir), 224)
+        assert dataset.cat2label == expected_mapping
+        assert dataset.class_names == expected_names
+        assert dataset.index.categories == (_CATEGORIES[1],)
+        assert dataset.total_samples == 2
+        assert [int(target["labels"][0]) for _, target in dataset] == [expected_label, expected_label]
 
     @pytest.mark.parametrize(
         "square_resize_div_64",
@@ -1416,7 +1440,7 @@ class TestDataModuleStreaming:
 
     @pytest.fixture(autouse=True)
     def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``webdataset``/``pytorch_lightning`` extras are absent.
+        """Skip every test in this class when the optional ``data``/``train`` extras are absent.
 
         Examples:
             >>> pass  # doctest: +SKIP
@@ -1431,7 +1455,7 @@ class TestDataModuleStreaming:
 
         Examples:
             >>> pass  # doctest: +SKIP
-            Needs a real tmp_path and the webdataset/pytorch_lightning extras, so it cannot run standalone.
+            Needs a real tmp_path and the data/train extras, so it cannot run standalone.
         """
         from rfdetr.config import RFDETRSmallConfig, TrainConfig
         from rfdetr.training.module_data import RFDETRDataModule

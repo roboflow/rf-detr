@@ -17,7 +17,7 @@ The module is deliberately split in two halves with different dependencies:
   package. Keeping the packer dependency-free means it is exercised by the default CI job rather than only by an
   extra-gated one.
 - **Reading** (:class:`WebDatasetDetection`, :func:`build_webdataset_loader`) imports ``webdataset`` lazily, so the
-  optional ``rfdetr[webdataset]`` extra is only required by a run that actually streams shards.
+  optional ``rfdetr[data]`` extra is only required by a run that actually streams shards.
 
 :func:`build_webdataset_loader` returns a stock :class:`~torch.utils.data.DataLoader` rather than
 ``webdataset.WebLoader``; see that function for why the wrapper is dropped while the streaming pipeline is kept.
@@ -74,38 +74,36 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+#: Schema version stamped into every shard index, so a future format change can be rejected with a clear message.
 INDEX_VERSION = 1
-"""Schema version stamped into every shard index, so a future format change can be rejected with a clear message."""
 
+#: Default shard size target in bytes (~100 MB), the size range WebDataset is tuned for.
 DEFAULT_MAX_SHARD_BYTES = 100 * 1024 * 1024
-"""Default shard size target in bytes (~100 MB), the size range WebDataset is tuned for."""
 
+#: Samples held in the training reservoir shuffle buffer, on top of shard-order shuffling.
 DEFAULT_SHUFFLE_BUFFER = 1000
-"""Samples held in the training reservoir shuffle buffer, on top of shard-order shuffling."""
 
+#: Warn once per loader when the smallest worker's shard share falls this far below the average.
+#:
+#: Shards split across workers by count, so an uneven split leaves the smallest worker short of the samples
+#: a fixed epoch asks of it: it wraps and repeats its own while better-supplied workers leave some unseen.
+#: Measured on a 2,000-image 3-epoch fine-tune, 39 shards over 8 workers (18% short) cost about 0.011 mAP@50:95
+#: against the map-style loader, while re-packing the same split into 290 shards (0.6% short) closed it.
 SHARD_SKEW_WARN_FRACTION = 0.05
-"""Warn once per loader when the smallest worker's shard share falls this far below the average.
 
-Shards split across workers by count, so an uneven split leaves the smallest worker short of the samples a fixed epoch
-asks of it: it wraps and repeats its own while better-supplied workers leave some unseen. Measured on a 2,000-image
-3-epoch fine-tune, 39 shards over 8 workers (18% short) cost about 0.011 mAP@50:95 against the map-style loader, while
-re-packing the same split into 290 shards (0.6% short) closed it.
-"""
-
+#: Raise instead of warn when the smallest worker's shard share falls this far below the average.
+#:
+#: Every degradation mode this module can measure is otherwise silent past a warning nobody watches live in a
+#: training log: a skew this severe is no longer a tuning nuisance worth a log line — it is close enough to a
+#: worker seeing a small fraction of its assigned share that failing the run before it starts is cheaper than
+#: discovering it from a degraded metric hours later. Must stay above :data:`SHARD_SKEW_WARN_FRACTION`.
 SHARD_SKEW_RAISE_FRACTION = 0.30
-"""Raise instead of warn when the smallest worker's shard share falls this far below the average.
 
-Every degradation mode this module can measure is otherwise silent past a warning nobody watches live in a training log:
-a skew this severe is no longer a tuning nuisance worth a log line — it is close enough to a worker seeing a small
-fraction of its assigned share that failing the run before it starts is cheaper than discovering it from a degraded
-metric hours later. Must stay above :data:`SHARD_SKEW_WARN_FRACTION`.
-"""
-
+#: Shards held in the training shard-order shuffle buffer.
+#:
+#: WebDataset rejects ``True`` here with a warning and silently substitutes this same value,
+#: so it is passed as an integer.
 DEFAULT_SHARD_SHUFFLE = 100
-"""Shards held in the training shard-order shuffle buffer.
-
-WebDataset rejects ``True`` here with a warning and silently substitutes this same value, so it is passed as an integer.
-"""
 
 CategoryIdPolicy = Literal["remap", "raw"]
 
@@ -746,8 +744,7 @@ def _require_webdataset() -> Any:
         import webdataset
     except ImportError as exc:  # pragma: no cover - exercised only without the optional extra
         raise ImportError(
-            "Streaming WebDataset shards requires the webdataset package. "
-            "Install with: pip install 'rfdetr[webdataset]'"
+            "Streaming WebDataset shards requires the webdataset package. Install with: pip install 'rfdetr[data]'"
         ) from exc
     return webdataset
 
@@ -883,6 +880,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         self._seed = seed
         self._draft_size = draft_size
         self.index = read_shard_index(self._shard_dir, split)
+        self._label_categories = self.index.categories
         self.cat2label = self.index.cat2label() if cat2label is None else dict(cat2label)
         self.label2cat = None if self.cat2label is None else {label: cat_id for cat_id, label in self.cat2label.items()}
         self.prepare = ConvertCoco(include_masks=include_masks, cat2label=self.cat2label)
@@ -899,7 +897,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
 
     @property
     def class_names(self) -> list[str]:
-        """Category names in the order this split's label space puts them.
+        """Category names in label order, using train metadata when built for evaluation.
 
         The map-style datasets expose the same thing through their ``coco`` object, which a shard stream has no
         equivalent of; the packed index carries the category list instead. Every entry sits at its own label
@@ -911,7 +909,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         Returns:
             The category names, indexed by label, with an empty string at every label with no category.
         """
-        categories = {int(category["id"]): str(category["name"]) for category in self.index.categories}
+        categories = {int(category["id"]): str(category["name"]) for category in self._label_categories}
         if self.label2cat is None:
             if not categories:
                 return []
@@ -1472,7 +1470,7 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
         include_masks=include_masks,
     )
     logger.info("Building WebDataset %s dataset at resolution %d from %s", image_set, resolution, root)
-    return WebDatasetDetection(
+    dataset = WebDatasetDetection(
         root,
         split,
         transforms=transforms,
@@ -1483,6 +1481,10 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
         seed=int(getattr(args, "seed", 0) or 0),
         draft_size=draft_size,
     )
+    if not is_train:
+        # Evaluation indexes may omit categories; names must follow the same train-owned label space as labels.
+        dataset._label_categories = train_index.categories
+    return dataset
 
 
 # ----------------------------------------------------------------------------------------------------------------
