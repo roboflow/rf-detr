@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for the WebDataset sequential-I/O pipeline.
+"""Tests for the WebDataset shard pack and streaming-load package.
 
 Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind an
 ``importorskip`` on the optional ``data`` extra — streaming, sizing and parity against the loose-file
@@ -29,29 +29,38 @@ from PIL import Image
 
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms
-from rfdetr.datasets.webdataset_io import (
+from rfdetr.datasets.webdataset import index, io, load, pack
+from rfdetr.datasets.webdataset.index import (
     DEFAULT_MAX_SHARD_BYTES,
     INDEX_VERSION,
-    SHARD_SKEW_RAISE_FRACTION,
-    SHARD_SKEW_WARN_FRACTION,
     ShardIndex,
-    WebDatasetDetection,
     WebDatasetSplitUnavailableError,
-    _pack_generation,
-    _resolve_within,
-    _shard_url,
-    _tar_member_bytes,
     _validate_split_name,
-    build_webdataset,
-    build_webdataset_loader,
     index_name,
-    pack_coco_to_shards,
-    plan_samples_per_worker,
     read_shard_index,
 )
+from rfdetr.datasets.webdataset.io import resolve_within, tar_member_bytes
+from rfdetr.datasets.webdataset.load import (
+    SHARD_SKEW_RAISE_FRACTION,
+    SHARD_SKEW_WARN_FRACTION,
+    WebDatasetDetection,
+    _shard_url,
+    build_webdataset,
+    build_webdataset_loader,
+    plan_samples_per_worker,
+)
+from rfdetr.datasets.webdataset.pack import _pack_generation, pack_coco_to_shards
 from rfdetr.utilities.tensors import make_collate_fn
 
 _CATEGORIES = [{"id": 3, "name": "cat"}, {"id": 9, "name": "dog"}]
+
+
+def test_package_modules_own_the_webdataset_contract() -> None:
+    """Index, pack, load and IO modules expose their owned public APIs."""
+    assert callable(index.read_shard_index)
+    assert callable(io.resolve_within)
+    assert callable(pack.pack_coco_to_shards)
+    assert callable(load.build_webdataset)
 
 
 def _build_coco_split(
@@ -201,7 +210,7 @@ class TestTarMemberBytes:
         members per sample here (image, JSON sidecar) -- so ``max_shard_bytes`` under-shot the real shard size on disk,
         worse the smaller the average sample.
         """
-        assert _tar_member_bytes(payload_len) == expected
+        assert tar_member_bytes(payload_len) == expected
 
 
 class TestPackCocoToShardsFailures:
@@ -514,7 +523,7 @@ class TestShardPathValidation:
 
     def test_resolve_within_accepts_a_shard_under_base(self, tmp_path: Path) -> None:
         """An ordinary shard file name resolves to the expected path under the base directory."""
-        assert _resolve_within(tmp_path, "train-000000.tar") == (tmp_path / "train-000000.tar").resolve()
+        assert resolve_within(tmp_path, "train-000000.tar") == (tmp_path / "train-000000.tar").resolve()
 
     @pytest.mark.parametrize(
         "entry",
@@ -531,7 +540,7 @@ class TestShardPathValidation:
         opening or deleting whatever it points at.
         """
         with pytest.raises(ValueError, match="resolves outside"):
-            _resolve_within(tmp_path, entry)
+            resolve_within(tmp_path, entry)
 
     def test_shard_urls_rejects_a_malicious_index_entry(self, tmp_path: Path) -> None:
         """Reading shard URLs rejects an index whose ``shards`` list was tampered with a traversal entry.
@@ -571,7 +580,7 @@ def _pack(tmp_path: Path, **kwargs: Any) -> Path:
     Examples:
         >>> import tempfile
         >>> from unittest.mock import patch
-        >>> with tempfile.TemporaryDirectory() as tmp, patch("rfdetr.datasets.webdataset_io.logger.info"):
+        >>> with tempfile.TemporaryDirectory() as tmp, patch("rfdetr.datasets.webdataset.pack.logger.info"):
         ...     shard_dir = _pack(Path(tmp), count=1)
         ...     sample_count = read_shard_index(shard_dir, "train").num_samples
         >>> sample_count
@@ -1304,7 +1313,7 @@ class TestBuildWebdataset:
 
     @staticmethod
     def _namespace(dataset_dir: Path, **overrides: Any) -> types.SimpleNamespace:
-        """Build the merged model/train namespace :func:`~rfdetr.datasets.webdataset_io.build_webdataset` expects.
+        """Build the merged model/train namespace :func:`~rfdetr.datasets.webdataset.load.build_webdataset` expects.
 
         Args:
             dataset_dir: Directory holding the packed shards.

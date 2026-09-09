@@ -30,7 +30,7 @@ from rfdetr.datasets.coco import (
     filter_parent_categories,
     scale_coco_annotation,
 )
-from rfdetr.datasets.webdataset_io import pack_coco_to_shards
+from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 from rfdetr.detr import RFDETR
 from rfdetr.utilities import PackedTargets, pack_targets
 

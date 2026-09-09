@@ -6,7 +6,7 @@
 """Command-line packing of COCO splits into WebDataset shards.
 
 Run ``python -m rfdetr.cli.webdataset --help`` for arguments. Reusable packing and index handling live in
-:mod:`rfdetr.datasets.webdataset_io`.
+:mod:`rfdetr.datasets.webdataset`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from rfdetr.datasets.webdataset_io import DEFAULT_MAX_SHARD_BYTES, index_name, pack_coco_to_shards
+from rfdetr.datasets.webdataset.index import DEFAULT_MAX_SHARD_BYTES, index_name
+from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

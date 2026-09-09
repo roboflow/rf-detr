@@ -14,30 +14,35 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from rfdetr.datasets.webdataset_io import read_shard_index
+from rfdetr.datasets.webdataset.index import read_shard_index
 
 
-@pytest.mark.parametrize("module", ["rfdetr.datasets.webdataset_io", "rfdetr.cli.webdataset"])
 class TestWebDatasetCLI:
-    """Both module commands preserve packing and argument validation."""
+    """The WebDataset command preserves packing and argument validation."""
 
-    def test_help(self, module: str) -> None:
+    def test_help(self) -> None:
         """Help succeeds without required packing arguments."""
         result = subprocess.run(
-            [sys.executable, "-m", module, "--help"], capture_output=True, text=True, timeout=60, check=False
+            [sys.executable, "-m", "rfdetr.cli.webdataset", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
         assert result.returncode == 0, result.stderr
         assert "--image-dir" in result.stdout
         assert "--category-ids {remap,raw}" in result.stdout
 
-    def test_missing_arguments(self, module: str) -> None:
+    def test_missing_arguments(self) -> None:
         """Missing required paths produce argparse's usage error."""
-        result = subprocess.run([sys.executable, "-m", module], capture_output=True, text=True, timeout=60, check=False)
+        result = subprocess.run(
+            [sys.executable, "-m", "rfdetr.cli.webdataset"], capture_output=True, text=True, timeout=60, check=False
+        )
         assert result.returncode == 2
         assert "the following arguments are required" in result.stderr
         assert "--annotations" in result.stderr
 
-    def test_help_without_training_extra(self, module: str) -> None:
+    def test_help_without_training_extra(self) -> None:
         """Packing must not import the optional Lightning training dependency."""
         result = subprocess.run(
             [
@@ -45,7 +50,7 @@ class TestWebDatasetCLI:
                 "-c",
                 "import runpy, sys; sys.modules['pytorch_lightning'] = None; "
                 "module = sys.argv.pop(1); runpy.run_module(module, run_name='__main__')",
-                module,
+                "rfdetr.cli.webdataset",
                 "--help",
             ],
             capture_output=True,
@@ -57,7 +62,7 @@ class TestWebDatasetCLI:
         assert "--image-dir" in result.stdout
 
     @pytest.mark.parametrize("category_ids", ["remap", "raw"])
-    def test_pack(self, module: str, category_ids: str, tmp_path: Path) -> None:
+    def test_pack(self, category_ids: str, tmp_path: Path) -> None:
         """Packing preserves image bytes, category policy and output summary."""
         image_dir = tmp_path / "images"
         image_dir.mkdir()
@@ -80,7 +85,7 @@ class TestWebDatasetCLI:
             [
                 sys.executable,
                 "-m",
-                module,
+                "rfdetr.cli.webdataset",
                 "--image-dir",
                 str(image_dir),
                 "--annotations",

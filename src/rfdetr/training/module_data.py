@@ -19,11 +19,8 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.webdataset_io import (
-    WebDatasetDetection,
-    WebDatasetSplitUnavailableError,
-    build_webdataset_loader,
-)
+from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError
+from rfdetr.datasets.webdataset.load import WebDatasetDetection, build_webdataset_loader
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger

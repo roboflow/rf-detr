@@ -39,7 +39,7 @@ from rfdetr.datasets._keypoint_schema import (
     infer_yolo_keypoint_schema,
 )
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
-from rfdetr.datasets.webdataset_io import WebDatasetSplitUnavailableError, index_name, read_shard_index
+from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.models.backbone.backbone import Backbone
@@ -2065,7 +2065,7 @@ class RFDETR:
         reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
         a packed ``dataset_file="webdataset"`` directory (keypoints unsupported there, so only reached when
         *use_grouppose_keypoints* is false) it reads the train shard index instead of a raw annotation file, using
-        the same ``"remap"``/``"raw"`` convention :func:`~rfdetr.datasets.webdataset_io.build_webdataset` does.
+        the same ``"remap"``/``"raw"`` convention :func:`~rfdetr.datasets.webdataset.load.build_webdataset` does.
         For YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):

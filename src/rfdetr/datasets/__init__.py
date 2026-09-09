@@ -26,7 +26,7 @@ from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema as infer
 from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer_yolo_keypoint_schema
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
-from rfdetr.datasets.webdataset_io import build_webdataset
+from rfdetr.datasets.webdataset.load import build_webdataset
 from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
 
 
