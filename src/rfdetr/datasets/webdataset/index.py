@@ -5,12 +5,10 @@
 # ------------------------------------------------------------------------
 """WebDataset shard-index schema, validation and on-disk access.
 
-Purpose: Define the stable contract shared by packing and streaming WebDataset
-splits. Scope: shard names, split validation, index serialization and loading.
-Usage: import ShardIndex and read_shard_index from this module. Outputs: parsed
-or serialized JSON index data and verified shard-relative paths. Failure:
-rejects malformed names, incompatible schemas and unavailable split indexes.
-Used by: webdataset pack, load, RF-DETR dataset construction and the CLI.
+Purpose: Define the stable contract shared by packing and streaming WebDataset splits. Scope: shard names, split
+validation, index serialization and loading. Usage: import ShardIndex and read_shard_index from this module. Outputs:
+parsed or serialized JSON index data and verified shard-relative paths. Failure: rejects malformed names, incompatible
+schemas and unavailable split indexes. Used by: webdataset pack, load, RF-DETR dataset construction and the CLI.
 """
 
 from __future__ import annotations
@@ -28,7 +26,42 @@ INDEX_VERSION = 1
 #: Default shard size target in bytes (~100 MB), the size range WebDataset is tuned for.
 DEFAULT_MAX_SHARD_BYTES = 100 * 1024 * 1024
 
+#: Supported image extensions written to and decoded from shards.
+IMAGE_EXTENSIONS: tuple[str, ...] = ("jpg", "jpeg", "png", "webp", "bmp")
+
 CategoryIdPolicy = Literal["remap", "raw"]
+
+
+def resolve_within(base: Path, name: str) -> Path:
+    """Resolve *name* under *base*, rejecting any path that escapes it.
+
+    Shard file names come from ordinary on-disk JSON. Both shard reading and
+    stale-shard cleanup trust those entries, so traversal must fail before an
+    open or unlink reaches a path outside the shard directory.
+
+    Args:
+        base: Directory *name* must resolve inside.
+        name: Untrusted path-like string taken from a shard index.
+
+    Returns:
+        The resolved absolute path to *name* under *base*.
+
+    Raises:
+        ValueError: If *name* is absolute or resolves outside *base*.
+
+    Examples:
+        >>> resolve_within(Path("/data/shards"), "train-000000.tar").name
+        'train-000000.tar'
+        >>> resolve_within(Path("/data/shards"), "../../etc/passwd")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: shard entry '../../etc/passwd' resolves outside ...shards.
+    """
+    base_resolved = base.resolve()
+    candidate = (base / name).resolve()
+    if not candidate.is_relative_to(base_resolved):
+        raise ValueError(f"shard entry {name!r} resolves outside {base}.")
+    return candidate
 
 
 def _validate_split_name(split: str) -> str:

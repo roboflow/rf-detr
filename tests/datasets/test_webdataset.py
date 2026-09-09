@@ -12,12 +12,12 @@ Cover the packer (standard library only), the shard index contract, epoch planni
 
 from __future__ import annotations
 
-import io
 import json
 import tarfile
 import types
 import warnings
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import urlparse
@@ -29,7 +29,7 @@ from PIL import Image
 
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms
-from rfdetr.datasets.webdataset import index, io, load, pack
+from rfdetr.datasets.webdataset import index, load, pack
 from rfdetr.datasets.webdataset.index import (
     DEFAULT_MAX_SHARD_BYTES,
     INDEX_VERSION,
@@ -38,8 +38,8 @@ from rfdetr.datasets.webdataset.index import (
     _validate_split_name,
     index_name,
     read_shard_index,
+    resolve_within,
 )
-from rfdetr.datasets.webdataset.io import resolve_within, tar_member_bytes
 from rfdetr.datasets.webdataset.load import (
     SHARD_SKEW_RAISE_FRACTION,
     SHARD_SKEW_WARN_FRACTION,
@@ -49,16 +49,16 @@ from rfdetr.datasets.webdataset.load import (
     build_webdataset_loader,
     plan_samples_per_worker,
 )
-from rfdetr.datasets.webdataset.pack import _pack_generation, pack_coco_to_shards
+from rfdetr.datasets.webdataset.pack import _pack_generation, pack_coco_to_shards, tar_member_bytes
 from rfdetr.utilities.tensors import make_collate_fn
 
 _CATEGORIES = [{"id": 3, "name": "cat"}, {"id": 9, "name": "dog"}]
 
 
 def test_package_modules_own_the_webdataset_contract() -> None:
-    """Index, pack, load and IO modules expose their owned public APIs."""
+    """Index, pack and load modules expose their owned public APIs."""
     assert callable(index.read_shard_index)
-    assert callable(io.resolve_within)
+    assert callable(index.resolve_within)
     assert callable(pack.pack_coco_to_shards)
     assert callable(load.build_webdataset)
 
@@ -800,8 +800,8 @@ def _rewrite_shard_without(shard: Path, extension: str) -> None:
         >>> with tempfile.TemporaryDirectory() as temporary:
         ...     shard = Path(temporary) / "sample.tar"
         ...     with tarfile.open(shard, "w") as archive:
-        ...         archive.addfile(tarfile.TarInfo("sample.jpg"), io.BytesIO())
-        ...         archive.addfile(tarfile.TarInfo("sample.json"), io.BytesIO())
+        ...         archive.addfile(tarfile.TarInfo("sample.jpg"), BytesIO())
+        ...         archive.addfile(tarfile.TarInfo("sample.json"), BytesIO())
         ...     _rewrite_shard_without(shard, "json")
         ...     with tarfile.open(shard) as archive:
         ...         archive.getnames()
@@ -813,7 +813,7 @@ def _rewrite_shard_without(shard: Path, extension: str) -> None:
         for member, payload in kept:
             if member.name.endswith(f".{extension}"):
                 continue
-            tar.addfile(member, io.BytesIO(payload))
+            tar.addfile(member, BytesIO(payload))
 
 
 class TestStreamingShuffle:

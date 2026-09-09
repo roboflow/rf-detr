@@ -5,13 +5,11 @@
 # ------------------------------------------------------------------------
 """Load WebDataset shards into RF-DETR streaming datasets and loaders.
 
-Purpose: Read indexed tar shards with RF-DETR transforms and deterministic
-distributed worker planning. Scope: the optional WebDataset dependency,
-iterable dataset, epoch sizing and DataLoader construction. Usage: build a
-dataset with build_webdataset and a loader with build_webdataset_loader.
-Outputs: RF-DETR-compatible dataset samples and DataLoaders. Failure: rejects
-missing indexes, incompatible distribution plans and unsupported keypoints.
-Used by: datasets, detr and training module data.
+Purpose: Read indexed tar shards with RF-DETR transforms and deterministic distributed worker planning. Scope: the
+optional WebDataset dependency, iterable dataset, epoch sizing and DataLoader construction. Usage: build a dataset with
+build_webdataset and a loader with build_webdataset_loader. Outputs: RF-DETR-compatible dataset samples and DataLoaders.
+Failure: rejects missing indexes, incompatible distribution plans and unsupported keypoints. Used by: datasets, detr and
+training module data.
 """
 
 from __future__ import annotations
@@ -40,10 +38,11 @@ from rfdetr.datasets.coco import (
 )
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.webdataset.index import (
+    IMAGE_EXTENSIONS,
     WebDatasetSplitUnavailableError,
     read_shard_index,
+    resolve_within,
 )
-from rfdetr.datasets.webdataset.io import IMAGE_EXTENSIONS, resolve_within
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()

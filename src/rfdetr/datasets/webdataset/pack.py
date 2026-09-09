@@ -5,12 +5,10 @@
 # ------------------------------------------------------------------------
 """Pack COCO-format datasets into deterministic WebDataset tar shards.
 
-Purpose: Convert one COCO split into tar shards and its JSON index. Scope:
-standard-library archive writing, deterministic generation names and atomic
-index publication. Usage: call pack_coco_to_shards or the dedicated CLI.
-Outputs: tar shards and an index under the requested output directory. Failure:
-rejects malformed annotations and paths before publishing a partial index.
-Used by: rfdetr.cli.webdataset and library callers.
+Purpose: Convert one COCO split into tar shards and its JSON index. Scope: standard-library archive writing,
+deterministic generation names and atomic index publication. Usage: call pack_coco_to_shards or the dedicated CLI.
+Outputs: tar shards and an index under the requested output directory. Failure: rejects malformed annotations and paths
+before publishing a partial index. Used by: rfdetr.cli.webdataset and library callers.
 """
 
 from __future__ import annotations
@@ -27,6 +25,7 @@ from typing import Any
 
 from rfdetr.datasets.webdataset.index import (
     DEFAULT_MAX_SHARD_BYTES,
+    IMAGE_EXTENSIONS,
     CategoryIdPolicy,
     ShardIndex,
     WebDatasetSplitUnavailableError,
@@ -34,13 +33,36 @@ from rfdetr.datasets.webdataset.index import (
     _validate_split_name,
     index_name,
     read_shard_index,
+    resolve_within,
 )
-from rfdetr.datasets.webdataset.io import IMAGE_EXTENSIONS, resolve_within, tar_member_bytes
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
 _TAR_MEMBER_MODE = 0o644
+_TAR_BLOCK_BYTES = 512
+
+
+def tar_member_bytes(payload_len: int) -> int:
+    """Return the on-disk bytes occupied by a POSIX tar member payload.
+
+    Each member adds one header block and rounds its content up to the next
+    block. Packing uses this rather than raw payload lengths to respect the
+    requested shard-size boundary.
+
+    Args:
+        payload_len: Content length of the member, in bytes.
+
+    Returns:
+        Total bytes occupied in the tar archive, including header and padding.
+
+    Examples:
+        >>> tar_member_bytes(0)
+        512
+        >>> tar_member_bytes(513)
+        1536
+    """
+    return _TAR_BLOCK_BYTES + -(-payload_len // _TAR_BLOCK_BYTES) * _TAR_BLOCK_BYTES
 
 
 def _add_bytes(tar: tarfile.TarFile, name: str, payload: bytes) -> None:
