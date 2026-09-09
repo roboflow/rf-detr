@@ -2346,6 +2346,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>Added <code>TrainConfig.eval_backend</code>, selecting the COCO evaluator used for validation and test mAP. Both options now ship with <code>rfdetr[train]</code>; <code>"faster_coco_eval"</code> restores the previous evaluator. Keypoint OKS evaluation is unaffected, and the ONNX/TensorRT benchmark evaluator in <code>rfdetr.evaluation.coco_eval</code> continues to use <code>faster-coco-eval</code> directly.</p>
+</li>
+<li>
 <p>Added <code>python -m rfdetr.cli.webdataset</code> as the dedicated packing entry point.</p>
 </li>
 <li>
@@ -2425,7 +2428,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>RFDETR.predict()</code> performance work, none of it changing detections: every entry measured byte-identical or checksum-identical against the previous path.<ul>
+<li>
+<p><strong>Detection and segmentation COCO evaluation now runs on <a href="https://github.com/derekallman/hotcoco">hotcoco</a> by default</strong> — a Rust COCO evaluator under MIT with <code>numpy</code> as its only runtime dependency, added to the <code>train</code> extra. Reported metrics do not change: the parity tests compare every aggregate, per-class and class-ID output of both backends for box-only and box-plus-mask evaluation and require exact equality, which they reach. Set <code>TrainConfig.eval_backend="faster_coco_eval"</code> to restore the previous evaluator, which remains installed and is still required — torchmetrics resolves its COCO helpers from a closed backend-name enum with no hotcoco member, so the adapter constructs it with the supported name and replaces the resolved modules. What changes is the cost of <code>compute()</code>, not the validation forward pass that usually dominates a validation epoch: on synthetic COCO-val-shaped state (5,000 images, 36.6k ground-truth boxes, 300 detections per image, 80 classes, <code>eval_max_dets=500</code>) one macOS-CPU <code>compute()</code> took 6.2 s before and 1.1 s after, measured against <code>hotcoco</code> 1.0.0. Most of that is not the evaluator: for box-only evaluation the prediction dataset is now handed to the backend as one detection array instead of the million-plus annotation dictionaries TorchMetrics materializes, which on that state builds in 0.4 s where the dictionary path the other backend still takes costs 1.8 s. Segmentation, the <code>faster_coco_eval</code> backend, and states without stored boxes keep the dictionary path. This is a single-machine CPU measurement on generated detections, not a trained-model or multi-hardware figure. Two hotcoco behaviors are silent wrong answers rather than errors and are handled in the adapter, each with a test that fails if the handling is dropped: its <code>dataset</code> getter returns a copy, so field-level mutation is discarded — which would leak one IoU type's annotation areas into the other's COCO size buckets, doubling <code>bbox_map_small</code> in the shipped regression fixture; and its own <code>mask.encode</code> emits RLE counts as bytes, which its own COCO constructor reads back as an empty mask, collapsing mask AP to <code>0.0</code> without raising. Installing hotcoco also puts a generically-named <code>coco</code> console script on <code>PATH</code>.</p>
+</li>
+<li>
+<p><code>RFDETR.predict()</code> performance work, none of it changing detections: every entry measured byte-identical or checksum-identical against the previous path.</p>
+<ul>
 <li>Skips the recursive <code>eval()</code> reassignment when the module tree is already in eval mode, saving ~0.4-0.5 ms/call on RTX 4060/L4 in the common repeated-inference case. (<a href="https://github.com/roboflow/rf-detr/pull/1419">#1419</a>)</li>
 <li>Transfers PIL/uint8 NumPy inputs to device in their original byte storage and widens to float on-device, not on host, cutting host-to-device transfer size 4x. (<a href="https://github.com/roboflow/rf-detr/pull/1415">#1415</a>)</li>
 <li>Converts PIL/uint8 NumPy inputs to contiguous CHW float storage in one fused allocation, not a separate dtype/layout pass. (<a href="https://github.com/roboflow/rf-detr/pull/1390">#1390</a>)</li>
@@ -2433,14 +2441,18 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Skips the deferred <code>[0, 1]</code> pixel-range scan (from #1341) for PIL/uint8 NumPy inputs, since <code>to_tensor</code> already guarantees that range for them; tensor and non-uint8 NumPy inputs are unaffected. (<a href="https://github.com/roboflow/rf-detr/pull/1387">#1387</a>)</li>
 </ul>
 </li>
-<li>Single-feature-level fast paths reuse tensors instead of re-materializing them (current Nano/Small/Medium/Large models; legacy <code>RFDETRLargeDeprecatedConfig</code> unaffected where noted); outputs bit-identical:<ul>
+<li>
+<p>Single-feature-level fast paths reuse tensors instead of re-materializing them (current Nano/Small/Medium/Large models; legacy <code>RFDETRLargeDeprecatedConfig</code> unaffected where noted); outputs bit-identical:</p>
+<ul>
 <li>Eager forward pass skips rebuilding the sine position embedding, padding masks, and padded batch tensor when a batch carries no padding, tracked via <code>NestedTensor.no_padding</code>; position embeddings are served from a small cache in eval mode. Batches with real padding are unaffected. (<a href="https://github.com/roboflow/rf-detr/pull/1416">#1416</a>)</li>
 <li>Deformable attention reuses its sampled tensor directly for single-level inputs instead of stack+flatten over a one-element list, mainly benefiting keypoint cross-attention. (<a href="https://github.com/roboflow/rf-detr/pull/1385">#1385</a>)</li>
 <li><code>Transformer.forward</code> reuses flattened tensors instead of <code>torch.cat</code> over a one-element list. (<a href="https://github.com/roboflow/rf-detr/pull/1377">#1377</a>)</li>
 <li>Decoder's grouped self-attention reuses the regrouped query tensor as the key, not materializing the same grouping twice. (<a href="https://github.com/roboflow/rf-detr/pull/1371">#1371</a>)</li>
 </ul>
 </li>
-<li>Evaluation:<ul>
+<li>
+<p>Evaluation:</p>
+<ul>
 <li>New <code>TrainConfig.eval_base_model</code> (default <code>False</code>) restores base+EMA validation comparison when only one model is evaluated (see Breaking Changes). <code>TrainConfig.eval_ema_only</code> is deprecated, removal in v1.13. (<a href="https://github.com/roboflow/rf-detr/pull/1380">#1380</a>)</li>
 <li>COCO mAP computation consolidated into a new <code>rfdetr.training.coco_map.OnePassCocoMeanAveragePrecision</code> adapter: base and EMA share one evaluation pass, and each image's detection scores convert once, not once per detection. Narrows the <code>torchmetrics[detection]</code> pin to <code>&gt;=1.8.2,&lt;1.9.0</code>, which validates a TorchMetrics-internal contract this adapter relies on. (<a href="https://github.com/roboflow/rf-detr/pull/1375">#1375</a>, <a href="https://github.com/roboflow/rf-detr/pull/1379">#1379</a>)</li>
 <li>Shares bbox IoU per image with a unified tie-break contract, plus C=1/no-crowd fast paths. (<a href="https://github.com/roboflow/rf-detr/pull/1373">#1373</a>)</li>
@@ -2448,17 +2460,31 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Detection validation converts each batch's ground-truth targets once and shares the result between base and EMA mAP accumulators. Segmentation still converts twice, because per-head mask grids can differ. (<a href="https://github.com/roboflow/rf-detr/pull/1381">#1381</a>)</li>
 </ul>
 </li>
-<li>Segmentation postprocessing, both bit-identical to the previous output:<ul>
+<li>
+<p>Segmentation postprocessing, both bit-identical to the previous output:</p>
+<ul>
 <li>Reads each image's mask resize target once per batch, not per image, cutting CUDA syncs; same fix applied to <code>COCOEvalCallback._convert_targets</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1369">#1369</a>)</li>
 <li>Writes thresholded interpolation chunks directly into a preallocated buffer instead of <code>torch.cat</code>-ing a list. Small CUDA selections keep the prior path, for lower peak memory at shipped <code>num_select=100</code> defaults. (<a href="https://github.com/roboflow/rf-detr/pull/1374">#1374</a>)</li>
 </ul>
 </li>
-<li><code>SetCriterion.loss_masks</code> samples matched ground-truth mask labels via direct tensor indexing instead of <code>point_sample</code>, under size/contiguity/dtype guards; CUDA keeps the previous path. Measured 6.7-7.1x faster on a single-thread CPU microbenchmark of the full <code>loss_masks</code> call, labels bit-identical either way. (<a href="https://github.com/roboflow/rf-detr/pull/1367">#1367</a>)</li>
-<li><code>HungarianMatcher</code> batches host transfers instead of issuing them per problem. (<a href="https://github.com/roboflow/rf-detr/pull/1361">#1361</a>)</li>
-<li>Oversized JPEGs, including 1080p sources, are draft-decoded while preserving draft geometry. (<a href="https://github.com/roboflow/rf-detr/pull/1389">#1389</a>)</li>
-<li>Torch-free NumPy export kernels: bilinear resize made separable, top-k selection partitioned. (<a href="https://github.com/roboflow/rf-detr/pull/1394">#1394</a>, <a href="https://github.com/roboflow/rf-detr/pull/1393">#1393</a>)</li>
-<li>Kornia <code>GaussianBlur.sigma</code> default changed <code>(0.1, 2.0)</code> → <code>(0.5, 3.0)</code> and <code>GaussNoise.std_range</code> default changed <code>(0.01, 0.05)</code> → <code>(0.2, 0.44)</code>, 4-9x stronger, matching Albumentations' defaults. <strong>Silently changes augmentation strength</strong> for any config that omits these params on the Kornia/GPU backend (e.g. <code>AUG_INDUSTRIAL</code> reaches the blur default); pin explicit values if you rely on the old strength. (<a href="https://github.com/roboflow/rf-detr/pull/1395">#1395</a>)</li>
-<li>Training skips PyTorch Lightning's pre-training sanity validation batches by default; <code>num_sanity_val_steps</code> restores it. Per-microbatch training-loss metrics are compacted, 17 → 9 keys on default <code>RFDETRSmall</code>, and <code>compact_train_metrics=False</code> restores per-layer keys. LR metrics emit only on optimizer updates, not every microbatch: a no-op at the new <code>grad_accum_steps=1</code> default, but ~75% fewer log calls at <code>grad_accum_steps=4</code>, the 1.9.x default. (<a href="https://github.com/roboflow/rf-detr/pull/1360">#1360</a>)</li>
+<li>
+<p><code>SetCriterion.loss_masks</code> samples matched ground-truth mask labels via direct tensor indexing instead of <code>point_sample</code>, under size/contiguity/dtype guards; CUDA keeps the previous path. Measured 6.7-7.1x faster on a single-thread CPU microbenchmark of the full <code>loss_masks</code> call, labels bit-identical either way. (<a href="https://github.com/roboflow/rf-detr/pull/1367">#1367</a>)</p>
+</li>
+<li>
+<p><code>HungarianMatcher</code> batches host transfers instead of issuing them per problem. (<a href="https://github.com/roboflow/rf-detr/pull/1361">#1361</a>)</p>
+</li>
+<li>
+<p>Oversized JPEGs, including 1080p sources, are draft-decoded while preserving draft geometry. (<a href="https://github.com/roboflow/rf-detr/pull/1389">#1389</a>)</p>
+</li>
+<li>
+<p>Torch-free NumPy export kernels: bilinear resize made separable, top-k selection partitioned. (<a href="https://github.com/roboflow/rf-detr/pull/1394">#1394</a>, <a href="https://github.com/roboflow/rf-detr/pull/1393">#1393</a>)</p>
+</li>
+<li>
+<p>Kornia <code>GaussianBlur.sigma</code> default changed <code>(0.1, 2.0)</code> → <code>(0.5, 3.0)</code> and <code>GaussNoise.std_range</code> default changed <code>(0.01, 0.05)</code> → <code>(0.2, 0.44)</code>, 4-9x stronger, matching Albumentations' defaults. <strong>Silently changes augmentation strength</strong> for any config that omits these params on the Kornia/GPU backend (e.g. <code>AUG_INDUSTRIAL</code> reaches the blur default); pin explicit values if you rely on the old strength. (<a href="https://github.com/roboflow/rf-detr/pull/1395">#1395</a>)</p>
+</li>
+<li>
+<p>Training skips PyTorch Lightning's pre-training sanity validation batches by default; <code>num_sanity_val_steps</code> restores it. Per-microbatch training-loss metrics are compacted, 17 → 9 keys on default <code>RFDETRSmall</code>, and <code>compact_train_metrics=False</code> restores per-layer keys. LR metrics emit only on optimizer updates, not every microbatch: a no-op at the new <code>grad_accum_steps=1</code> default, but ~75% fewer log calls at <code>grad_accum_steps=4</code>, the 1.9.x default. (<a href="https://github.com/roboflow/rf-detr/pull/1360">#1360</a>)</p>
+</li>
 </ul>
 <h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
 <ul>

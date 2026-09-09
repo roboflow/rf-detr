@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-04T09:30:05">
+  <meta property="article:modified_time" content="2026-09-09T22:15:13">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-04T09:30:05",
+    "dateModified": "2026-09-09T22:15:13",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3483,6 +3483,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>Log per-class AP metrics to the console and loggers. Enable it to also run the underlying per-class <code>torchmetrics</code> computation. Aggregate mAP/mAR and F1 metrics remain available either way.</td>
 </tr>
 <tr>
+<td><code>eval_backend</code></td>
+<td><code>Literal["hotcoco","faster_coco_eval"]</code></td>
+<td><code>"hotcoco"</code></td>
+<td>COCO evaluation backend for detection and segmentation mAP. Both ship with <code>rfdetr[train]</code> and return identical metrics; <code>"faster_coco_eval"</code> selects the previous, slower evaluator.</td>
+</tr>
+<tr>
 <td><code>eval_base_model</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
@@ -3516,6 +3522,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><code>eval_base_model=True</code> restores the previous behaviour: the base model is evaluated under <code>val/mAP_*</code>, the EMA model under <code>val/ema_*</code>, and both checkpoint tracks run. It costs one extra forward pass per validation batch.</li>
 <li><code>eval_interval</code> controls validation frequency, not the cost of a validation epoch: non-evaluation epochs skip the complete validation loop, while the final epoch always evaluates.</li>
 <li>Lowering <code>eval_max_dets</code> can reduce detection/segmentation evaluation work, but it also changes AP and AR semantics. Keypoint evaluation keeps COCO <code>maxDets=20</code>.</li>
+<li><code>eval_backend</code> selects the COCO evaluator. The default <code>"hotcoco"</code> (<a href="https://github.com/derekallman/hotcoco">hotcoco</a>) ships with <code>rfdetr[train]</code>; <code>"faster_coco_eval"</code> restores the previous evaluator. Metrics are identical, not merely close: the parity tests compare every aggregate, per-class and class-ID output of both backends for box-only and box-plus-mask evaluation and require exact equality. The knob changes the cost of <code>compute()</code>, not the validation forward pass that usually dominates a validation epoch, so it matters most on large validation sets. On synthetic COCO-val-shaped state (5,000 images, 36.6k ground-truth boxes, 300 detections per image, 80 classes, <code>eval_max_dets=500</code>) one macOS-CPU <code>compute()</code> took 6.2 s on <code>faster_coco_eval</code> against 1.1 s on <code>hotcoco</code>. Keypoint evaluation uses its own OKS path and is unaffected, as is the ONNX/TensorRT benchmark evaluator.</li>
 </ul>
 <h2 id="keypoint-preview-parameters">Keypoint Preview Parameters<a class="headerlink" href="#keypoint-preview-parameters" title="Permanent link">&para;</a></h2>
 <p>These parameters apply when training <code>RFDETRKeypointPreview</code> on COCO keypoint annotations or Ultralytics YOLO pose labels.</p>
@@ -3924,6 +3931,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>Log per-class AP metrics; enable to run the underlying per-class compute.</td>
 </tr>
 <tr>
+<td><code>eval_backend</code></td>
+<td><code>Literal["hotcoco","faster_coco_eval"]</code></td>
+<td>"hotcoco"</td>
+<td>COCO evaluation backend; <code>"faster_coco_eval"</code> selects the previous, slower evaluator.</td>
+</tr>
+<tr>
 <td><code>eval_base_model</code></td>
 <td>bool</td>
 <td>False</td>
@@ -4077,7 +4090,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 4, 2026 09:30:05 UTC">2026-09-04 09:30:05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 9, 2026 22:15:13 UTC">2026-09-09 22:15:13</span>
   </span>
 
     
