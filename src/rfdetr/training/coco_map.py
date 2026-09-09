@@ -102,11 +102,6 @@ _BACKEND_KEYWORD_PARAMS: dict[str, tuple[str, ...]] = {
 # newly-required parameter upstream would make that call fail at compute() time instead of at construction.
 _EVALUATOR_ZERO_ARG_METHODS = ("evaluate", "accumulate", "summarize")
 _VAR_PARAM_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-# TorchMetrics emits bare ``{"id": ...}`` image entries. hotcoco 0.5 rejected those outright; 1.0.0 accepts them
-# and defaults the size to 0x0, so the injection now supplies a real size rather than avoiding an error. Mask sizes
-# are recovered from each image's RLE; box-only evaluation never reads the image size (COCO area ranges come from
-# the annotations), so a placeholder stands in when no mask reveals the real one.
-_PLACEHOLDER_IMAGE_SIZE = 1
 
 
 def _hotcoco() -> Any:
@@ -376,12 +371,10 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 continue
 
             evaluator_factory = cast(Callable[..., Any], self._coco_backend.cocoeval)
-            # The two backends spell the parameter differently; hotcoco 1.0.0 accepts faster-coco-eval's spelling
-            # too, but 0.5 did not and the dispatch costs nothing. Passing it positionally would work on both, but
-            # then a parameter inserted before it upstream would bind the IoU type to the wrong slot and evaluate
-            # a detection run as segmentation, silently.
-            iou_type_keyword = "iou_type" if isinstance(self._coco_backend, _HotCocoBackend) else "iouType"
-            coco_eval = evaluator_factory(coco_target, coco_preds, **{iou_type_keyword: iou_type})
+            # By keyword, never positionally: both backends accept `iouType`, but a parameter inserted before it
+            # upstream would bind the IoU type to the wrong slot and evaluate a detection run as segmentation,
+            # silently. hotcoco spells it `iou_type` natively and accepts `iouType` as a pycocotools alias.
+            coco_eval = evaluator_factory(coco_target, coco_preds, iouType=iou_type)
             # Whole-object assignment, not field-by-field mutation: on hotcoco 0.5 the `params` getter returned a
             # copy, so writing a field through it was a silent no-op that left `max_detection_thresholds` at
             # COCO's default 100 with no error. 1.0.0 makes field writes take effect but still documents
@@ -583,7 +576,6 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 coco.createIndex()
             return coco
 
-        image_sizes: dict[int, list[int]] = {}
         for annotation in dataset["annotations"]:
             segmentation = annotation.get("segmentation")
             if not isinstance(segmentation, dict):
@@ -593,10 +585,6 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             # error raised anywhere.
             if isinstance(segmentation["counts"], bytes):
                 segmentation["counts"] = segmentation["counts"].decode("utf-8")
-            image_sizes[annotation["image_id"]] = segmentation["size"]
-        for image in dataset["images"]:
-            height, width = image_sizes.get(image["id"], [_PLACEHOLDER_IMAGE_SIZE, _PLACEHOLDER_IMAGE_SIZE])
-            image["height"], image["width"] = height, width
         return coco_factory(dataset)
 
     def _prediction_dataset_for_iou_type(
