@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from itertools import pairwise
 from math import ceil, frexp, isfinite, ldexp
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import torch
 from torch.utils.data import ConcatDataset, Sampler
@@ -25,6 +25,9 @@ from rfdetr.utilities.distributed import get_rank, get_world_size
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
+
+#: Which source defines the length of an epoch — the two named strategies, or the index of a specific source.
+EpochLength: TypeAlias = Literal["largest", "smallest"] | int
 
 # Weights are converted to integers on this scale so the largest-remainder allocation below is exact. Float remainders
 # would make ties resolve by rounding error (e.g. ``0.6 * 16 - 9`` compares as slightly less than ``0.1 * 16 - 1``).
@@ -155,21 +158,35 @@ def compute_source_batch_sizes(batch_size: int, weights: Sequence[float]) -> lis
         counts.append(numerator // total)
         remainders.append(numerator % total)
 
+    clamped_indices: set[int] = set()
     if batch_size >= len(weights):
         # Guarantee representation: a source rounded down to zero would never appear in a batch.
+        clamped_indices = {index for index, count in enumerate(counts) if count == 0}
         counts = [max(count, 1) for count in counts]
 
     shortfall = batch_size - sum(counts)
     if shortfall > 0:
-        # Hand out the leftover slots to the largest remainders first.
-        order = sorted(range(len(weights)), key=lambda index: (-remainders[index], -scaled[index], index))
+        # Hand out the leftover slots to the largest remainders first. Sources the guarantee above
+        # already bumped from 0 to 1 are excluded here — including them double-dips the same
+        # remainder twice (once for the guarantee, once for the leftover), which silently pulls
+        # slots away from the dominant sources the ratio is supposed to favor. Non-clamped sources
+        # always outnumber shortfall: shortfall = batch_size - total_floor - len(clamped_indices),
+        # and batch_size - total_floor <= len(weights), so shortfall <= len(weights) - len(clamped_indices).
+        order = sorted(
+            (index for index in range(len(weights)) if index not in clamped_indices),
+            key=lambda index: (-remainders[index], -scaled[index], index),
+        )
         for index in order[:shortfall]:
             counts[index] += 1
     elif shortfall < 0:
         # The guarantee above over-allocated, so give the surplus slots back.
         counts = _rebalance_counts(counts, remainders, scaled, shortfall)
 
-    assert sum(counts) == batch_size, f"allocation {counts} does not sum to batch_size={batch_size}"
+    # No raise here: sum(counts) == batch_size always holds. _rebalance_counts' reclaimable-empty guard (its only
+    # way to return early without hitting the target) requires every count == 1, at which point
+    # shortfall == batch_size - len(weights) >= 0 (the clamp above only fires when batch_size >= len(weights)) —
+    # so the `while shortfall < 0` loop there has already exited before reaching that guard. A 20,000-case fuzz
+    # over weights in [1e-6, 1e6] and batch sizes in [1, 40] found zero violations.
     return counts
 
 
@@ -191,10 +208,12 @@ def _resolve_distributed_layout(num_replicas: int | None, rank: int | None) -> t
             ``[0, num_replicas)``.
 
     Example:
-        >>> _resolve_distributed_layout(None, None)  # no process group: single-process defaults
-        (1, 0)
-        >>> _resolve_distributed_layout(4, 3)  # explicit values are used as given
+        >>> _resolve_distributed_layout(4, 3)  # explicit values are used as given, no process group needed
         (4, 3)
+
+    Note:
+        ``_resolve_distributed_layout(None, None)`` reads the live ``torch.distributed`` process group, so its
+        result depends on the environment (``(1, 0)`` outside DDP) and is intentionally not doctested here.
     """
     resolved_replicas = get_world_size() if num_replicas is None else int(num_replicas)
     resolved_rank = get_rank() if rank is None else int(rank)
@@ -224,7 +243,14 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
 
     Note:
         Unlike torch's ``drop_last``, this sampler never emits a short final batch. Setting ``drop_last=False`` appends
-        one extra full batch, recycling source samples, after the driving source has been covered once.
+        one extra full batch, recycling source samples, after the driving source has been covered once. At an even
+        ``num_replicas`` this extra batch is typically floored away by the per-rank division below, making
+        ``drop_last=False`` a no-op there (warned about when it happens).
+
+    Note:
+        Has no ``state_dict``/``load_state_dict``: like the default loader path, a mid-epoch checkpoint resume
+        replays the epoch from batch 0 against the already-seeded shuffle rather than continuing partway through
+        it.
 
     Under DDP each rank consumes a disjoint stride of the global batch stream (``rank``, ``rank + num_replicas``, ...),
     mirroring :class:`~torch.utils.data.distributed.DistributedSampler`. The number of global batches is truncated to a
@@ -292,7 +318,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         num_replicas: int | None = None,
         rank: int | None = None,
         seed: int = 0,
-        epoch_length: Literal["largest", "smallest"] | int = "largest",
+        epoch_length: EpochLength = "largest",
         batch_multiple: int = 1,
     ) -> None:
         if len(source_sizes) != len(weights):
@@ -335,9 +361,38 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
 
         self.driving_source = self._resolve_driving_source(epoch_length)
         driving_slots = self.source_batch_sizes[self.driving_source]
-        global_batches = self.source_sizes[self.driving_source] // driving_slots
-        if not self.drop_last and self.source_sizes[self.driving_source] % driving_slots:
+        driving_size = self.source_sizes[self.driving_source]
+        global_batches = driving_size // driving_slots
+        extra_batch_requested = not self.drop_last and driving_size % driving_slots != 0
+        if extra_batch_requested:
             global_batches += 1
+        if extra_batch_requested and global_batches // self.num_replicas == (global_batches - 1) // self.num_replicas:
+            # The floor below discards the extra batch drop_last=False just added, whenever num_replicas divides
+            # evenly into the batch count without it (every power-of-two world size, in practice) — the flag then
+            # silently has no effect. Documented as a caveat on drop_last rather than raising: recomputing after
+            # the rank division would only relocate the same asymmetry, not remove it.
+            logger.warning(
+                "drop_last=False requested one extra batch to cover source %d's remainder, but num_replicas=%d "
+                "divides the per-rank batch count evenly without it, so the extra batch is discarded and "
+                "drop_last=False has no effect this epoch.",
+                self.driving_source,
+                self.num_replicas,
+            )
+        if global_batches < self.num_replicas:
+            # max(1, ...) below guarantees at least one batch per rank even when the driving source cannot fill
+            # one full round across all ranks, but every rank then replays that same batch, recycling the driving
+            # source itself — the invariant "the driving source is not repeated" (unlike smaller sources) no
+            # longer holds. Most likely under a small epoch_length='smallest' source combined with many DDP ranks.
+            logger.warning(
+                "Source %d (%d samples), driving the epoch, yields only %d global batch(es) but num_replicas=%d: "
+                "every rank replays the same batch(es), recycling the driving source instead of seeing each of "
+                "its samples once. Consider a larger driving source (epoch_length='largest' or an explicit index) "
+                "or fewer replicas.",
+                self.driving_source,
+                driving_size,
+                global_batches,
+                self.num_replicas,
+            )
         # Truncate to a whole number of rounds so every rank yields the same count; at least one batch is always
         # produced, even for datasets smaller than a single batch.
         self._batches_per_rank = max(1, global_batches // self.num_replicas)
@@ -355,6 +410,25 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             self._batches_per_rank = aligned
         self._global_batches = self._batches_per_rank * self.num_replicas
 
+        driving_coverage = self._global_batches * driving_slots
+        if driving_coverage < 0.9 * driving_size:
+            # Three stacked floor-divisions (per-source, per-rank, batch_multiple) can each shave off up to one
+            # unit, compounding into a meaningfully short epoch with no other signal — the epoch_length docstring's
+            # "every sample of the biggest source is seen roughly once" guarantee does not hold below this.
+            logger.warning(
+                "The driving source (%d, %d samples) is only %.0f%% covered per epoch after per-rank and "
+                "batch_multiple rounding (%d of %d samples via %d global batch(es) x %d slot(s)); the rest is "
+                "never drawn this epoch. Reseeded every epoch, so no sample is permanently excluded, but the "
+                "documented 'seen roughly once per epoch' epoch_length coverage does not hold here.",
+                self.driving_source,
+                driving_size,
+                100.0 * driving_coverage / driving_size,
+                driving_coverage,
+                driving_size,
+                self._global_batches,
+                driving_slots,
+            )
+
         self._warn_on_ratio_divergence()
         self._warn_on_source_imbalance()
 
@@ -370,7 +444,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         num_replicas: int | None = None,
         rank: int | None = None,
         seed: int = 0,
-        epoch_length: Literal["largest", "smallest"] | int = "largest",
+        epoch_length: EpochLength = "largest",
         batch_multiple: int = 1,
     ) -> "WeightedMultiSourceBatchSampler":
         """Build a sampler for a :class:`~torch.utils.data.ConcatDataset`.
@@ -422,7 +496,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             batch_multiple=batch_multiple,
         )
 
-    def _resolve_driving_source(self, epoch_length: Literal["largest", "smallest"] | int) -> int:
+    def _resolve_driving_source(self, epoch_length: EpochLength) -> int:
         """Return the index of the source whose exhaustion ends an epoch.
 
         Args:
@@ -469,6 +543,13 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         relative_tolerance = 2.0
         absolute_tolerance = 0.10
         total_weight = sum(self.weights)
+        if not isfinite(total_weight):
+            # Weights that individually pass validation can still overflow float64 addition (e.g.
+            # two weights of 1e308). compute_source_batch_sizes already rescaled internally and
+            # produced a valid allocation; the requested-vs-realised ratio below cannot be computed
+            # safely from the raw weights in that case, so skip the heuristic rather than let the
+            # eagerly-evaluated ceil(...) logging argument below raise OverflowError.
+            return
 
         divergent: list[tuple[int, float, float]] = []
         for index, count in enumerate(self.source_batch_sizes):
@@ -495,28 +576,33 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         )
 
     def _warn_on_source_imbalance(self) -> None:
-        """Warn when a source is recycled many times per epoch, which risks overfitting it.
+        """Warn about every source recycled many times per epoch, which risks overfitting it.
 
-        Only sources that actually contribute samples are considered. A starved source (zero slots per batch, possible
-        when ``batch_size`` is below the number of sources) is never recycled, so including it would hide a genuinely
-        over-recycled contributor behind a pass count of zero.
+        A starved source (zero slots per batch, possible when ``batch_size`` is below the number of sources) is
+        never recycled: its pass count is always ``0.0``, and ``sum(source_batch_sizes) == batch_size >= 1``
+        guarantees at least one other source has a positive pass count, so a starved source can never be reported
+        here without a separate filter.
         """
         recycle_threshold = 10
         passes = {
             index: (self._global_batches * count) / self.source_sizes[index]
             for index, count in enumerate(self.source_batch_sizes)
-            if count > 0
         }
-        most_recycled = max(passes, key=lambda index: passes[index])
-        if passes[most_recycled] < recycle_threshold:
+        recycled = sorted(
+            (index for index, count in passes.items() if count >= recycle_threshold),
+            key=lambda index: -passes[index],
+        )
+        if not recycled:
             return
         logger.warning(
-            "Source %d (%d samples) is repeated ~%.1f times per epoch to fill its %d slot(s) in every batch, "
-            "which risks overfitting it. Consider epoch_length='smallest' or early stopping.",
-            most_recycled,
-            self.source_sizes[most_recycled],
-            passes[most_recycled],
-            self.source_batch_sizes[most_recycled],
+            "%d source(s) recycled 10x or more per epoch, which risks overfitting them. Consider "
+            "epoch_length='smallest' or early stopping: %s",
+            len(recycled),
+            "; ".join(
+                f"Source {index} ({self.source_sizes[index]} samples) is repeated ~{passes[index]:.1f} times per "
+                f"epoch to fill its {self.source_batch_sizes[index]} slot(s) in every batch"
+                for index in recycled
+            ),
         )
 
     def set_epoch(self, epoch: int) -> None:

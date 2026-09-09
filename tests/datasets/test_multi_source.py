@@ -74,6 +74,21 @@ def _layout_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [record.getMessage() for record in caplog.records if "world size of" in record.getMessage()]
 
 
+def _ddp_truncation_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the emitted DDP epoch-truncation warnings (driving-source recycle, under-coverage, drop_last no-op).
+
+    Examples:
+        Needs pytest's ``caplog`` fixture, so the live call is covered by tests rather than doctest.
+
+        >>> callable(_ddp_truncation_warnings)  # doctest: +SKIP
+        True
+    """
+    markers = ("recycling the driving source", "is only", "drop_last=False has no effect")
+    return [
+        record.getMessage() for record in caplog.records if any(marker in record.getMessage() for marker in markers)
+    ]
+
+
 def _source_of(index: int, source_sizes: list[int]) -> int:
     """Return the source a concatenated-dataset index belongs to.
 
@@ -200,6 +215,18 @@ class TestComputeSourceBatchSizes:
     def test_rejects_non_positive_batch_size(self) -> None:
         with pytest.raises(ValueError, match="batch_size must be >= 1"):
             compute_source_batch_sizes(0, [0.5, 0.5])
+
+    def test_clamped_source_excluded_from_leftover_remainder_ranking(self) -> None:
+        """A source the one-slot guarantee bumps from 0 must not also win a leftover slot by remainder.
+
+        batch_size=8, weights=[0.45, 0.45, 0.1]: floor counts are [3, 3, 0]; the guarantee clamps index 2 up to 1,
+        giving [3, 3, 1] with shortfall=1. True Hamilton distributes the one leftover slot by remainder among every
+        source, landing on index 2 again ([3, 3, 2]) only if the clamp is not excluded — the realised ratio would then
+        be [0.375, 0.375, 0.25] against a requested [0.45, 0.45, 0.1], starving both dominant sources. Excluding the
+        clamped index from the leftover ranking gives the leftover slot to the highest-remainder *non-clamped* source
+        (index 0), matching true Hamilton apportionment: [4, 3, 1].
+        """
+        assert compute_source_batch_sizes(8, [0.45, 0.45, 0.1]) == [4, 3, 1]
 
 
 class TestSamplerValidation:
@@ -393,6 +420,20 @@ class TestRecyclingWarning:
             self._build_starved_sampler()
         assert "~25.0 times" in "".join(_recycling_warnings(caplog))
 
+    def test_reports_every_source_above_the_threshold_not_only_the_worst(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Two sources recycled above the threshold (37.5x and 20.0x) must both appear, not only the worst one.
+
+        A ``max()``-based warning would report only the 37.5x source while the 20.0x one reads clean, hiding a second
+        genuinely over-recycled contributor from the log.
+        """
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([1000, 20, 25, 40], [0.4, 0.3, 0.2, 0.1], batch_size=10, epoch_length=0)
+        message = "".join(_recycling_warnings(caplog))
+        assert "Source 1" in message
+        assert "Source 2" in message
+
     def test_no_warning_when_sources_are_balanced(self, caplog: pytest.LogCaptureFixture) -> None:
         with _capture_warnings(caplog):
             WeightedMultiSourceBatchSampler([1000, 900], [0.5, 0.5], batch_size=10)
@@ -404,6 +445,69 @@ class TestRecyclingWarning:
             self.STARVED_SIZES, self.STARVED_WEIGHTS, batch_size=self.STARVED_BATCH_SIZE, epoch_length=3
         )
         assert sampler.source_batch_sizes[sampler.driving_source] > 0
+
+
+class TestDDPTruncationWarnings:
+    """Warnings about the three ways many DDP ranks can silently shrink or misrepresent an epoch.
+
+    ``max(1, global_batches // num_replicas)`` guarantees every rank at least one batch, but on a small driving source
+    it can recycle that source instead of covering it once; stacked floor-divisions can drop a meaningful fraction of
+    the driving source with no other signal; and ``drop_last=False``'s extra batch can be floored away by the same per-
+    rank division that adds the guarantee, at every replica count that divides evenly without it.
+    """
+
+    def test_warns_when_the_driving_source_is_recycled_across_ranks(self, caplog: pytest.LogCaptureFixture) -> None:
+        """2 true global batches over 8 replicas forces every rank to replay the driving source, not see it once."""
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([5, 5], [0.5, 0.5], batch_size=4, num_replicas=8, rank=0)
+        message = "".join(_ddp_truncation_warnings(caplog))
+        assert "recycling the driving source" in message
+
+    def test_no_recycle_warning_at_a_single_replica(self, caplog: pytest.LogCaptureFixture) -> None:
+        """The same driving source at num_replicas=1 has enough global batches and must stay quiet."""
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([1000, 500], [0.6, 0.4], batch_size=16, num_replicas=1, rank=0)
+        assert "recycling the driving source" not in "".join(_ddp_truncation_warnings(caplog))
+
+    def test_warns_when_stacked_rounding_under_covers_the_driving_source(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """8 replicas + batch_multiple=4 draws only 320 of the driving source's 500 samples (64%), unwarned
+        otherwise."""
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler(
+                [500, 200, 40], [0.6, 0.3, 0.1], batch_size=16, num_replicas=8, rank=0, batch_multiple=4
+            )
+        message = "".join(_ddp_truncation_warnings(caplog))
+        assert "is only" in message
+        assert "64%" in message
+
+    def test_no_coverage_warning_when_rounding_stays_above_the_threshold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The same sources at num_replicas=1 keep coverage above 90% and must stay quiet."""
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([500, 200, 40], [0.6, 0.3, 0.1], batch_size=16, num_replicas=1, rank=0)
+        assert "is only" not in "".join(_ddp_truncation_warnings(caplog))
+
+    def test_warns_when_drop_last_false_is_floored_away_at_an_even_replica_count(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """505 samples over 50-slot batches need drop_last=False's extra batch (51 vs 50), but 2 replicas floor it
+        away."""
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler(
+                [505, 200, 40], [0.6, 0.3, 0.1], batch_size=16, drop_last=False, num_replicas=2, rank=0
+            )
+        assert "drop_last=False has no effect" in "".join(_ddp_truncation_warnings(caplog))
+
+    def test_no_no_op_warning_when_drop_last_false_is_honoured(self, caplog: pytest.LogCaptureFixture) -> None:
+        """The same sources at num_replicas=1 keep the extra batch, so drop_last=False must stay quiet."""
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler(
+                [505, 200, 40], [0.6, 0.3, 0.1], batch_size=16, drop_last=False, num_replicas=1, rank=0
+            )
+        assert "drop_last=False has no effect" not in "".join(_ddp_truncation_warnings(caplog))
 
 
 class TestRatioDivergenceWarning:
@@ -461,6 +565,18 @@ class TestRatioDivergenceWarning:
         with _capture_warnings(caplog):
             WeightedMultiSourceBatchSampler([1000, 20, 50, 5], [0.5, 0.3, 0.15, 0.05], batch_size=3)
         assert _ratio_warnings(caplog) == []
+
+    def test_weights_near_float_max_do_not_raise_overflowerror(self) -> None:
+        """Two weights near float64 max pass validation individually but overflow ``sum()`` to inf.
+
+        ``_validate_and_scale_weights`` rescales its own internal copy when the *largest* weight alone would overflow,
+        but ``_warn_on_ratio_divergence`` reads the raw, unrescaled ``self.weights`` — so ``sum([1e308, 1e308])`` (>
+        float64 max) still overflows to ``inf`` there, making ``ceil(total_weight / min(self.weights))`` raise
+        ``OverflowError`` unconditionally, regardless of log level, because logging arguments are evaluated eagerly. The
+        guard must make construction succeed.
+        """
+        sampler = WeightedMultiSourceBatchSampler([50, 50], [1e308, 1e308], batch_size=8)
+        assert sampler.source_batch_sizes == [4, 4]
 
 
 class TestShufflingDeterminism:
