@@ -39,7 +39,7 @@ Your contributions can be in many forms—whether it’s enhancing existing feat
     git commit -m "A brief description of your changes"
     git push -u origin your-descriptive-name
     ```
-6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Please detail your changes and link any related issues.
+6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Fill in the [PR template](PULL_REQUEST_TEMPLATE.md) — summary, verification commands and their results, and any related issues.
 
 Before merging, check that all tests pass and that your changes adhere to our development and documentation standards.
 
