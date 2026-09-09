@@ -656,21 +656,22 @@ def test_distributed_merge_is_noop_for_world_size_one(_initialized: MagicMock, _
     gather.assert_not_called()
 
 
-def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str) -> None:
+def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str, backend: str) -> None:
     """Verify one populated and one empty rank converge on identical global COCO metrics.
 
     Args:
         rank: Process rank launched by ``torch.multiprocessing``.
         world_size: Total process count.
         init_file: File-store path used to initialize the local Gloo process group.
+        backend: COCO evaluator selected by each rank.
 
     Examples:
         This worker requires a multi-process Gloo rendezvous and is exercised by the test below.  # doctest: +SKIP
-        >>> _distributed_empty_rank_worker(0, 2, "/tmp/rfdetr-coco-map-rendezvous")  # doctest: +SKIP
+        >>> _distributed_empty_rank_worker(0, 2, "/tmp/rfdetr-coco-map-rendezvous", "ultrafast")  # doctest: +SKIP
     """
     dist.init_process_group("gloo", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
     try:
-        metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
+        metric = OnePassCocoMeanAveragePrecision(class_metrics=True, backend=backend)
         if rank == 0:
             metric.update(
                 [
@@ -694,8 +695,9 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str) -
 # Windows CI currently cannot run this spawn test because gloo DDP spawn fails with
 # makeDeviceForHostname unsupported-device errors (see tests/training/test_trainer_smoke.py).
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
-def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path) -> None:
+@pytest.mark.parametrize("backend", ["faster_coco_eval", "ultrafast"])
+def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path, backend: str) -> None:
     """Two real Gloo ranks must finish without deadlock when only rank zero receives a metric update."""
     init_file = tmp_path / "coco-map-gloo-init"
 
-    mp.spawn(_distributed_empty_rank_worker, args=(2, str(init_file)), nprocs=2, join=True)
+    mp.spawn(_distributed_empty_rank_worker, args=(2, str(init_file), backend), nprocs=2, join=True)

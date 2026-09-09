@@ -16,8 +16,8 @@ Scope:
     evaluation, and terminal rendering remain callback concerns.
 Usage:
     Import :class:`OnePassCocoMeanAveragePrecision` only from RF-DETR training code. Construct it with the
-    ``faster_coco_eval`` backend and ``sync_on_compute=False``, call ``update`` for each batch, explicitly call
-    ``merge_distributed_state`` at rank-symmetric callback sites, then call ``compute``.
+    default ``faster_coco_eval`` or optional ``ultrafast`` backend and ``sync_on_compute=False``. Call ``update``
+    for each batch, then ``merge_distributed_state`` at rank-symmetric callback sites, and finally ``compute``.
 Outputs:
     Return the same aggregate, per-class, and class-ID tensor keys consumed from TorchMetrics by RF-DETR. Evaluator
     precision, recall, score, and IoU arrays are reduced immediately and are never returned or retained. One
@@ -113,7 +113,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         class_metrics: Whether to return per-class AP and AR.
         extended_summary: Must remain ``False`` so large evaluator arrays do not escape computation.
         average: Must remain ``"macro"`` because RF-DETR logs class-level metrics.
-        backend: Must remain ``"faster_coco_eval"``; this is the callback's supported backend.
+        backend: ``"faster_coco_eval"`` (default) or optional ``"ultrafast"``.
         kwargs: TorchMetrics configuration. ``sync_on_compute`` defaults to and must remain ``False`` because the
             callback invokes :meth:`merge_distributed_state` explicitly at rank-symmetric sites.
 
@@ -132,13 +132,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         class_metrics: bool = False,
         extended_summary: bool = False,
         average: Literal["macro", "micro"] = "macro",
-        backend: Literal["pycocotools", "faster_coco_eval"] = "faster_coco_eval",
+        backend: Literal["pycocotools", "faster_coco_eval", "ultrafast"] = "faster_coco_eval",
         **kwargs: Any,
     ) -> None:
         if extended_summary:
             raise ValueError("OnePassCocoMeanAveragePrecision does not support extended_summary=True")
-        if backend != "faster_coco_eval":
-            raise ValueError("OnePassCocoMeanAveragePrecision requires backend='faster_coco_eval'")
+        if backend not in ("faster_coco_eval", "ultrafast"):
+            raise ValueError("OnePassCocoMeanAveragePrecision requires backend='faster_coco_eval' or 'ultrafast'")
         if average != "macro":
             raise ValueError("OnePassCocoMeanAveragePrecision requires average='macro'")
         sync_on_compute = kwargs.pop("sync_on_compute", False)
@@ -153,11 +153,23 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             class_metrics=class_metrics,
             extended_summary=False,
             average=average,
-            backend=backend,
+            backend="faster_coco_eval",
             sync_on_compute=False,
             **kwargs,
         )
-        self._validate_private_contract()
+        if backend == "ultrafast":
+            # Optional dependency boundary: the default metric does not import ultrafast.
+            try:
+                from ultrafast_pycocotools.integrations.rfdetr import use_ultrafast
+            except ModuleNotFoundError as exc:
+                if exc.name and exc.name.startswith("ultrafast_pycocotools"):
+                    raise ModuleNotFoundError(
+                        "Install the optional evaluator with: pip install 'rfdetr[ultrafast]'"
+                    ) from exc
+                raise
+            use_ultrafast(self)
+        else:
+            self._validate_private_contract()
 
     @property
     def has_updates(self) -> bool:

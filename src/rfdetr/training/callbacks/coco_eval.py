@@ -13,7 +13,7 @@ import io
 import logging
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import torch
@@ -131,8 +131,9 @@ class COCOEvalCallback(Callback):
     Args:
         max_dets: Maximum detections per image passed to
             ``MeanAveragePrecision``. Defaults to :data:`~rfdetr.evaluation.keypoint_oks.DEFAULT_KEYPOINT_MAX_DETS`.
-        segmentation: When ``True``, evaluate both bbox and segm IoU using
-            ``backend="faster_coco_eval"``. Defaults to ``False``.
+        segmentation: When ``True``, evaluate both bbox and segm IoU. Defaults to ``False``.
+        coco_backend: COCO bbox/mask evaluator. ``"ultrafast"`` requires ``rfdetr[ultrafast]``.
+            Defaults to ``"faster_coco_eval"``; custom keypoint OKS evaluation is independent.
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP computation
@@ -158,8 +159,10 @@ class COCOEvalCallback(Callback):
         in_notebook: bool | None = None,
         eval_ema_only: bool | None = None,
         eval_base_model: bool | None = None,
+        coco_backend: Literal["faster_coco_eval", "ultrafast"] = "faster_coco_eval",
     ) -> None:
         super().__init__()
+        self._coco_backend = coco_backend
         self._max_dets = max_dets
         self._segmentation = segmentation
         self._eval_interval = max(1, int(eval_interval))
@@ -227,7 +230,7 @@ class COCOEvalCallback(Callback):
             # `all_gather`, then compute() runs locally on the full set.
             sync_on_compute=False,
         )
-        kwargs["backend"] = "faster_coco_eval"
+        kwargs["backend"] = self._coco_backend
         self.map_metric = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         self.map_metric_train = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
@@ -975,7 +978,7 @@ class COCOEvalCallback(Callback):
                 iou_type=ema_iou_type,
                 class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
-                backend="faster_coco_eval",
+                backend=self._coco_backend,
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)
             )
         else:

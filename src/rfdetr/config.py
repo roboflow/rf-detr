@@ -1131,6 +1131,8 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
+    #: COCO bbox/mask evaluator; ultrafast requires the optional rfdetr[ultrafast] extra.
+    coco_backend: Literal["faster_coco_eval", "ultrafast"] = "faster_coco_eval"
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
     # validation/test, returning them at the mask head's native (lower) resolution instead —
     # cheaper, but ground-truth masks must then be compared at that same lower resolution

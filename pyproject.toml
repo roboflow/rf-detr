@@ -47,6 +47,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ultrafast = ["rfdetr[train]", "ultrafast-pycocotools>=0.1.10,<0.2"]
 lora = [
     "peft",                            # LoRA backbone fine-tuning
 ]
@@ -207,6 +208,7 @@ build = [
 ]
 
 tests = [
+  "ultrafast-pycocotools>=0.1.10,<0.2",
   "pytest>=7.2,<10",
   "pytest-cov>=4,<8",
   "pytest-xdist>=3.6,<4",
@@ -439,6 +441,7 @@ overrides = [
     "einops", "einops.*",
     "deprecate", "deprecate.*",
     "faster_coco_eval", "faster_coco_eval.*",
+    "ultrafast_pycocotools", "ultrafast_pycocotools.*",
     "matplotlib", "matplotlib.*",
     "pandas", "pandas.*",
     "requests", "requests.*",
