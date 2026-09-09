@@ -183,14 +183,14 @@ class MultiSourceDataModule(RFDETRDataModule):
             self._dataset_train = ConcatDataset([labeled_dataset, synthetic_dataset, public_dataset])
 
     def build_train_sampler(self, dataset: ConcatDataset) -> WeightedMultiSourceBatchSampler:
-        self._multi_source_sampler = WeightedMultiSourceBatchSampler.from_concat_dataset(
+        return WeightedMultiSourceBatchSampler.from_concat_dataset(
             dataset,
             weights=[0.6, 0.3, 0.1],
             batch_size=self._resolve_batch_size(),
             num_replicas=self.trainer.world_size if self.trainer else 1,
             rank=self.trainer.global_rank if self.trainer else 0,
+            batch_multiple=self.train_config.grad_accum_steps,
         )
-        return self._multi_source_sampler
 ```
 
 `_resolve_batch_size()` is used instead of `train_config.batch_size` directly because `batch_size` may still be the literal string `"auto"` on this path — `RFDETR.train()` resolves `"auto"` to a concrete integer before construction, but this custom-`DataModule` pattern bypasses that, and `_resolve_batch_size()` raises a clear `RuntimeError` instead of a cryptic one from the sampler.
@@ -201,19 +201,13 @@ A source that runs out of samples part-way through an epoch is reshuffled and re
 
 !!! warning "Set `use_distributed_sampler=False` under DDP"
 
-    The sampler shards batches across ranks itself via `num_replicas` and `rank`. Let Lightning inject its own `DistributedSampler` on top and the data will be split twice:
+    The sampler shards batches across ranks itself via `num_replicas` and `rank`. Without this flag, Lightning tries to rebuild the batch sampler around its own `DistributedSampler` and the run fails with a `RuntimeError` naming the fix (raised before training starts, not a silent double-split):
 
     ```python
     trainer = build_trainer(train_config, model_config, use_distributed_sampler=False)
     ```
 
-Lightning only auto-calls `set_epoch` on a sampler it owns (`dataloader.sampler` / `dataloader.batch_sampler.sampler`), and `WeightedMultiSourceBatchSampler` has no `.sampler` attribute, so it is never wired up automatically — call it yourself every epoch, or every epoch reuses the same shuffle:
-
-```python
-class MultiSourceModelModule(RFDETRModelModule):
-    def on_train_epoch_start(self) -> None:
-        self.trainer.datamodule._multi_source_sampler.set_epoch(self.current_epoch)
-```
+Lightning only auto-calls `set_epoch` on a sampler it owns (`dataloader.sampler` / `dataloader.batch_sampler.sampler`), and `WeightedMultiSourceBatchSampler` has no `.sampler` attribute — but `train_dataloader` stores whatever `build_train_sampler` returns on the public `self.train_batch_sampler` attribute, and `RFDETRModelModule.on_train_epoch_start` forwards `set_epoch` to it every epoch automatically. No `RFDETRModelModule` subclass or manual wiring needed; just use `RFDETRModelModule` as-is.
 
 ---
 

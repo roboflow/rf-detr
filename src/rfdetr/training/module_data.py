@@ -162,6 +162,13 @@ class RFDETRDataModule(LightningDataModule):
         self._dataset_val: torch.utils.data.Dataset[Any] | None = None
         self._dataset_test: torch.utils.data.Dataset[Any] | None = None
 
+        # Set by train_dataloader() when build_train_sampler() returns a custom batch sampler.
+        # Public so RFDETRModelModule.on_train_epoch_start can forward set_epoch to it: PTL never
+        # calls epoch hooks on a LightningDataModule (only setup/teardown/on_exception/state_dict/
+        # prepare_data are forwarded), so a batch sampler's own seeded reshuffle needs this bridge
+        # from the LightningModule side to advance every epoch instead of staying fixed for the run.
+        self.train_batch_sampler: torch.utils.data.Sampler[list[int]] | None = None
+
         # GPU augmentation pipeline (Kornia); built lazily in setup("fit").
         self._kornia_pipeline: Any | None = None
         self._kornia_normalize: Any | None = None
@@ -394,6 +401,13 @@ class RFDETRDataModule(LightningDataModule):
         around its own ``DistributedSampler`` and fails with a bare ``TypeError`` about missing ``__init__``
         arguments; :meth:`train_dataloader` raises a ``RuntimeError`` naming the fix before that happens.
 
+        :meth:`train_dataloader` also stores the returned sampler on the public ``self.train_batch_sampler``
+        attribute, and :meth:`RFDETRModelModule.on_train_epoch_start
+        <rfdetr.training.module_model.RFDETRModelModule.on_train_epoch_start>` forwards the current epoch to
+        it every epoch when it exposes ``set_epoch``. PTL never calls epoch hooks on a ``LightningDataModule``
+        itself (only ``setup``/``teardown``/``on_exception``/``state_dict``/``prepare_data`` are forwarded), so
+        without this bridge a sampler's seeded per-epoch reshuffle would silently stay fixed for the whole run.
+
         Args:
             dataset: The training dataset built by :meth:`setup`, i.e. ``self._dataset_train``.
 
@@ -411,7 +425,7 @@ class RFDETRDataModule(LightningDataModule):
                         return WeightedMultiSourceBatchSampler.from_concat_dataset(
                             dataset,
                             weights=[0.6, 0.3, 0.1],
-                            batch_size=self.train_config.batch_size,
+                            batch_size=self._resolve_batch_size(),
                         )
         """
         return None
@@ -468,14 +482,16 @@ class RFDETRDataModule(LightningDataModule):
 
         Args:
             batch_sampler: The sampler returned by :meth:`build_train_sampler`. A sampler without ``__len__``
-                declares no epoch length, so nothing can be checked and the call is a no-op.
+                (``TypeError``) or one whose ``__len__`` declares no length by raising ``NotImplementedError``
+                (a common torch idiom for infinite/streaming samplers) reports no epoch length, so nothing can
+                be checked and the call is a no-op.
         """
         grad_accum_steps = self.train_config.grad_accum_steps
         if grad_accum_steps < 2:
             return
         try:
             batches = len(batch_sampler)  # type: ignore[arg-type]
-        except TypeError:
+        except (TypeError, NotImplementedError):
             return
         if batches % grad_accum_steps == 0:
             return
@@ -556,6 +572,7 @@ class RFDETRDataModule(LightningDataModule):
         num_workers = self._num_workers
 
         custom_batch_sampler = self.build_train_sampler(dataset)
+        self.train_batch_sampler = custom_batch_sampler
         if custom_batch_sampler is not None:
             self._check_custom_sampler_owns_ddp(custom_batch_sampler)
             self._warn_on_unaligned_batch_sampler(custom_batch_sampler)

@@ -1771,6 +1771,43 @@ class TestOnTrainEpochStart:
         assert module._accumulated_box_normalizer is None
         assert real_param.grad is None or real_param.grad.abs().sum().item() == pytest.approx(0.0)
 
+    def test_forwards_current_epoch_to_datamodule_train_batch_sampler(self, tmp_path):
+        """A custom batch sampler on the datamodule must receive set_epoch(current_epoch) every epoch.
+
+        PTL never calls epoch hooks on a LightningDataModule itself, so RFDETRModelModule bridges the gap
+        from its own on_train_epoch_start: this is the only place WeightedMultiSourceBatchSampler's seeded
+        per-epoch reshuffle actually advances instead of reusing the first epoch's shuffle for the whole run.
+        """
+        module, *_ = _build_module(tmp_path=tmp_path)
+        fake_sampler = MagicMock()
+        fake_datamodule = MagicMock(train_batch_sampler=fake_sampler)
+        fake_trainer = MagicMock(datamodule=fake_datamodule)
+        module._trainer = fake_trainer
+        with patch.object(type(module), "current_epoch", new=3):
+            module.on_train_epoch_start()
+
+        fake_sampler.set_epoch.assert_called_once_with(3)
+
+    def test_is_noop_when_datamodule_has_no_custom_batch_sampler(self, tmp_path):
+        """build_train_sampler() returning None must not raise when there is no set_epoch to forward."""
+        module, *_ = _build_module(tmp_path=tmp_path)
+        fake_datamodule = MagicMock(train_batch_sampler=None)
+        fake_trainer = MagicMock(datamodule=fake_datamodule)
+        module._trainer = fake_trainer
+
+        module.on_train_epoch_start()  # must not raise
+
+        assert module._accumulated_box_normalizer is None
+
+    def test_is_noop_when_trainer_is_unattached(self, tmp_path):
+        """Calling on_train_epoch_start with no Trainer attached must not raise (matches the other cases in this
+        class)."""
+        module, *_ = _build_module(tmp_path=tmp_path)
+
+        module.on_train_epoch_start()  # must not raise RuntimeError from the unattached self.trainer property
+
+        assert module._accumulated_box_normalizer is None
+
 
 class TestRescaleAccumulatedGradients:
     """Direct contract tests for _rescale_accumulated_gradients."""
