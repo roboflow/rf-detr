@@ -47,18 +47,19 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 
 ## Current notebooks
 
-| File                                | Card title                                      | Version |
-| ----------------------------------- | ----------------------------------------------- | ------- |
-| `multi-source-batch-sampler.ipynb`  | Mix Universe datasets with a fixed batch ratio  | v1.10.0 |
-| `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
-| `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler               | v1.9.0  |
-| `export-coreml.ipynb`               | Export to Native CoreML & Run Inference         | v1.9.0  |
-| `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.9.0  |
-| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.9.0  |
-| `export-tflite.ipynb`               | Export to TFLite (INT8) & Run Inference         | v1.11.0 |
-| `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection              | v1.8.0  |
-| `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
-| `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |
-| `inference-latency-benchmark.ipynb` | Inference Latency Benchmark                     | v1.8.2  |
-| `pytorch-lightning.ipynb`           | Training with PyTorch Lightning                 | v1.6.0  |
-| `train-coco2017.ipynb`              | Train RF-DETR Nano on COCO2017                  | v1.10.0 |
+| File                                | Card title                                           | Version |
+| ----------------------------------- | ---------------------------------------------------- | ------- |
+| `multi-source-rf100vl.ipynb`        | Train on RF100-VL sources with size-balanced weights | v1.10.0 |
+| `multi-source-batch-sampler.ipynb`  | Mix Universe datasets with a fixed batch ratio       | v1.10.0 |
+| `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress      | v1.5.0  |
+| `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler                    | v1.9.0  |
+| `export-coreml.ipynb`               | Export to Native CoreML & Run Inference              | v1.9.0  |
+| `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference                   | v1.9.0  |
+| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference                 | v1.9.0  |
+| `export-tflite.ipynb`               | Export to TFLite (INT8) & Run Inference              | v1.11.0 |
+| `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection                   | v1.8.0  |
+| `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection                 | v1.8.0  |
+| `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation              | v1.8.2  |
+| `inference-latency-benchmark.ipynb` | Inference Latency Benchmark                          | v1.8.2  |
+| `pytorch-lightning.ipynb`           | Training with PyTorch Lightning                      | v1.6.0  |
+| `train-coco2017.ipynb`              | Train RF-DETR Nano on COCO2017                       | v1.10.0 |

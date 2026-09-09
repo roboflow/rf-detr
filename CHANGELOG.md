@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Cookbook for mixing Roboflow Universe datasets with `WeightedMultiSourceBatchSampler` (`docs/cookbooks/multi-source-batch-sampler.ipynb`).
 
+- Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).
+
 ### Changed
 
 ### Deprecated
