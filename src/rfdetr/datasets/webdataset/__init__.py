@@ -5,9 +5,7 @@
 # ------------------------------------------------------------------------
 """WebDataset storage package.
 
-Purpose: Separate shard index, packing and streaming-load responsibilities.
-Scope: internal implementation modules. Usage: import index, pack or load by
-responsibility. Outputs:
-stable WebDataset index, shard and loader contracts. Failure: module-specific
-validation errors surface unchanged. Used by: RF-DETR data and CLI paths.
+Purpose: Separate shard index, packing and streaming-load responsibilities. Scope: internal implementation modules.
+Usage: import index, pack or load by responsibility. Outputs: stable WebDataset index, shard and loader contracts.
+Failure: module-specific validation errors surface unchanged. Used by: RF-DETR data and CLI paths.
 """

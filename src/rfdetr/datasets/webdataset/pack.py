@@ -5,12 +5,10 @@
 # ------------------------------------------------------------------------
 """Pack COCO-format datasets into deterministic WebDataset tar shards.
 
-Purpose: Convert one COCO split into tar shards and its JSON index. Scope:
-standard-library archive writing, deterministic generation names and atomic
-index publication. Usage: call pack_coco_to_shards or the dedicated CLI.
-Outputs: tar shards and an index under the requested output directory. Failure:
-rejects malformed annotations and paths before publishing a partial index.
-Used by: rfdetr.cli.webdataset and library callers.
+Purpose: Convert one COCO split into tar shards and its JSON index. Scope: standard-library archive writing,
+deterministic generation names and atomic index publication. Usage: call pack_coco_to_shards or the dedicated CLI.
+Outputs: tar shards and an index under the requested output directory. Failure: rejects malformed annotations and paths
+before publishing a partial index. Used by: rfdetr.cli.webdataset and library callers.
 """
 
 from __future__ import annotations

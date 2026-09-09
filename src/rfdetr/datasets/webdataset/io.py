@@ -5,12 +5,10 @@
 # ------------------------------------------------------------------------
 """Shared filesystem and archive primitives for WebDataset storage.
 
-Purpose: Keep shard-path validation and tar-size accounting consistent across
-packing and loading. Scope: trusted local paths, image-member extensions and
-POSIX tar member framing. Usage: import these private helpers only from sibling
-WebDataset modules. Outputs: verified child paths and archive byte counts.
-Failure: rejects shard-index paths that leave their designated directory.
-Used by: rfdetr.datasets.webdataset.pack and rfdetr.datasets.webdataset.load.
+Purpose: Keep shard-path validation and tar-size accounting consistent across packing and loading. Scope: trusted local
+paths, image-member extensions and POSIX tar member framing. Usage: import these private helpers only from sibling
+WebDataset modules. Outputs: verified child paths and archive byte counts. Failure: rejects shard-index paths that leave
+their designated directory. Used by: rfdetr.datasets.webdataset.pack and rfdetr.datasets.webdataset.load.
 """
 
 from __future__ import annotations

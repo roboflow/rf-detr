@@ -5,13 +5,11 @@
 # ------------------------------------------------------------------------
 """Load WebDataset shards into RF-DETR streaming datasets and loaders.
 
-Purpose: Read indexed tar shards with RF-DETR transforms and deterministic
-distributed worker planning. Scope: the optional WebDataset dependency,
-iterable dataset, epoch sizing and DataLoader construction. Usage: build a
-dataset with build_webdataset and a loader with build_webdataset_loader.
-Outputs: RF-DETR-compatible dataset samples and DataLoaders. Failure: rejects
-missing indexes, incompatible distribution plans and unsupported keypoints.
-Used by: datasets, detr and training module data.
+Purpose: Read indexed tar shards with RF-DETR transforms and deterministic distributed worker planning. Scope: the
+optional WebDataset dependency, iterable dataset, epoch sizing and DataLoader construction. Usage: build a dataset with
+build_webdataset and a loader with build_webdataset_loader. Outputs: RF-DETR-compatible dataset samples and DataLoaders.
+Failure: rejects missing indexes, incompatible distribution plans and unsupported keypoints. Used by: datasets, detr and
+training module data.
 """
 
 from __future__ import annotations

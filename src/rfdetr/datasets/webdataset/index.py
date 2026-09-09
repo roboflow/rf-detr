@@ -5,12 +5,10 @@
 # ------------------------------------------------------------------------
 """WebDataset shard-index schema, validation and on-disk access.
 
-Purpose: Define the stable contract shared by packing and streaming WebDataset
-splits. Scope: shard names, split validation, index serialization and loading.
-Usage: import ShardIndex and read_shard_index from this module. Outputs: parsed
-or serialized JSON index data and verified shard-relative paths. Failure:
-rejects malformed names, incompatible schemas and unavailable split indexes.
-Used by: webdataset pack, load, RF-DETR dataset construction and the CLI.
+Purpose: Define the stable contract shared by packing and streaming WebDataset splits. Scope: shard names, split
+validation, index serialization and loading. Usage: import ShardIndex and read_shard_index from this module. Outputs:
+parsed or serialized JSON index data and verified shard-relative paths. Failure: rejects malformed names, incompatible
+schemas and unavailable split indexes. Used by: webdataset pack, load, RF-DETR dataset construction and the CLI.
 """
 
 from __future__ import annotations
