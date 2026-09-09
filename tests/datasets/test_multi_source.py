@@ -216,6 +216,14 @@ class TestComputeSourceBatchSizes:
         with pytest.raises(ValueError, match="batch_size must be >= 1"):
             compute_source_batch_sizes(0, [0.5, 0.5])
 
+    def test_single_source_receives_the_full_batch(self) -> None:
+        """A single-source allocation (``len(weights) == 1``) is a legitimate, untested shape.
+
+        A ``ConcatDataset`` of one dataset before expansion hits this path; every other allocation test in this class
+        uses 2+ sources.
+        """
+        assert compute_source_batch_sizes(8, [1.0]) == [8]
+
     def test_clamped_source_excluded_from_leftover_remainder_ranking(self) -> None:
         """A source the one-slot guarantee bumps from 0 must not also win a leftover slot by remainder.
 
@@ -325,6 +333,21 @@ class TestBatchMultipleAlignment:
         """Omitting the argument must leave the existing epoch length untouched."""
         explicit = WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4, batch_multiple=1)
         assert len(explicit) == len(WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=4))
+
+    def test_alignment_applies_independently_with_a_kept_trailing_batch(self) -> None:
+        """``batch_multiple`` rounds correctly whether or not ``drop_last=False`` kept the trailing batch.
+
+        This class and ``TestEpochLength``'s ``drop_last`` cases each exercise ``batch_multiple`` and ``drop_last`` on
+        their own; a kept trailing partial batch folding into ``batch_multiple`` rounding was untested.
+        """
+        # Driving source (101 samples, 5 slots/batch): 20 whole batches + 1 remainder batch.
+        kept = WeightedMultiSourceBatchSampler([101, 50], [0.5, 0.5], batch_size=10, drop_last=False, batch_multiple=3)
+        dropped = WeightedMultiSourceBatchSampler(
+            [101, 50], [0.5, 0.5], batch_size=10, drop_last=True, batch_multiple=3
+        )
+        assert len(dropped) == 18  # 20 rounded down to a multiple of 3
+        assert len(kept) == 21  # 21 (20 + the kept remainder batch) is already a multiple of 3
+        assert all(len(batch) == 10 for batch in kept)
 
     def test_rejects_multiple_larger_than_the_epoch(self) -> None:
         """An alignment the epoch cannot satisfy must fail loudly rather than yield zero batches."""
@@ -445,6 +468,16 @@ class TestRecyclingWarning:
             self.STARVED_SIZES, self.STARVED_WEIGHTS, batch_size=self.STARVED_BATCH_SIZE, epoch_length=3
         )
         assert sampler.source_batch_sizes[sampler.driving_source] > 0
+
+    def test_single_source_never_triggers_the_recycling_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """``_warn_on_source_imbalance``'s ``max()`` over a one-entry dict must not crash or false-warn.
+
+        A single source is always its own driving source, so it can never be recycled — every other test in this class
+        uses 3+ sources.
+        """
+        with _capture_warnings(caplog):
+            WeightedMultiSourceBatchSampler([20], [1.0], batch_size=4)
+        assert _recycling_warnings(caplog) == []
 
 
 class TestDDPTruncationWarnings:
@@ -719,6 +752,43 @@ class TestDistributedSharding:
         )
         assert len(rank0) == len(rank1) == 1
         assert len(list(rank0)) + len(list(rank1)) == 2
+
+    def test_single_source_shards_across_ranks(self) -> None:
+        """A single-source sampler (``len(weights) == 1``) still shards disjointly under DDP.
+
+        Every other sharding test in this class uses 3+ sources.
+        """
+
+        def batches_for(rank: int) -> list[list[int]]:
+            sampler = WeightedMultiSourceBatchSampler([1000], [1.0], batch_size=10, num_replicas=2, rank=rank)
+            sampler.set_epoch(0)
+            return list(sampler)
+
+        rank0 = {tuple(batch) for batch in batches_for(0)}
+        rank1 = {tuple(batch) for batch in batches_for(1)}
+        assert rank0 and rank1
+        assert rank0.isdisjoint(rank1)
+
+    def test_starved_source_configuration_shards_correctly_under_ddp(self) -> None:
+        """A starved source (zero slots per batch) combined with ``num_replicas > 1`` shards cleanly.
+
+        ``TestRecyclingWarning``'s starved-source cases are single-process only, and every case here gives each source
+        at least one slot, so starved x DDP was never combined.
+        """
+        weights = [0.9, 0.04, 0.03, 0.03]
+        source_sizes = [1000, 1000, 1000, 1000]
+
+        def batches_for(rank: int) -> tuple[WeightedMultiSourceBatchSampler, list[list[int]]]:
+            sampler = WeightedMultiSourceBatchSampler(source_sizes, weights, batch_size=3, num_replicas=2, rank=rank)
+            sampler.set_epoch(0)
+            return sampler, list(sampler)
+
+        rank0, batches0 = batches_for(0)
+        _, batches1 = batches_for(1)
+        assert rank0.source_batch_sizes == [3, 0, 0, 0]  # sources 1-3 starved at this batch_size
+        assert len(batches0) == len(batches1) == len(rank0)
+        # Only source 0 (offsets [0, 1000)) contributes samples, on either rank.
+        assert all(index < 1000 for batch in batches0 + batches1 for index in batch)
 
 
 class TestPublicReExports:

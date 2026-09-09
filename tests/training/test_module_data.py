@@ -1013,6 +1013,49 @@ class TestTrainDataloader:
         with pytest.raises(RuntimeError, match="use_distributed_sampler=False"):
             dm.train_dataloader()
 
+    def test_check_custom_sampler_owns_ddp_pins_ptl_private_attributes_on_a_real_trainer(self, tmp_path):
+        """The guard's private PyTorch Lightning attributes still exist on a real (non-mocked) Trainer.
+
+        Every other test in this group attaches a ``MagicMock`` trainer, which auto-vivifies any attribute name — so
+        `getattr(x, attr, None)` never reaches its `None` default the way it would for a genuinely renamed or removed
+        attribute. A real single-device Trainer pins the actual surface, so a PyTorch Lightning upgrade that renames it
+        fails this test loudly instead of silently turning the guard into a no-op.
+        """
+        from pytorch_lightning import Trainer
+
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = Trainer(accelerator="cpu", devices=1, logger=False, enable_checkpointing=False)
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+
+        assert hasattr(trainer._accelerator_connector, "use_distributed_sampler")
+        assert hasattr(trainer._accelerator_connector, "is_distributed")
+        dm._check_custom_sampler_owns_ddp(custom_sampler)  # single device: never raises
+
+    def test_check_custom_sampler_owns_ddp_noop_when_flag_attribute_is_genuinely_absent(self, tmp_path):
+        """A truly missing attribute (not a ``MagicMock`` auto-vivified one) still falls back safely.
+
+        ``MagicMock`` returns a truthy sub-mock for any attribute name, so a MagicMock trainer can never exercise the
+        ``getattr(..., None)`` fallback the way a real missing attribute would.
+        """
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+
+        class _AccelConnectorMissingUseDistributedSampler:
+            is_distributed = True
+
+        class _TrainerWithIncompleteConnector:
+            distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+            _accelerator_connector = _AccelConnectorMissingUseDistributedSampler()
+
+        dm.trainer = _TrainerWithIncompleteConnector()
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+
+        dm._check_custom_sampler_owns_ddp(custom_sampler)  # missing use_distributed_sampler -> no raise
+
     @staticmethod
     def _raw_sample(h: int = 16, w: int = 16) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Build one (image, target) pair as a dataset __getitem__ would return it, for collate_fn input.

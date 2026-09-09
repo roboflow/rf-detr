@@ -629,8 +629,10 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
         generator.manual_seed(self.seed + self.epoch)
 
         # A starved source (zero slots per batch) is never drawn from, so shuffling it would only burn RNG draws.
-        streams = [
-            self._shuffled_indices(index, generator) if self.source_batch_sizes[index] else []
+        streams: list[torch.Tensor] = [
+            self._shuffled_indices(index, generator)
+            if self.source_batch_sizes[index]
+            else torch.empty(0, dtype=torch.long)
             for index in range(len(self.source_sizes))
         ]
         cursors = [0] * len(self.source_sizes)
@@ -645,7 +647,7 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
                     streams[source] = stream
                     cursors[source] = 0
                 take = min(count - len(picked), len(stream) - cursors[source])
-                picked.extend(stream[cursors[source] : cursors[source] + take])
+                picked.extend(stream[cursors[source] : cursors[source] + take].tolist())
                 cursors[source] += take
             return picked
 
@@ -661,18 +663,23 @@ class WeightedMultiSourceBatchSampler(Sampler[list[int]]):
             if batch_index % self.num_replicas == self.rank:
                 yield batch
 
-    def _shuffled_indices(self, source: int, generator: torch.Generator) -> list[int]:
-        """Return the source's indices in the concatenated index space, shuffled when ``shuffle`` is set.
+    def _shuffled_indices(self, source: int, generator: torch.Generator) -> torch.Tensor:
+        """Return the source's indices in the concatenated index space, as a tensor.
+
+        Kept as a tensor rather than a Python list: :meth:`__iter__`'s ``draw`` slices this tensor and
+        calls ``.tolist()`` only on the drawn slice. Converting the whole source with ``.tolist()`` on
+        every reshuffle costs far more than the shuffle itself and holds a full Python list per source
+        in memory for the epoch, regardless of how many samples are actually drawn from it.
 
         Args:
             source: Index of the source.
             generator: RNG shared by all ranks for this epoch.
 
         Returns:
-            One full pass over the source's global indices.
+            One full pass over the source's global indices, as an ``int64`` tensor.
         """
         offset = self._source_offsets[source]
         size = self.source_sizes[source]
         if not self.shuffle:
-            return list(range(offset, offset + size))
-        return (torch.randperm(size, generator=generator) + offset).tolist()
+            return torch.arange(offset, offset + size)
+        return torch.randperm(size, generator=generator) + offset
