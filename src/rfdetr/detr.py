@@ -39,6 +39,7 @@ from rfdetr.datasets._keypoint_schema import (
     infer_yolo_keypoint_schema,
 )
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
+from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.models.backbone.backbone import Backbone
@@ -2062,13 +2063,26 @@ class RFDETR:
         consume neither a label index nor an output slot. In keypoint mode it instead counts the
         inferred RF-DETR keypoint label slots. In legacy background-first schemas (e.g. ``[0, 17]``) slot ``0`` is
         reserved for classes without keypoints; active-first schemas (e.g. ``[17]``) use normal 0-based indices. For
-        YOLO-style datasets it falls back to ``_load_classes``.
+        a packed ``dataset_file="webdataset"`` directory (keypoints unsupported there, so only reached when
+        *use_grouppose_keypoints* is false) it reads the train shard index instead of a raw annotation file, using
+        the same ``"remap"``/``"raw"`` convention :func:`~rfdetr.datasets.webdataset.load.build_webdataset` does.
+        For YOLO-style datasets it falls back to ``_load_classes``.
         """
         if is_valid_coco_dataset(dataset_dir):
             if use_grouppose_keypoints:
                 coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
                 return len(infer_coco_keypoint_schema(coco_path).class_names)
             return len({category["id"] for category in RFDETR._filtered_coco_categories(dataset_dir)})
+
+        if not use_grouppose_keypoints and (Path(dataset_dir) / index_name("train")).exists():
+            try:
+                train_index = read_shard_index(dataset_dir, "train")
+            except WebDatasetSplitUnavailableError:
+                pass
+            else:
+                if train_index.category_ids == "raw":
+                    return max((int(category["id"]) for category in train_index.categories), default=-1) + 1
+                return len(train_index.cat2label() or {})
 
         return len(RFDETR._load_classes(dataset_dir))
 
