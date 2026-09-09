@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for SetCriterion edge paths: _output_device and num_boxes_for_targets."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ from rfdetr.models.criterion import (
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.matcher import HungarianMatcher
-from rfdetr.utilities.tensors import NestedTensor
+from rfdetr.utilities.tensors import NestedTensor, pad_targets_to_fixed_count
 
 
 class _MatcherStub:
@@ -1245,3 +1246,217 @@ class TestMaskLossDenominatorStaysOnDevice:
 
         assert met.counter_value("aten::_local_scalar_dense") is None
         assert [name for name in met.counter_names() if name.startswith("aten::")] == []
+
+
+def _padding_batch(seed: int, batch_size: int = 4, num_classes: int = 5, queries: int = 60):
+    """Build one random detection batch with a different ground-truth count per image.
+
+    Args:
+        seed: Seed for the batch's generator.
+        batch_size: Images in the batch.
+        num_classes: Class count for the logits.
+        queries: Query count for the logits and boxes.
+
+    Returns:
+        A ``(outputs, targets)`` pair shaped like the detection head's output.
+
+    Examples:
+        >>> outputs, targets = _padding_batch(0)
+        >>> outputs["pred_logits"].shape[0] == len(targets)
+        True
+    """
+    generator = torch.Generator().manual_seed(seed)
+    outputs = {
+        "pred_logits": torch.randn(batch_size, queries, num_classes, generator=generator),
+        "pred_boxes": torch.rand(batch_size, queries, 4, generator=generator) * 0.5 + 0.25,
+    }
+    targets = []
+    for _ in range(batch_size):
+        count = int(torch.randint(1, 9, (1,), generator=generator).item())
+        targets.append(
+            {
+                "boxes": torch.rand(count, 4, generator=generator) * 0.5 + 0.25,
+                "labels": torch.randint(0, num_classes, (count,), generator=generator),
+                "iscrowd": torch.zeros(count, dtype=torch.int64),
+                "area": torch.rand(count, generator=generator),
+            }
+        )
+    return outputs, targets
+
+
+def _padding_criterion(num_classes: int = 5, losses: list[str] | None = None, **overrides):
+    """Build a criterion on the production classification branch.
+
+    ``SetCriterion`` defaults ``ia_bce_loss`` to False while ``TrainConfig`` sets it True, so a test
+    that takes the constructor default would exercise a branch training never runs.
+
+    Args:
+        num_classes: Class count.
+        losses: Loss names to configure. Defaults to ``["labels", "boxes"]``.
+        overrides: Extra ``SetCriterion`` keyword arguments.
+
+    Returns:
+        A configured :class:`SetCriterion`.
+
+    Examples:
+        >>> _padding_criterion().ia_bce_loss
+        True
+    """
+    options = {"ia_bce_loss": True}
+    options.update(overrides)
+    return SetCriterion(
+        num_classes=num_classes,
+        matcher=HungarianMatcher(),
+        weight_dict={"loss_bbox": 5.0, "loss_giou": 2.0, "loss_ce": 1.0},
+        focal_alpha=0.25,
+        losses=losses if losses is not None else ["labels", "boxes"],
+        group_detr=1,
+        **options,
+    )
+
+
+class TestPaddedTargets:
+    """Fixed-size target padding keeps the XLA graph shape-stable without changing the arithmetic.
+
+    XLA compiles per tensor shape, and the detection loss is shaped by the ground-truth box count, so an unpadded run
+    recompiles whenever a batch brings a new per-image count. Padding is only worth anything if it is invisible to the
+    result, which is what these pin.
+    """
+
+    @pytest.mark.parametrize(
+        ("count", "pad_to", "expected_valid"),
+        [
+            pytest.param(1, 4, [True, False, False, False], id="pads-up"),
+            pytest.param(4, 4, [True] * 4, id="exact-fit"),
+            pytest.param(6, 4, [True] * 4, id="truncates-down"),
+        ],
+    )
+    def test_every_per_object_field_reaches_the_same_length(self, count, pad_to, expected_valid) -> None:
+        """A consumer that cross-checks two target fields (COCO matching does) must not see a mismatch."""
+        target = {
+            "boxes": torch.rand(count, 4),
+            "labels": torch.zeros(count, dtype=torch.int64),
+            "iscrowd": torch.zeros(count, dtype=torch.int64),
+            "area": torch.rand(count),
+            "orig_size": torch.tensor([640, 480]),
+        }
+        padded = pad_targets_to_fixed_count([target], pad_to)[0]
+
+        for key in ("boxes", "labels", "iscrowd", "area"):
+            assert padded[key].shape[0] == pad_to, key
+        assert padded["valid"].tolist() == expected_valid
+        assert padded["orig_size"].tolist() == [640, 480], "non per-object entries stay untouched"
+
+    @pytest.mark.parametrize("pad_to", [0, -1], ids=["zero", "negative"])
+    def test_non_positive_pad_to_raises(self, pad_to) -> None:
+        """A silently empty or a cryptic low-level error is worse than a clear, actionable one."""
+        target = {"boxes": torch.rand(2, 4), "labels": torch.zeros(2, dtype=torch.int64)}
+
+        with pytest.raises(ValueError, match="pad_to must be a positive integer"):
+            pad_targets_to_fixed_count([target], pad_to)
+
+    def test_truncation_logs_the_dropped_box_count(self, caplog: pytest.LogCaptureFixture, monkeypatch) -> None:
+        """Dropping real ground-truth boxes must be observable, even though it stays non-fatal."""
+        target = {"boxes": torch.rand(6, 4), "labels": torch.zeros(6, dtype=torch.int64)}
+
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            pad_targets_to_fixed_count([target], 4)
+
+        assert any("2 box(es) are dropped" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.parametrize("seed", range(8))
+    @pytest.mark.parametrize(
+        ("batch_size", "queries"),
+        [
+            pytest.param(4, 60, id="compact-path"),
+            pytest.param(1, 8, id="full-cartesian-path"),
+        ],
+    )
+    def test_padding_does_not_change_the_assignment(self, batch_size, queries, seed) -> None:
+        """Padded columns carry a query-independent cost, so they cannot displace a real target.
+
+        ``HungarianMatcher._compact_path_applicable`` only takes the compact path for ``batch_size > 1``; a single-image
+        batch always falls to the full cartesian path in ``forward()``, which needs its own copy of the same
+        ``_PADDED_TARGET_COST`` masking. With few queries relative to the padded target count (12), a filler target that
+        isn't masked can win a query a real target would otherwise have taken.
+        """
+        outputs, targets = _padding_batch(seed, batch_size=batch_size, queries=queries)
+        criterion = _padding_criterion()
+        plain = criterion.matcher(outputs, targets)
+        padded = criterion.matcher(outputs, list(pad_targets_to_fixed_count(targets, 12)))
+
+        for count, (src_a, tgt_a), (src_b, tgt_b) in zip([int(t["boxes"].shape[0]) for t in targets], plain, padded):
+            real = tgt_b < count
+            assert dict(zip(tgt_a.tolist(), src_a.tolist())) == dict(zip(tgt_b[real].tolist(), src_b[real].tolist()))
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_padding_does_not_change_the_losses(self, seed) -> None:
+        """Every reported term matches; the box terms differ only by float32 summation order."""
+        outputs, targets = _padding_batch(seed)
+        criterion = _padding_criterion()
+        plain = criterion(outputs, targets)
+        padded = criterion(outputs, list(pad_targets_to_fixed_count(targets, 12)))
+
+        assert set(plain) == set(padded)
+        for key in plain:
+            assert torch.allclose(plain[key], padded[key], rtol=1e-5, atol=1e-6), (
+                f"{key} diverged: {float(plain[key])} vs {float(padded[key])}"
+            )
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_cardinality_error_counts_real_boxes_not_padded_rows(self, seed) -> None:
+        """``loss_cardinality`` compared padded targets' constant row count against the prediction count instead of the
+        real ground-truth count; ``valid`` must be read back out of it."""
+        outputs, targets = _padding_batch(seed)
+        criterion = _padding_criterion(losses=["cardinality"])
+        plain = criterion(outputs, targets)
+        padded = criterion(outputs, list(pad_targets_to_fixed_count(targets, 12)))
+
+        assert torch.allclose(plain["cardinality_error"], padded["cardinality_error"], rtol=1e-5, atol=1e-6)
+
+    def test_unmasked_classification_branches_refuse_padded_targets(self) -> None:
+        """Better a loud failure than a loss that quietly counts filler rows as real matches."""
+        outputs, targets = _padding_batch(0)
+        criterion = _padding_criterion(ia_bce_loss=False)
+
+        with pytest.raises(NotImplementedError, match="IoU-aware BCE"):
+            criterion(outputs, list(pad_targets_to_fixed_count(targets, 12)))
+
+    def test_mask_loss_refuses_padded_targets(self) -> None:
+        """``loss_masks`` point-samples every matched pair, so a filler pair would contribute real gradient."""
+        criterion = _bare_criterion()
+        criterion.mask_point_sample_ratio = 16
+        pred_masks = torch.randn(1, 8, 24, 24, requires_grad=True)
+        targets = list(
+            pad_targets_to_fixed_count([{"boxes": torch.rand(8, 4), "masks": torch.rand(8, 96, 96) > 0.5}], 12)
+        )
+        indices = [(torch.arange(8), torch.arange(8))]
+
+        with pytest.raises(NotImplementedError, match="pad_targets_to unset for segmentation"):
+            criterion.loss_masks({"pred_masks": pred_masks}, targets, indices, num_boxes=torch.tensor(8.0))
+
+    def test_keypoints_loss_refuses_padded_targets(self) -> None:
+        """``loss_keypoints`` reads every matched pair with no valid-row mask, so a filler pair would contribute real
+        gradient -- same shape of gap as ``loss_masks`` above, on the sibling head."""
+        criterion = _bare_criterion()
+        outputs = {"pred_keypoints": torch.randn(1, 8, 3, 3, requires_grad=True)}
+        targets = list(
+            pad_targets_to_fixed_count(
+                [
+                    {
+                        "boxes": torch.rand(8, 4),
+                        "labels": torch.zeros(8, dtype=torch.int64),
+                        "keypoints": torch.rand(8, 3, 3),
+                    }
+                ],
+                12,
+            )
+        )
+        indices = [(torch.arange(8), torch.arange(8))]
+
+        with pytest.raises(NotImplementedError, match="pad_targets_to unset for keypoint"):
+            criterion.loss_keypoints(outputs, targets, indices, num_boxes=torch.tensor(8.0))

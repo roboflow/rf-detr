@@ -23,6 +23,10 @@ import torch
 import torchvision
 from torch import Tensor
 
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
 
 def _round_up_to_multiple(value: int, multiple: int) -> int:
     """Round *value* up to the next multiple of *multiple*.
@@ -425,10 +429,70 @@ def _nearest_grid_sample(
     return torch.where(torch.zeros_like(grid_x, dtype=torch.bool), grid_x, output)
 
 
+# Target entries with one row per ground-truth object. They must be padded together or a consumer
+# that cross-checks two of them (COCO matching validates ``iscrowd`` against ``labels``) will raise.
+_PER_OBJECT_TARGET_KEYS = ("boxes", "labels", "area", "iscrowd", "keypoints", "masks")
+
+
+def pad_targets_to_fixed_count(targets: Sequence[dict[str, Any]], pad_to: int) -> tuple[dict[str, Any], ...]:
+    """Pad every per-object field of each target dict to *pad_to* rows and record which rows are real.
+
+    XLA keys its compiled graph on tensor shapes, and the detection loss is shaped by how many
+    ground-truth boxes each image carries -- so a batch with a new per-image box-count tuple forces a
+    recompilation.  Padding here, while the tensors are still on the host, keeps every downstream
+    shape constant.  The added ``valid`` mask is what lets the matcher and the losses ignore the
+    filler rows.
+
+    Args:
+        targets: Per-image target dicts, as produced by the dataset.
+        pad_to: Row count every image is padded (or truncated) to. Must be a positive integer.
+
+    Returns:
+        The same dicts with every entry in :data:`_PER_OBJECT_TARGET_KEYS` resized to *pad_to* rows and a
+        boolean ``valid`` mask. Entries that are not per-object, such as ``orig_size``, are left alone.
+
+    Raises:
+        ValueError: If ``pad_to`` is not a positive integer.
+
+    Examples:
+        >>> import torch
+        >>> out = pad_targets_to_fixed_count([{"boxes": torch.zeros(1, 4), "labels": torch.zeros(1)}], 3)
+        >>> out[0]["boxes"].shape, out[0]["valid"].tolist()
+        (torch.Size([3, 4]), [True, False, False])
+    """
+    if pad_to < 1:
+        raise ValueError(f"pad_to must be a positive integer, got {pad_to}")
+    padded = []
+    for target in targets:
+        entry = dict(target)
+        count = int(entry["boxes"].shape[0])
+        if count > pad_to:
+            logger.warning(
+                "pad_targets_to=%d is smaller than this image's %d ground-truth boxes; the extra "
+                "%d box(es) are dropped from training rather than recompiling the graph for them.",
+                pad_to,
+                count,
+                count - pad_to,
+            )
+        for key in _PER_OBJECT_TARGET_KEYS:
+            value = entry.get(key)
+            if value is None or not torch.is_tensor(value) or value.ndim == 0:
+                continue
+            if value.shape[0] > pad_to:
+                entry[key] = value[:pad_to]
+            elif value.shape[0] < pad_to:
+                filler = value.new_zeros((pad_to - value.shape[0], *value.shape[1:]))
+                entry[key] = torch.cat([value, filler])
+        entry["valid"] = torch.arange(pad_to) < min(count, pad_to)
+        padded.append(entry)
+    return tuple(padded)
+
+
 def _collate_with_block_size(
     batch: list[tuple[Any, ...]],
     block_size: int | None = None,
     pack: bool = False,
+    pad_targets_to: int | None = None,
 ) -> tuple[Any, ...]:
     """Module-level collate helper used as the base for :func:`make_collate_fn`.
 
@@ -441,15 +505,23 @@ def _collate_with_block_size(
             :func:`nested_tensor_from_tensor_list`.
         pack: When set, concatenate the target dicts into a :class:`PackedTargets` so that a batch crosses the
             worker-to-main boundary as a handful of tensors instead of one per field per sample.
+        pad_targets_to: When set, pad every target dict's per-object fields to this many rows before packing, so
+            XLA's compiled graph stops keying on the per-image ground-truth box count. Applied before *pack*: every
+            target the packer sees already shares one row count, and packing padded targets is bit-identical to
+            packing the same targets first and padding the packed result would be, but without ever materialising
+            the intermediate variable-length batch.
 
     Returns:
-        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``, the targets packed when *pack* is set.
+        Tuple of ``(NestedTensor_of_images, tuple_of_targets)``, the targets padded and/or packed as configured.
     """
     columns = list(zip(*batch))
     images = nested_tensor_from_tensor_list(list(columns[0]), block_size=block_size)
-    if pack and len(columns) == 2 and all(isinstance(entry, dict) for entry in columns[1]):
-        return (images, pack_targets(list(columns[1])))
-    return (images, *columns[1:])
+    rest = list(columns[1:])
+    if pad_targets_to is not None and rest:
+        rest[0] = pad_targets_to_fixed_count(rest[0], pad_targets_to)
+    if pack and len(rest) == 1 and all(isinstance(entry, dict) for entry in rest[0]):
+        return (images, pack_targets(list(rest[0])))
+    return (images, *rest)
 
 
 def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
@@ -471,6 +543,7 @@ def collate_fn(batch: list[tuple[Any, ...]]) -> tuple[Any, ...]:
 def make_collate_fn(
     block_size: int | None = None,
     pack: bool = False,
+    pad_targets_to: int | None = None,
 ) -> Callable[[list[tuple[Any, ...]]], tuple[Any, ...]]:
     """Build a collate function that rounds batch ``H``/``W`` up to *block_size*.
 
@@ -485,11 +558,13 @@ def make_collate_fn(
         block_size: When set, batch ``H`` and ``W`` are rounded up to the next
             multiple of this value before padding.  The rounded-up strip is marked as padding in the NestedTensor mask.
         pack: When set, the collated targets are returned as a :class:`PackedTargets`.
+        pad_targets_to: When set, every target dict's per-object fields are padded to this many rows before
+            packing. See :func:`_collate_with_block_size`.
 
     Returns:
         A collate callable suitable for ``torch.utils.data.DataLoader``.
     """
-    return partial(_collate_with_block_size, block_size=block_size, pack=pack)
+    return partial(_collate_with_block_size, block_size=block_size, pack=pack, pad_targets_to=pad_targets_to)
 
 
 class PackedTargets:

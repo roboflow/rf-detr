@@ -1007,3 +1007,43 @@ def test_probe_step_with_real_segmentation_criterion(tmp_path):
         segmentation_head=True,
     )
     assert ok is True
+
+
+@pytest.mark.parametrize(
+    ("pad_targets_to", "expected_probe_targets"),
+    [
+        pytest.param(None, 100, id="unpadded-uses-the-worst-case-ceiling"),
+        pytest.param(8, 8, id="padded-uses-the-exact-count"),
+    ],
+)
+def test_resolve_auto_batch_config_probes_the_padded_target_count(pad_targets_to, expected_probe_targets):
+    """Fixed-size padding turns the per-image target count from a guess into a fact.
+
+    The probe sizes the memory envelope by synthesizing ``max_targets_per_image`` targets per image. Without padding
+    that has to be a pessimistic ceiling, but with ``pad_targets_to`` set it is exactly what every image will carry --
+    so probing the ceiling instead would reject batch sizes that actually fit, and would understate the envelope for a
+    pad size above the ceiling.
+    """
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=False)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        auto_batch_max_targets_per_image=100,
+        pad_targets_to=pad_targets_to,
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+    probe = MagicMock(return_value=5)
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", probe),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+
+    assert probe.call_args.kwargs["max_targets_per_image"] == expected_probe_targets

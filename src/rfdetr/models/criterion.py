@@ -523,10 +523,21 @@ class SetCriterion(nn.Module):
             3.0
         """
         group_detr = self.group_detr if self.training else 1
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        if not self.sum_group_losses:
-            num_boxes = num_boxes * group_detr
-        num_boxes_tensor = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
+        if targets and "valid" in targets[0]:
+            # Fixed-size target padding: only the real rows count toward the denominator, and the
+            # count is kept as a device tensor so reading it never syncs to the host.
+            num_boxes_tensor = (
+                torch.stack([target["valid"].sum() for target in targets])
+                .sum()
+                .to(dtype=torch.float, device=self._output_device(outputs))
+            )
+            if not self.sum_group_losses:
+                num_boxes_tensor = num_boxes_tensor * group_detr
+        else:
+            num_boxes = sum(len(t["labels"]) for t in targets)
+            if not self.sum_group_losses:
+                num_boxes = num_boxes * group_detr
+            num_boxes_tensor = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes_tensor)
         return torch.clamp(num_boxes_tensor / get_world_size(), min=1.0)
@@ -544,6 +555,13 @@ class SetCriterion(nn.Module):
         dim [nb_target_boxes]"""
         assert "pred_logits" in outputs
         src_logits = outputs["pred_logits"]
+        valid_mask = self._matched_valid_mask(targets, indices)
+        if valid_mask is not None and not self.ia_bce_loss:
+            raise NotImplementedError(
+                "Fixed-size target padding masks padded pairs only in the IoU-aware BCE classification "
+                "branch (ia_bce_loss=True, which is the TrainConfig default). The position-supervised, "
+                "varifocal and plain focal branches would count the padding as real matches."
+            )
 
         if matched_targets is None:
             idx = self._get_src_permutation_idx(indices)
@@ -576,8 +594,18 @@ class SetCriterion(nn.Module):
             t = prob[tuple(pos_ind)].pow(alpha) * pos_ious.pow(1 - alpha)
             t = torch.clamp(t, 0.01).detach()
 
-            pos_weights[tuple(pos_ind)] = t.to(pos_weights.dtype)
-            neg_weights[tuple(pos_ind)] = 1 - t.to(neg_weights.dtype)
+            if valid_mask is None:
+                pos_weights[tuple(pos_ind)] = t.to(pos_weights.dtype)
+                neg_weights[tuple(pos_ind)] = 1 - t.to(neg_weights.dtype)
+            else:
+                # A query matched to a filler target is really unmatched: it must keep the plain
+                # ``prob ** gamma`` negative weight it was initialised with, not the 1 - t a real
+                # match would write, and contribute no positive weight at all.
+                keep = valid_mask.to(torch.bool)
+                pos_weights[tuple(pos_ind)] = (t * valid_mask).to(pos_weights.dtype)
+                neg_weights[tuple(pos_ind)] = torch.where(
+                    keep, (1 - t).to(neg_weights.dtype), neg_weights[tuple(pos_ind)]
+                )
             # a reformulation of the standard loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
             # with a focus on statistical stability by using fused logsigmoid
             loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (pos_weights + neg_weights)
@@ -681,7 +709,14 @@ class SetCriterion(nn.Module):
 
         if log:
             # TODO this should probably be a separate loss, not hacked in this one here
-            losses["class_error"] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
+            if valid_mask is None:
+                losses["class_error"] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
+            else:
+                # Selecting the real pairs would make this tensor's shape depend on the box count
+                # again, which is the whole thing padding exists to avoid -- so weight them out.
+                # Equivalent to accuracy(..., topk=(1,)) restricted to the real matches.
+                correct = (src_logits[idx].argmax(dim=-1) == target_classes_o).to(valid_mask.dtype)
+                losses["class_error"] = 100 - 100 * (correct * valid_mask).sum() / valid_mask.sum().clamp(min=1)
         return losses
 
     @torch.no_grad()
@@ -699,7 +734,13 @@ class SetCriterion(nn.Module):
         """
         pred_logits = outputs["pred_logits"]
         device = pred_logits.device
-        tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
+        if targets and "valid" in targets[0]:
+            # Fixed-size target padding (pad_targets_to) pads every "labels" row count to the same
+            # constant, so len() would report a constant error against a constant instead of the real
+            # ground-truth count -- "valid" marks which rows are real.
+            tgt_lengths = torch.as_tensor([int(v["valid"].sum()) for v in targets], device=device)
+        else:
+            tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
         # Sigmoid/focal heads have no background class; count predictions whose top score is confident
         card_pred = (pred_logits.sigmoid().max(-1).values > 0.5).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
@@ -727,6 +768,9 @@ class SetCriterion(nn.Module):
         )
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
+        valid_mask = self._matched_valid_mask(targets, indices)
+        if valid_mask is not None:
+            loss_bbox = loss_bbox * valid_mask[:, None]
 
         losses = {}
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
@@ -735,6 +779,8 @@ class SetCriterion(nn.Module):
             box_ops.box_cxcywh_to_xyxy(src_boxes),
             box_ops.box_cxcywh_to_xyxy(target_boxes),
         )
+        if valid_mask is not None:
+            loss_giou = loss_giou * valid_mask
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
 
@@ -750,6 +796,12 @@ class SetCriterion(nn.Module):
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
         """
         assert "pred_masks" in outputs, "pred_masks missing in model outputs"
+        if targets and "valid" in targets[0]:
+            raise NotImplementedError(
+                "Fixed-size target padding does not cover the mask loss yet: loss_masks point-samples "
+                "every matched pair, so the filler pairs would contribute real gradient. Leave "
+                "pad_targets_to unset for segmentation training."
+            )
         idx = self._get_src_permutation_idx(indices)
         pred_masks = outputs["pred_masks"]  # [B, Q, H, W]
 
@@ -853,6 +905,12 @@ class SetCriterion(nn.Module):
     ) -> dict[str, Tensor]:
         """Compute keypoint losses on matched prediction/target pairs."""
         assert "pred_keypoints" in outputs
+        if targets and "valid" in targets[0]:
+            raise NotImplementedError(
+                "Fixed-size target padding does not cover the keypoint loss yet: loss_keypoints "
+                "reads every matched pair with no valid-row mask, so the filler pairs would "
+                "contribute real gradient. Leave pad_targets_to unset for keypoint training."
+            )
         idx = self._get_src_permutation_idx(indices)
         src_keypoints = outputs["pred_keypoints"][idx]
         target_keypoints = torch.cat([target["keypoints"][j] for target, (_, j) in zip(targets, indices)], dim=0)
@@ -905,6 +963,29 @@ class SetCriterion(nn.Module):
             ),
             boxes=torch.cat([target["boxes"][target_indices] for target, (_, target_indices) in zip(targets, indices)]),
         )
+
+    @staticmethod
+    def _matched_valid_mask(targets: list[dict[str, Tensor]], indices: list[tuple[Tensor, Tensor]]) -> Tensor | None:
+        """Per-matched-pair mask marking which pairs point at a real target rather than padding.
+
+        Returns ``None`` when the batch carries no ``valid`` key, which is every batch that did not go
+        through fixed-size target padding -- so the unpadded path keeps its exact previous arithmetic.
+
+        Args:
+            targets: Per-image target dictionaries in batch order.
+            indices: Per-image matcher results, source and target indices.
+
+        Returns:
+            A float mask flattened in the same order as the matched tensors, or ``None``.
+
+        Examples:
+            >>> SetCriterion._matched_valid_mask([{"labels": torch.zeros(1)}], [(torch.zeros(1), torch.zeros(1))])
+        """
+        if not targets or "valid" not in targets[0]:
+            return None
+        return torch.cat(
+            [target["valid"][target_indices] for target, (_, target_indices) in zip(targets, indices)]
+        ).float()
 
     def _get_tgt_permutation_idx(self, indices: list[tuple[Tensor, Tensor]]) -> tuple[Tensor, Tensor]:
         # permute targets following indices
