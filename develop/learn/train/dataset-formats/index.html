@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-08-12T14:13:29">
+  <meta property="article:modified_time" content="2026-09-09T13:18:42">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-08-12T14:13:29",
+    "dateModified": "2026-09-09T13:18:42",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1285,6 +1285,100 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Pose Labels (YOLO Pose)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#webdataset-shards-sequential-io" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebDataset Shards (Sequential I/O)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="WebDataset Shards (Sequential I/O)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does-change-everywhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it does change, everywhere
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#packing-a-split" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packing a split
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-from-shards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training from shards
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-an-epoch-is-sized" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How an epoch is sized
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pack-plenty-of-shards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pack plenty of shards
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shuffling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shuffling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#not-covered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not covered
       
     </span>
   </a>
@@ -2831,6 +2925,100 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#webdataset-shards-sequential-io" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        WebDataset Shards (Sequential I/O)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="WebDataset Shards (Sequential I/O)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-does-change-everywhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it does change, everywhere
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#packing-a-split" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packing a split
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#training-from-shards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training from shards
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-an-epoch-is-sized" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How an epoch is sized
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pack-plenty-of-shards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pack plenty of shards
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shuffling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shuffling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#not-covered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not covered
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#converting-between-formats" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3331,33 +3519,116 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><code>flip_idx</code> is a permutation, while <code>keypoint_flip_pairs</code> is a flat pair list. During <code>model.train()</code>, RF-DETR infers the pair list automatically from <code>flip_idx</code> when no explicit <code>keypoint_flip_pairs</code> is provided.</p>
 </div>
 <hr />
+<h2 id="webdataset-shards-sequential-io">WebDataset Shards (Sequential I/O)<a class="headerlink" href="#webdataset-shards-sequential-io" title="Permanent link">&para;</a></h2>
+<p>A COCO-format split stored as loose files costs one <code>open()</code> per image per epoch. Raising <code>num_workers</code> to keep a GPU fed multiplies that into thousands of concurrent random opens — cheap against a local NVMe disk, expensive against network storage, an object-store mount, or any filesystem whose metadata operations are slow.</p>
+<p><code>dataset_file="webdataset"</code> reads the same images from a handful of <code>.tar</code> shards instead. Each worker walks its own shards front to back, so an epoch becomes a set of large sequential reads and one <code>open()</code> per shard rather than one per image. Augmentation is unchanged: shards decode into the same <code>(image, target)</code> pairs the loose-file loader produces, go through the same CPU Albumentations/torchvision pipeline, and reach the GPU through the same <code>pin_memory</code> hand-off and Kornia stage.</p>
+<p>This is an alternative input path, not a replacement — <code>coco</code>, <code>roboflow</code> and <code>yolo</code> behave exactly as before.</p>
+<div class="admonition note">
+<p class="admonition-title">It is not a general speed-up</p>
+<p>Whether packing helps depends on where your input pipeline is actually blocked. Measured on a 32-vCPU machine with an NVMe-attached persistent disk, on COCO 2017, throughput was the same either way — between 0.92x and 1.03x across six configurations. Measurements identified the worker-to-main batch transfer as the ceiling, not decode/augmentation or file access: <code>iowait</code> stayed under 1%, and raw reads on the same disk sustained roughly 5.5x the images per second the loader consumed. Packing pays off where per-file access genuinely is the constraint — network filesystems, object-store mounts, directories with millions of small files. What it improves regardless is construction.</p>
+</div>
+<h3 id="what-it-does-change-everywhere">What it does change, everywhere<a class="headerlink" href="#what-it-does-change-everywhere" title="Permanent link">&para;</a></h3>
+<p>Building the dataset stops parsing the split's annotation file. <code>dataset_file="coco"</code> loads <code>instances_train2017.json</code> into a <code>pycocotools</code> index before the first batch; the streaming path reads a small JSON listing shards, sample count and categories, and takes each image's annotations from the shard next to its pixels.</p>
+<p>On full COCO 2017 that is a median 19.9 s and 2,810 MB of resident memory before the first batch, against 0.012 s and 0.9 MB (three cold runs per arm; the spread is under 0.13 s and RSS is identical to the tenth of a MB). Both are per process, so per rank under DDP.</p>
+<h3 id="packing-a-split">Packing a split<a class="headerlink" href="#packing-a-split" title="Permanent link">&para;</a></h3>
+<p>Shards are written with the standard library, so packing needs no extra dependency:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>python<span class="w"> </span>-m<span class="w"> </span>rfdetr.cli.webdataset<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">    </span>--image-dir<span class="w"> </span>/data/coco/train2017<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">    </span>--annotations<span class="w"> </span>/data/coco/annotations/instances_train2017.json<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span>--output-dir<span class="w"> </span>/data/coco-shards<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span>--split<span class="w"> </span>train
+</span></code></pre></div>
+<p>Repeat once per split, into the same <code>--output-dir</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>coco-shards/
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>├── train-a1b2c3d4-000000.tar   # ~100 MB each, override with --max-shard-mb
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>├── train-a1b2c3d4-000001.tar
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>├── ...
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>├── train-index.json        # shard list, sample count, categories
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>├── val-5e6f7a8b-000000.tar
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>└── val-index.json
+</span></code></pre></div>
+<p>The hex segment in a shard name is a generation token derived from the packed contents. It lets a re-pack write its shards alongside the ones the published index still points at, so the index swap is the only moment the pack changes; because it is derived from the contents rather than random, re-packing unchanged data reproduces the same names instead of churning the directory.</p>
+<p>Repacking is an offline operation: stop every reader and other packer for that split before starting. Publication swaps the index after all new shards exist, then removes the old generation. A running dataset retains its old index and can fail with <code>FileNotFoundError</code> after that cleanup. Atomic index publication does not make live repacking safe; construct new datasets/loaders after repacking completes.</p>
+<p>Image bytes are copied verbatim — no re-encode — so a packed split decodes to exactly the same pixels as the directory it came from. A <code>.json</code> member next to each image carries that image's <code>image_id</code>, <code>file_name</code> and annotation list, segmentation polygons included.</p>
+<p><code>--category-ids</code> chooses the label space, and the index records the choice so the loader never has to guess:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Labels</th>
+<th>Matches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>remap</code> (default)</td>
+<td>contiguous <code>0..N-1</code>, unannotated grouping categories dropped</td>
+<td><code>dataset_file="roboflow"</code></td>
+</tr>
+<tr>
+<td><code>raw</code></td>
+<td>the source <code>category_id</code> values</td>
+<td><code>dataset_file="coco"</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="training-from-shards">Training from shards<a class="headerlink" href="#training-from-shards" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"/data/coco-shards"</span><span class="p">,</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>    <span class="n">dataset_file</span><span class="o">=</span><span class="s2">"webdataset"</span><span class="p">,</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a>    <span class="n">num_workers</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Install the reader with <code>pip install "rfdetr[data]"</code>.</p>
+<p><code>num_classes</code> auto-detects from <code>train-index.json</code> when not set on the model, the same as the other formats — under <code>raw</code>, that is the <strong>highest <code>id</code> in <code>categories</code>, plus one</strong> (COCO's own ids run 1-90 with gaps for its 80 categories, so <code>len(categories)</code> undercounts it — the same <code>max_obj_id + 1</code> convention <code>dataset_file="coco"</code> uses); under <code>remap</code>, it is simply the number of categories left after grouping nodes are dropped. Class <em>names</em> are read from the same index, indexed by the same labels the loader emits, so checkpoints and <code>predict()</code> label output are unaffected. Pass <code>num_classes</code> explicitly to override auto-detection, e.g. to keep a pretrained head's width.</p>
+<h3 id="how-an-epoch-is-sized">How an epoch is sized<a class="headerlink" href="#how-an-epoch-is-sized" title="Permanent link">&para;</a></h3>
+<p>A streaming dataset has no index to sample from, so the two loaders size an epoch differently:</p>
+<ul>
+<li><strong>Training</strong> gives every worker the same fixed number of samples, with full batches per worker and full accumulation windows across each rank. For <code>W = max(1, num_workers)</code> workers and <code>A = max(1, grad_accum_steps)</code>, each worker's count is floored to a multiple of <code>batch_size × A / gcd(W, A)</code>. For example, two workers with batch size 4 and accumulation 2 need only 4 samples each: together they supply one complete accumulation window. The epoch length is then exact, which is what the LR schedule needs — it is derived from <code>trainer.estimated_stepping_batches</code>. The cost is that a worker holding fewer shards than average repeats some of its own samples inside the epoch.</li>
+<li><strong>Validation and test</strong> let every worker drain its shards once, so the split is scored exactly once with nothing repeated or dropped. Those loaders report no length, so their progress bar shows no total.</li>
+</ul>
+<p>The test stage uses a packed <code>test</code> split when the directory has one, and falls back to <code>val</code> with a log line when it does not — a shard directory only has a split someone packed deliberately.</p>
+<p>Training raises a <code>ValueError</code> rather than starting if <code>world_size × num_workers</code> exceeds the shard count, because a worker left without a shard would silently shorten every epoch. Pack with a smaller <code>--max-shard-mb</code> to get more shards, or lower <code>num_workers</code>.</p>
+<h3 id="pack-plenty-of-shards">Pack plenty of shards<a class="headerlink" href="#pack-plenty-of-shards" title="Permanent link">&para;</a></h3>
+<p>Shards are split across workers by count, so an uneven split leaves the worst-served worker short of the samples a fixed epoch asks of it: it repeats some of its own while better-supplied workers leave some unseen. This is measurable. On a 2,000-image, 3-epoch fine-tune at <code>num_workers=8</code>, packing into 39 shards — the short worker 18% under the average — scored about 0.011 <code>mAP@50:95</code> below the loose-file loader; re-packing the identical split into 290 shards, 0.6% under, matched it. The loader logs a warning when that shortfall passes 5%, measured from each shard's real sample count (shards are cut by byte size, so a count-only estimate can be badly wrong when image sizes vary a lot within a split).</p>
+<p>Aim for a shard count that divides <code>world_size × num_workers</code>, or simply for many more shards than workers. <code>--max-shard-mb</code> is the knob.</p>
+<h3 id="shuffling">Shuffling<a class="headerlink" href="#shuffling" title="Permanent link">&para;</a></h3>
+<p>Shard visiting order is shuffled, and samples are shuffled again in a reservoir buffer as they stream. That is a local shuffle, not the global permutation <code>shuffle=True</code> gives a map-style loader: two samples in the same shard stay more likely to land in the same epoch region. The loader uses a dedicated generator initialized from the dataset seed on every rank, so rank-local random draws cannot change the shared pre-split shard permutation. Restarted workers receive the next generator seed; persistent workers retain their initial seed and advance a local epoch counter. Augmentation and reservoir seeds remain rank- and worker-specific. All ranks must use the same dataset seed, worker configuration and epoch sequence. This does not guarantee identical sample order across worker configurations or checkpoint-resumed runs.</p>
+<h3 id="not-covered">Not covered<a class="headerlink" href="#not-covered" title="Permanent link">&para;</a></h3>
+<p>Keypoint training rejects <code>dataset_file="webdataset"</code> with an explicit error. Its label space is inferred from a whole parsed COCO annotation file, which a shard index does not carry — use <code>coco</code>, <code>roboflow</code> or <code>yolo</code> for keypoints. Detection and segmentation splits are supported.</p>
+<hr />
 <h2 id="converting-between-formats">Converting Between Formats<a class="headerlink" href="#converting-between-formats" title="Permanent link">&para;</a></h2>
 <h3 id="yolo-to-coco">YOLO to COCO<a class="headerlink" href="#yolo-to-coco" title="Permanent link">&para;</a></h3>
 <p>You can use the <a href="https://github.com/roboflow/supervision">supervision</a> library to convert datasets:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># Load YOLO dataset</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_yolo</span><span class="p">(</span>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span>
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"path/to/labels"</span><span class="p">,</span>
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"path/to/data.yaml"</span><span class="p">,</span>
-</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="p">)</span>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>
-</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="c1"># Save as COCO</span>
-</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_coco</span><span class="p">(</span><span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"output/annotations.json"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="c1"># Load YOLO dataset</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_yolo</span><span class="p">(</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>    <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"path/to/labels"</span><span class="p">,</span>
+</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>    <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"path/to/data.yaml"</span><span class="p">,</span>
+</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="p">)</span>
+</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>
+</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="c1"># Save as COCO</span>
+</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_coco</span><span class="p">(</span><span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"output/annotations.json"</span><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="coco-to-yolo">COCO to YOLO<a class="headerlink" href="#coco-to-yolo" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="c1"># Load COCO dataset</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_coco</span><span class="p">(</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"path/to/annotations.json"</span>
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="p">)</span>
-</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>
-</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="c1"># Save as YOLO</span>
-</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_yolo</span><span class="p">(</span>
-</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"output/labels"</span><span class="p">,</span> <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"output/data.yaml"</span>
-</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="c1"># Load COCO dataset</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">dataset</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">DetectionDataset</span><span class="o">.</span><span class="n">from_coco</span><span class="p">(</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span> <span class="n">annotations_path</span><span class="o">=</span><span class="s2">"path/to/annotations.json"</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="p">)</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="c1"># Save as YOLO</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="n">dataset</span><span class="o">.</span><span class="n">as_yolo</span><span class="p">(</span>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>    <span class="n">images_directory_path</span><span class="o">=</span><span class="s2">"output/images"</span><span class="p">,</span> <span class="n">annotations_directory_path</span><span class="o">=</span><span class="s2">"output/labels"</span><span class="p">,</span> <span class="n">data_yaml_path</span><span class="o">=</span><span class="s2">"output/data.yaml"</span>
+</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="using-roboflow">Using Roboflow<a class="headerlink" href="#using-roboflow" title="Permanent link">&para;</a></h3>
 <p><a href="https://roboflow.com">Roboflow</a> provides a web interface to:</p>
@@ -3414,7 +3685,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="format-detection-fails">Format Detection Fails<a class="headerlink" href="#format-detection-fails" title="Permanent link">&para;</a></h3>
 <p>If you see an error like:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>Could not detect dataset format in /path/to/dataset
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>Could not detect dataset format in /path/to/dataset
 </span></code></pre></div>
 <p>Check that:</p>
 <p><strong>For COCO format:</strong></p>
@@ -3454,7 +3725,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 12, 2026 14:13:29 UTC">2026-08-12 14:13:29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 9, 2026 13:18:42 UTC">2026-09-09 13:18:42</span>
   </span>
 
     
