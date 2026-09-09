@@ -57,12 +57,12 @@ train = [
     # Default COCO evaluation backend (MIT, numpy-only runtime dependency, cp39-abi3 wheels for manylinux2014
     # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
     # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
-    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. Keep the floor at 0.5;
-    # earlier releases were never checked against the adapter's parity tests. The ceiling is deliberate: three of
-    # the hotcoco behaviors the adapter works around fail silently rather than loudly (copy-on-read `params` and
-    # `dataset`, bytes RLE counts), so a pre-1.0 minor must be re-verified against the parity tests before it is
-    # allowed in, which is what the tight ceiling forces. Installing it also puts a generically-named `coco`
-    # console script on PATH.
+    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The exact pin is
+    # deliberate: two of the hotcoco behaviors the adapter works around still fail silently rather than loudly on
+    # 1.0.0 — its `dataset` getter returns a copy, and its own `mask.encode` emits RLE counts as bytes that its
+    # own COCO constructor reads back as an empty mask, collapsing mask AP to 0.0 without raising. Pinning exactly
+    # makes every hotcoco release an explicit, parity-tested upgrade rather than something a user's resolver can
+    # pick up unverified. Installing it also puts a generically-named `coco` console script on PATH.
     "hotcoco==1.0.0",
     "faster-coco-eval>=1.7.2",
     "pycocotools",

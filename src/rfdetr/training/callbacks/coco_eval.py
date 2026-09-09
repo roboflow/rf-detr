@@ -131,15 +131,11 @@ class COCOEvalCallback(Callback):
     Args:
         max_dets: Maximum detections per image passed to
             ``MeanAveragePrecision``. Defaults to :data:`~rfdetr.evaluation.keypoint_oks.DEFAULT_KEYPOINT_MAX_DETS`.
-        segmentation: When ``True``, evaluate both bbox and segm IoU using
-            ``backend="faster_coco_eval"``. Defaults to ``False``.
+        segmentation: When ``True``, evaluate both bbox and segm IoU. Defaults to ``False``.
         eval_interval: Run validation metrics every N epochs. Test metrics are
             always computed when ``trainer.test()`` is called.
         log_per_class_metrics: When ``False``, skip per-class AP computation
             (``MeanAveragePrecision(class_metrics=False)``) as well as the per-class logging/table.
-        eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`. Both
-            backends return identical metrics; ``"hotcoco"`` is the faster default and ``"faster_coco_eval"`` is
-            the previous evaluator.
         eval_ema_only: Deprecated compatibility flag from the pre-1.10 callback API. When explicitly supplied,
             ``True`` selects EMA-only evaluation and ``False`` selects base-plus-EMA evaluation, preserving the old
             keyword and positional behavior. Omit it for the new default.
@@ -149,6 +145,10 @@ class COCOEvalCallback(Callback):
             is skipped and its predictions are routed to the EMA track. When ``True``,
             ``validation_step`` forwards the base model and this callback runs the second, EMA
             forward pass, so both models are evaluated from independent predictions.
+        eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`. Both
+            backends return identical metrics; ``"hotcoco"`` is the faster default and ``"faster_coco_eval"`` is
+            the previous evaluator. Appended after the existing parameters rather than grouped with the other
+            evaluation knobs, so that positional callers keep binding the arguments they always did.
     """
 
     def __init__(
@@ -157,11 +157,11 @@ class COCOEvalCallback(Callback):
         segmentation: bool = False,
         eval_interval: int = 1,
         log_per_class_metrics: bool = True,
-        eval_backend: Literal["hotcoco", "faster_coco_eval"] = "hotcoco",
         keypoint_oks_sigmas: list[float] | None = None,
         in_notebook: bool | None = None,
         eval_ema_only: bool | None = None,
         eval_base_model: bool | None = None,
+        eval_backend: Literal["hotcoco", "faster_coco_eval"] = "hotcoco",
     ) -> None:
         super().__init__()
         self._max_dets = max_dets

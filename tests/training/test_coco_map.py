@@ -6,6 +6,7 @@
 """Contract tests for RF-DETR's one-pass TorchMetrics COCO adapter."""
 
 import sys
+import warnings
 from typing import Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -849,9 +850,10 @@ def test_hotcoco_backend_matches_faster_coco_eval_for_segmentation() -> None:
 def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
     """A configured maximum-detection threshold must change the metric it is supposed to change.
 
-    hotcoco's ``params`` getter returns a copy, so writing a field through it changes nothing and raises nothing.
-    Without this test the adapter could keep evaluating at COCO's default 100 detections while RF-DETR asked for
-    ``eval_max_dets``, and every metric would still look plausible.
+    hotcoco 0.5's ``params`` getter returned a copy, so writing a field through it changed nothing and raised nothing;
+    1.0.0 makes field writes take effect but still documents pull-edit-assign as the idiom. Without this test the
+    adapter could keep evaluating at COCO's default 100 detections while RF-DETR asked for ``eval_max_dets``, and every
+    metric would still look plausible.
     """
     pytest.importorskip(backend)
     boxes = torch.tensor([[float(index), 0.0, float(index) + 8.0, 8.0] for index in range(0, 60, 6)])
@@ -877,9 +879,11 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
 def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
     """Selecting hotcoco must not add backend chatter to a training run's console output.
 
-    hotcoco prints from Rust straight to the output file descriptors, so Python-level redirection does not reach
-    it: a COCO summary table plus one warning per overridden evaluator parameter would land on the console on
-    every validation epoch of every run.
+    hotcoco prints from Rust straight to the output file descriptors, where Python-level redirection does not reach
+    it: a COCO summary table plus one message per overridden evaluator parameter would land on the console on every
+    validation epoch of every run. 1.0.0 additionally raises each message as a warning, which
+    ``test_hotcoco_evaluation_raises_no_warnings`` covers -- the two channels are independent and each needs its own
+    assertion.
     """
     pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
@@ -894,6 +898,30 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) ->
     captured = capfd.readouterr()
     assert captured.out == ""
     assert captured.err == ""
+
+
+def test_hotcoco_evaluation_raises_no_warnings() -> None:
+    """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
+
+    hotcoco 1.0.0 reports every evaluator parameter differing from the COCO defaults on two independent channels: a
+    write to descriptor 2 from Rust, and a Python warning. RF-DETR overrides ``maxDets``, and torchmetrics keeps its
+    thresholds in float32, so the IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three of
+    each per ``compute()`` on a real configuration. The descriptor copy is what
+    ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning copy reaches a caller's ``catch_warnings``, a
+    notebook cell, or a ``-W error`` run whatever the descriptors do.
+    """
+    pytest.importorskip("hotcoco")
+    predictions, targets = multiclass_detection_state()
+    metric = OnePassCocoMeanAveragePrecision(
+        backend="hotcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
+    )
+    metric.update(predictions, targets)
+
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        metric.compute()
+
+    assert [str(warning.message) for warning in raised] == []
 
 
 def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:

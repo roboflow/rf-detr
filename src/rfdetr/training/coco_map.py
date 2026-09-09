@@ -41,6 +41,7 @@ import inspect
 import io
 import os
 import sys
+import warnings
 from collections.abc import Callable, Iterator
 from typing import Any, Literal, cast
 
@@ -101,9 +102,10 @@ _BACKEND_KEYWORD_PARAMS: dict[str, tuple[str, ...]] = {
 # newly-required parameter upstream would make that call fail at compute() time instead of at construction.
 _EVALUATOR_ZERO_ARG_METHODS = ("evaluate", "accumulate", "summarize")
 _VAR_PARAM_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-# hotcoco requires every image entry to declare its size, but TorchMetrics emits bare ``{"id": ...}`` entries.
-# Mask sizes are recovered from each image's RLE; box-only evaluation never reads the image size (COCO area ranges
-# come from the annotations), so a placeholder stands in when no mask reveals the real one.
+# TorchMetrics emits bare ``{"id": ...}`` image entries. hotcoco 0.5 rejected those outright; 1.0.0 accepts them
+# and defaults the size to 0x0, so the injection now supplies a real size rather than avoiding an error. Mask sizes
+# are recovered from each image's RLE; box-only evaluation never reads the image size (COCO area ranges come from
+# the annotations), so a placeholder stands in when no mask reveals the real one.
 _PLACEHOLDER_IMAGE_SIZE = 1
 
 
@@ -126,18 +128,25 @@ def _hotcoco() -> Any:
 
 
 @contextlib.contextmanager
-def _silenced_rust_output() -> Iterator[None]:
-    """Silence writes to the standard output and error file descriptors, plus Python-level standard output.
+def _silenced_backend_diagnostics() -> Iterator[None]:
+    """Silence the configuration diagnostics hotcoco reports while an evaluation runs.
 
-    hotcoco prints from Rust, straight to the file descriptors, so :func:`contextlib.redirect_stdout` does not
-    reach it: ``summarize()`` puts a twelve-line COCO summary table on descriptor 1 and, on descriptor 2, one
-    warning for every evaluator parameter that differs from the COCO defaults. RF-DETR deliberately overrides
-    ``maxDets`` and ``iouThrs`` on every evaluation, so those warnings would repeat each validation epoch and each
-    IoU type while describing intended configuration. Genuine failures still surface: the bindings raise Python
-    exceptions rather than reporting errors on descriptor 2.
+    hotcoco reports every evaluator parameter that differs from the COCO defaults, plus a summary table. RF-DETR
+    overrides ``maxDets`` on every evaluation and hands over thresholds torchmetrics stores in float32, which
+    hotcoco reads as off-reference by ~2.4e-8, so those messages describe intended configuration and would
+    otherwise repeat each validation epoch and each IoU type.
+
+    Both channels have to be closed, because hotcoco 1.0.0 reports each message **twice**: once written from Rust
+    straight to descriptor 2, where :func:`contextlib.redirect_stdout` cannot reach it, and once as a
+    :class:`UserWarning`, which a descriptor redirect only catches while ``warnings`` happens to be writing
+    through :data:`sys.stderr`. Every ``UserWarning`` raised inside the window is dropped rather than an
+    enumerated set of messages: hotcoco has four of them today, one firing only on empty state, and matching on
+    text would silently stop working when a release rewords one. Nothing but the three backend calls runs inside
+    the window, so no other source can be caught by it, and genuine failures still surface as exceptions rather
+    than as writes to descriptor 2.
 
     Yields:
-        Nothing; both descriptors are restored on exit.
+        Nothing; the descriptors and the warning filters are restored on exit.
     """
     sys.stdout.flush()
     sys.stderr.flush()
@@ -146,7 +155,8 @@ def _silenced_rust_output() -> Iterator[None]:
     try:
         for descriptor in saved:
             os.dup2(devnull, descriptor)
-        with contextlib.redirect_stdout(io.StringIO()):
+        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+            warnings.simplefilter("ignore", UserWarning)
             yield
     finally:
         for descriptor, saved_descriptor in saved.items():
@@ -366,14 +376,17 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 continue
 
             evaluator_factory = cast(Callable[..., Any], self._coco_backend.cocoeval)
-            # The two backends spell the parameter differently and neither accepts the other's spelling. Passing it
-            # positionally would work on both, but then a parameter inserted before it upstream would bind the IoU
-            # type to the wrong slot and evaluate a detection run as segmentation, silently.
+            # The two backends spell the parameter differently; hotcoco 1.0.0 accepts faster-coco-eval's spelling
+            # too, but 0.5 did not and the dispatch costs nothing. Passing it positionally would work on both, but
+            # then a parameter inserted before it upstream would bind the IoU type to the wrong slot and evaluate
+            # a detection run as segmentation, silently.
             iou_type_keyword = "iou_type" if isinstance(self._coco_backend, _HotCocoBackend) else "iouType"
             coco_eval = evaluator_factory(coco_target, coco_preds, **{iou_type_keyword: iou_type})
-            # Whole-object assignment, not field-by-field mutation: hotcoco's `params` getter returns a copy, so
-            # writing a field through it is a silent no-op that would leave `max_detection_thresholds` at COCO's
-            # default 100 with no error. faster-coco-eval returns the live object, where this is equivalent.
+            # Whole-object assignment, not field-by-field mutation: on hotcoco 0.5 the `params` getter returned a
+            # copy, so writing a field through it was a silent no-op that left `max_detection_thresholds` at
+            # COCO's default 100 with no error. 1.0.0 makes field writes take effect but still documents
+            # pull-edit-assign as the supported idiom, and faster-coco-eval returns the live object, where this is
+            # equivalent -- so the one form that is correct everywhere is the whole-object assignment.
             params = coco_eval.params
             params.iouThrs = np.asarray(self.iou_thresholds, dtype=np.float64)
             params.recThrs = np.asarray(self.rec_thresholds, dtype=np.float64)
@@ -418,8 +431,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             The prediction and target datasets in the order ``_get_coco_datasets`` returns them, followed by the
             COCO-format dictionary the prediction dataset was built from, or ``None`` when it was loaded from a
             detection array instead. That dictionary is returned rather than read back from the dataset because
-            hotcoco keeps only the COCO fields it knows, dropping the ``area_bbox``/``area_segm`` values a
-            multi-IoU-type evaluation switches between; ``None`` is safe because the array path is taken only for
+            hotcoco's ``dataset`` getter is a copy, so the ``area_bbox``/``area_segm`` switch a multi-IoU-type
+            evaluation performs would be discarded (hotcoco 0.5 also dropped those non-COCO keys outright; 1.0.0
+            preserves them, but a copy is still a copy); ``None`` is safe because the array path is taken only for
             single-IoU-type evaluation, where no area switching happens.
 
         Raises:
@@ -624,7 +638,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             A context manager that silences the backend's COCO summary output.
         """
         if isinstance(self._coco_backend, _HotCocoBackend):
-            return _silenced_rust_output()
+            return _silenced_backend_diagnostics()
         return contextlib.redirect_stdout(io.StringIO())
 
     def _assign_detection_scores(self, annotations: list[dict[str, Any]]) -> None:
