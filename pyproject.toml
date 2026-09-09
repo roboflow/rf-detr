@@ -63,7 +63,7 @@ train = [
     # `dataset`, bytes RLE counts), so a pre-1.0 minor must be re-verified against the parity tests before it is
     # allowed in, which is what the tight ceiling forces. Installing it also puts a generically-named `coco`
     # console script on PATH.
-    "hotcoco>=0.5,<0.6",
+    "hotcoco==1.0.0",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
