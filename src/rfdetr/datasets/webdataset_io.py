@@ -162,10 +162,10 @@ def _validate_split_name(split: str) -> str:
     Examples:
         >>> _validate_split_name("train")
         'train'
-        >>> _validate_split_name("../escape")
+        >>> _validate_split_name("../escape")  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
-        ValueError: split '../escape' must not contain a path separator or '..'.
+        ValueError: split '../escape' must not contain a path separator, drive prefix, or '..'.
     """
     if not split or "/" in split or "\\" in split or ":" in split or split in (".", ".."):
         raise ValueError(f"split {split!r} must not contain a path separator, drive prefix, or '..'.")
