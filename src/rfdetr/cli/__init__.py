@@ -9,6 +9,12 @@ The ``rfdetr`` console script and ``python -m rfdetr`` both invoke :func:`main`,
 :class:`~rfdetr.training.cli.RFDETRCli` (Lightning CLI with jsonargparse).
 """
 
-from rfdetr.training.cli import main
-
 __all__ = ["main"]
+
+
+def main() -> None:
+    """Run the training CLI, loading its optional dependencies only when invoked."""
+    # Packing subcommands must remain usable without the training extra.
+    from rfdetr.training.cli import main as training_main
+
+    training_main()

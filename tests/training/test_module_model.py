@@ -8,12 +8,14 @@
 import logging
 import random
 import warnings
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 import torch
 from pytorch_lightning import Callback, Trainer
+from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
@@ -1022,6 +1024,32 @@ class TestTrainingStep:
         assert loss.item() == pytest.approx(1.0)
         backward_loss = module.manual_backward.call_args.args[0]
         assert backward_loss.item() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize(
+        "grad_accum_steps,num_training_batches,batch_idx,sync_grad",
+        [(2, 2, 0, False), (2, 4, 1, True), (4, 2, 1, True)],
+    )
+    def test_keypoint_accumulation_syncs_only_when_optimizer_steps(
+        self, tmp_path, grad_accum_steps, num_training_batches, batch_idx, sync_grad
+    ):
+        """Keypoint DDP must skip gradient synchronization until an accumulation window closes."""
+        keypoint_config = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            accumulate_grad_batches=grad_accum_steps,
+            model_config=keypoint_config,
+        )
+        optimizer = MagicMock(spec=LightningOptimizer)
+        optimizer.param_groups = [{"lr": 1e-3}]
+        optimizer.toggle_model.return_value = nullcontext()
+        optimizer.zero_grad = MagicMock()
+        module.optimizers.return_value = optimizer
+        module._trainer.num_training_batches = num_training_batches
+
+        module.training_step((samples, targets), batch_idx=batch_idx)
+
+        optimizer.toggle_model.assert_called_once_with(sync_grad=sync_grad)
+        module.manual_backward.assert_called_once()
 
     def test_detection_loss_uses_lightning_grad_accum_scaling(self, tmp_path):
         """Detection (automatic optimization) divides loss by ``trainer.accumulate_grad_batches`` so the returned loss
@@ -2888,6 +2916,25 @@ class TestConfigureOptimizers:
 
         assert optimizer.defaults.get("fused") is True
 
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_fused_optimizer_enabled_with_transformer_engine(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """Default FP8 uses BF16 weights, so the built-in fused AdamW path must remain active."""
+        module, param_dicts = self._setup_module(tmp_path)
+        mock_get_param_dict.return_value = param_dicts
+        module._trainer.precision = "transformer-engine"
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.defaults.get("fused") is True
+
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
     def test_fused_optimizer_disabled_when_cuda_unavailable(self, mock_cuda_available, tmp_path):
         """_use_fused_optimizer must return False when CUDA is not available, regardless of precision."""
@@ -3293,6 +3340,42 @@ class TestOnLoadCheckpoint:
 
     def test_no_pe_keys_in_state_dict_is_noop(self, build_module):
         """on_load_checkpoint must not raise when state_dict contains no PE keys."""
+        checkpoint = {
+            "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
+            "epoch": 1,
+        }
+        original_keys = set(checkpoint["state_dict"].keys())
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert set(checkpoint["state_dict"].keys()) == original_keys
+
+    def test_extra_state_keys_stripped_from_state_dict(self, build_module):
+        """on_load_checkpoint must remove `_extra_state` entries before PTL applies the state dict.
+
+        Under FP8, the live module's checkpointed state_dict carries Transformer Engine `_extra_state` entries recording
+        FP8 scaling history. `strict_loading=False` only tolerates their presence/absence after the fact — it does not
+        stop `load_state_dict()` from calling `set_extra_state()` for a key present in both the checkpoint and the
+        module, which Transformer Engine rejects on a pickle round-trip. The entries must therefore be excluded from
+        `checkpoint["state_dict"]` here, before PTL ever applies it.
+        """
+        checkpoint = {
+            "state_dict": {
+                "model.some_layer.weight": torch.randn(4, 4),
+                "model.some_layer._extra_state": b"fp8-scaling-history",
+            },
+            "epoch": 1,
+        }
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert "model.some_layer._extra_state" not in checkpoint["state_dict"]
+        assert "model.some_layer.weight" in checkpoint["state_dict"]
+
+    def test_no_extra_state_keys_in_state_dict_is_noop(self, build_module):
+        """on_load_checkpoint must not raise or alter keys when state_dict contains no `_extra_state` entries."""
         checkpoint = {
             "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
             "epoch": 1,

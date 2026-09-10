@@ -39,7 +39,7 @@ Your contributions can be in many forms—whether it’s enhancing existing feat
     git commit -m "A brief description of your changes"
     git push -u origin your-descriptive-name
     ```
-6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Please detail your changes and link any related issues.
+6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Fill in the [PR template](PULL_REQUEST_TEMPLATE.md) — summary, verification commands and their results, and any related issues.
 
 Before merging, check that all tests pass and that your changes adhere to our development and documentation standards.
 
@@ -136,7 +136,7 @@ uv venv
 
 # Install the extras and groups the CPU test job uses (add ,coreml on macOS).
 # --torch-backend=cpu keeps this from pulling a CUDA build of PyTorch.
-uv pip install -e ".[train,augment,cli,visual]" --group tests --torch-backend=cpu
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 
 # Docs or build work only, without the test extras
 uv sync --group docs       # Documentation dependencies only
@@ -151,6 +151,7 @@ The test suite imports the training and augmentation dependencies, so installing
 
 ### Optional Extras
 
+- `rfdetr[data]` installs the WebDataset streaming reader.
 - `rfdetr[train]` installs the minimal training loop dependencies and uses torchvision-native default augmentations.
 - `rfdetr[augment]` installs Albumentations (custom CPU `aug_config` dictionaries and built-in presets) and Kornia (GPU-side augmentation with `augmentation_backend="gpu"` or `"auto"`).
 
@@ -443,6 +444,8 @@ This step is essential before any merge can occur.
 ## Google-Style Docstrings and Mandatory Type Hints
 
 For clarity and maintainability, any new functions or classes must include [Google-style docstrings](https://google.github.io/styleguide/pyguide.html) and use Python type hints. Type hints are mandatory in all function definitions, ensuring explicit parameter and return type declarations.
+
+Document constants with `#: explanation` immediately above the assignment, not standalone triple-quoted strings. Keep docstrings for modules, classes and functions.
 
 > [!IMPORTANT]
 >
