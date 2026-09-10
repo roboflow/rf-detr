@@ -35,6 +35,20 @@ class TestDecodeDetections:
 
         np.testing.assert_allclose(decoded.xyxy, np.array([[0.0, 0.0, 100.0, 50.0]], dtype=np.float32))
 
+    def test_clamps_out_of_bounds_boxes_to_source_image(self) -> None:
+        """Boxes extending beyond the source image stop at its pixel bounds.
+
+        Box regression is unbounded, so an exported model can produce coordinates below zero or beyond the image edge.
+        The shared decoder must match ``PostProcess`` by retaining those values only through conversion, then clipping
+        every pixel coordinate to the source width and height.
+        """
+        boxes = np.array([[0.5, 0.5, 1.5, 2.0]], dtype=np.float32)
+        logits = np.array([[9.0]], dtype=np.float32)
+
+        decoded = decode_detections(boxes, logits, (100, 50), background_class_id=None)
+
+        np.testing.assert_allclose(decoded.xyxy, np.array([[0.0, 0.0, 100.0, 50.0]], dtype=np.float32))
+
     def test_scores_are_per_class_sigmoid(self) -> None:
         """Confidence is an independent per-class sigmoid, not a softmax over classes.
 
