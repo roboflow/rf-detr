@@ -557,6 +557,8 @@ def build_trainer(
     # --- Precision resolution ---
     def _resolve_precision() -> str:
         if not model_config.amp:
+            if tc.amp_dtype == "fp8":
+                raise ValueError("amp_dtype='fp8' requires model_config.amp=True.")
             if tc.amp_dtype != "auto":
                 warnings.warn(
                     f"amp_dtype={tc.amp_dtype!r} has no effect when model_config.amp=False.",
@@ -564,6 +566,9 @@ def build_trainer(
                     stacklevel=2,
                 )
             return "32-true"
+        # Honor explicit accelerators and Lightning's XLA-first auto selection before probing global CUDA.
+        if tc.amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
+            raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":
@@ -571,7 +576,8 @@ def build_trainer(
         # ``train_config.amp_dtype`` (a train() kwarg) lets callers pin the autocast dtype (see issue #1132):
         #   "auto" — bf16 on bf16-capable CUDA, fp16 otherwise (historical default);
         #   "fp16" — force "16-mixed" (e.g. deployment targets without bf16 support);
-        #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported.
+        #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported;
+        #   "fp8" — use Lightning's Transformer Engine precision plugin.
         # Unrecognised values are coerced to "auto" (with a warning) by TrainConfig validation.
         amp_dtype = tc.amp_dtype
         # Ampere+ GPUs support bf16-mixed which is scaler-free —
@@ -589,6 +595,27 @@ def build_trainer(
         # parent has initialised. If a fork-based path is ever added, this
         # precision check must be moved into the child process.
         if torch.cuda.is_available():
+            if amp_dtype == "fp8":
+                # Transformer Engine's FP8 tensor-core path requires Ada (compute capability 8.9),
+                # Hopper (9.0), or newer (e.g. Blackwell) — older CUDA GPUs such as A100/T4 are
+                # CUDA-visible but not FP8-capable and would otherwise reach TE's plugin/kernel
+                # initialization and fail there instead of at this clear rejection.
+                _min_fp8_capability = (8, 9)
+                unsupported_devices = [
+                    index
+                    for index in range(torch.cuda.device_count())
+                    if torch.cuda.get_device_capability(index) < _min_fp8_capability
+                ]
+                if unsupported_devices:
+                    names = ", ".join(
+                        f"cuda:{index} ({torch.cuda.get_device_name(index)})" for index in unsupported_devices
+                    )
+                    raise ValueError(
+                        "amp_dtype='fp8' requires a Transformer Engine-supported NVIDIA GPU "
+                        "(Ada, Hopper, or newer; compute capability >= 8.9). "
+                        f"Unsupported visible device(s): {names}."
+                    )
+                return "transformer-engine"
             if amp_dtype == "fp16":
                 return "16-mixed"
             if amp_dtype == "bf16":
@@ -608,6 +635,8 @@ def build_trainer(
             # amp_dtype == "auto"
             return "bf16-mixed" if torch.cuda.is_bf16_supported() else "16-mixed"
         if torch.backends.mps.is_available():
+            if amp_dtype == "fp8":
+                raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
             if amp_dtype == "bf16":
                 _logger.warning(
                     "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast."
@@ -618,6 +647,8 @@ def build_trainer(
                     stacklevel=2,
                 )
             return "16-mixed"
+        if amp_dtype == "fp8":
+            raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
         return "32-true"
 
     # --- Strategy + EMA sharding guard ---
@@ -625,6 +656,12 @@ def build_trainer(
     devices = trainer_kwargs.get("devices", tc.devices)
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
     has_keypoints = bool(model_config.use_grouppose_keypoints)
+    if tc.amp_dtype == "fp8" and _is_sharded_strategy(strategy):
+        raise ValueError(
+            "amp_dtype='fp8' is not compatible with FSDP or DeepSpeed strategies because Lightning's "
+            "Transformer Engine precision plugin cannot replace their strategy-owned precision plugin. "
+            "Use strategy='ddp' or 'auto', or select bf16/fp16 for sharded training."
+        )
     if (
         xla_accelerator
         and not has_keypoints
