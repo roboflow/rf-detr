@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-07T07:57:16">
+  <meta property="article:modified_time" content="2026-09-10T10:19:36">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-07T07:57:16",
+    "dateModified": "2026-09-10T10:19:36",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2378,10 +2378,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-five-non-default-arguments" class="md-nav__link">
+  <a href="#training-settings" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The five non-default arguments
+        Training settings
       
     </span>
   </a>
@@ -2389,10 +2389,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
-  <a href="#levers-deliberately-not-pulled" class="md-nav__link">
+  <a href="#fp8-and-compilation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Levers deliberately not pulled
+        FP8 and compilation
       
     </span>
   </a>
@@ -3165,12 +3165,12 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h1 id="train-rf-detr-nano-on-coco2017-high-end-gpu">Train RF-DETR Nano on COCO2017 (high-end GPU)<a class="anchor-link" href="#train-rf-detr-nano-on-coco2017-high-end-gpu">¶</a></h1><p><a href="https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/docs/cookbooks/train-coco2017.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a></p>
 <p>Downloads the full public <strong>COCO2017</strong> dataset and trains <strong>RF-DETR Nano</strong> for 40 epochs, end to end. This
-notebook is <strong>sized for a high-end GPU</strong> — an A100, an H100, or an RTX PRO 6000 (e.g. Colab Pro+ with an A100
-runtime, or a GCP G4 VM) — and its batch size, RAM-disk step, and worker count all assume that class of machine.
-It still runs on a smaller GPU (T4/L4): switch <code>batch_size</code> back to <code>"auto"</code> in the training cell and the rest
-adapts, but expect the run to take far longer, and skip the RAM-disk move on a low-RAM host — it needs ~19 GB
-free in <code>/dev/shm</code>.</p>
-<p>The throughput work is all in the shipped defaults — the notebook adds host-adaptive knobs (<code>num_workers</code>,
+notebook uses <strong>FP8 and torch.compile on Linux x86-64 with a supported NVIDIA GPU</strong>, such as an H100 or
+RTX PRO 6000 Blackwell. Its batch size assumes an 80+ GB GPU. On smaller supported GPUs, choose a smaller
+integer <code>batch_size</code>; FP8 does not support automatic batch sizing. A100, T4, CPU, and Apple MPS cannot run this recipe; use
+<code>amp_dtype="bf16"</code>, or <code>amp_dtype="auto"</code> for ordinary training without Transformer Engine.
+Skip the RAM-disk move on a low-RAM host — it needs ~19 GB free in <code>/dev/shm</code>.</p>
+<p>In addition to default throughput improvements, this notebook enables FP8 and compilation, with host-adaptive knobs (<code>num_workers</code>,
 <code>seed</code>), a batch size measured on high-end hardware, and a learning-rate schedule sized for a 40-epoch run, each
 explained where it is set.</p>
 <p>Kept deliberately minimal: download, train, plot the metrics <code>CSVLogger</code> wrote during training. For dataset
@@ -3201,8 +3201,7 @@ an internal L4 measurement on a ~6,900-image dataset with <code>rfdetr-small</co
 <code>rfdetr-nano</code> is smaller and runs at a lower resolution than <code>rfdetr-small</code>, which pulls the other way. Expect the
 full 40-epoch run to take multiple hours even on a fast GPU.</p>
 <blockquote>
-<p><strong>On the target hardware (A100/H100/RTX PRO 6000) the full 40-epoch run fits comfortably in one session</strong>, and
-Colab Pro+ background execution keeps it alive with the browser closed. Training still checkpoints every
+<p><strong>Session limits vary; do not assume all 40 epochs will fit in one session.</strong> Training still checkpoints every
 <code>checkpoint_interval</code> epochs (10 by default) to <code>last.ckpt</code> as a safety net: if a session does disconnect,
 reopen the notebook, set <code>train_config.resume</code> to that file's path, and re-run the training cell to continue.
 On a free-tier T4/L4 the session is likely to end before 40 epochs do — plan on resuming.</p>
@@ -3344,12 +3343,14 @@ print("COCO2017 is complete.")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="2-set-up-the-environment">2 - Set up the environment<a class="anchor-link" href="#2-set-up-the-environment">¶</a></h2><p>The training-throughput work described above has not shipped in a tagged release yet, so this cell installs from
-the <code>develop</code> branch. Once a release containing it is out, replace this with
-<code>pip install -q "rfdetr[train,augment,visual]&gt;=1.10.0"</code>.</p>
-<p><strong>GPU required.</strong> Training needs a CUDA GPU, and this notebook's batch size assumes a high-end one — in Colab:
-<strong>Runtime → Change runtime type → A100 GPU</strong> (Pro/Pro+ plans; also enable High-RAM so the <code>/dev/shm</code> move below
-fits).</p>
+<h2 id="2-set-up-the-environment">2 - Set up the environment<a class="anchor-link" href="#2-set-up-the-environment">¶</a></h2><p>This recipe targets the maintained <code>develop</code> branch after FP8 support is merged; it requires the <code>cuda</code> extra.
+The extra installs <code>transformer-engine[pytorch]</code> (not <code>[torch]</code> or the empty metapackage).</p>
+<p>Before installation, provide CUDA-enabled PyTorch, CUDA toolkit headers, cuDNN, and a compiler for the
+PyTorch extension. Blackwell needs CUDA 12.8 or later; a GPU driver alone is insufficient. Match TE's
+<code>core_cu12</code> / <code>core_cu13</code> and extension build to your environment: the resolver may select CUDA 13 even
+when PyTorch reports CUDA 12.8. See the <a href="../learn/train/advanced.md#install-the-cuda-extra">advanced FP8 setup guide</a>
+and <a href="https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/installation.html">NVIDIA prerequisites</a>.
+Restart the kernel after installation. The verification cell below must succeed before training.</p>
 </div>
 </div>
 </div>
@@ -3372,9 +3373,9 @@ fits).</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[train,augment,visual] @ git+https://github.com/roboflow/rf-detr.git@develop"</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">pip</span> <span class="n">install</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">build</span><span class="o">-</span><span class="n">isolation</span> <span class="s2">"rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">!pip install -q "rfdetr[train,augment,visual] @ git+https://github.com/roboflow/rf-detr.git@develop"</div>
+<div class="clipboard-copy-txt" id="cell-3">%pip install --no-build-isolation "rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"</div>
 </div>
 </div>
 </div>
@@ -3471,15 +3472,22 @@ loader and the pretrained checkpoint both already use, so it does not need to be
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">importlib.metadata</span><span class="w"> </span><span class="kn">import</span> <span class="n">version</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">transformer_engine.pytorch</span>  <span class="c1"># noqa: F401 - verify the compiled PyTorch extension imports</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.visualize.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">plot_loss_metrics</span><span class="p">,</span> <span class="n">plot_map_metrics</span>
 
 <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
-    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This notebook requires a CUDA GPU. In Colab: Runtime -&gt; Change runtime type -&gt; A100 GPU."</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This FP8 recipe requires a supported NVIDIA CUDA GPU, not CPU or MPS."</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"Transformer Engine:"</span><span class="p">,</span> <span class="n">version</span><span class="p">(</span><span class="s2">"transformer-engine"</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"PyTorch:"</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">__version__</span><span class="p">,</span> <span class="s2">"CUDA:"</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">version</span><span class="o">.</span><span class="n">cuda</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"GPU:"</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+<span class="c1"># Import and device checks do not prove FP8 kernel compatibility; run the short training check below.</span>
 
 <span class="c1"># Repeated from the verification cell so this section still runs on its own after a runtime restart.</span>
 <span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"datasets/coco2017"</span><span class="p">)</span>
@@ -3490,22 +3498,29 @@ loader and the pretrained checkpoint both already use, so it does not need to be
 <span class="n">EPOCHS</span> <span class="o">=</span> <span class="mi">40</span>
 <span class="c1"># Capped: measured on a 48-core host, uncapped workers sat ~15% CPU-utilized while holding ~70% of RAM.</span>
 <span class="n">NUM_WORKERS</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="ow">or</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>
-<span class="c1"># Batch 128 was measured at ~80% GPU memory on a high-end (80+ GB) GPU — sized for an A100, H100, or</span>
-<span class="c1"># RTX PRO 6000. On a smaller GPU replace this with "auto" and the probe finds the largest batch that fits.</span>
+<span class="c1"># Starting batch for an 80+ GB GPU; FP8 + compile memory usage still needs measurement.</span>
+<span class="c1"># On a smaller supported GPU choose a smaller integer; FP8 cannot use automatic batch sizing.</span>
 <span class="n">BATCH_SIZE</span> <span class="o">=</span> <span class="mi">128</span>
 
-<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">()</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-5">import os
+from importlib.metadata import version
 from pathlib import Path
 
 import torch
+import transformer_engine.pytorch  # noqa: F401 - verify the compiled PyTorch extension imports
 
 from rfdetr import RFDETRNano
 from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics
 
 if not torch.cuda.is_available():
-    raise RuntimeError("This notebook requires a CUDA GPU. In Colab: Runtime -&gt; Change runtime type -&gt; A100 GPU.")
+    raise RuntimeError("This FP8 recipe requires a supported NVIDIA CUDA GPU, not CPU or MPS.")
+
+print("Transformer Engine:", version("transformer-engine"))
+print("PyTorch:", torch.__version__, "CUDA:", torch.version.cuda)
+print("GPU:", torch.cuda.get_device_name(0))
+# Import and device checks do not prove FP8 kernel compatibility; run the short training check below.
 
 # Repeated from the verification cell so this section still runs on its own after a runtime restart.
 COCO_ROOT = Path("datasets/coco2017")
@@ -3516,11 +3531,11 @@ OUTPUT_DIR = "output/det_coco2017_nano"
 EPOCHS = 40
 # Capped: measured on a 48-core host, uncapped workers sat ~15% CPU-utilized while holding ~70% of RAM.
 NUM_WORKERS = min(os.cpu_count() or 2, 16)
-# Batch 128 was measured at ~80% GPU memory on a high-end (80+ GB) GPU — sized for an A100, H100, or
-# RTX PRO 6000. On a smaller GPU replace this with "auto" and the probe finds the largest batch that fits.
+# Starting batch for an 80+ GB GPU; FP8 + compile memory usage still needs measurement.
+# On a smaller supported GPU choose a smaller integer; FP8 cannot use automatic batch sizing.
 BATCH_SIZE = 128
 
-model = RFDETRNano()  # type: ignore[no-untyped-call]</div>
+model = RFDETRNano(compile=True)  # type: ignore[no-untyped-call]</div>
 </div>
 </div>
 </div>
@@ -3536,19 +3551,19 @@ model = RFDETRNano()  # type: ignore[no-untyped-call]</div>
 <h2 id="5-train">5 - Train<a class="anchor-link" href="#5-train">¶</a></h2><p><code>model.train()</code> builds the <code>TrainConfig</code> and hands the rest to PyTorch Lightning: forward pass, bipartite
 matching loss, weight updates, learning-rate scheduling, and periodic COCO mAP validation.</p>
 <p><code>CSVLogger</code> appends one row of metrics per epoch to <code>output_dir/metrics.csv</code>, plotted below. The progress bar
-reports elapsed time per epoch — use the first completed epoch to size how long the remaining 39 will take on your
-GPU before deciding whether to let this run uninterrupted or resume it across multiple sessions.</p>
+reports elapsed time per epoch. Compilation adds startup overhead: time subsequent epochs separately.
+First try <code>EPOCHS=1</code> to verify training, validation, EMA, and shutdown before committing to 40 epochs.</p>
 <p>To <strong>resume an interrupted run</strong>, add <code>resume=f"{OUTPUT_DIR}/last.ckpt"</code> to the call below and re-run this cell.
 <code>last.ckpt</code> is rewritten every epoch (the archive <code>checkpoint_&lt;epoch&gt;.ckpt</code> files follow <code>checkpoint_interval</code>,
 10 by default), so a disconnect costs at most the epoch in flight.</p>
-<h3 id="the-five-non-default-arguments">The five non-default arguments<a class="anchor-link" href="#the-five-non-default-arguments">¶</a></h3><ul>
-<li><strong><code>batch_size=128</code></strong> — measured at ~80% of GPU memory on an 80+ GB GPU, leaving headroom for the multi-scale
-ladder's largest resolution and for memory fragmentation over a long run. Two things to know when changing it:
+<h3 id="training-settings">Training settings<a class="anchor-link" href="#training-settings">¶</a></h3><ul>
+<li><strong><code>batch_size=128</code></strong> — a starting point for an 80+ GB GPU, not a measured FP8 + compile memory guarantee.
+Two things to know when changing it:
 the default <code>lr=1e-4</code> was tuned around an effective batch of 16, and this notebook leans on cosine-plus-warmup
 rather than rescaling <code>lr</code> for the 8x larger batch — if you tune, the linear-scaling heuristic is the place to
-start. And on a smaller GPU, set <code>batch_size="auto"</code>: the probe finds the largest safe micro-batch and raises
-<code>grad_accum_steps</code> toward an effective batch of 16 (<code>"auto"</code> works only through <code>model.train()</code>; building the
-Lightning modules by hand requires a concrete integer).</li>
+start. On a smaller GPU, reduce the integer batch size and adjust <code>grad_accum_steps</code> to preserve the desired
+effective batch. FP8 rejects <code>batch_size="auto"</code>: its probe does not exercise Transformer Engine layers.
+With ordinary BF16/FP16, automatic sizing remains available through <code>model.train()</code>.</li>
 <li><strong><code>num_workers</code></strong> — the default is <code>2</code>, which is fine for the few-thousand-image datasets in the other
 cookbooks and far too low for COCO2017: 118k JPEGs have to be decoded and resized every epoch, and two worker
 processes cannot keep a modern GPU fed. But more is not simply better — on a 48-core host with this exact
@@ -3568,13 +3583,16 @@ from first step to last, so the mAP curve plateaus noisily with no final refinem
 from the run's own total step count, so it decays correctly no matter how many epochs or how large a batch the
 GPU ends up with, and the one-epoch linear warmup keeps the first steps stable.</li>
 </ul>
-<h3 id="levers-deliberately-not-pulled">Levers deliberately not pulled<a class="anchor-link" href="#levers-deliberately-not-pulled">¶</a></h3><p>One further speedup exists but changes the recipe rather than the schedule, so this notebook leaves it alone.
-With <code>multi_scale=True</code> (the default) and <code>do_random_resize_via_padding=False</code>, training runs at the largest
-scale of the multi-scale ladder — 544 px for Nano, while validation and inference stay at 384 px. Setting
-<code>multi_scale=False</code> trains at 384 px instead (roughly half the pixels). Separately, <code>augmentation_backend="gpu"</code>
-moves augmentation off the CPU workers — a rescue for CPU-starved runtimes (a 2-core Colab), and exactly
-backwards on this notebook's target: with the CPU mostly idle and the GPU saturated, it would add work to the
-bottleneck and take it away from idle cores.</p>
+<h3 id="fp8-and-compilation">FP8 and compilation<a class="anchor-link" href="#fp8-and-compilation">¶</a></h3><p><code>amp_dtype="fp8"</code> selects Lightning's Transformer Engine precision plugin; incompatible layers stay in
+higher precision. <code>RFDETRNano(compile=True)</code> enables CUDA compilation. This recipe uses <code>multi_scale=False</code>
+to train Nano at a fixed 384 px; CUDA compilation also supports multiscale training. This replaces
+the previous recipe's 544 px workload and may change accuracy.
+No combined FP8 + compile speedup is measured here. Compare compile on/off at the same fixed resolution,
+batch size, and precision; record warm-up separately, peak memory, and validation mAP. Validate resume
+separately before relying on full FP8 checkpoints. Never enable unsafe pickle loading as a routine workaround.</p>
+<p>Separately, <code>augmentation_backend="gpu"</code> moves augmentation off the CPU workers — a
+rescue for CPU-starved runtimes (a 2-core Colab), and exactly backwards on this notebook's target: with the CPU
+mostly idle and the GPU saturated, it would add work to the bottleneck and take it away from idle cores.</p>
 </div>
 </div>
 </div>
@@ -3609,6 +3627,8 @@ bottleneck and take it away from idle cores.</p>
     <span class="n">warmup_epochs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">tensorboard</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
     <span class="n">progress_bar</span><span class="o">=</span><span class="s2">"tqdm"</span><span class="p">,</span>
+    <span class="n">amp_dtype</span><span class="o">=</span><span class="s2">"fp8"</span><span class="p">,</span>
+    <span class="n">multi_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-6">model.train(
@@ -3623,6 +3643,8 @@ bottleneck and take it away from idle cores.</p>
     warmup_epochs=1,
     tensorboard=False,
     progress_bar="tqdm",
+    amp_dtype="fp8",
+    multi_scale=False,
 )</div>
 </div>
 </div>
@@ -3744,7 +3766,7 @@ plt.close(map_figure)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 7, 2026 07:57:16 UTC">2026-09-07 07:57:16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 10, 2026 10:19:36 UTC">2026-09-10 10:19:36</span>
   </span>
 
     

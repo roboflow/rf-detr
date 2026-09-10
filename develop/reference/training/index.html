@@ -5989,7 +5989,7 @@ for the non-fused path.</p>
     <div class="doc doc-contents ">
 
         <p>Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.</p>
-<p>PTL calls this hook before applying <code>checkpoint["state_dict"]</code> to the module.  Three normalisation steps are
+<p>PTL calls this hook before applying <code>checkpoint["state_dict"]</code> to the module.  Four normalisation steps are
 applied in order:</p>
 <ol>
 <li>
@@ -6003,6 +6003,16 @@ applied in order:</p>
    will mismatch. :func:<code>~rfdetr.models.weights.interpolate_position_embeddings</code> is called to bicubic-resize the
    PE to <code>model_config.positional_encoding_size</code> before PTL applies the state dict.  Regression fix for
    :issue:<code>998</code>.</p>
+</li>
+<li>
+<p><strong>FP8 extra-state removal</strong> — under Transformer Engine (<code>amp_dtype="fp8"</code>), the live module's
+   <code>state_dict()</code> carries <code>_extra_state</code> entries recording FP8 scaling history. Since <code>strict_loading</code>
+   is disabled on this module, <code>load_state_dict()</code> tolerates a missing or unexpected key afterward, but
+   that does not stop it from calling <code>set_extra_state()</code> for any such key present in both the checkpoint
+   and the module —
+   and Transformer Engine intentionally rejects pickle-deserialised extra state. The entries are removed from
+   <code>checkpoint["state_dict"]</code> here so the full-checkpoint resume path (<code>Trainer(ckpt_path=...)</code>) cannot
+   abort on them, mirroring :meth:<code>~rfdetr.training.callbacks.ema.RFDETREMACallback._without_extra_state</code>.</p>
 </li>
 <li>
 <p><strong>Converted format</strong> — a file produced by

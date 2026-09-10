@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-09T22:15:13">
+  <meta property="article:modified_time" content="2026-09-10T10:19:36">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-09T22:15:13",
+    "dateModified": "2026-09-10T10:19:36",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1243,6 +1243,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Hardware Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#training-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training precision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2756,6 +2773,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Hardware Parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#training-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Training precision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3239,6 +3273,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
+<h3 id="training-precision">Training precision<a class="headerlink" href="#training-precision" title="Permanent link">&para;</a></h3>
+<p><code>amp_dtype</code> accepts <code>"auto"</code>, <code>"bf16"</code>, <code>"fp16"</code>, or <code>"fp8"</code>. FP8 selects Lightning's Transformer Engine precision plugin, which replaces eligible linear and layer-normalization layers while retaining BF16 weights. FP8 requires a Transformer Engine-supported NVIDIA GPU and <code>model_config.amp=True</code>; it is rejected for CPU, MPS, TPU/XLA, FSDP, and DeepSpeed. Use DDP for multi-GPU FP8 training. Hardware support and speedups vary, so benchmark the exact model and GPU before adopting it.</p>
+<p>FP8 requires an explicit integer <code>batch_size</code>. Automatic batch sizing probes an unconverted model and is rejected with <code>amp_dtype="fp8"</code>; BF16/FP16 retain automatic sizing.</p>
+<p>See <a href="../advanced/#fp8-training-on-nvidia-cuda">Advanced Training — FP8 on NVIDIA CUDA</a> for the <code>cuda</code> extra, CUDA-version compatibility, an environment check, and troubleshooting. The extra does not enable FP8 automatically and does not support Apple MPS.</p>
 <h2 id="ema-exponential-moving-average">EMA (Exponential Moving Average)<a class="headerlink" href="#ema-exponential-moving-average" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -4090,7 +4128,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 9, 2026 22:15:13 UTC">2026-09-09 22:15:13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 10, 2026 10:19:36 UTC">2026-09-10 10:19:36</span>
   </span>
 
     
