@@ -1547,6 +1547,27 @@ class TestAffineScalarParameters:
         assert min(horizontal) < 0 < max(horizontal), horizontal
         assert min(vertical) < 0 < max(vertical), vertical
 
+    def test_scalar_translate_percent_warns_about_the_cpu_distribution(self) -> None:
+        """A fixed positive CPU scalar must not silently become signed GPU sampling."""
+        from unittest import mock
+
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets import kornia_transforms
+
+        cpu_affine = albumentations.Affine(translate_percent=0.1)
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            gpu_affine = kornia_transforms._make_affine({"translate_percent": 0.1, "p": 1.0})
+
+        assert cpu_affine.translate_percent == {"x": (0.1, 0.1), "y": (0.1, 0.1)}
+        assert tuple(float(value) for value in gpu_affine._param_generator.translate) == pytest.approx(
+            (0.1, 0.1), abs=1e-6
+        )
+        messages = [
+            call.args[0] % call.args[1:] if len(call.args) > 1 else call.args[0] for call in warn.call_args_list
+        ]
+        assert any("scalar" in message and "different distribution" in message for message in messages), messages
+
     def test_scalar_scale_executes_public_pipeline(self) -> None:
         """A scalar scale must build and run instead of failing inside Kornia."""
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
