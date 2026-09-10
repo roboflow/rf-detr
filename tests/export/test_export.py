@@ -1132,8 +1132,8 @@ class TestSwitchToExportMode:
     ) -> None:
         """``OnnxExporter`` must share the choke point, so a composed ONNX export cannot switch twice.
 
-        A TFLite or TensorRT export runs an ONNX export internally after the model was already switched, so an
-        unguarded ``model.export()`` here would overwrite ``_forward_origin`` with the export forward.
+        A TFLite or TensorRT export runs an ONNX export internally after the model was already switched, so an unguarded
+        ``model.export()`` here would overwrite ``_forward_origin`` with the export forward.
         """
         model = self._SwitchCountingModel()
         _switch_to_export_mode(model)
