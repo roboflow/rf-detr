@@ -3323,6 +3323,42 @@ class TestOnLoadCheckpoint:
 
         assert set(checkpoint["state_dict"].keys()) == original_keys
 
+    def test_extra_state_keys_stripped_from_state_dict(self, build_module):
+        """on_load_checkpoint must remove `_extra_state` entries before PTL applies the state dict.
+
+        Under FP8, the live module's checkpointed state_dict carries Transformer Engine `_extra_state` entries recording
+        FP8 scaling history. `strict_loading=False` only tolerates their presence/absence after the fact — it does not
+        stop `load_state_dict()` from calling `set_extra_state()` for a key present in both the checkpoint and the
+        module, which Transformer Engine rejects on a pickle round-trip. The entries must therefore be excluded from
+        `checkpoint["state_dict"]` here, before PTL ever applies it.
+        """
+        checkpoint = {
+            "state_dict": {
+                "model.some_layer.weight": torch.randn(4, 4),
+                "model.some_layer._extra_state": b"fp8-scaling-history",
+            },
+            "epoch": 1,
+        }
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert "model.some_layer._extra_state" not in checkpoint["state_dict"]
+        assert "model.some_layer.weight" in checkpoint["state_dict"]
+
+    def test_no_extra_state_keys_in_state_dict_is_noop(self, build_module):
+        """on_load_checkpoint must not raise or alter keys when state_dict contains no `_extra_state` entries."""
+        checkpoint = {
+            "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
+            "epoch": 1,
+        }
+        original_keys = set(checkpoint["state_dict"].keys())
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert set(checkpoint["state_dict"].keys()) == original_keys
+
 
 class TestManualOptLRSchedulerStepping:
     """Manual-optimization (keypoint) path steps LR schedulers itself, honoring interval and plateau semantics."""

@@ -596,6 +596,25 @@ def build_trainer(
         # precision check must be moved into the child process.
         if torch.cuda.is_available():
             if amp_dtype == "fp8":
+                # Transformer Engine's FP8 tensor-core path requires Ada (compute capability 8.9),
+                # Hopper (9.0), or newer (e.g. Blackwell) — older CUDA GPUs such as A100/T4 are
+                # CUDA-visible but not FP8-capable and would otherwise reach TE's plugin/kernel
+                # initialization and fail there instead of at this clear rejection.
+                _min_fp8_capability = (8, 9)
+                unsupported_devices = [
+                    index
+                    for index in range(torch.cuda.device_count())
+                    if torch.cuda.get_device_capability(index) < _min_fp8_capability
+                ]
+                if unsupported_devices:
+                    names = ", ".join(
+                        f"cuda:{index} ({torch.cuda.get_device_name(index)})" for index in unsupported_devices
+                    )
+                    raise ValueError(
+                        "amp_dtype='fp8' requires a Transformer Engine-supported NVIDIA GPU "
+                        "(Ada, Hopper, or newer; compute capability >= 8.9). "
+                        f"Unsupported visible device(s): {names}."
+                    )
                 return "transformer-engine"
             if amp_dtype == "fp16":
                 return "16-mixed"
