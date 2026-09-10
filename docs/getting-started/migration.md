@@ -40,6 +40,52 @@ You can apply all changes in one go; working through sections one release at a t
 
     The engine is named `{output_name}-backbone.trt` instead of `{output_name}.trt`, matching what `RFDETR.export()`'s documentation already described and what every other format does. Without the marker a backbone engine silently overwrites a full-detector engine exported under the same name. Scripts that rebuilt the path from `output_name` need the suffix added.
 
+### Removed
+
+!!! warning "Removed: `rfdetr.datasets.synthetic`"
+
+    The synthetic shape-dataset generator has been removed. It existed to build RF-DETR's own test fixtures, and that job now belongs to the [`fuse-augmentations`](https://github.com/Borda/fuse-augmentations) package, whose `fuse_augmentations.data` module generates the same datasets in COCO or YOLO layout for detection, segmentation, and OBB tasks.
+
+    Removed names: `generate_coco_dataset`, `generate_synthetic_sample`, `draw_synthetic_shape`, `calculate_boundary_overlap`, `DatasetSplitRatios`, `DEFAULT_SPLIT_RATIOS`, `SYNTHETIC_SHAPES`, `SYNTHETIC_COLORS`.
+
+    ```bash
+    pip install fuse-augmentations
+    ```
+
+    ```python
+    # Before
+    from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
+
+    generate_coco_dataset(
+        output_dir="dataset",
+        num_images=100,
+        img_size=224,
+        class_mode="shape",
+        min_objects=3,
+        max_objects=7,
+        split_ratios=DatasetSplitRatios(train=0.8, val=0.2, test=0.0),
+        with_segmentation=True,
+    )
+
+    # After
+    from fuse_augmentations.data import SplitRatios, generate_dataset
+
+    generate_dataset(
+        output_dir="dataset",
+        num_images=100,
+        fmt="coco",
+        task="segmentation",  # "detection" for boxes only
+        class_mode="shape",
+        split_ratios=SplitRatios(train=0.8, val=0.2, test=0.0),
+        seed=42,
+        img_size=224,
+        min_objects=3,
+        max_objects=7,
+    )
+    ```
+
+    Two differences to plan for: the replacement writes **dense** COCO category ids (`1, 2, 3, …`) where the removed generator wrote sparse ones (`1, 3, 5, …`), and its shape set adds `rectangle`, so a fixed class count of 3 becomes 4. Derive the class count from the annotation file rather than hard-coding it. Generation also draws from fresh entropy unless you pass `seed`.
+
 ---
 
 ## Upgrade 1.9 → 1.10

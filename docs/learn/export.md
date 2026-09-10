@@ -182,6 +182,12 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 
 ### Python API Conversion
 
+Use this only to convert an **already-exported** `.onnx` file without re-running the model export. To go straight from a checkpoint to an engine, use [`format="tensorrt"`](#export-directly-to-tensorrt) above.
+
+!!! warning "Internal API"
+
+    `rfdetr.export._tensorrt` is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. `RFDETR.export(format="tensorrt")` is the supported entry point.
+
 ```python
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export.base import TensorRTConfig
@@ -467,6 +473,8 @@ model.export(format="openvino", openvino_precision="float32")
 
 ### OpenVINO Inference Example
 
+`OpenVINOInference` loads an exported IR and runs it. It takes already-preprocessed NCHW tensors and returns the model's raw output tensors — decoding those into detections is up to you (see [Using the Exported Model](#using-the-exported-model) for the decode steps).
+
 !!! warning "The input array must be float32 and contiguous"
 
     `infer()` validates this at the boundary and raises `ValueError` if violated, but a resize step that diverges from `predict()`'s own preprocessing (e.g. PIL's default `Image.resize()`, which resamples with bicubic) will still silently produce different — not obviously wrong — detections. Use `torchvision.transforms.functional.resize(..., antialias=False)` as below to match `predict()`'s antialias-free bilinear resize exactly.
@@ -474,10 +482,10 @@ model.export(format="openvino", openvino_precision="float32")
 ```python
 import torchvision.transforms.functional as F
 from PIL import Image
-from rfdetr.export._openvino.inference import OpenVINOInference
+from rfdetr.export.inference import OpenVINOInference
 
-# Load the exported model
-model = OpenVINOInference("output/rfdetr-medium.xml")
+# Load the exported model; device is "AUTO", "CPU", "GPU" or "NPU"
+model = OpenVINOInference("output/rfdetr-medium.xml", device="AUTO")
 
 # Prepare input image (NCHW format, ImageNet normalized) — matches predict()'s own preprocessing
 image = Image.open("image.jpg").convert("RGB")
@@ -495,6 +503,10 @@ image_array = image_tensor.unsqueeze(0).numpy()
 outputs = model(image_array)
 boxes, labels = outputs  # boxes: normalized cxcywh (center_x, center_y, width, height), not xywh
 ```
+
+!!! tip "Construct once, and use one instance per worker thread"
+
+    Building an `OpenVINOInference` compiles the model, which is the expensive step — do it once and reuse the instance for every image. Pass `cache_dir="<dir>"` to reuse compiled kernels across process starts as well. Calls through a single instance are serialized by an internal lock, so sharing one instance across threads is safe but not faster; for parallel throughput give each worker thread its own instance.
 
 ### Benchmark OpenVINO Model
 

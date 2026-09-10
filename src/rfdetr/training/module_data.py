@@ -19,6 +19,8 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import AugmentationBackend, ModelConfig, TrainConfig
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError
+from rfdetr.datasets.webdataset.load import WebDatasetDetection, build_webdataset_loader
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 from rfdetr.utilities.logger import get_logger
@@ -64,7 +66,8 @@ def _has_cuda_device() -> bool:
 
 
 class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
-    """Dataset wrapper that pads length to a multiple of ``effective_batch_size * world_size``.
+    """Dataset wrapper that pads length to a multiple of ``effective_batch_size * world_size``, optionally above a
+    minimum.
 
     Workaround for https://github.com/Lightning-AI/pytorch-lightning/issues/19987: PTL fires the optimizer on partial
     accumulation windows at the tail of the dataset, causing the last optimizer step to be under-scaled.  Padding the
@@ -83,6 +86,9 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
         world_size: Number of DDP processes (default 1 for single-GPU/CPU).
             The alignment unit is ``effective_batch_size * world_size`` so that after PTL's ``DistributedSampler``
             splits samples across ranks each rank still receives an exact multiple of ``effective_batch_size``.
+        minimum_length: Optional minimum padded length before alignment. This lets DDP repeat short datasets through a
+            dataset wrapper that Lightning can safely partition instead of a replacement sampler that Lightning would
+            discard when injecting ``DistributedSampler``.
     """
 
     def __init__(
@@ -90,6 +96,7 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
         dataset: torch.utils.data.Dataset[Any],
         effective_batch_size: int,
         world_size: int = 1,
+        minimum_length: int | None = None,
     ) -> None:
         if effective_batch_size < 1:
             raise ValueError(f"effective_batch_size must be >= 1, got {effective_batch_size}")
@@ -99,8 +106,9 @@ class GradAccumAlignedDataset(torch.utils.data.Dataset[Any]):
         self._dataset = dataset
         self._dataset_length = len(dataset)  # type: ignore[arg-type]
         pad_unit = effective_batch_size * world_size
-        remainder = self._dataset_length % pad_unit
-        pad_count = (pad_unit - remainder) % pad_unit
+        target_length = max(self._dataset_length, minimum_length or 0)
+        aligned_length = target_length + (pad_unit - target_length % pad_unit) % pad_unit
+        pad_count = aligned_length - self._dataset_length
         pad_index_generator = torch.Generator()
         pad_index_generator.manual_seed(0)
         self._pad_indices: list[int] = (
@@ -288,6 +296,10 @@ class RFDETRDataModule(LightningDataModule):
         the name "test".  A ``roboflow`` export in COCO format still has to ship ``test/_annotations.coco.json``:
         its absence raises a plain ``FileNotFoundError`` from the COCO builder, which this fallback does not catch.
 
+        ``webdataset`` uses a packed ``test`` split when the shard directory has one, and falls back to ``val`` with a
+        log line when it does not — a split is only present there if someone packed it deliberately, so evaluating
+        ``val`` under the name "test" without saying so would be the same silent substitution.
+
         ``coco`` falls back to ``val`` because its ``test`` split is unlabelled COCO test-dev and cannot be scored
         locally.  ``o365`` also falls back because its dataset builder exposes only ``train`` and ``val`` splits.
 
@@ -299,6 +311,14 @@ class RFDETRDataModule(LightningDataModule):
             The dataset to evaluate during the ``test`` stage.
         """
         dataset_file = self.train_config.dataset_file
+        if dataset_file == "webdataset":
+            try:
+                return build_dataset("test", ns, resolution)
+            except WebDatasetSplitUnavailableError:
+                logger.warning(
+                    "No 'test' shard index in %s; evaluating the 'val' split instead.",
+                    self.train_config.dataset_dir,
+                )
         if dataset_file in ("roboflow", "yolo"):
             try:
                 return build_dataset("test", ns, resolution)
@@ -353,14 +373,69 @@ class RFDETRDataModule(LightningDataModule):
             raise RuntimeError(f"{split} dataset was not built; call setup({split!r}) before requesting a dataloader.")
         return dataset
 
+    def _webdataset_loader(
+        self, dataset: WebDatasetDetection, *, batch_size: int, fixed_epoch: bool
+    ) -> DataLoader[Any]:
+        """Return the streaming loader for a WebDataset-backed split.
+
+        A shard-streaming dataset carries its own shard-to-worker split, so it takes no sampler and no
+        :class:`GradAccumAlignedDataset` wrapper; the fixed-length epoch that ``fixed_epoch`` requests is what plays
+        the alignment role there — floored to a whole number of *accumulation windows* (``batch_size *
+        grad_accum_steps``) for training, so PTL never fires the optimizer on a partial one
+        (https://github.com/Lightning-AI/pytorch-lightning/issues/19987), the same guarantee
+        :class:`GradAccumAlignedDataset` gives the map-style path. Collation, ``pin_memory`` and the worker knobs
+        stay the ones configured for every other loader, so the batch reaching ``on_after_batch_transfer`` is
+        indistinguishable from a map-style one.
+
+        Args:
+            dataset: The streaming dataset to wrap.
+            batch_size: Per-rank micro-batch size.
+            fixed_epoch: Plan a fixed-length epoch and drop partial batches (training), rather than passing over
+                every sample exactly once (evaluation).
+
+        Returns:
+            The streaming DataLoader.
+        """
+        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
+        rank: int = getattr(self.trainer, "global_rank", 0) if self.trainer else 0
+        return build_webdataset_loader(
+            dataset,
+            batch_size=batch_size,
+            collate_fn=self._collate_fn,
+            num_workers=self._num_workers,
+            pin_memory=self._pin_memory,
+            persistent_workers=self._persistent_workers,
+            prefetch_factor=self._prefetch_factor,
+            worker_init_fn=_worker_init_fn,
+            fixed_epoch=fixed_epoch,
+            world_size=world_size,
+            rank=rank,
+            grad_accum_steps=self._effective_grad_accum_steps() if fixed_epoch else 1,
+        )
+
+    def _effective_grad_accum_steps(self) -> int:
+        """Return the accumulation count that owns optimizer stepping for this training route.
+
+        Keypoint models accumulate manually from ``TrainConfig`` while Lightning owns accumulation for detection and
+        segmentation, including caller overrides passed directly to ``Trainer``.
+
+        Returns:
+            The number of microbatches per optimizer step.
+        """
+        trainer = self.trainer
+        if trainer is None or self.model_config.use_grouppose_keypoints:
+            return self.train_config.grad_accum_steps
+        return trainer.accumulate_grad_batches
+
     def train_dataloader(self) -> DataLoader[Any]:
         """Return the training DataLoader.
 
-        Uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES`` effective batches
-        (matching legacy behaviour in ``main.py``).  Otherwise wraps the dataset with :class:`GradAccumAlignedDataset`
-        to ensure its length is an exact multiple of ``effective_batch_size * world_size`` (workaround for
-        https://github.com/Lightning-AI/pytorch-lightning/issues/19987) and then uses ``shuffle=True, drop_last=True``
-        so that PTL can auto-inject ``DistributedSampler`` in DDP mode.
+        On one process, uses a replacement sampler when the dataset is too small to fill ``_MIN_TRAIN_BATCHES``
+        effective batches (matching legacy behaviour in ``main.py``). In DDP, repeats short datasets through
+        :class:`GradAccumAlignedDataset` so that Lightning can safely inject ``DistributedSampler`` without discarding
+        the requested sample count. The wrapper also ensures the length is an exact multiple of
+        ``effective_batch_size * world_size`` (workaround for
+        https://github.com/Lightning-AI/pytorch-lightning/issues/19987).
 
         Returns:
             DataLoader for the training dataset. With ``TrainConfig.pack_targets=True`` (the default), its collated
@@ -368,20 +443,24 @@ class RFDETRDataModule(LightningDataModule):
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
         batch_size = self._resolve_batch_size()
-        effective_batch_size = batch_size * self.train_config.grad_accum_steps
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=batch_size, fixed_epoch=True)
+        effective_batch_size = batch_size * self._effective_grad_accum_steps()
         num_workers = self._num_workers
 
+        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
         dataset_length = len(dataset)  # type: ignore[arg-type]
-        if dataset_length < effective_batch_size * _MIN_TRAIN_BATCHES:
+        minimum_length_per_process = effective_batch_size * _MIN_TRAIN_BATCHES
+        if dataset_length < minimum_length_per_process and world_size == 1:
             logger.info(
                 "Training with uniform sampler because dataset is too small: %d < %d",
                 dataset_length,
-                effective_batch_size * _MIN_TRAIN_BATCHES,
+                minimum_length_per_process,
             )
             sampler = torch.utils.data.RandomSampler(
                 dataset,  # type: ignore[arg-type]
                 replacement=True,
-                num_samples=effective_batch_size * _MIN_TRAIN_BATCHES,
+                num_samples=minimum_length_per_process,
             )
             return DataLoader(
                 dataset,
@@ -395,12 +474,26 @@ class RFDETRDataModule(LightningDataModule):
                 worker_init_fn=_worker_init_fn,
             )
 
+        minimum_distributed_length = minimum_length_per_process * world_size
+        minimum_length: int | None = None
+        if world_size > 1 and dataset_length < minimum_distributed_length:
+            logger.info(
+                "Repeating training samples because dataset is too small for DDP: %d < %d",
+                dataset_length,
+                minimum_distributed_length,
+            )
+            minimum_length = minimum_distributed_length
+
         # Pad the dataset to a multiple of effective_batch_size * world_size so
         # that drop_last=True below becomes a true no-op and PTL never fires the
         # optimizer on a partial accumulation window.
         # See https://github.com/Lightning-AI/pytorch-lightning/issues/19987
-        world_size: int = getattr(self.trainer, "world_size", 1) if self.trainer else 1
-        aligned_dataset = GradAccumAlignedDataset(dataset, effective_batch_size, world_size)
+        aligned_dataset = GradAccumAlignedDataset(
+            dataset,
+            effective_batch_size,
+            world_size,
+            minimum_length=minimum_length,
+        )
 
         return DataLoader(
             aligned_dataset,
@@ -423,6 +516,8 @@ class RFDETRDataModule(LightningDataModule):
             (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "validate")
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=self._resolve_eval_batch_size(), fixed_epoch=False)
         return DataLoader(
             dataset,
             batch_size=self._resolve_eval_batch_size(),
@@ -444,6 +539,8 @@ class RFDETRDataModule(LightningDataModule):
             default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_test, "test")
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=self._resolve_eval_batch_size(), fixed_epoch=False)
         return DataLoader(
             dataset,
             batch_size=self._resolve_eval_batch_size(),
@@ -465,6 +562,8 @@ class RFDETRDataModule(LightningDataModule):
             (the default), its collated batches contain ``PackedTargets`` for losslessly packable target batches.
         """
         dataset = self._require_dataset(self._dataset_val, "predict")
+        if isinstance(dataset, WebDatasetDetection):
+            return self._webdataset_loader(dataset, batch_size=self._resolve_eval_batch_size(), fixed_epoch=False)
         return DataLoader(
             dataset,
             batch_size=self._resolve_eval_batch_size(),
@@ -536,6 +635,12 @@ class RFDETRDataModule(LightningDataModule):
         dataset = self._get_dataset_for_visualization(split)
         if dataset is None:
             raise RuntimeError(f"Could not build dataset split {split!r} for visualization.")
+        if isinstance(dataset, WebDatasetDetection):
+            # The grid indexes the dataset directly, which a shard stream cannot serve.
+            raise TypeError(
+                "Sample grids need a map-style dataset, and dataset_file='webdataset' streams shards instead. "
+                "Point dataset_dir at the loose files the shards were packed from to visualize this split."
+            )
 
         inv_normalize = T.Normalize(
             mean=[-0.485 / 0.229, -0.456 / 0.224, -0.406 / 0.225],
@@ -776,6 +881,12 @@ class RFDETRDataModule(LightningDataModule):
         for dataset in (self._dataset_train, self._dataset_val, self._dataset_test):
             if dataset is None:
                 continue
+            # A webdataset stream carries its own label-indexed names, read from its shard index; the
+            # COCO-object path below stays the route for every map-style dataset.
+            if isinstance(dataset, WebDatasetDetection):
+                own_names = dataset.class_names
+                if own_names:
+                    return own_names
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
                 label2cat = getattr(dataset, "label2cat", None)

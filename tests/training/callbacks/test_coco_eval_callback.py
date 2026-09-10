@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Unit tests for COCOEvalCallback."""
 
+import inspect
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -15,7 +16,7 @@ import torch
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -123,14 +124,24 @@ class TestSetup:
         cb.setup(trainer, module, stage="validate")
         assert cb.map_metric is not first
 
-    def test_detection_uses_faster_coco_eval_backend(self) -> None:
-        """Detection mode always uses faster_coco_eval backend to avoid map=-1 bug."""
+    def test_detection_never_selects_the_pycocotools_backend_name(self) -> None:
+        """Detection mode must never resolve torchmetrics' pycocotools backend, which reports ``map=-1``.
+
+        The name is the one torchmetrics resolves its COCO helpers from, not the evaluator RF-DETR ends up
+        running: the hotcoco adapter constructs the parent with ``"faster_coco_eval"`` and replaces the resolved
+        modules afterwards, so this pins the enum member alone. ``test_eval_backend_defaults_to_hotcoco`` covers
+        which evaluator actually runs.
+        """
         cb = COCOEvalCallback(segmentation=False)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
 
-    def test_segmentation_uses_faster_coco_eval_backend(self) -> None:
-        """Segmentation mode always uses faster_coco_eval backend."""
+    def test_segmentation_never_selects_the_pycocotools_backend_name(self) -> None:
+        """Segmentation mode pins the same torchmetrics backend enum member as detection mode.
+
+        Mask evaluation resolves the RLE utilities from that same backend, so a divergence here would send the two IoU
+        types through different COCO helper implementations.
+        """
         cb = COCOEvalCallback(segmentation=True)
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric._coco_backend.backend == "faster_coco_eval"
@@ -145,6 +156,47 @@ class TestSetup:
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert cb.map_metric.class_metrics is False
         assert cb.map_metric_train.class_metrics is False
+
+    def test_eval_backend_reaches_every_metric(self) -> None:
+        """The configured evaluation backend must reach the validation and train-split metrics alike.
+
+        The backend is chosen once in ``TrainConfig`` but instantiated three times, and the EMA metric is built by a
+        separate method that re-lists its keyword arguments by hand, so a missed call site would silently evaluate part
+        of a run on the other backend.
+        """
+        cb = COCOEvalCallback(eval_backend="faster_coco_eval")
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer())
+
+        assert cb.map_metric_ema is not None, "EMA metric must exist or this asserts nothing"
+        for metric in (cb.map_metric, cb.map_metric_train, cb.map_metric_ema):
+            assert not isinstance(metric._coco_backend, _HotCocoBackend)
+
+    def test_eval_backend_defaults_to_hotcoco(self) -> None:
+        """Omitting the backend must select hotcoco, which is what makes evaluation fast by default."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        assert isinstance(cb.map_metric._coco_backend, _HotCocoBackend)
+
+    def test_constructor_parameter_order_is_append_only(self) -> None:
+        """New constructor parameters must be appended, never inserted among the existing ones.
+
+        None of the parameters are keyword-only and ``eval_ema_only`` documents positional support, so inserting
+        a parameter rebinds every argument after it: a caller passing ``keypoint_oks_sigmas`` positionally would
+        hand a list of OKS sigmas to whatever took its slot, with no error at the call site.
+        """
+        assert list(inspect.signature(COCOEvalCallback.__init__).parameters)[1:] == [
+            "max_dets",
+            "segmentation",
+            "eval_interval",
+            "log_per_class_metrics",
+            "keypoint_oks_sigmas",
+            "in_notebook",
+            "eval_ema_only",
+            "eval_base_model",
+            "eval_backend",
+        ]
 
     def test_log_per_class_metrics_default_keeps_class_metrics_compute(self) -> None:
         """Default log_per_class_metrics=True keeps per-class AP computation on for both metrics.

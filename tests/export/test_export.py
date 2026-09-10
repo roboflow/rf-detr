@@ -1127,6 +1127,49 @@ class TestSwitchToExportMode:
         _switch_to_export_mode(model)
         assert not hasattr(model, "_export")
 
+    def test_onnx_exporter_routes_through_the_guarded_switch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``OnnxExporter`` must share the choke point, so a composed ONNX export cannot switch twice.
+
+        A TFLite or TensorRT export runs an ONNX export internally after the model was already switched, so an
+        unguarded ``model.export()`` here would overwrite ``_forward_origin`` with the export forward.
+        """
+        model = self._SwitchCountingModel()
+        _switch_to_export_mode(model)
+        monkeypatch.setattr(torch.onnx, "export", lambda *_args, **_kwargs: None)
+        graph = ExportGraph(
+            model=model,
+            input_tensors=torch.zeros(1, 2),
+            input_names=("input",),
+            output_names=("output",),
+            dynamic_axes=None,
+            shape=(2, 2),
+            backbone_only=False,
+        )
+
+        OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))(graph)
+
+        assert model.switches == 1
+
+    def test_onnx_exporter_still_switches_a_fresh_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Routing through the guarded helper must not drop the switch for a fresh model."""
+        model = self._SwitchCountingModel()
+        monkeypatch.setattr(torch.onnx, "export", lambda *_args, **_kwargs: None)
+        graph = ExportGraph(
+            model=model,
+            input_tensors=torch.zeros(1, 2),
+            input_names=("input",),
+            output_names=("output",),
+            dynamic_axes=None,
+            shape=(2, 2),
+            backbone_only=False,
+        )
+
+        OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))(graph)
+
+        assert model.switches == 1
+
 
 def _stub_export_dependencies(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, export_format: str
