@@ -2392,7 +2392,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Renamed the optional installation extra from <code>webdataset</code> to <code>data</code>, without a compatibility alias. Use <code>pip install "rfdetr[data]"</code>; <code>dataset_file="webdataset"</code> is unchanged.</li>
+<li>
+<p>Removed <code>rfdetr.datasets.synthetic</code> (<code>generate_coco_dataset</code>, <code>generate_synthetic_sample</code>, <code>draw_synthetic_shape</code>, <code>calculate_boundary_overlap</code>, <code>DatasetSplitRatios</code>, <code>SYNTHETIC_SHAPES</code>, <code>SYNTHETIC_COLORS</code>). The module only ever fed RF-DETR's own test fixtures and is replaced by the <code>fuse-augmentations</code> package, whose <code>fuse_augmentations.data</code> module generates the same shape datasets in COCO or YOLO layout for detection, segmentation, and OBB. Callers migrate to <code>pip install fuse-augmentations</code> plus <code>from fuse_augmentations.data import generate_dataset</code>; note that it writes dense COCO category ids where the removed generator wrote sparse ones, and its shape set adds <code>rectangle</code>.</p>
+</li>
+<li>
+<p>Renamed the optional installation extra from <code>webdataset</code> to <code>data</code>, without a compatibility alias. Use <code>pip install "rfdetr[data]"</code>; <code>dataset_file="webdataset"</code> is unchanged.</p>
+</li>
 </ul>
 <hr />
 <h2 id="1101-2026-09-07">[1.10.1] — 2026-09-07<a class="headerlink" href="#1101-2026-09-07" title="Permanent link">&para;</a></h2>
