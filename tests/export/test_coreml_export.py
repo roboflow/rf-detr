@@ -30,6 +30,7 @@ import torch
 from PIL import Image
 from supervision.assets import ImageAssets, download_assets
 
+from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.converter import _check_coremltools_available, export_coreml
 from tests.export.conftest import (
@@ -221,6 +222,57 @@ class TestExportCoremlBareDefaultNaming:
 
         assert output_file.name == "inference_model_fp16.mlpackage"
         mock_mlmodel.save.assert_called_once_with(str(output_file))
+
+    @pytest.mark.parametrize(
+        "variant_name, output_name, full_name, backbone_name",
+        [
+            ("rfdetr-nano", None, "rfdetr-nano_fp32.mlpackage", "rfdetr-nano_fp32-backbone.mlpackage"),
+            ("rfdetr-nano", "custom", "custom.mlpackage", "custom-backbone.mlpackage"),
+            (None, None, "inference_model_fp32.mlpackage", "backbone_model_fp32.mlpackage"),
+        ],
+    )
+    def test_backbone_only_does_not_collide_with_full_detector_export(
+        self,
+        tmp_path: Path,
+        variant_name: str | None,
+        output_name: str | None,
+        full_name: str,
+        backbone_name: str,
+    ) -> None:
+        """Backbone and detector paths stay distinct with variant, custom, and default names."""
+        coremltools = mock.MagicMock()
+        full_model, backbone_model = mock.MagicMock(), mock.MagicMock()
+        coremltools.convert.side_effect = [full_model, backbone_model]
+        exported_program = mock.MagicMock()
+        exported_program.run_decompositions.return_value = exported_program
+        with (
+            mock.patch.dict("sys.modules", {"coremltools": coremltools}),
+            mock.patch("rfdetr.export._coreml.converter._IS_COREMLTOOLS_AVAILABLE", True),
+            mock.patch("torch.export.export", return_value=exported_program),
+            mock.patch("rfdetr.export._coreml.converter.unsupported_coreml_ops", return_value={}),
+        ):
+            full_out = export_coreml(
+                torch.nn.Identity(),
+                torch.zeros(1, 3, 32, 32),
+                tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                verbose=False,
+            )
+            backbone_out = export_coreml(
+                torch.nn.Identity(),
+                torch.zeros(1, 3, 32, 32),
+                tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                verbose=False,
+                backbone_only=True,
+            )
+        assert full_out != backbone_out
+        assert full_out.name == full_name
+        assert backbone_out.name == backbone_name
+        full_model.save.assert_called_once_with(str(full_out))
+        backbone_model.save.assert_called_once_with(str(backbone_out))
 
 
 class TestVariantNamePathSafety:
@@ -424,6 +476,27 @@ def coreml_export(
     return model, example, Path(mlpackage_path), validate_fn
 
 
+@pytest.fixture(scope="module")
+def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
+    """Export RFDETRNano's backbone and return its eager feature-map reference module.
+
+    Uses the public ``backbone_only=True`` route so the CoreML runtime executes the same list-valued ``_BackboneExport``
+    graph that users receive, rather than a mocked converter dispatch.
+    """
+    import rfdetr
+    from rfdetr.utilities.reproducibility import seed_all
+
+    out_dir = tmp_path_factory.mktemp("coreml_backbone")
+    seed_all(_COREML_EXPORT_SEED)
+    detector = rfdetr.RFDETRNano(pretrain_weights=None)
+    mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", backbone_only=True, verbose=False)
+    backbone = detector.model.model.backbone[0].to("cpu").eval()
+    reference_model = _BackboneExport(backbone)
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
+    return reference_model, example, Path(mlpackage_path)
+
+
 @coreml_only
 @pytest.mark.e2e_coreml
 class TestCoreMLEndToEnd:
@@ -452,6 +525,17 @@ class TestCoreMLEndToEnd:
         model, structured, mlpackage_path, validate_fn = coreml_export
         example = _parity_input_from_image(people_walking_image_path, int(structured.shape[-1]))
         validate_fn(mlpackage_path, model, example)
+
+    def test_backbone_outputs_match_pytorch_structured(
+        self, coreml_backbone_export: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """CoreML must run every backbone feature-map output from the public backbone-only export."""
+        model, example, mlpackage_path = coreml_backbone_export
+        assert "-backbone" in mlpackage_path.stem
+        diffs = _coreml_parity_diffs(mlpackage_path, model, example)
+        assert max(diffs) < _COREML_MAX_ABS_DIFF, (
+            f"CoreML backbone outputs diverge from PyTorch: max abs diff {max(diffs)} (bound={_COREML_MAX_ABS_DIFF})"
+        )
 
 
 class TestCoreMLParityInputHelpers:
