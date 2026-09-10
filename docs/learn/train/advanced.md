@@ -65,10 +65,13 @@ model.train(
     batch_size=4,
     amp_dtype="fp8",
     use_ema=True,
+    run_test=True,
 )
 ```
 
-FP8 requires model AMP to be enabled. CPU, MPS, FSDP, and DeepSpeed combinations are rejected; use DDP for supported multi-GPU FP8 training.
+FP8 requires an explicit integer `batch_size`; `batch_size="auto"` is rejected because its probe does not exercise Transformer Engine layers. Choose a smaller micro-batch and adjust `grad_accum_steps` manually when needed.
+
+FP8 requires model AMP to be enabled. CPU, MPS, TPU/XLA, FSDP, and DeepSpeed combinations are rejected; use DDP for supported multi-GPU FP8 training.
 
 ### Troubleshooting FP8
 

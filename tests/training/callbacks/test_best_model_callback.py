@@ -2952,3 +2952,74 @@ class TestOnFitEndEMASwapSuppression:
             cb.on_fit_end(trainer, pl_module)
 
         assert ema_cb.suppress_test_swap is False
+
+
+class _GuardedExtraStateLinear(torch.nn.Linear):
+    """Represent a converted layer whose extra-state loader forbids deserialization."""
+
+    def get_extra_state(self) -> torch.Tensor:
+        """Return a serializable stand-in for FP8 scaling history.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).get_extra_state()
+            tensor([1], dtype=torch.uint8)
+        """
+        return torch.ones(1, dtype=torch.uint8)
+
+    def set_extra_state(self, state: object) -> None:
+        """Reject loading history, as Transformer Engine does without pickle opt-in.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).set_extra_state(None)
+            Traceback (most recent call last):
+            ...
+            RuntimeError: extra-state deserialization forbidden
+        """
+        raise RuntimeError("extra-state deserialization forbidden")
+
+
+class TestFP8BestEMAWeightReload:
+    """Exercise real checkpoint export and reload with converted-layer extra state."""
+
+    @pytest.mark.parametrize(
+        "damage, error",
+        [
+            pytest.param(None, None, id="intact-ema"),
+            pytest.param("missing", "Missing.*weight", id="missing-weight"),
+            pytest.param("unexpected", "Unexpected.*spurious", id="unexpected-key"),
+            pytest.param("shape", "size mismatch", id="wrong-shape"),
+        ],
+    )
+    def test_final_ema_reload(self, tmp_path: Path, damage: str | None, error: str | None) -> None:
+        """Only absent extra state is tolerated; all tensor/key corruption remains fatal."""
+        torch.manual_seed(0)
+        module = _TestStepLinearModule()
+        module.model = torch.nn.Sequential(_GuardedExtraStateLinear(1, 1, bias=False))
+        with torch.no_grad():
+            module.model[0].weight.fill_(3.0)
+        ema = RFDETREMACallback()
+        callback = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=True)
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.8}, callbacks=[ema, callback])
+        ema.on_fit_start(trainer, module)
+        callback.on_validation_end(trainer, module)
+        path = tmp_path / "checkpoint_best_ema.pth"
+        checkpoint = torch.load(path, weights_only=True)
+        assert set(checkpoint["model"]) == {"0.weight"}
+        if damage == "missing":
+            del checkpoint["model"]["0.weight"]
+        elif damage == "unexpected":
+            checkpoint["model"]["spurious"] = torch.ones(1)
+        elif damage == "shape":
+            checkpoint["model"]["0.weight"] = torch.ones(2, 1)
+        torch.save(checkpoint, path)
+        with torch.no_grad():
+            module.model[0].weight.fill_(7.0)
+
+        if error is not None:
+            with pytest.raises(RuntimeError, match=error):
+                callback.on_fit_end(trainer, module)
+            trainer.test.assert_not_called()
+        else:
+            callback.on_fit_end(trainer, module)
+            trainer.test.assert_called_once_with(module, datamodule=trainer.datamodule, verbose=False)
+            torch.testing.assert_close(module.model[0].weight, torch.full((1, 1), 3.0), rtol=1e-4, atol=1e-6)

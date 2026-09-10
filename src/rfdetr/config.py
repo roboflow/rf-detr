@@ -1388,6 +1388,16 @@ class TrainConfig(BaseConfig):
         return optimizer
 
     @model_validator(mode="after")
+    def validate_fp8_batch_size(self) -> "TrainConfig":
+        """Require an explicit FP8 micro-batch until auto-sizing probes converted layers."""
+        if self.amp_dtype == "fp8" and self.batch_size == "auto":
+            raise ValueError(
+                "FP8 training requires an explicit integer batch_size: automatic batch sizing does not "
+                "probe Transformer Engine layers. Choose batch_size manually or use amp_dtype='bf16'/'fp16'."
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_eval_ema_only(self) -> "TrainConfig":
         """``eval_ema_only`` has no EMA model to evaluate without ``use_ema=True``, and contradicts ``eval_base_model``.
 

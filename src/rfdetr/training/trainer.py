@@ -566,11 +566,12 @@ def build_trainer(
                     stacklevel=2,
                 )
             return "32-true"
+        # Honor explicit accelerators and Lightning's XLA-first auto selection before probing global CUDA.
+        if tc.amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
+            raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":
-            if tc.amp_dtype == "fp8":
-                raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
             return "32-true"
         # ``train_config.amp_dtype`` (a train() kwarg) lets callers pin the autocast dtype (see issue #1132):
         #   "auto" — bf16 on bf16-capable CUDA, fp16 otherwise (historical default);

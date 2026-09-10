@@ -6,6 +6,7 @@
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -853,6 +854,24 @@ class TestBuildTrainerAmpDtype:
         """FP8 must fail clearly instead of silently falling back on a non-CUDA accelerator."""
         with pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator="cpu")
+
+    @pytest.mark.parametrize("accelerator", ["cpu", "mps", "xla", "tpu"])
+    def test_fp8_rejects_non_cuda_with_cuda_visible(self, tmp_path: Path, accelerator: str) -> None:
+        """Visible CUDA must not override an explicitly selected non-CUDA accelerator."""
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator=accelerator)
+
+    def test_fp8_rejects_auto_resolving_to_xla(self, tmp_path: Path) -> None:
+        """Lightning selects XLA before CUDA for auto; FP8 must honor that choice."""
+        with (
+            patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True),
+            patch("torch.cuda.is_available", return_value=True),
+            pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator="auto")
 
     def test_fp8_requires_amp_enabled(self, tmp_path):
         """An explicit FP8 request must not be silently disabled by the model AMP flag."""

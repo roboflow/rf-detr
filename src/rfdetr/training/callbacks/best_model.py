@@ -582,7 +582,8 @@ class BestModelCallback(ModelCheckpoint):
         """Select the overall best model and optionally run test evaluation.
 
         Copies the winner (regular vs EMA, strict ``>`` for EMA) to ``checkpoint_best_total.pth``, strips
-        optimizer/scheduler state, then optionally runs ``trainer.test()``.
+        optimizer/scheduler state, then optionally runs ``trainer.test()``. EMA reload tolerates only missing
+        module extra state; all weight/key mismatches remain errors.
 
         Args:
             trainer: The Lightning Trainer instance.
@@ -664,7 +665,17 @@ class BestModelCallback(ModelCheckpoint):
                 # Checkpoints always store plain keys; load into the unwrapped module
                 # so compiled (OptimizedModule) and non-compiled models both work.
                 raw = BestModelCallback._unwrap_model(pl_module)
-                raw.load_state_dict(ckpt["model"], strict=True)
+                if chose_ema:
+                    # EMA exports omit FP8 history; retain the live history without relaxing weight validation.
+                    incompatible = raw.load_state_dict(ckpt["model"], strict=False)
+                    missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
+                    if missing or incompatible.unexpected_keys:
+                        raise RuntimeError(
+                            f"Error loading best EMA weights: Missing keys: {missing}; "
+                            f"Unexpected keys: {incompatible.unexpected_keys}"
+                        )
+                else:
+                    raw.load_state_dict(ckpt["model"], strict=True)
                 logger.info("Loaded best weights from %s for test evaluation.", total_path)
                 # The EMA callback swaps final-EMA weights in for test epochs, which would silently overwrite the
                 # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
