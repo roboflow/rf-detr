@@ -422,6 +422,13 @@ def _prepare_run_config(
                     model_args.resolution = _resolution
                 if hasattr(model_args, "positional_encoding_size"):
                     model_args.positional_encoding_size = new_pe
+    if for_eval and kwargs.get("amp_dtype") == "fp8" and kwargs.get("batch_size") == "auto":
+        # TrainConfig.validate_fp8_batch_size rejects amp_dtype="fp8" with batch_size="auto"
+        # unconditionally, because auto-sizing probes the unconverted model — a real risk only
+        # on the training path. evaluate() never runs that probe (see the for_eval branch below),
+        # so substitute the eval default before construction; otherwise the validator raises
+        # before for_eval is ever consulted.
+        kwargs["batch_size"] = TrainConfig.model_fields["batch_size"].default
     config = detector.get_train_config(**kwargs)
     if config.batch_size == "auto" and for_eval:
         # The probe sizes for the *training* memory envelope (forward + retained activations +

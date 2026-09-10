@@ -12,6 +12,7 @@ import inspect
 import math
 import random
 import warnings
+from contextlib import nullcontext
 from typing import Any, Callable, cast
 
 import torch
@@ -622,8 +623,17 @@ class RFDETRModelModule(LightningModule):
             # loss_for_backward is only None in the automatic-optimization branch above,
             # which is mutually exclusive with _use_manual_optimization.
             assert loss_for_backward is not None
-            self.manual_backward(loss_for_backward)
-            if self._should_step_optimizer(batch_idx):
+            should_step = self._should_step_optimizer(batch_idx)
+            # LightningOptimizer maps sync_grad=False to DDP's no_sync context. Intermediate
+            # microbatches accumulate locally; the closing backward reduces the whole window.
+            sync_context = (
+                optimizer.toggle_model(sync_grad=should_step)
+                if isinstance(optimizer, LightningOptimizer)
+                else nullcontext()
+            )
+            with sync_context:
+                self.manual_backward(loss_for_backward)
+            if should_step:
                 self._step_optimizer(optimizer)
         if self.train_config.compute_train_metrics:
             with torch.no_grad():
@@ -1161,7 +1171,7 @@ class RFDETRModelModule(LightningModule):
             self.model_config.fused_optimizer
             and torch.cuda.is_available()
             and torch.cuda.is_bf16_supported()
-            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
+            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true", "transformer-engine"}
         )
 
     @property
@@ -1448,7 +1458,7 @@ class RFDETRModelModule(LightningModule):
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.
 
-        PTL calls this hook before applying ``checkpoint["state_dict"]`` to the module.  Three normalisation steps are
+        PTL calls this hook before applying ``checkpoint["state_dict"]`` to the module.  Four normalisation steps are
         applied in order:
 
         1. **Raw legacy format** — a ``*.pth`` file loaded directly by
@@ -1461,7 +1471,16 @@ class RFDETRModelModule(LightningModule):
            PE to ``model_config.positional_encoding_size`` before PTL applies the state dict.  Regression fix for
            :issue:`998`.
 
-        3. **Converted format** — a file produced by
+        3. **FP8 extra-state removal** — under Transformer Engine (``amp_dtype="fp8"``), the live module's
+           ``state_dict()`` carries ``_extra_state`` entries recording FP8 scaling history. Since ``strict_loading``
+           is disabled on this module, ``load_state_dict()`` tolerates a missing or unexpected key afterward, but
+           that does not stop it from calling ``set_extra_state()`` for any such key present in both the checkpoint
+           and the module —
+           and Transformer Engine intentionally rejects pickle-deserialised extra state. The entries are removed from
+           ``checkpoint["state_dict"]`` here so the full-checkpoint resume path (``Trainer(ckpt_path=...)``) cannot
+           abort on them, mirroring :meth:`~rfdetr.training.callbacks.ema.RFDETREMACallback._without_extra_state`.
+
+        4. **Converted format** — a file produced by
            :func:`~rfdetr.training.checkpoint.convert_legacy_checkpoint` that already has ``"state_dict"`` but also
            carries ``"legacy_ema_state_dict"``.  The EMA weights are stashed on ``self._pending_legacy_ema_state`` for
            optional restoration by :class:`~rfdetr.training.callbacks.ema.RFDETREMACallback`.
@@ -1488,6 +1507,16 @@ class RFDETRModelModule(LightningModule):
                 checkpoint["state_dict"],
                 self.model_config.positional_encoding_size,
             )
+
+        # Drop Transformer Engine's `_extra_state` entries before PTL applies the state dict.
+        # `strict_loading=False` (set in __init__) only tolerates a missing or unexpected key
+        # afterward — it does not stop `load_state_dict()` from calling `set_extra_state()` for a
+        # key present in both the checkpoint and the module, and Transformer Engine rejects that
+        # pickle round-trip.
+        if "state_dict" in checkpoint:
+            extra_state_keys = [key for key in checkpoint["state_dict"] if key.rsplit(".", 1)[-1] == "_extra_state"]
+            for key in extra_state_keys:
+                del checkpoint["state_dict"][key]
 
         # Optimizer/scheduler state saved before parameters were grouped by hyperparameters carries
         # one parameter group per parameter, a layout the optimizer no longer has. Regroup it so

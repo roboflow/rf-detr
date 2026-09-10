@@ -1511,6 +1511,130 @@ def _affine_ranges(transform: Any) -> dict[str, tuple[float, float]]:
     return resolved
 
 
+class TestAffineScalarParameters:
+    """Scalar ``Affine`` ranges must not lose an axis or fail in the Kornia backend."""
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self) -> None:
+        """Skip when Kornia is unavailable (optional extra not installed in CPU CI).
+
+        Examples:
+            Pytest fixture functions cannot be called directly outside fixture injection.
+
+            >>> TestAffineScalarParameters()._require_kornia()  # doctest: +SKIP
+        """
+        pytest.importorskip("kornia")
+
+    def test_scalar_translate_percent_moves_both_axes(self) -> None:
+        """A scalar translation must not silently leave the horizontal axis fixed."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        torch.manual_seed(0)
+        pipeline = build_kornia_pipeline(
+            {"Affine": {"translate_percent": 0.1, "rotate": (0.0, 0.0), "p": 1.0}}, resolution=64
+        )
+        image = torch.zeros(1, 1, 64, 64)
+        image[0, 0, 32, 32] = 1.0
+        boxes = torch.tensor([[[31.0, 31.0, 33.0, 33.0]]])
+        horizontal, vertical = [], []
+
+        for _ in range(128):
+            moved, _ = pipeline(image, boxes)
+            flat_index = int(moved[0, 0].flatten().argmax().item())
+            horizontal.append(flat_index % 64 - 32)
+            vertical.append(flat_index // 64 - 32)
+
+        assert min(horizontal) < 0 < max(horizontal), horizontal
+        assert min(vertical) < 0 < max(vertical), vertical
+
+    def test_scalar_translate_percent_warns_about_the_cpu_distribution(self) -> None:
+        """A fixed positive CPU scalar must not silently become signed GPU sampling."""
+        from unittest import mock
+
+        albumentations = pytest.importorskip("albumentations")
+
+        from rfdetr.datasets import kornia_transforms
+
+        cpu_affine = albumentations.Affine(translate_percent=0.1)
+        with mock.patch.object(kornia_transforms.logger, "warning") as warn:
+            gpu_affine = kornia_transforms._make_affine({"translate_percent": 0.1, "p": 1.0})
+
+        assert cpu_affine.translate_percent == {"x": (0.1, 0.1), "y": (0.1, 0.1)}
+        assert tuple(float(value) for value in gpu_affine._param_generator.translate) == pytest.approx(
+            (0.1, 0.1), abs=1e-6
+        )
+        messages = [
+            call.args[0] % call.args[1:] if len(call.args) > 1 else call.args[0] for call in warn.call_args_list
+        ]
+        assert any("scalar" in message and "different distribution" in message for message in messages), messages
+
+    def test_scalar_scale_executes_public_pipeline(self) -> None:
+        """A scalar scale must build and run instead of failing inside Kornia."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Affine": {"scale": 1.1, "rotate": (0.0, 0.0), "p": 1.0}}, resolution=64)
+        image = torch.rand(1, 3, 64, 64)
+        boxes = torch.tensor([[[8.0, 8.0, 24.0, 24.0]]])
+
+        image_out, boxes_out = pipeline(image, boxes)
+
+        assert image_out.shape == image.shape
+        assert boxes_out.shape == boxes.shape
+        assert not torch.allclose(boxes_out, boxes)
+
+    def test_existing_pairs_keep_their_ranges(self) -> None:
+        """The scalar fix must not change existing ordered-pair behaviour."""
+        from rfdetr.datasets.kornia_transforms import _make_affine
+
+        ranges = _affine_ranges(_make_affine({"translate_percent": (-0.05, 0.2), "scale": (0.8, 1.2), "p": 1.0}))
+
+        assert ranges["translate"] == pytest.approx((0.2, 0.2), abs=1e-6)
+        assert ranges["scale"] == pytest.approx((0.8, 1.2), abs=1e-6)
+
+    @pytest.mark.parametrize(
+        "params,key,expected",
+        [
+            pytest.param(
+                {"translate_percent": 0.1, "scale": (0.9, 1.1), "rotate": (0.0, 0.0), "p": 1.0},
+                "translate",
+                (0.1, 0.1),
+                id="translate",
+            ),
+            pytest.param(
+                {"translate_percent": (-0.05, 0.05), "scale": 1.1, "rotate": (0.0, 0.0), "p": 1.0},
+                "scale",
+                (1.1, 1.1),
+                id="scale",
+            ),
+        ],
+    )
+    def test_scalar_parameters_resolve_to_the_symmetric_range(
+        self, params: dict[str, Any], key: str, expected: tuple[float, float]
+    ) -> None:
+        """A scalar parameter must resolve to the exact symmetric range Kornia receives, not just execute."""
+        from rfdetr.datasets.kornia_transforms import _make_affine
+
+        ranges = _affine_ranges(_make_affine(params))
+
+        assert ranges[key] == pytest.approx(expected, abs=1e-6)
+
+    @pytest.mark.parametrize(
+        "parameter,value",
+        [
+            pytest.param("translate_percent", ("-0.1", "0.1"), id="translate-pair"),
+            pytest.param("scale", ("0.8", "1.2"), id="scale-pair"),
+            pytest.param("translate_percent", "0.1", id="translate-scalar"),
+            pytest.param("scale", "1.1", id="scale-scalar"),
+        ],
+    )
+    def test_string_values_keep_their_existing_rejection(self, parameter: str, value: Any) -> None:
+        """Normalising numeric scalars must not accept string values."""
+        from rfdetr.datasets.kornia_transforms import _make_affine
+
+        with pytest.raises((TypeError, ValueError)):
+            _make_affine({parameter: value, "p": 1.0})
+
+
 class TestShiftScaleRotateFactory:
     """`ShiftScaleRotate` on the Kornia backend (issue #1252).
 
