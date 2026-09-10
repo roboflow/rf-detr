@@ -2390,6 +2390,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>WebDataset training keeps shard permutations consistent across ranks with real DataLoader workers, aligns accumulation at rank level, and sizes raw-label heads from all declared categories. Repacking is documented as offline-only; path and shard-helper doctests are portable and executable.</p>
 </li>
 <li>
+<p>Distributed (DDP) training now preserves the minimum five optimizer steps per epoch for short datasets instead of losing the replacement sample count when Lightning injects its distributed sampler.</p>
+</li>
+<li>
 <p>Kornia <code>Affine</code> now applies scalar <code>translate_percent</code> to both axes and reads scalar <code>scale</code> as a fixed range, avoiding silent horizontal-translation loss and construction failures. Scalar translation emits a warning because Kornia samples signed offsets while Albumentations applies the scalar as a fixed positive offset.</p>
 </li>
 <li>
