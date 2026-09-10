@@ -122,6 +122,14 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 | `device`                 | `str`  | `None`  | Device to run training on. `None` means auto-detected by PyTorch Lightning. Options: `"cuda"`, `"cpu"`, `"mps"` (Apple Silicon).                                                                                                               |
 | `gradient_checkpointing` | `bool` | `False` | **Constructor-only parameter** — pass to the model constructor (`RFDETRMedium(gradient_checkpointing=True)`), not to `train()`. Re-computes activations during backprop to reduce memory usage by ~30-40% at the cost of ~20% slower training. |
 
+### Training precision
+
+`amp_dtype` accepts `"auto"`, `"bf16"`, `"fp16"`, or `"fp8"`. FP8 selects Lightning's Transformer Engine precision plugin, which replaces eligible linear and layer-normalization layers while retaining BF16 weights. FP8 requires a Transformer Engine-supported NVIDIA GPU and `model_config.amp=True`; it is rejected for CPU, MPS, TPU/XLA, FSDP, and DeepSpeed. Use DDP for multi-GPU FP8 training. Hardware support and speedups vary, so benchmark the exact model and GPU before adopting it.
+
+FP8 requires an explicit integer `batch_size`. Automatic batch sizing probes an unconverted model and is rejected with `amp_dtype="fp8"`; BF16/FP16 retain automatic sizing.
+
+See [Advanced Training — FP8 on NVIDIA CUDA](advanced.md#fp8-training-on-nvidia-cuda) for the `cuda` extra, CUDA-version compatibility, an environment check, and troubleshooting. The extra does not enable FP8 automatically and does not support Apple MPS.
+
 ## EMA (Exponential Moving Average)
 
 | Parameter         | Type   | Default | Description                                                                                                                                                                                                                                                                                          |

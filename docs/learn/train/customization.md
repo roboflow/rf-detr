@@ -92,7 +92,7 @@ train_config = TrainConfig(..., optimizer=functools.partial(torch.optim.AdamW, w
 
 See [Training parameters — optimizer](training-parameters.md) for the full parameter reference and examples.
 
-`fused_optimizer` only affects the built-in `optimizer="adamw"` path; it is ignored for custom optimizers. On a BF16/CUDA run where fused AdamW would otherwise apply, RF-DETR logs a warning if `fused_optimizer=True` is combined with a non-default optimizer.
+`fused_optimizer` only affects the built-in `optimizer="adamw"` path; it is ignored for custom optimizers. On a BF16/CUDA or Transformer Engine run where fused AdamW would otherwise apply, RF-DETR logs a warning if `fused_optimizer=True` is combined with a non-default optimizer.
 
 !!! warning "Wrapper optimizers (SAM, Lookahead, …) need extra care"
 
@@ -182,7 +182,7 @@ trainer = build_trainer(train_config, model_config)
 | Max epochs            | `train_config.epochs`                                                                                                                                                                                                                                          |
 | Gradient accumulation | Detection/segmentation: `train_config.grad_accum_steps` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `1`).                                                                                     |
 | Gradient clipping     | Detection/segmentation: `train_config.clip_max_norm` forwarded to Trainer. Keypoint models: owned by `RFDETRModelModule` manual optimization (Trainer always sees `None`).                                                                                     |
-| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype)                                                                                            |
+| Mixed precision       | `model_config.amp` enables AMP; dtype resolved from `train_config.amp_dtype` (`"auto"` selects `bf16-mixed` on Ampere+, `"bf16"` / `"fp16"` force a specific dtype, and `"fp8"` selects Lightning Transformer Engine on supported NVIDIA GPUs)                 |
 | Accelerator           | `train_config.accelerator` (default `"auto"`)                                                                                                                                                                                                                  |
 | Strategy              | Set via `train_config.strategy` (default `"auto"`) or pass `strategy=` as a `**trainer_kwarg` to `build_trainer`. Common values: `"auto"`, `"ddp"`, `"ddp_spawn"`. `TrainConfig` also exposes `devices` and `num_nodes` for multi-GPU and multi-node training. |
 | Sync batch norm       | `train_config.sync_bn`                                                                                                                                                                                                                                         |
