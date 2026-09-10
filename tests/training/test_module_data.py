@@ -896,6 +896,18 @@ class TestTrainDataloader:
         ``coco.py:653``), not the rank-0 scalar ``ConvertCoco``'s own docstring calls it
         (``coco.py:615``) -- matched to the actual runtime shape here.
 
+        Args:
+            h: Image and mask height. Pass distinct values across samples in the same
+                batch to exercise ``pack_targets``'s per-sample shape bookkeeping --
+                ``RandomResize`` preserves each source image's own aspect ratio, so a real
+                collated batch routinely mixes segmentation masks of different spatial shape.
+            w: Image and mask width, independent of ``h`` for the same reason.
+            num_instances: Number of instances in the sample; ``0`` produces an
+                empty-but-shaped ``masks`` tensor.
+
+        Returns:
+            The synthetic image tensor and its matching target dict.
+
         Examples:
             >>> image, target = TestTrainDataloader._raw_segmentation_sample(num_instances=2)
             >>> target["masks"].shape, target["masks"].dtype
@@ -930,9 +942,13 @@ class TestTrainDataloader:
         dm._dataset_train = _fake_dataset(200)
 
         loader = dm.train_dataloader()
-        sample_a = self._raw_segmentation_sample(num_instances=1)
-        sample_zero = self._raw_segmentation_sample(num_instances=0)
-        sample_b = self._raw_segmentation_sample(num_instances=3)
+        # Distinct, non-transposed H/W per sample: RandomResize preserves each source image's own
+        # aspect ratio, so a real collated batch routinely mixes masks of different spatial shape.
+        # Same-shape samples would still round-trip bit-identically even if pack_targets silently
+        # reused one sample's spatial shape for another -- these dimensions discriminate that.
+        sample_a = self._raw_segmentation_sample(h=14, w=22, num_instances=1)
+        sample_zero = self._raw_segmentation_sample(h=20, w=10, num_instances=0)
+        sample_b = self._raw_segmentation_sample(h=18, w=16, num_instances=3)
         _, packed = loader.collate_fn([sample_a, sample_zero, sample_b])
 
         assert isinstance(packed, PackedTargets), "a real segmentation batch must still pack"
@@ -945,7 +961,7 @@ class TestTrainDataloader:
             assert torch.equal(actual["labels"], expected["labels"])
             assert torch.equal(actual["area"], expected["area"])
             assert torch.equal(actual["iscrowd"], expected["iscrowd"])
-        assert rebuilt[1]["masks"].shape == (0, 16, 16), "the zero-instance sample must not collapse into a neighbour"
+        assert rebuilt[1]["masks"].shape == (0, 20, 10), "the zero-instance sample must not collapse into a neighbour"
 
 
 class TestGradAccumAlignedDataset:
