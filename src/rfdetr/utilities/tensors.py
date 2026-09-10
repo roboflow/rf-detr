@@ -429,8 +429,8 @@ def _nearest_grid_sample(
     return torch.where(torch.zeros_like(grid_x, dtype=torch.bool), grid_x, output)
 
 
-# Target entries with one row per ground-truth object. They must be padded together or a consumer
-# that cross-checks two of them (COCO matching validates ``iscrowd`` against ``labels``) will raise.
+#: Target entries with one row per ground-truth object. They must be padded together or a consumer
+#: that cross-checks two of them (COCO matching validates ``iscrowd`` against ``labels``) will raise.
 _PER_OBJECT_TARGET_KEYS = ("boxes", "labels", "area", "iscrowd", "keypoints", "masks")
 
 

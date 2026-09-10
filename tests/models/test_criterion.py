@@ -1418,6 +1418,39 @@ class TestPaddedTargets:
 
         assert torch.allclose(plain["cardinality_error"], padded["cardinality_error"], rtol=1e-5, atol=1e-6)
 
+    @pytest.mark.xla
+    def test_cardinality_error_does_not_read_the_valid_mask_back_to_the_host(self) -> None:
+        """No ``_local_scalar_dense``: reading padded targets' ``valid`` counts must stay a device transfer.
+
+        Padding runs host-side in the collate seam (as it does in production), so this pads before moving the batch to
+        the XLA device -- exactly the boundary an ``int()`` per image would cross on every read. Runs on any PJRT
+        backend -- ``device.type`` is ``"xla"`` under ``PJRT_DEVICE=CPU`` too, which is all the host-sync counter
+        depends on, so this needs no TPU silicon.
+        """
+        pytest.importorskip("torch_xla")
+        import torch_xla
+        import torch_xla.debug.metrics as met
+
+        device = torch_xla.device()
+        outputs, targets = _padding_batch(0, batch_size=2, queries=8)
+        padded = [
+            {key: (value.to(device) if torch.is_tensor(value) else value) for key, value in target.items()}
+            for target in pad_targets_to_fixed_count(targets, 12)
+        ]
+        outputs = {key: value.to(device) for key, value in outputs.items()}
+        criterion = _padding_criterion(losses=["cardinality"])
+        num_boxes = torch.tensor(0.0, device=device)
+
+        # Warm up so one-off compilation transfers do not land in the measured counters.
+        criterion.loss_cardinality(outputs, padded, indices=[], num_boxes=num_boxes)
+        torch_xla.sync()
+
+        met.clear_all()
+        criterion.loss_cardinality(outputs, padded, indices=[], num_boxes=num_boxes)
+        torch_xla.sync()
+
+        assert met.counter_value("aten::_local_scalar_dense") is None
+
     def test_unmasked_classification_branches_refuse_padded_targets(self) -> None:
         """Better a loud failure than a loss that quietly counts filler rows as real matches."""
         outputs, targets = _padding_batch(0)

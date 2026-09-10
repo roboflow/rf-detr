@@ -737,8 +737,11 @@ class SetCriterion(nn.Module):
         if targets and "valid" in targets[0]:
             # Fixed-size target padding (pad_targets_to) pads every "labels" row count to the same
             # constant, so len() would report a constant error against a constant instead of the real
-            # ground-truth count -- "valid" marks which rows are real.
-            tgt_lengths = torch.as_tensor([int(v["valid"].sum()) for v in targets], device=device)
+            # ground-truth count -- "valid" marks which rows are real. Stacking the per-image device
+            # scalars (as num_boxes_for_targets does) and moving the whole batch in one transfer keeps
+            # this on device; an int() per image would read each one back to the host instead, cutting
+            # XLA's lazy graph every layer, every step.
+            tgt_lengths = torch.stack([v["valid"].sum() for v in targets]).to(device=device)
         else:
             tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
         # Sigmoid/focal heads have no background class; count predictions whose top score is confident

@@ -549,6 +549,24 @@ class TestTrainConfigT42PromotedFields:
         """eval_batch_size defaults to None so eval loaders inherit the resolved train batch size."""
         assert self._tc(tmp_path).eval_batch_size is None
 
+    @pytest.mark.parametrize(
+        "pad_targets_to",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_pad_targets_to_rejects_non_positive_values(self, tmp_path: Path, pad_targets_to: int) -> None:
+        """pad_targets_to must be >= 1 when provided, caught at construction, not at first collate."""
+        with pytest.raises(
+            ValidationError, match=r"pad_targets_to\s+Value error, pad_targets_to must be a positive integer"
+        ):
+            self._tc(tmp_path, pad_targets_to=pad_targets_to)
+
+    def test_pad_targets_to_defaults_to_none(self, tmp_path: Path) -> None:
+        """pad_targets_to defaults to None so training keeps the variable-length path CUDA wants."""
+        assert self._tc(tmp_path).pad_targets_to is None
+
     @pytest.mark.parametrize("ema_headroom", [0.0, 1.5])
     def test_auto_batch_ema_headroom_must_be_in_open_one(self, tmp_path, ema_headroom):
         """auto_batch_ema_headroom must be in (0, 1]."""

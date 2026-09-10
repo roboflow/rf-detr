@@ -1303,6 +1303,18 @@ class TrainConfig(BaseConfig):
             raise ValueError("eval_batch_size must be >= 1 when provided.")
         return v
 
+    @field_validator("pad_targets_to", mode="after")
+    @classmethod
+    def validate_pad_targets_to(cls, v: int | None) -> int | None:
+        """Validate pad_targets_to is None (keep the variable-length path) or >= 1.
+
+        Catches a non-positive value at construction instead of at the first DataLoader collate, which can run inside a
+        worker process.
+        """
+        if v is not None and v < 1:
+            raise ValueError("pad_targets_to must be a positive integer when provided.")
+        return v
+
     @field_validator(
         "grad_accum_steps", "auto_batch_target_effective", "auto_batch_max_targets_per_image", mode="after"
     )
