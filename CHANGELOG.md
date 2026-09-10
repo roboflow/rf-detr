@@ -28,6 +28,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.export(backbone_only=True)` now exports the encoder and feature projector instead of calling the full detector and failing with an `AttributeError`. ONNX exports retain every configured feature-pyramid level and support dynamic batches.
 
+- `pack_targets` correctness for segmentation targets (the `masks` field) is now covered by a dedicated regression test through the real `RFDETRDataModule` collate path, closing a parity gap #1399 shipped without. ([#1399](https://github.com/roboflow/rf-detr/pull/1399))
+
 ### Changed
 
 - Multi-GPU keypoint training with `grad_accum_steps > 1` now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.

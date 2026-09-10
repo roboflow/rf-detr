@@ -885,6 +885,68 @@ class TestTrainDataloader:
         assert not isinstance(targets, PackedTargets)
         assert all(isinstance(t, dict) for t in targets)
 
+    @staticmethod
+    def _raw_segmentation_sample(
+        h: int = 16, w: int = 16, num_instances: int = 1
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Build one (image, target) pair shaped exactly as the COCO reader produces for a
+        segmentation model: ``masks`` is ``torch.bool`` of shape ``(num_instances, H, W)``,
+        alongside the ``area``/``iscrowd``/``size`` fields ``rfdetr.datasets.coco.py`` always
+        attaches next to it. ``image_id`` is rank-1 (``torch.as_tensor([image_id])``,
+        ``coco.py:653``), not the rank-0 scalar ``ConvertCoco``'s own docstring calls it
+        (``coco.py:615``) -- matched to the actual runtime shape here.
+
+        Examples:
+            >>> image, target = TestTrainDataloader._raw_segmentation_sample(num_instances=2)
+            >>> target["masks"].shape, target["masks"].dtype
+            (torch.Size([2, 16, 16]), torch.bool)
+        """
+        image = torch.randn(3, h, w)
+        target = {
+            "boxes": torch.rand(num_instances, 4),
+            "labels": torch.arange(num_instances, dtype=torch.int64),
+            "image_id": torch.as_tensor([0]),
+            "area": torch.rand(num_instances),
+            "iscrowd": torch.zeros(num_instances, dtype=torch.int64),
+            "orig_size": torch.tensor([h, w]),
+            "size": torch.tensor([h, w]),
+            "masks": torch.rand(num_instances, h, w) > 0.5,
+        }
+        return image, target
+
+    def test_pack_targets_round_trips_segmentation_masks_bit_identically(self, tmp_path):
+        """#1399's own body flagged this as unmeasured: the packer handles any same-keyed field, including ``masks``,
+        but no parity run existed for it.
+
+        This pins correctness through the real DataModule collate seam, using ``to_list()`` -- the exact method
+        ``transfer_batch_to_device`` calls on the real training path -- rather than a related but different
+        iteration method. The middle, zero-instance sample mirrors
+        ``TestPackedTargets.test_a_sample_with_no_instances_survives_the_round_trip`` in
+        ``tests/utilities/test_tensors.py`` -- that test pins the same "must not collapse into a neighbour's rows"
+        invariant for ``boxes``/``labels``, but never through a real segmentation batch's ``masks`` field.
+        """
+        model_config = _base_model_config(segmentation_head=True)
+        dm = RFDETRDataModule(model_config, _base_train_config(tmp_path, pack_targets=True))
+        dm._dataset_train = _fake_dataset(200)
+
+        loader = dm.train_dataloader()
+        sample_a = self._raw_segmentation_sample(num_instances=1)
+        sample_zero = self._raw_segmentation_sample(num_instances=0)
+        sample_b = self._raw_segmentation_sample(num_instances=3)
+        _, packed = loader.collate_fn([sample_a, sample_zero, sample_b])
+
+        assert isinstance(packed, PackedTargets), "a real segmentation batch must still pack"
+        rebuilt = packed.to_list(torch.device("cpu"))
+        for (_, expected), actual in zip([sample_a, sample_zero, sample_b], rebuilt, strict=True):
+            assert actual["masks"].dtype == torch.bool
+            assert actual["masks"].shape == expected["masks"].shape
+            assert torch.equal(actual["masks"], expected["masks"]), "masks must round-trip bit-identically"
+            assert torch.equal(actual["boxes"], expected["boxes"])
+            assert torch.equal(actual["labels"], expected["labels"])
+            assert torch.equal(actual["area"], expected["area"])
+            assert torch.equal(actual["iscrowd"], expected["iscrowd"])
+        assert rebuilt[1]["masks"].shape == (0, 16, 16), "the zero-instance sample must not collapse into a neighbour"
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
