@@ -17,7 +17,7 @@ import torch.utils.data
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.config import KeypointTrainConfig, RFDETRBaseConfig, TrainConfig
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.tensors import NestedTensor, PackedTargets, pack_targets
@@ -828,12 +828,64 @@ class TestTrainDataloader:
             batch_size=2,
             grad_accum_steps=4,
         )
-        dm.trainer = MagicMock(world_size=3)
+        dm.trainer = MagicMock(world_size=3, accumulate_grad_batches=4)
 
         loader = dm.train_dataloader()
 
         assert len(loader.dataset) % (2 * 4 * 3) == 0
         assert len(loader.dataset) == 120
+
+    @pytest.mark.parametrize(
+        ("dataset_length", "grad_accum_steps", "trainer_grad_accum_steps", "expected_samples"),
+        [
+            pytest.param(3, 1, 1, 20, id="far_below_threshold"),
+            pytest.param(12, 1, 1, 20, id="between_single_and_ddp_thresholds"),
+            pytest.param(19, 1, 1, 20, id="threshold_minus_one"),
+            pytest.param(20, 1, 1, 20, id="exact_threshold"),
+            pytest.param(21, 1, 1, 24, id="threshold_plus_one"),
+            pytest.param(3, 3, 3, 60, id="configured_gradient_accumulation"),
+            pytest.param(3, 1, 2, 40, id="trainer_gradient_accumulation_override"),
+        ],
+    )
+    def test_ddp_preserves_minimum_effective_batches_per_rank(
+        self,
+        tmp_path: Path,
+        dataset_length: int,
+        grad_accum_steps: int,
+        trainer_grad_accum_steps: int,
+        expected_samples: int,
+    ) -> None:
+        """DDP keeps five complete optimizer steps per rank across the small-dataset threshold."""
+        batch_size = 2
+        world_size = 2
+        dm = self._setup_dm_with_train(
+            tmp_path,
+            dataset_length=dataset_length,
+            batch_size=batch_size,
+            grad_accum_steps=grad_accum_steps,
+        )
+        dm.trainer = MagicMock(
+            world_size=world_size,
+            accumulate_grad_batches=trainer_grad_accum_steps,
+        )
+
+        loader = dm.train_dataloader()
+
+        assert len(loader.dataset) == expected_samples
+
+    def test_ddp_keypoint_uses_manually_owned_gradient_accumulation(self, tmp_path: Path) -> None:
+        """Keypoint padding follows TrainConfig rather than Lightning's forced accumulation value of one."""
+        model_config = _base_model_config(use_grouppose_keypoints=True)
+        train_config = KeypointTrainConfig(
+            **_base_train_config(tmp_path, batch_size=2, grad_accum_steps=3).model_dump()
+        )
+        dm = RFDETRDataModule(model_config, train_config)
+        dm._dataset_train = _fake_dataset(3)
+        dm.trainer = MagicMock(world_size=2, accumulate_grad_batches=1)
+
+        loader = dm.train_dataloader()
+
+        assert len(loader.dataset) == 60
 
     @staticmethod
     def _raw_sample(h: int = 16, w: int = 16) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -916,6 +968,14 @@ class TestGradAccumAlignedDataset:
         ds = self._make_dataset(50)  # 50 % 16 = 2 → pad 14
         wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
         assert len(wrapped) == 64
+
+    def test_minimum_length_repeats_to_requested_aligned_size(self) -> None:
+        """A minimum length extends short datasets while preserving the alignment unit."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(3)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=2, world_size=2, minimum_length=20)
+        assert len(wrapped) == 20
 
     def test_getitem_forwards_to_original_dataset(self):
         """Items in the original range map directly to the underlying dataset."""

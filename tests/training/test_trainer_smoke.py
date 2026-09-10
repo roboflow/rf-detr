@@ -436,3 +436,74 @@ def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train
 
     trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
     trainer.fit(module, datamodule=datamodule)
+
+
+class _DDPMinStepsModule(RFDETRModelModule):
+    """RFDETRModelModule subclass that asserts on the guaranteed minimum optimizer-step count in ddp_spawn.
+
+    See ``_DDPModule``'s docstring above: ``ddp_spawn`` pickles this class by qualified name, so patches applied in
+    the parent process are invisible to the spawned child; ``configure_optimizers`` is overridden to bypass
+    ``get_param_dict``, which would fail on ``_TinyModel`` (no ``.backbone`` attribute).
+
+    Must be defined at module level so pickle can look up the class by qualified name when ddp_spawn deserialises it
+    in the child process.
+
+    Regression guard for the DDP short-dataset epoch collapse: Lightning's ``DistributedSampler`` injection must not
+    discard the replacement sample count that ``RFDETRDataModule.train_dataloader()`` computes for a short dataset.
+    """
+
+    def configure_optimizers(self):
+        """Minimal single-group AdamW — bypasses get_param_dict."""
+        return torch.optim.AdamW(self.parameters(), lr=1e-4)
+
+    def on_train_epoch_end(self) -> None:
+        """Raise in the child process if this rank did not complete the guaranteed five optimizer steps."""
+        super().on_train_epoch_end()
+        expected_steps = 5
+        if self.global_step != expected_steps:
+            raise AssertionError(
+                f"rank {self.global_rank} completed {self.global_step} optimizer steps, expected "
+                f"{expected_steps}. DDP discarded the short-dataset replacement sample count."
+            )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@pytest.mark.parametrize("trainer_grad_accum_steps", [1, 2])
+def test_ddp_spawn_preserves_minimum_optimizer_steps(
+    base_model_config,
+    base_train_config,
+    trainer_grad_accum_steps: int,
+):
+    """ddp_spawn with a below-threshold dataset must still complete five optimizer steps per rank.
+
+    ``TestTrainDataloader.test_ddp_preserves_minimum_effective_batches_per_rank`` in test_module_data.py covers the
+    replacement-length arithmetic before Lightning injects its ``DistributedSampler``. This test exercises the real
+    ``ddp_spawn`` strategy end to end and fails (via ``_DDPMinStepsModule.on_train_epoch_end``) if that injection
+    discards the replacement sample count, which the arithmetic-only test cannot observe.
+    """
+    mc = base_model_config()
+    tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn", epochs=1)
+
+    fake_dataset = _FakeDataset(length=3)
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), _FakePostProcess()),
+        ),
+    ):
+        module = _DDPMinStepsModule(mc, tc)
+
+    datamodule = RFDETRDataModule(mc, tc)
+    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
+    datamodule._dataset_train = fake_dataset
+    datamodule._dataset_val = fake_dataset
+
+    trainer = build_trainer(
+        tc,
+        mc,
+        accelerator="cpu",
+        accumulate_grad_batches=trainer_grad_accum_steps,
+    )
+    trainer.fit(module, datamodule=datamodule)
