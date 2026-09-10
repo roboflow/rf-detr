@@ -532,7 +532,7 @@ class RFDETRModelModule(LightningModule):
                 )
 
     def on_train_epoch_start(self) -> None:
-        """Reset the accumulated box normalizer at the start of every training epoch.
+        """Reset the accumulated box normalizer and advance any custom batch sampler's epoch.
 
         Lightning may reuse the module across epochs without calling ``_step_optimizer`` at the boundary (for example
         when an epoch ends mid-accumulation window with a non-divisible batch count). Clearing the accumulator here
@@ -546,6 +546,13 @@ class RFDETRModelModule(LightningModule):
         trailing window, so this reset is the only change needed.  On IterableDatasets (infinite
         ``num_training_batches``) a partial window may survive epoch end with un-stepped gradients; those are
         discarded here and the optimizer is zeroed so the first microbatch of the new epoch starts from a clean state.
+
+        Also forwards the current epoch to ``self.trainer.datamodule.train_batch_sampler`` when
+        :meth:`~rfdetr.training.module_data.RFDETRDataModule.build_train_sampler` returned a sampler and it
+        exposes ``set_epoch`` (for example :class:`~rfdetr.datasets.multi_source.WeightedMultiSourceBatchSampler`).
+        PTL forwards only ``setup``/``teardown``/``on_exception``/``state_dict``/``prepare_data`` to a
+        ``LightningDataModule`` — never epoch hooks — so a custom batch sampler's seeded per-epoch reshuffle has
+        no other way to advance and would otherwise silently reuse the same shuffle for the entire run.
         """
         if self._accumulated_box_normalizer is not None:
             # Discard any partial accumulation window that survived the epoch boundary
@@ -557,6 +564,15 @@ class RFDETRModelModule(LightningModule):
             except RuntimeError:
                 pass  # Not attached to Trainer (unit-test context); nothing to zero.
         self._accumulated_box_normalizer = None
+
+        try:
+            trainer = self.trainer
+        except RuntimeError:
+            return  # Not attached to Trainer (unit-test context); nothing to forward.
+        batch_sampler = getattr(getattr(trainer, "datamodule", None), "train_batch_sampler", None)
+        set_epoch = getattr(batch_sampler, "set_epoch", None)
+        if callable(set_epoch):
+            set_epoch(self.current_epoch)
 
     def training_step(self, batch: tuple[Any, Any], batch_idx: int) -> Tensor | dict[str, Any]:
         """Compute loss for one training step and log metrics.
