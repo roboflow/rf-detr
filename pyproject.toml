@@ -54,6 +54,18 @@ train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
     "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract; re-verify _validate_private_contract() (src/rfdetr/training/coco_map.py) against 1.9+ before widening this pin
+    # Default COCO evaluation backend (MIT, numpy-only runtime dependency, cp39-abi3 wheels for manylinux2014
+    # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
+    # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
+    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The exact pin is
+    # deliberate: two of the hotcoco behaviors the adapter works around still fail silently rather than loudly on
+    # 1.0.0 — its `dataset` getter returns a copy, and its own `mask.encode` emits RLE counts as bytes that its
+    # own COCO constructor reads back as an empty mask, collapsing mask AP to 0.0 without raising. Pinning exactly
+    # makes every hotcoco release an explicit, parity-tested upgrade rather than something a user's resolver can
+    # pick up unverified. Installing it also puts a generically-named `coco` console script on PATH.
+    # TODO: once a hotcoco release fixes both behaviors, drop the matching workarounds
+    # in src/rfdetr/training/coco_map.py (each carries its own TODO) and reconsider widening this to a range.
+    "hotcoco==1.0.0",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
@@ -78,6 +90,14 @@ cuda = [
 augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
     "kornia>=0.7,<1",                  # optional GPU-side augmentation
+]
+data = [
+    # Streaming tar-shard training input (dataset_file="webdataset"). Only the reader needs it: shards are packed
+    # with the standard library's tarfile, so `python -m rfdetr.cli.webdataset` runs without this extra.
+    # Floored at 1.0, the series whose WebDataset(...) signature this integrates against: the loader
+    # passes workersplitter, nodesplitter, empty_check and seed explicitly.
+    # Integration tested against webdataset==1.0.2; the supported dependency range remains below.
+    "webdataset>=1.0,<2",
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
@@ -142,6 +162,11 @@ coreml = [
     # during convert) is present at some low rate on torch<2.12 too. Raise this cap once the root
     # cause is understood/fixed upstream; don't treat it as a guaranteed-deterministic fix.
     "torch<2.12",
+]
+openvino = [
+    # Calendar-versioned (year.minor.patch); cap at next major to guard convert_model/save_model/Core,
+    # which this package calls directly and which can move across a major release.
+    "openvino>=2024.0,<2027.0",
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -381,6 +406,7 @@ markers = [
     "flaky: tests that may fail due to nondeterminism and are retried via pytest-rerunfailures",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
+    "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
     "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",
 ]
@@ -450,8 +476,10 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "openvino", "openvino.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
+    "webdataset", "webdataset.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the

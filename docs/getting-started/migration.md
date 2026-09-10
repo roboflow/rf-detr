@@ -203,7 +203,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 
-    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to `inference()` with the same signature.
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature.
 
     ```python
     # Before (deprecated)

@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
+import logging
 import random
 import warnings
 from types import SimpleNamespace
@@ -313,6 +314,26 @@ class _ScalarLossModel(nn.Module):
         return {"loss_scale": self.value}
 
 
+class _DynamicShapeModel(nn.Module):
+    """Tiny model whose loss path depends on the multi-scale batch tensor."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(()))
+
+    def forward(self, samples, targets=None):
+        return {"dummy": samples.tensors.mean() * self.weight}
+
+    def update_drop_path(self, *args, **kwargs) -> None:
+        pass
+
+    def update_dropout(self, *args, **kwargs) -> None:
+        pass
+
+    def reinitialize_detection_head(self, *args, **kwargs) -> None:
+        pass
+
+
 class _BoxNormalizedCriterion:
     """Criterion with controllable per-target loss numerators and box counts."""
 
@@ -402,16 +423,96 @@ class TestInit:
         assert module.model_config is mc
         assert module.train_config is tc
 
-    def test_compile_disabled_when_multi_scale_enabled(self, tmp_path):
-        """torch.compile is skipped when multi_scale=True (dynamic shapes)."""
+    def test_compile_runs_when_multi_scale_enabled(self, tmp_path):
+        """torch.compile still runs with multi_scale=True, which is the shipped default.
+
+        ``dynamic=True`` is passed precisely so one graph covers every (H, W) the multi-scale pipeline produces, so
+        multi-scale is not a reason to skip compilation on CUDA.
+        """
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=True)
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_called_once()
+        assert mock_compile.call_args.kwargs["dynamic"] is True
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="compiled multi-scale regression requires CUDA")
+    def test_compiled_multi_scale_forward_backward_across_resolutions(self, tmp_path):
+        """The real compiled CUDA module must backpropagate finite losses at two resized multi-scale resolutions."""
+        torch.manual_seed(0)
+        model_config = _base_model_config(compile=True, resolution=128)
+        train_config = _base_train_config(tmp_path, multi_scale=True)
+        model = _DynamicShapeModel().cuda()
+        criterion = _FakeCriterion()
+
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+        ):
+            module = RFDETRModelModule(model_config, train_config)
+
+        resized_shapes = set()
+        for global_step in (0, 1):
+            module.trainer = SimpleNamespace(global_step=global_step)
+            samples, targets = _make_batch(h=128, w=128)
+            samples.tensors = samples.tensors.cuda()
+            samples.mask = samples.mask.cuda()
+
+            module.on_train_batch_start((samples, targets), batch_idx=global_step)
+            resized_shapes.add(tuple(samples.tensors.shape[-2:]))
+            loss = criterion(module.model(samples, targets), targets)["loss_ce"]
+            loss.backward()
+
+            assert torch.isfinite(loss)
+            assert model.weight.grad is not None
+            assert torch.isfinite(model.weight.grad)
+            model.zero_grad(set_to_none=True)
+
+        assert len(resized_shapes) == 2
+
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
+    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, accelerator, tmp_path):
+        """XLA/TPU never compiles, and that no longer depends on multi_scale being set.
+
+        This is the invariant the removed ``not multi_scale`` clause was documented as protecting; the accelerator check
+        is what actually enforces it.
+        """
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False, accelerator=accelerator)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
             patch("rfdetr.training.module_model.torch.compile") as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
+
+    def test_compile_disabled_when_device_is_not_cuda(self, tmp_path, caplog, monkeypatch):
+        """A non-CUDA accelerator disables compilation regardless of multi_scale, with an explanatory notice.
+
+        A caller who sets ``compile=True`` on CPU/XLA/TPU must still learn why nothing was compiled, the same way the
+        old multi_scale-only notice used to inform CUDA callers.
+        """
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=True)
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with (
+            patch("rfdetr.config.DEVICE", "cpu"),
+            patch("rfdetr.training.module_model.torch.compile") as mock_compile,
+            caplog.at_level(logging.INFO, logger="rf-detr"),
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_not_called()
+        assert any("Disabling torch.compile" in record.getMessage() for record in caplog.records)
 
     def test_compile_runs_when_enabled_and_static_shapes(self, tmp_path):
         """torch.compile runs when compile=True and multi_scale=False on CUDA."""

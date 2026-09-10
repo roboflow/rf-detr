@@ -1057,7 +1057,9 @@ class TrainConfig(BaseConfig):
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
     keypoint_oks_sigmas: list[float] | None = None
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
+    # "webdataset" streams pre-packed tar shards instead of loose image files; see
+    # rfdetr.datasets.webdataset for the packer and the sizing contract it imposes on the loaders.
+    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "webdataset"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
@@ -1130,6 +1132,14 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
+    eval_backend: Literal["hotcoco", "faster_coco_eval"] = Field(
+        default="hotcoco",
+        description=(
+            "COCO evaluation backend used for validation and test mAP. Both ship with 'rfdetr[train]' and produce "
+            "identical metrics; 'hotcoco' is several times faster to compute. Set 'faster_coco_eval' to fall back "
+            "to the previous evaluator."
+        ),
+    )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
     # validation/test, returning them at the mask head's native (lower) resolution instead —
     # cheaper, but ground-truth masks must then be compared at that same lower resolution
