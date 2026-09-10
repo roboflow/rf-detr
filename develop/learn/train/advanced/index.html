@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-10T10:19:36">
+  <meta property="article:modified_time" content="2026-09-10T11:54:22">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-10T10:19:36",
+    "dateModified": "2026-09-10T11:54:22",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3484,7 +3484,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/keypoint-dataset"</span><span class="p">,</span>
 </span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="n">epochs</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
 </span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># per-GPU batch size</span>
-</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># recommended on multi-GPU — see note below</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>  <span class="c1"># see note below for multi-GPU accumulation behavior</span>
 </span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
 </span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>    <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">,</span>
 </span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">devices</span><span class="o">=</span><span class="s2">"auto"</span><span class="p">,</span>  <span class="c1"># or devices=8</span>
@@ -3493,8 +3493,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>torchrun<span class="w"> </span>--nproc_per_node<span class="o">=</span><span class="m">8</span><span class="w"> </span>train_pose.py
 </span></code></pre></div>
 <div class="admonition note">
-<p class="admonition-title">Prefer <code>grad_accum_steps=1</code> on multi-GPU for keypoints</p>
-<p>Keypoint models use <strong>manual optimization</strong> so the per-step box-count loss normalization is computed over the full accumulated batch. As a result, gradients synchronize on <strong>every</strong> microbatch rather than only at the end of an accumulation window. Training with <code>grad_accum_steps &gt; 1</code> on multiple GPUs is still numerically correct, but performs one <code>all_reduce</code> per microbatch (i.e. <code>grad_accum_steps</code>× the necessary communication). For best throughput, scale with more GPUs / a larger per-GPU <code>batch_size</code> and keep <code>grad_accum_steps=1</code>.</p>
+<p class="admonition-title">Gradient accumulation on multi-GPU keypoint training</p>
+<p>Keypoint models use <strong>manual optimization</strong> so the per-step box-count loss normalization is computed over the full accumulated batch. Intermediate microbatches accumulate gradients locally on each rank. The backward pass that closes the accumulation window synchronizes the full accumulated gradient before the optimizer step, avoiding redundant DDP reductions while preserving full-effective-batch normalization.</p>
 <p>Sharded strategies (FSDP / DeepSpeed) are <strong>not</strong> supported for keypoint models — use <code>ddp</code> (or <code>strategy="auto"</code> with <code>devices &gt; 1</code>).</p>
 </div>
 <h3 id="advanced-multi-gpu-options-ptl-api">Advanced multi-GPU options (PTL API)<a class="headerlink" href="#advanced-multi-gpu-options-ptl-api" title="Permanent link">&para;</a></h3>
@@ -3681,7 +3681,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 10, 2026 10:19:36 UTC">2026-09-10 10:19:36</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 10, 2026 11:54:22 UTC">2026-09-10 11:54:22</span>
   </span>
 
     

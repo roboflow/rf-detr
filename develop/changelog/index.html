@@ -2377,6 +2377,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Multi-GPU keypoint training with <code>grad_accum_steps &gt; 1</code> now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.</li>
+</ul>
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
