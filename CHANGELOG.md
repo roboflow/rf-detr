@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Multi-GPU keypoint training with `grad_accum_steps > 1` now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.
+
 ### Deprecated
 
 ### Fixed

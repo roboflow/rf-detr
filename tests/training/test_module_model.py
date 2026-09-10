@@ -8,12 +8,14 @@
 import logging
 import random
 import warnings
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 import torch
 from pytorch_lightning import Callback, Trainer
+from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
@@ -1022,6 +1024,32 @@ class TestTrainingStep:
         assert loss.item() == pytest.approx(1.0)
         backward_loss = module.manual_backward.call_args.args[0]
         assert backward_loss.item() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize(
+        "grad_accum_steps,num_training_batches,batch_idx,sync_grad",
+        [(2, 2, 0, False), (2, 4, 1, True), (4, 2, 1, True)],
+    )
+    def test_keypoint_accumulation_syncs_only_when_optimizer_steps(
+        self, tmp_path, grad_accum_steps, num_training_batches, batch_idx, sync_grad
+    ):
+        """Keypoint DDP must skip gradient synchronization until an accumulation window closes."""
+        keypoint_config = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            accumulate_grad_batches=grad_accum_steps,
+            model_config=keypoint_config,
+        )
+        optimizer = MagicMock(spec=LightningOptimizer)
+        optimizer.param_groups = [{"lr": 1e-3}]
+        optimizer.toggle_model.return_value = nullcontext()
+        optimizer.zero_grad = MagicMock()
+        module.optimizers.return_value = optimizer
+        module._trainer.num_training_batches = num_training_batches
+
+        module.training_step((samples, targets), batch_idx=batch_idx)
+
+        optimizer.toggle_model.assert_called_once_with(sync_grad=sync_grad)
+        module.manual_backward.assert_called_once()
 
     def test_detection_loss_uses_lightning_grad_accum_scaling(self, tmp_path):
         """Detection (automatic optimization) divides loss by ``trainer.accumulate_grad_batches`` so the returned loss
