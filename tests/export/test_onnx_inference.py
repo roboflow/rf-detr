@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from PIL import Image as PILImage
 
-from rfdetr.export._onnx.inference import _run_inference
+from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
 
 _INPUT_SHAPE = [1, 3, 224, 224]
 
@@ -166,3 +166,73 @@ class TestMulticlassSelection:
         dets, _ = _run_inference(session, rgb_image, threshold=0.3, num_select=3)
 
         assert len(dets) == 3
+
+
+@pytest.fixture()
+def tiny_onnx_model(tmp_path: Path) -> Path:
+    """Write a minimal single-node ONNX model and return its path.
+
+    ``_create_onnx_session`` only needs a loadable graph; an ``Identity`` node avoids depending on the real RF-DETR
+    export path for a session-construction test.
+
+    Examples:
+        Pytest fixture functions cannot be called directly outside fixture injection.
+        >>> tiny_onnx_model(Path("."))  # doctest: +SKIP
+    """
+    onnx = pytest.importorskip("onnx", reason="onnx not installed")
+    tensor_proto, helper = onnx.TensorProto, onnx.helper
+
+    inp = helper.make_tensor_value_info("input", tensor_proto.FLOAT, [1, 3, 8, 8])
+    out = helper.make_tensor_value_info("output", tensor_proto.FLOAT, [1, 3, 8, 8])
+    node = helper.make_node("Identity", inputs=["input"], outputs=["output"])
+    graph = helper.make_graph([node], "test", [inp], [out])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    onnx_path = tmp_path / "identity.onnx"
+    onnx.save(model, str(onnx_path))
+    return onnx_path
+
+
+class TestCreateOnnxSession:
+    """Tests for ``_create_onnx_session``'s CPU thread-pool configuration.
+
+    ``_run_inference``'s own preprocessing (``preprocess_to_nchw``, via ``torchvision`` when installed) runs in the same
+    process as the session it feeds. ONNX Runtime's default CPU thread pool busy-spins between calls rather than
+    blocking, so those idle-but-spinning threads contend for CPU with that preprocessing step -- and with the session's
+    own next call -- for as long as the process lives. Disabling spinning only changes how idle threads wait; it does
+    not change computed values.
+    """
+
+    def test_disables_intra_op_spinning_on_cpu(self, tiny_onnx_model: Path) -> None:
+        """The constructed session must not let its CPU threads busy-spin between calls."""
+        pytest.importorskip("onnxruntime", reason="onnxruntime not installed")
+
+        session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])
+
+        options = session.get_session_options()
+        assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
+        assert options.get_session_config_entry("session.inter_op.allow_spinning") == "0"
+
+    def test_still_produces_correct_output(self, tiny_onnx_model: Path) -> None:
+        """Disabling spinning must not change what the session computes."""
+        pytest.importorskip("onnxruntime", reason="onnxruntime not installed")
+
+        session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])
+
+        feed = np.arange(3 * 8 * 8, dtype=np.float32).reshape(1, 3, 8, 8)
+        (actual,) = session.run(None, {session.get_inputs()[0].name: feed})
+
+        np.testing.assert_array_equal(actual, feed)
+
+    def test_disables_spinning_regardless_of_requested_provider_list(self, tiny_onnx_model: Path) -> None:
+        """The spin-config entries attach before provider selection, so they apply the same way for any requested
+        provider list -- including one naming a GPU provider unavailable on the machine running the test.
+
+        ONNX Runtime falls back to an available provider with a warning rather than raising in that case.
+        """
+        pytest.importorskip("onnxruntime", reason="onnxruntime not installed")
+
+        session = _create_onnx_session(tiny_onnx_model, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+
+        options = session.get_session_options()
+        assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
+        assert options.get_session_config_entry("session.inter_op.allow_spinning") == "0"

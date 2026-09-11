@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Multi-GPU keypoint training with `grad_accum_steps > 1` now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.
 
+- The ONNX Runtime CPU inference session built by `RFDETR.export(format="onnx")`'s inference helper no longer lets its intra-op thread pool busy-spin between calls. Spinning previously contended for CPU with any other work sharing the process — including this same helper's own torchvision-based preprocessing step — for as long as the session was alive.
+
 ### Deprecated
 
 ### Fixed
