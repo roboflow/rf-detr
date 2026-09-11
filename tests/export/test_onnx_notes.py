@@ -44,11 +44,17 @@ def _export_tiny_model(tmp_path: Path, notes: object = None) -> str:
         Path to the exported ONNX file.
 
     Examples:
+        ``export_onnx`` logs its success at INFO, and rf-detr's stdout handler re-resolves
+        ``sys.stdout`` per record, so without the redirect the log line lands in doctest's captured
+        output and is compared against the expected value.
+
+        >>> import contextlib
+        >>> import io
         >>> import tempfile
         >>> from pathlib import Path
-        >>> with tempfile.TemporaryDirectory() as d:
+        >>> with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
         ...     out = _export_tiny_model(Path(d))
-        ...     Path(out).suffix
+        >>> Path(out).suffix
         '.onnx'
     """
     model = _TinyModel().eval()
