@@ -287,8 +287,12 @@ rfdetr = "rfdetr.cli:main"
 # tflite deps carry python_version>='3.12' and <'3.13' markers because onnx2tf's numpy pin
 # cannot be satisfied on 3.13 via any available release; when onnx2tf relaxes the exact pin,
 # remove the <'3.13' upper bound from the tflite deps AND from the override below.
+#
+# A uv override replaces a package's whole requirement set, so a lone 3.12-scoped entry would leave
+# ml-dtypes uninstalled everywhere else and break `import onnx`. Keep the markers complementary.
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
+    "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
 # ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
