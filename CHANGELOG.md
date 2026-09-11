@@ -44,6 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Distributed (DDP) training now preserves the minimum five optimizer steps per epoch for short datasets instead of losing the replacement sample count when Lightning injects its distributed sampler.
 
+- Installing the `[onnx]` extra from a source checkout with `uv` on Python 3.10, 3.11 or 3.13 now brings in `ml-dtypes` again; the `ml-dtypes==0.5.1` override, scoped to Python 3.12 for the TFLite stack, was dropping the requirement on every other interpreter and left `import onnx` failing with `ModuleNotFoundError`.
+
 - Kornia `Affine` now applies scalar `translate_percent` to both axes and reads scalar `scale` as a fixed range, avoiding silent horizontal-translation loss and construction failures. Scalar translation emits a warning because Kornia samples signed offsets while Albumentations applies the scalar as a fixed positive offset.
 
 - TFLite INT8 documentation and warnings now reflect that dynamic-range quantization needs no calibration data. ([#1363](https://github.com/roboflow/rf-detr/issues/1363))

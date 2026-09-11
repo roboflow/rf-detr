@@ -186,7 +186,12 @@ def tiny_onnx_model(tmp_path: Path) -> Path:
     out = helper.make_tensor_value_info("output", tensor_proto.FLOAT, [1, 3, 8, 8])
     node = helper.make_node("Identity", inputs=["input"], outputs=["output"])
     graph = helper.make_graph([node], "test", [inp], [out])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    # Pin the IR version rather than taking ``make_model``'s default, which is the installed ``onnx`` package's own
+    # ``IR_VERSION`` (13 since onnx 1.20). The ``[onnx]`` extra resolves ``onnxruntime<1.24`` on Python 3.10, and
+    # that last cp310 release (1.23.2) refuses the file at load time with "Unsupported model IR version: 13, max
+    # supported IR version: 11" -- before any assertion runs. IR 10 is what onnx 1.16/1.17 emitted, loads across the
+    # whole onnxruntime range the extra can resolve, and is more than enough for an opset-13 ``Identity`` graph.
+    model = helper.make_model(graph, ir_version=10, opset_imports=[helper.make_opsetid("", 13)])
     onnx_path = tmp_path / "identity.onnx"
     onnx.save(model, str(onnx_path))
     return onnx_path
