@@ -293,12 +293,7 @@ def prepare_export_graph(
         {name: {0: "batch"} for name in input_names + output_names} if dynamic_batch else None
     )
 
-    # Run the sanity pass on the export device — not a hard-coded "cuda" — so CPU-only export paths work,
-    # falling back to CPU when CUDA was requested but is unavailable (e.g. a CPU-only CI machine).
-    run_device = torch.device(device)
-    if run_device.type == "cuda" and not torch.cuda.is_available():
-        logger.warning("CUDA requested but not available; falling back to CPU for sanity forward pass.")
-        run_device = torch.device("cpu")
+    # Run the sanity pass on the device resolved above — not a hard-coded "cuda" — so CPU-only export paths work.
     export_model.eval().to(run_device)
     input_tensors = input_tensors.to(run_device)
     with torch.no_grad():
