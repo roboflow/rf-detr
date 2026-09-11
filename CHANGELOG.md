@@ -46,6 +46,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - TFLite INT8 documentation and warnings now reflect that dynamic-range quantization needs no calibration data. ([#1363](https://github.com/roboflow/rf-detr/issues/1363))
 
+- `RFDETR.export(format="tensorrt", fp16=True)` now actually builds an FP16 engine on strongly typed TensorRT (11+) instead of silently falling back to FP32, by casting the ONNX graph to FP16 first (`rfdetr[tensorrt]` now also pulls `onnx` and `onnxconverter-common`). This graph cast raises `ImportError` if those two packages are missing — previously such a setup silently produced an FP32 engine reported as FP16. ([#1453](https://github.com/roboflow/rf-detr/issues/1453))
+
 ### Breaking Changes
 
 - Removed `rfdetr.datasets.synthetic` (`generate_coco_dataset`, `generate_synthetic_sample`, `draw_synthetic_shape`, `calculate_boundary_overlap`, `DatasetSplitRatios`, `SYNTHETIC_SHAPES`, `SYNTHETIC_COLORS`). The module only ever fed RF-DETR's own test fixtures and is replaced by the `fuse-augmentations` package, whose `fuse_augmentations.data` module generates the same shape datasets in COCO or YOLO layout for detection, segmentation, and OBB. Callers migrate to `pip install fuse-augmentations` plus `from fuse_augmentations.data import generate_dataset`; note that it writes dense COCO category ids where the removed generator wrote sparse ones, and its shape set adds `rectangle`.
