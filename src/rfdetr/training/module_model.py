@@ -452,16 +452,21 @@ class RFDETRModelModule(LightningModule):
             # tiling_utils.get_pw_red_splits comparing size hints. That assert has no
             # symbolic-shape escape, unlike the CantSplit branch below it, so entire forward
             # frames fall back to eager. Turning the analysis off costs nothing under
-            # dynamic=True. The attribute is absent on older torch versions and assigning an
-            # unknown name to the inductor config raises AttributeError, hence the hasattr guard.
+            # dynamic=True. Passed as a compile option rather than assigned on the inductor
+            # config module, so the default is preserved for any other compilation in this
+            # process. The knob is absent on older torch versions, where passing it would raise
+            # RuntimeError("Unexpected optimization option ..."), hence the hasattr guard.
             # Local import: pulls in inductor, which an uncompiled run never needs.
             import torch._inductor.config as inductor_config
 
+            compile_options: dict[str, Any] = {}
             if hasattr(inductor_config.triton, "coalesce_tiling_analysis"):
-                inductor_config.triton.coalesce_tiling_analysis = False
+                compile_options["triton.coalesce_tiling_analysis"] = False
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
-            self.model = torch.compile(self.model, dynamic=True)  # type: ignore[assignment]
+            self.model = torch.compile(  # type: ignore[assignment]
+                self.model, dynamic=True, options=compile_options or None
+            )
 
     # ------------------------------------------------------------------
     # PTL lifecycle hooks
