@@ -51,15 +51,6 @@ repos:
         additional_dependencies: [tomli]
         args: ["--in-place"]
 
-  - repo: local
-    hooks:
-      - id: mypy
-        name: mypy
-        # Run through the project environment, matching ci-typing.yml.
-        entry: uv run --group typing --extra train --extra cli --extra visual mypy src/rfdetr/ --no-error-summary
-        language: system
-        pass_filenames: false
-
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
     hooks:
@@ -96,3 +87,12 @@ repos:
           - .github/LICENSE_HEADER.txt
           - --comment-style
           - "#"
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        # Run through the project environment, matching ci-typing.yml.
+        entry: uv run --group typing --extra train --extra cli --extra visual mypy src/rfdetr/ --no-error-summary
+        language: system
+        pass_filenames: false
