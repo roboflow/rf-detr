@@ -527,6 +527,41 @@ class TestInit:
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
 
+    @pytest.mark.parametrize("knob_supported", [True, False])
+    def test_coalesce_tiling_knob_passed_only_when_torch_exposes_it(self, knob_supported, tmp_path):
+        """The Inductor workaround reaches torch.compile only on a torch whose config exposes the knob.
+
+        Older torch versions have no ``triton.coalesce_tiling_analysis``; passing it there raises
+        ``RuntimeError("Unexpected optimization option ...")`` from ``_TorchCompileInductorWrapper.apply_options``.
+        Compilation must still proceed in both cases.
+        """
+        triton_config = SimpleNamespace(coalesce_tiling_analysis=True) if knob_supported else SimpleNamespace()
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        expected = {"triton.coalesce_tiling_analysis": False} if knob_supported else None
+        assert mock_compile.call_args.kwargs["options"] == expected
+
+    def test_coalesce_tiling_knob_leaves_process_global_config_untouched(self, tmp_path):
+        """The workaround must not disable coalesce tiling for unrelated compilations in the same process."""
+        triton_config = SimpleNamespace(coalesce_tiling_analysis=True)
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m),
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        assert triton_config.coalesce_tiling_analysis is True
+
     @patch("rfdetr.training.module_model.torch.compile")
     @patch("rfdetr.config.DEVICE", "cuda")
     def test_compile_disabled_when_train_accelerator_is_cpu(self, _mock_compile: MagicMock, tmp_path):
