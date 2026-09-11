@@ -1057,6 +1057,9 @@ class OnnxExporter(Exporter[OnnxConfig]):
     def _convert(self, graph: ExportGraph) -> str:
         """Write the ``.onnx`` file and return its path."""
         output_file = self._resolve_output_file(backbone_only=graph.backbone_only)
+        # Composed TFLite/TensorRT exporters route their intermediate ONNX through here before creating their own
+        # output directory, so this stage cannot rely on a caller having made it.
+        os.makedirs(str(self.config.output_dir), exist_ok=True)
         self._trace(graph, output_file)
         self._embed_notes(output_file)
         return output_file

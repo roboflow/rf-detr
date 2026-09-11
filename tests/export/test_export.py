@@ -1171,6 +1171,29 @@ class TestSwitchToExportMode:
         assert model.switches == 1
 
 
+def test_onnx_exporter_creates_a_missing_output_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ONNX stage must create its own output directory.
+
+    The composed TFLite and TensorRT exporters route their intermediate ONNX through ``OnnxExporter`` before creating
+    their own output directory, so it cannot rely on a caller having made it.
+    """
+    monkeypatch.setattr(torch.onnx, "export", lambda *_args, **_kwargs: None)
+    output_dir = tmp_path / "missing" / "nested"
+    graph = ExportGraph(
+        model=torch.nn.Identity(),
+        input_tensors=torch.zeros(1, 2),
+        input_names=("input",),
+        output_names=("output",),
+        dynamic_axes=None,
+        shape=(2, 2),
+        backbone_only=False,
+    )
+
+    OnnxExporter(OnnxConfig(output_dir=output_dir, verbose=False))(graph)
+
+    assert output_dir.is_dir()
+
+
 def _stub_export_dependencies(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, export_format: str
 ) -> dict[str, MagicMock]:
