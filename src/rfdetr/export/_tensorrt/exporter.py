@@ -104,7 +104,10 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     setting_names = {"opset_version": "opset_version", "fp16": "fp16"}
     format = "tensorrt"
     display_name = "TensorRT"
-    supports_dynamic_batch = True
+    dynamic_batch_reason = (
+        "(the engine is compiled without a TensorRT optimization profile, so it accepts only the exported batch"
+        " size). Export one engine per batch size instead."
+    )
     supports_notes = True
     pip_extra = "tensorrt"
 

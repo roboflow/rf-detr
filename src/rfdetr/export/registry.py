@@ -72,7 +72,14 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         preimport="rfdetr.export._backend:preload_tensorflow_before_onnx",
     ),
     "tensorrt": ExporterEntry(
-        "rfdetr.export._tensorrt.exporter", "TensorRTExporter", "tensorrt", "TensorRT", supports_dynamic_batch=True
+        "rfdetr.export._tensorrt.exporter",
+        "TensorRTExporter",
+        "tensorrt",
+        "TensorRT",
+        dynamic_batch_reason=(
+            "(the engine is compiled without a TensorRT optimization profile, so it accepts only the exported batch"
+            " size). Export one engine per batch size instead."
+        ),
     ),
     "executorch": ExporterEntry(
         "rfdetr.export._executorch.exporter",

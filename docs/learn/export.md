@@ -82,7 +82,7 @@ The `export()` method accepts several parameters to customize the export process
 | `verbose`            | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                                                                                                            |
 | `shape`              | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                                                                                                         |
 | `batch_size`         | `1`        | Batch size for the exported model.                                                                                                                                                                                                                                                                                                                      |
-| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                                                                                                                                                                             |
+| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime. Only supported for `format="onnx"` and `format="tflite"` — TensorRT, ExecuTorch, CoreML and OpenVINO bake a fixed batch size.                                                                                 |
 | `patch_size`         | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                                                                                                                       |
 | `backend`            | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                                                                                                                                                                        |
 | `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                             |
@@ -174,6 +174,10 @@ model.export(format="tensorrt")
 ```
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](#export-parameters) — unless `output_name` is set).
+
+!!! note "`dynamic_batch=True` is not supported"
+
+    The engine is compiled without a TensorRT optimization profile, so it accepts only the batch size baked into the intermediate ONNX graph. Export one engine per batch size instead.
 
 !!! note "Who consumes the `.trt` engine?"
 

@@ -1650,6 +1650,9 @@ class RFDETR:
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
                 Also unsupported for ``format="openvino"``: the IR graph bakes a fixed input shape;
                 export one model per batch size instead.
+                Also unsupported for ``format="tensorrt"``: the engine is compiled without a
+                TensorRT optimization profile, so it accepts only the exported batch size;
+                export one engine per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
                 provided explicitly it must match the instantiated model's
