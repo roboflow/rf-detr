@@ -25,9 +25,11 @@ See https://github.com/roboflow/inference/tree/main/inference_models for details
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from typing import Any
 
 from rfdetr.export._naming import resolve_export_stem
-from rfdetr.export.base import Exporter, TensorRTConfig
+from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
@@ -55,6 +57,33 @@ except ImportError:  # pragma: no cover - exercised via TensorRTExporter._requir
     _IS_TENSORRT_AVAILABLE = False
 
 
+@dataclass(frozen=True, slots=True)
+class TensorRTConfig(ExportConfig):
+    """Settings for ``format="tensorrt"``, which builds an engine from an ONNX export.
+
+    Attributes:
+        opset_version: ONNX opset the intermediate graph targets.
+        fp16: Whether to build the engine with FP16 precision.
+    """
+
+    opset_version: int = 17
+    fp16: bool = True
+
+    def onnx_stage(self) -> Any:
+        """Return the configuration for the ONNX export this format builds from.
+
+        Returns:
+            An :class:`~rfdetr.export._onnx.exporter.OnnxConfig` carrying the settings the intermediate graph needs.
+
+        Examples:
+            >>> TensorRTConfig(fp16=False).onnx_stage().opset_version
+            17
+        """
+        from rfdetr.export._onnx.exporter import OnnxConfig
+
+        return OnnxConfig.derive(self, opset_version=self.opset_version)
+
+
 class TensorRTExporter(Exporter[TensorRTConfig]):
     """Export to TensorRT by running an ONNX export first and compiling its output into an engine.
 
@@ -71,6 +100,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         ```
     """
 
+    config_class = TensorRTConfig
+    setting_names = {"opset_version": "opset_version", "fp16": "fp16"}
     format = "tensorrt"
     display_name = "TensorRT"
     supports_dynamic_batch = True

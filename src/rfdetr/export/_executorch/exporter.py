@@ -52,14 +52,16 @@ Note:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import torch
 from torch import nn
 
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
-from rfdetr.export.base import ExecutorchConfig, Exporter
+from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
@@ -281,6 +283,19 @@ def _lower_qnn(model: nn.Module, input_tensors: torch.Tensor, *, soc_model: str)
     return edge_program.to_executorch()
 
 
+@dataclass(frozen=True, slots=True)
+class ExecutorchConfig(ExportConfig):
+    """Settings for ``format="executorch"``.
+
+    Attributes:
+        backend: Delegation backend the ``.pte`` is lowered for.
+        soc: Target SoC, required by backends that compile ahead-of-time for one chip.
+    """
+
+    backend: Literal["xnnpack", "coreml", "qnn"] = "xnnpack"
+    soc: str | None = None
+
+
 class ExecuTorchExporter(Exporter[ExecutorchConfig]):
     """Lower a prepared graph to an ExecuTorch ``.pte`` for the configured delegation backend.
 
@@ -307,8 +322,11 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         ```
     """
 
+    config_class = ExecutorchConfig
+    setting_names = {"backend": "backend", "soc": "soc"}
     format = "executorch"
     display_name = "ExecuTorch"
+    dynamic_batch_reason = "(see the ExecuTorch exporter for details). Export one .pte per batch size instead."
     experimental = True
     pip_extra = "executorch"
     # torch.export keeps the batch dim symbolic (verified: range stays [1, N] through export), but ExecuTorch 1.3.1
@@ -322,6 +340,30 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
     # shipped. (QNN additionally compiles a fixed-shape, SoC-locked binary.) Revisit on an ExecuTorch release that
     # fixes the verifier specialization and dynamic view resize.
     notes_reason = "ExecuTorch .pte has no metadata slot"
+
+    @classmethod
+    def _format_settings(cls, settings: Mapping[str, Any]) -> dict[str, Any]:
+        """Read the delegation backend and SoC, refusing an unresolved backend rather than defaulting to one.
+
+        ``_resolve_export_backend`` always resolves a backend for this format, so ``None`` here means that resolver
+        was bypassed. Silently falling back to ``"xnnpack"`` would turn that into a quietly-wrong artifact instead
+        of an error.
+
+        Args:
+            settings: The keyword arguments ``RFDETR.export`` was called with.
+
+        Returns:
+            The ``backend`` and ``soc`` keyword arguments for :class:`ExecutorchConfig`.
+
+        Raises:
+            ValueError: If no backend was resolved for this format.
+        """
+        backend = settings.get("backend")
+        if backend is None:
+            raise ValueError("format='executorch' requires a backend; none was resolved.")
+        # The resolver already validated it against _VALID_BACKENDS; narrow the static type to the Literal the
+        # configuration declares.
+        return {"backend": cast("Literal['xnnpack', 'coreml', 'qnn']", backend), "soc": settings.get("soc")}
 
     def _resolve_backend(self) -> str:
         """Return the configured delegation backend, lowercased and checked against the supported set.

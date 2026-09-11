@@ -30,9 +30,8 @@ from torch.jit import TracerWarning
 from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 from rfdetr import detr as _detr_module
 from rfdetr.export._backend import _switch_to_export_mode
-from rfdetr.export._onnx.exporter import OnnxExporter
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
-from rfdetr.export.base import OnnxConfig, build_export_config
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.export.registry import resolve_exporter
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -1018,8 +1017,9 @@ def test_prepared_backbone_module_reaches_the_exporter(tmp_path: Path, format: s
     """
     graph = _make_export_graph(backbone_only=True)
     backend = "xnnpack" if format == "executorch" else None
-    config = build_export_config(format, output_dir=tmp_path, variant_name="nano", verbose=False, backend=backend)
-    exporter = resolve_exporter(format)(config)
+    exporter_class = resolve_exporter(format)
+    config = exporter_class.build_config(output_dir=tmp_path, variant_name="nano", verbose=False, backend=backend)
+    exporter = exporter_class(config)
     output_path = tmp_path / "backbone"
 
     with patch.object(type(exporter), "_convert", return_value=output_path) as convert:

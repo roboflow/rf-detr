@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ import torch
 from torch import nn
 
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
-from rfdetr.export.base import Exporter, OpenVINOConfig
+from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
@@ -37,6 +38,17 @@ def _check_openvino_available() -> None:
         import openvino  # noqa: F401
     except ImportError as error:
         raise ImportError('OpenVINO requires `openvino`. Install it with: pip install "rfdetr[openvino]"') from error
+
+
+@dataclass(frozen=True, slots=True)
+class OpenVINOConfig(ExportConfig):
+    """Settings for ``format="openvino"``.
+
+    Attributes:
+        precision: ``"float32"``, ``"float16"``, or ``None`` to keep OpenVINO's own FP16 compression default.
+    """
+
+    precision: str | None = None
 
 
 class ModelWrapper(nn.Module):
@@ -89,8 +101,11 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         ```
     """
 
+    config_class = OpenVINOConfig
+    setting_names = {"precision": "openvino_precision"}
     format = "openvino"
     display_name = "OpenVINO"
+    dynamic_batch_reason = "(the IR graph bakes a fixed input shape). Export one model per batch size instead."
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 

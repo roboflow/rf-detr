@@ -33,9 +33,8 @@ import pytest
 import torch
 from numpy.typing import NDArray
 
-from rfdetr.export._openvino.exporter import OpenVINOExporter
+from rfdetr.export._openvino.exporter import OpenVINOConfig, OpenVINOExporter
 from rfdetr.export._openvino.inference import OpenVINOInference
-from rfdetr.export.base import OpenVINOConfig
 from rfdetr.export.prepare import ExportGraph
 from tests.export.conftest import (
     _parity_input_from_image,

@@ -72,6 +72,7 @@ import os
 import sys
 import sysconfig
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generator, cast
 
@@ -79,7 +80,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from rfdetr.export._resize import _bilinear_resize_half_pixel
-from rfdetr.export.base import Exporter, TFLiteConfig
+from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
@@ -839,6 +840,39 @@ def _quantize_dynamic_range(saved_model_dir: Path, model_stem: str) -> Path:
     return out_path
 
 
+@dataclass(frozen=True, slots=True)
+class TFLiteConfig(ExportConfig):
+    """Settings for ``format="tflite"``, which converts an ONNX export rather than the model directly.
+
+    Attributes:
+        opset_version: ONNX opset the intermediate graph targets.
+        quantization: Quantization mode; ``"int8"`` additionally writes a dynamic-range model.
+        calibration_data: Data written to a scratch file beside the artifacts but not consumed by the conversion.
+        max_images: Maximum images read from a *calibration_data* directory.
+    """
+
+    opset_version: int = 17
+    quantization: str | None = None
+    calibration_data: Any = None
+    max_images: int = 100
+
+    def onnx_stage(self) -> Any:
+        """Return the configuration for the ONNX export this format converts from.
+
+        Returns:
+            An :class:`~rfdetr.export._onnx.exporter.OnnxConfig` carrying the settings the intermediate graph needs.
+
+        Examples:
+            >>> TFLiteConfig(quantization="int8").onnx_stage().opset_version
+            17
+        """
+        # Imported here, not at module scope: the ONNX exporter pulls in the ONNX C extension, which must not load
+        # before TensorFlow on this path (see the registry's `preimport` hook for the format).
+        from rfdetr.export._onnx.exporter import OnnxConfig
+
+        return OnnxConfig.derive(self, opset_version=self.opset_version)
+
+
 class TFLiteExporter(Exporter[TFLiteConfig]):
     """Export to TFLite by running an ONNX export first and converting its output with ``onnx2tf``.
 
@@ -855,6 +889,13 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         ```
     """
 
+    config_class = TFLiteConfig
+    setting_names = {
+        "opset_version": "opset_version",
+        "quantization": "quantization",
+        "calibration_data": "calibration_data",
+        "max_images": "max_images",
+    }
     format = "tflite"
     display_name = "TFLite"
     supports_dynamic_batch = True

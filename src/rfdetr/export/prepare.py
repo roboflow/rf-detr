@@ -13,7 +13,7 @@ embeddings to the export shape, build an example input, wrap the backbone when o
 graph's input/output names and dynamic axes, and run one forward pass so a broken graph fails here rather than inside a
 third-party converter. Keeping that in one place is what stops the six format paths from each growing their own copy —
 the drift that already happened once between :meth:`rfdetr.detr.RFDETR.export` and the export CLI that used to live in
-:mod:`rfdetr.export.main`.
+``rfdetr.export.main`` (removed in v1.11).
 
 The result is an :class:`ExportGraph`: everything a converter needs, and nothing about *which* format is being written.
 """

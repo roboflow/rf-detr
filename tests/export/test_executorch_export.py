@@ -31,10 +31,10 @@ from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
 from rfdetr.export._executorch.exporter import (
     _VALID_BACKENDS,
+    ExecutorchConfig,
     ExecuTorchExporter,
     _check_executorch_available,
 )
-from rfdetr.export.base import ExecutorchConfig
 from rfdetr.export.prepare import ExportGraph
 from tests._online import is_online
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs

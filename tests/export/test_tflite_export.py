@@ -40,6 +40,7 @@ from rfdetr.export._tflite.exporter import (
     _IMAGE_EXTENSIONS,
     _NUMPY_LOAD_PATCH_LOCK,
     _VALID_QUANTIZATIONS,
+    TFLiteConfig,
     TFLiteExporter,
     _check_onnx2tf_available,
     _get_onnx_input_info,
@@ -49,7 +50,6 @@ from rfdetr.export._tflite.exporter import (
     _patch_validation_download,
     _prepare_calibration_data,
 )
-from rfdetr.export.base import TFLiteConfig
 
 onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 

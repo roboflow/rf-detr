@@ -19,8 +19,7 @@ import pytest
 import torch
 
 from rfdetr.export._tensorrt import exporter as tensorrt_export
-from rfdetr.export._tensorrt.exporter import _IS_TENSORRT_AVAILABLE, TensorRTExporter
-from rfdetr.export.base import TensorRTConfig
+from rfdetr.export._tensorrt.exporter import _IS_TENSORRT_AVAILABLE, TensorRTConfig, TensorRTExporter
 from tests.export.conftest import (
     _structured_parity_input,
     eager_reference_tensors,

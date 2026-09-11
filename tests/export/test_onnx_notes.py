@@ -3,7 +3,8 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for the ``notes`` setting on :class:`~rfdetr.export.base.OnnxConfig`, embedded by ``OnnxExporter``."""
+"""Tests for the ``notes`` setting on :class:`~rfdetr.export._onnx.exporter.OnnxConfig`, embedded by
+``OnnxExporter``."""
 
 import json
 from pathlib import Path
@@ -15,8 +16,7 @@ import torch.nn as nn
 onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX notes tests")
 
 
-from rfdetr.export._onnx.exporter import OnnxExporter  # noqa: E402
-from rfdetr.export.base import OnnxConfig  # noqa: E402
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter  # noqa: E402
 from rfdetr.export.prepare import ExportGraph  # noqa: E402
 
 

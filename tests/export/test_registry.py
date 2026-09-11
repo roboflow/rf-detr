@@ -19,19 +19,33 @@ from pathlib import Path
 import pytest
 
 from rfdetr.export import registry as registry_module
-from rfdetr.export.base import (
-    CoreMLConfig,
-    ExecutorchConfig,
-    ExportConfig,
-    Exporter,
-    OnnxConfig,
-    OpenVINOConfig,
-    TensorRTConfig,
-    TFLiteConfig,
-    build_export_config,
-    reject_unsupported_dynamic_batch,
-)
+from rfdetr.export._coreml.exporter import CoreMLConfig
+from rfdetr.export._executorch.exporter import ExecuTorchExporter
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
+from rfdetr.export._openvino.exporter import OpenVINOConfig
+from rfdetr.export._tensorrt.exporter import TensorRTConfig
+from rfdetr.export._tflite.exporter import TFLiteConfig
+from rfdetr.export.base import ExportConfig, Exporter, reject_unsupported_dynamic_batch
 from rfdetr.export.registry import ALIASES, REGISTRY, normalize_format, resolve_exporter
+
+
+def _resolve_or_skip(format: str) -> type[Exporter[ExportConfig]]:
+    """Return *format*'s exporter class, skipping the test when its optional dependency is absent.
+
+    Args:
+        format: Canonical format name.
+
+    Returns:
+        The exporter class registered for *format*.
+
+    Examples:
+        >>> _resolve_or_skip("onnx").format
+        'onnx'
+    """
+    try:
+        return resolve_exporter(format)
+    except ImportError:
+        pytest.skip(f"optional dependencies for format={format!r} are not installed")
 
 
 class TestNormalizeFormat:
@@ -84,8 +98,8 @@ class TestResolveExporter:
     def test_registry_capabilities_match_the_exporter_class(self, format: str) -> None:
         """The registry's pre-import copy of a format's capabilities must agree with the class it names.
 
-        The duplication exists so an impossible request can be refused before importing a heavy optional dependency. It
-        is only safe while the two stay in sync, and nothing but this test enforces that.
+        The duplication exists so an impossible request can be refused — in the format's own words — before importing a
+        heavy optional dependency. It is only safe while the two stay in sync, and nothing but this test enforces that.
         """
         entry = REGISTRY[format]
         try:
@@ -93,23 +107,33 @@ class TestResolveExporter:
         except ImportError:
             pytest.skip(f"optional dependencies for format={format!r} are not installed")
 
-        assert (exporter_class.format, exporter_class.display_name, exporter_class.supports_dynamic_batch) == (
-            format,
-            entry.label,
-            entry.supports_dynamic_batch,
-        )
+        assert (
+            exporter_class.format,
+            exporter_class.display_name,
+            exporter_class.supports_dynamic_batch,
+            exporter_class.dynamic_batch_reason,
+        ) == (format, entry.label, entry.supports_dynamic_batch, entry.dynamic_batch_reason)
 
 
 class TestRejectUnsupportedDynamicBatch:
     """The pre-import guard that refuses ``dynamic_batch`` for formats which bake a fixed input shape."""
 
-    @pytest.mark.parametrize("format", ["coreml", "executorch", "openvino"])
+    @pytest.mark.parametrize("format", sorted(f for f, e in REGISTRY.items() if not e.supports_dynamic_batch))
     def test_fixed_shape_formats_are_refused(self, format: str) -> None:
-        """A format that bakes a fixed shape must refuse, naming the format and what to do instead."""
-        with pytest.raises(NotImplementedError, match="dynamic_batch"):
+        """A format that bakes a fixed shape must refuse, naming the format and what to do instead.
+
+        Parametrized from the registry rather than a hand-written list so a newly registered fixed-batch format is
+        covered the moment it is added — including the one mistake this guard exists to prevent, a format declaring
+        ``supports_dynamic_batch=False`` without saying why.
+        """
+        with pytest.raises(NotImplementedError, match="dynamic_batch") as refusal:
             reject_unsupported_dynamic_batch(format, dynamic_batch=True)
 
-    @pytest.mark.parametrize("format", ["onnx", "tflite", "tensorrt"])
+        assert REGISTRY[format].label in str(refusal.value)
+        assert REGISTRY[format].dynamic_batch_reason in str(refusal.value)
+        assert REGISTRY[format].dynamic_batch_reason, "a fixed-batch format must explain what to do instead"
+
+    @pytest.mark.parametrize("format", sorted(f for f, e in REGISTRY.items() if e.supports_dynamic_batch))
     def test_dynamic_capable_formats_are_allowed(self, format: str) -> None:
         """A format that can carry a dynamic batch dimension passes through silently."""
         reject_unsupported_dynamic_batch(format, dynamic_batch=True)
@@ -124,8 +148,8 @@ class TestRejectUnsupportedDynamicBatch:
             reject_unsupported_dynamic_batch("nonesuch", dynamic_batch=True)
 
 
-class TestBuildExportConfig:
-    """``build_export_config`` narrows ``RFDETR.export()``'s flat keyword arguments to one format's settings."""
+class TestBuildConfig:
+    """``Exporter.build_config`` narrows ``RFDETR.export()``'s flat keyword arguments to one format's settings."""
 
     @pytest.mark.parametrize(
         "format, expected_type",
@@ -137,9 +161,10 @@ class TestBuildExportConfig:
             pytest.param("tensorrt", TensorRTConfig, id="tensorrt"),
         ],
     )
-    def test_builds_the_configuration_class_registered_for_the_format(self, format: str, expected_type: type) -> None:
+    def test_builds_the_configuration_class_the_exporter_declares(self, format: str, expected_type: type) -> None:
         """Each format gets its own configuration type, so a knob belonging to another format cannot be set."""
-        assert isinstance(build_export_config(format, output_dir=Path("out")), expected_type)
+        exporter_class = _resolve_or_skip(format)
+        assert isinstance(exporter_class.build_config(output_dir=Path("out")), expected_type)
 
     def test_executorch_requires_a_backend(self) -> None:
         """``format="executorch"`` without a resolved backend is an error, not a silent xnnpack default.
@@ -148,12 +173,11 @@ class TestBuildExportConfig:
         the wrong target instead of failing.
         """
         with pytest.raises(ValueError, match="requires a backend"):
-            build_export_config("executorch", output_dir=Path("out"))
+            ExecuTorchExporter.build_config(output_dir=Path("out"))
 
     def test_executorch_keeps_the_resolved_backend_and_soc(self) -> None:
         """A resolved backend and SoC reach the configuration unchanged."""
-        config = build_export_config("executorch", output_dir=Path("out"), backend="qnn", soc="SM8650")
-        assert isinstance(config, ExecutorchConfig)
+        config = ExecuTorchExporter.build_config(output_dir=Path("out"), backend="qnn", soc="SM8650")
         assert (config.backend, config.soc) == ("qnn", "SM8650")
 
     @pytest.mark.parametrize(
@@ -170,13 +194,18 @@ class TestBuildExportConfig:
         self, format: str, kwargs: dict, attribute: str, expected: object
     ) -> None:
         """The knob belonging to a format lands on that format's configuration under its own name."""
-        config = build_export_config(format, output_dir=Path("out"), **kwargs)
+        config = _resolve_or_skip(format).build_config(output_dir=Path("out"), **kwargs)
         assert getattr(config, attribute) == expected
 
-    def test_unknown_format_raises_value_error(self) -> None:
-        """A format with no configuration class is rejected rather than falling back to a generic one."""
-        with pytest.raises(ValueError, match="Unsupported export format"):
-            build_export_config("nonesuch", output_dir=Path("out"))
+    def test_settings_belonging_to_other_formats_are_dropped(self) -> None:
+        """A keyword another format reads must not reach this one, which has no field to put it in.
+
+        ``RFDETR.export()`` has one signature covering every format, so each exporter is handed the union of all their
+        keywords and has to take only its own.
+        """
+        config = OnnxExporter.build_config(output_dir=Path("out"), opset_version=18, fp16=False, quantization="int8")
+        assert config.opset_version == 18
+        assert not hasattr(config, "fp16")
 
 
 class TestOnnxStageHandoff:

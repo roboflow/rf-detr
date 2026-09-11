@@ -8,12 +8,15 @@
 # ------------------------------------------------------------------------
 """ONNX export, simplification, and OnnxOptimizer."""
 
+from __future__ import annotations
+
 import inspect
 import json
 import os
 from collections import OrderedDict
 from collections.abc import Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from os import PathLike
 from typing import Any, Protocol, TypeVar, cast
 
@@ -22,7 +25,7 @@ import torch
 
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
-from rfdetr.export.base import Exporter, OnnxConfig
+from rfdetr.export.base import ExportConfig, Exporter, shared_settings
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
@@ -918,6 +921,38 @@ class OnnxOptimizer:
         return mha_index
 
 
+@dataclass(frozen=True, slots=True)
+class OnnxConfig(ExportConfig):
+    """Settings for ``format="onnx"``.
+
+    Attributes:
+        opset_version: ONNX opset the graph targets.
+    """
+
+    opset_version: int = 17
+
+    @classmethod
+    def derive(cls, config: ExportConfig, *, opset_version: int) -> OnnxConfig:
+        """Build the intermediate configuration a two-stage format exports through.
+
+        TFLite and TensorRT both write an ONNX graph first and convert it. The intermediate graph inherits every
+        setting the ONNX stage understands, so the artifact a two-stage export passes on is named and annotated
+        exactly as a direct ``format="onnx"`` export would be.
+
+        Args:
+            config: The two-stage format's configuration.
+            opset_version: ONNX opset the intermediate graph targets.
+
+        Returns:
+            The configuration for the ONNX stage.
+
+        Examples:
+            >>> OnnxConfig.derive(ExportConfig(variant_name="rfdetr-small"), opset_version=17).variant_name
+            'rfdetr-small'
+        """
+        return cls(**shared_settings(config), opset_version=opset_version)
+
+
 class OnnxExporter(Exporter[OnnxConfig]):
     """Export a prepared graph to ONNX.
 
@@ -936,6 +971,8 @@ class OnnxExporter(Exporter[OnnxConfig]):
         ```
     """
 
+    config_class = OnnxConfig
+    setting_names = {"opset_version": "opset_version"}
     format = "onnx"
     display_name = "ONNX"
     supports_dynamic_batch = True

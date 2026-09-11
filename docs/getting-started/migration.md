@@ -34,7 +34,7 @@ You can apply all changes in one go; working through sections one release at a t
     | `rfdetr.export._tensorrt.build_engine`                                         | `rfdetr.export._tensorrt.exporter.TensorRTExporter`                                       |
     | `rfdetr.export.benchmark.TRTInference`                                         | `rfdetr.export._tensorrt.inference.TRTInference`                                          |
 
-    Every path with a leading underscore was already internal and carried no stability guarantee; they are listed so the move is discoverable rather than a silent break. Prefer `RFDETR.export(format=...)`.
+    Every path with a leading underscore was already internal and carried no stability guarantee; they are listed so the move is discoverable rather than a silent break. Prefer `RFDETR.export(format=...)`. The contract each exporter implements is documented in the [Exporter Blueprint](../learn/export-blueprint.md).
 
 !!! warning "Breaking: `format=\"tensorrt\"` with `backbone_only=True` and `output_name` now marks the engine"
 

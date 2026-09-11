@@ -19,7 +19,7 @@ Note:
     :class:`CoreMLExporter` defaults to ``compute_precision=FLOAT32`` for tight CPU parity with
     eager PyTorch. Pass ``coremltools.precision.FLOAT16`` (or the string ``"float16"``) when you
     want a smaller ANE-oriented bundle (expect larger numeric drift) — either directly on
-    :class:`~rfdetr.export.base.CoreMLConfig`, or via :meth:`rfdetr.detr.RFDETR.export`'s
+    :class:`CoreMLConfig`, or via :meth:`rfdetr.detr.RFDETR.export`'s
     ``coreml_precision`` argument (string form only, so callers don't need to import ``coremltools``).
 
 Note:
@@ -42,7 +42,7 @@ import torch
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
-from rfdetr.export.base import CoreMLConfig, Exporter
+from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
@@ -86,6 +86,17 @@ class _CoreMLApi:
     float16: ct_precision
 
 
+@dataclass(frozen=True, slots=True)
+class CoreMLConfig(ExportConfig):
+    """Settings for ``format="coreml"``.
+
+    Attributes:
+        compute_precision: ``"float32"``, ``"float16"``, or ``None`` for coremltools' default.
+    """
+
+    compute_precision: str | None = None
+
+
 class CoreMLExporter(Exporter[CoreMLConfig]):
     """Convert a prepared graph to a native CoreML ``.mlpackage`` via ``torch.export`` + ``coremltools``.
 
@@ -101,8 +112,13 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         ```
     """
 
+    config_class = CoreMLConfig
+    setting_names = {"compute_precision": "coreml_precision"}
     format = "coreml"
     display_name = "CoreML"
+    dynamic_batch_reason = (
+        "(fixed shapes are required for reliable ANE / GPU scheduling). Export one .mlpackage per batch size instead."
+    )
     experimental = True
     experimental_note = "Dynamic batch is not supported."
     pip_extra = "coreml"

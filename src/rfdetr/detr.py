@@ -1787,7 +1787,7 @@ class RFDETR:
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
         from rfdetr.export._backend import _resolve_export_backend
-        from rfdetr.export.base import build_export_config, reject_unsupported_dynamic_batch
+        from rfdetr.export.base import reject_unsupported_dynamic_batch
         from rfdetr.export.prepare import prepare_export_graph
         from rfdetr.export.registry import normalize_format, resolve_exporter
 
@@ -1798,8 +1798,9 @@ class RFDETR:
         # before the user pays for a full DINOv2 forward pass.
         reject_unsupported_dynamic_batch(format, dynamic_batch=dynamic_batch)
         exporter_class = resolve_exporter(format)
-        config = build_export_config(
-            format,
+        # The exporter class owns its configuration: it picks the settings its format reads out of this method's
+        # union-of-every-format signature and drops the rest, so no dispatcher here has to know which is which.
+        config = exporter_class.build_config(
             output_dir=Path(output_dir),
             output_name=output_name,
             variant_name=getattr(self, "size", None),

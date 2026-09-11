@@ -8,7 +8,8 @@
 Every format except ONNX sits behind an optional dependency — ``executorch``, ``coremltools``, ``openvino``,
 ``onnx2tf``/``tensorflow``, ``tensorrt`` — and none of them may be imported by ``import rfdetr``. The registry is
 therefore *data*: a format maps to the dotted path of its exporter class, and only :func:`resolve_exporter` imports it.
-Adding a format is one entry here plus the class it names.
+Adding a format is one entry here plus the module it names, which owns both the exporter class and the configuration
+dataclass it is built from.
 """
 
 from __future__ import annotations
@@ -30,10 +31,11 @@ logger = get_logger()
 class ExporterEntry:
     """Where one format's exporter class lives, what installs it, and the little that must be known before importing it.
 
-    ``label`` and ``supports_dynamic_batch`` mirror the exporter class's own ``display_name`` and
-    ``supports_dynamic_batch``. The duplication is deliberate and test-enforced
-    (``tests/export/test_registry.py``): both are needed *before* the format's module — and with it its heavy optional
-    dependency — is imported, so a doomed request can be refused without paying for ``coremltools`` or TensorFlow.
+    ``label``, ``supports_dynamic_batch`` and ``dynamic_batch_reason`` mirror the exporter class's own
+    ``display_name``, ``supports_dynamic_batch`` and ``dynamic_batch_reason``. The duplication is deliberate and
+    test-enforced (``tests/export/test_registry.py``): all three are needed *before* the format's module — and with it
+    its heavy optional dependency — is imported, so a doomed request can be refused, in the format's own words, without
+    paying for ``coremltools`` or TensorFlow.
 
     Attributes:
         module: Dotted path of the module defining the exporter class.
@@ -41,6 +43,9 @@ class ExporterEntry:
         pip_extra: The ``rfdetr[...]`` extra that installs the format's dependencies, or ``None`` when it needs none.
         label: How the format is spelled in messages addressed to users.
         supports_dynamic_batch: Whether the format can bake a dynamic batch dimension into its artifact.
+        dynamic_batch_reason: Why a fixed-batch format cannot honour ``dynamic_batch``, and what to do instead.
+            Empty for formats that support it. Mirrors the exporter class's own ``dynamic_batch_reason`` so the
+            pre-import refusal and the one the constructed exporter raises read identically.
         preimport: ``"module:function"`` to call before importing *module*, or ``None``. TFLite needs one: TensorFlow
             has to be loaded before anything pulls in ONNX's C extension, and importing the exporter's own package
             already reaches third-party code that could load ONNX first.
@@ -51,6 +56,7 @@ class ExporterEntry:
     pip_extra: str | None
     label: str
     supports_dynamic_batch: bool = False
+    dynamic_batch_reason: str = ""
     preimport: str | None = None
 
 
@@ -68,9 +74,30 @@ REGISTRY: Mapping[str, ExporterEntry] = {
     "tensorrt": ExporterEntry(
         "rfdetr.export._tensorrt.exporter", "TensorRTExporter", "tensorrt", "TensorRT", supports_dynamic_batch=True
     ),
-    "executorch": ExporterEntry("rfdetr.export._executorch.exporter", "ExecuTorchExporter", "executorch", "ExecuTorch"),
-    "coreml": ExporterEntry("rfdetr.export._coreml.exporter", "CoreMLExporter", "coreml", "CoreML"),
-    "openvino": ExporterEntry("rfdetr.export._openvino.exporter", "OpenVINOExporter", "openvino", "OpenVINO"),
+    "executorch": ExporterEntry(
+        "rfdetr.export._executorch.exporter",
+        "ExecuTorchExporter",
+        "executorch",
+        "ExecuTorch",
+        dynamic_batch_reason="(see the ExecuTorch exporter for details). Export one .pte per batch size instead.",
+    ),
+    "coreml": ExporterEntry(
+        "rfdetr.export._coreml.exporter",
+        "CoreMLExporter",
+        "coreml",
+        "CoreML",
+        dynamic_batch_reason=(
+            "(fixed shapes are required for reliable ANE / GPU scheduling)."
+            " Export one .mlpackage per batch size instead."
+        ),
+    ),
+    "openvino": ExporterEntry(
+        "rfdetr.export._openvino.exporter",
+        "OpenVINOExporter",
+        "openvino",
+        "OpenVINO",
+        dynamic_batch_reason="(the IR graph bakes a fixed input shape). Export one model per batch size instead.",
+    ),
 }
 
 #: Short spellings accepted for a format, mapped to the canonical name.

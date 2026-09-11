@@ -32,8 +32,7 @@ from supervision.assets import ImageAssets, download_assets
 
 from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
-from rfdetr.export._coreml.exporter import CoreMLExporter, _check_coremltools_available
-from rfdetr.export.base import CoreMLConfig
+from rfdetr.export._coreml.exporter import CoreMLConfig, CoreMLExporter, _check_coremltools_available
 from rfdetr.export.prepare import ExportGraph
 from tests.export.conftest import (
     _parity_input_from_image,
@@ -437,7 +436,7 @@ _COREML_E2E_VARIANTS = [
 # value_inference) and, on some untrained-weight draws, that fold overflows ("divide by zero
 # encountered in matmul" / "invalid value encountered in matmul"), embedding a bad constant in
 # the exported .mlpackage. This is a coremltools bug, not something RF-DETR's export code
-# controls (see src/rfdetr/export/_coreml/converter.py and the torch<2.12 pin in pyproject.toml,
+# controls (see src/rfdetr/export/_coreml/exporter.py and the torch<2.12 pin in pyproject.toml,
 # which reduces but does not eliminate the underlying instability).
 #
 # tests/conftest.py's autouse `reset_random_seeds` fixture already calls `seed_all(seed=7)`
