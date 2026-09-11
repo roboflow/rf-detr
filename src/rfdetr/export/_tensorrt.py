@@ -24,9 +24,13 @@ See https://github.com/roboflow/inference/tree/main/inference_models for details
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
 import tempfile
+from collections.abc import Iterator
+from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from rfdetr.export._naming import resolve_export_stem
@@ -66,6 +70,34 @@ _IS_FP16_CASTER_AVAILABLE = all(importlib.util.find_spec(name) is not None for n
 # rather than a sign of a lean/partial wheel.
 _STRONG_TYPING_MAJOR = 11
 
+# An explicitly quantized graph carries its precision in these nodes and their scale/zero-point
+# tensors, so a blanket fp16 cast contradicts it rather than converting it.
+_QUANTIZATION_OP_TYPES = frozenset({"QuantizeLinear", "DequantizeLinear", "DynamicQuantizeLinear"})
+
+
+class Fp16CastUnsupportedError(ValueError):
+    """An ONNX graph cannot be cast to fp16 for a strongly typed TensorRT build.
+
+    Subclasses ``ValueError`` so callers already guarding the conversion keep working, while the message stays in rfdetr
+    terms instead of naming converter internals the caller has no way to reach.
+    """
+
+
+class Fp16Strategy(str, Enum):
+    """How an FP16 engine can be obtained from the installed TensorRT.
+
+    Examples:
+        >>> Fp16Strategy("cast_graph") is Fp16Strategy.CAST_GRAPH
+        True
+    """
+
+    #: Weakly typed builder: precision is requested with ``BuilderFlag.FP16``.
+    BUILDER_FLAG = "builder_flag"
+    #: Strongly typed builder (TensorRT >= 11): precision comes from an fp16 ONNX graph.
+    CAST_GRAPH = "cast_graph"
+    #: Lean/partial weakly typed wheel: no FP16 route at all, so the build falls back to FP32.
+    UNAVAILABLE = "unavailable"
+
 
 def _tensorrt_major(version: str) -> int | None:
     """Extract the major version number from a TensorRT version string.
@@ -92,19 +124,210 @@ def _tensorrt_major(version: str) -> int | None:
         return None
 
 
-def _retarget_float_casts(graph: Any) -> int:
+def resolve_fp16_strategy(trt_module: Any | None) -> tuple[Fp16Strategy, str]:
+    """Decide how the installed TensorRT can produce an FP16 engine.
+
+    The absent ``BuilderFlag.FP16`` behind this code path is a *symptom* of strong typing, so the major
+    version is consulted first: a strongly typed TensorRT takes precision from the graph whether or not
+    it still exposes a deprecated or no-op FP16 flag. Only on a weakly typed build does a missing flag
+    mean a lean/partial wheel with no FP16 route at all.
+
+    Args:
+        trt_module: The imported ``tensorrt`` module, or ``None`` when it could not be imported.
+
+    Returns:
+        The strategy to use, paired with the version TensorRT reports (``"unknown"`` when it reports
+        none).
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> strongly_typed = SimpleNamespace(__version__="11.2.1.2", BuilderFlag=SimpleNamespace())
+        >>> resolve_fp16_strategy(strongly_typed)[0] is Fp16Strategy.CAST_GRAPH
+        True
+        >>> lean_wheel = SimpleNamespace(__version__="10.16.1.11", BuilderFlag=SimpleNamespace())
+        >>> resolve_fp16_strategy(lean_wheel)[0] is Fp16Strategy.UNAVAILABLE
+        True
+    """
+    if trt_module is None:
+        # A missing or broken tensorrt import is surfaced by the caller's build chain, not diagnosed here.
+        return Fp16Strategy.BUILDER_FLAG, "unknown"
+
+    version = getattr(trt_module, "__version__", "unknown")
+    major = _tensorrt_major(version)
+    if major is not None and major >= _STRONG_TYPING_MAJOR:
+        return Fp16Strategy.CAST_GRAPH, version
+    if hasattr(getattr(trt_module, "BuilderFlag", None), "FP16"):
+        return Fp16Strategy.BUILDER_FLAG, version
+    return Fp16Strategy.UNAVAILABLE, version
+
+
+def _subgraphs(node: Any) -> Iterator[Any]:
+    """Yield the graphs nested directly in a node's attributes (``If`` branches, ``Loop``/``Scan`` bodies).
+
+    Args:
+        node: ``NodeProto`` to inspect.
+
+    Yields:
+        Each ``GraphProto`` held by one of *node*'s attributes.
+
+    Examples:
+        Needs an ``onnx.NodeProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> list(_subgraphs(node))  # doctest: +SKIP
+        []
+    """
+    for attribute in node.attribute:
+        if attribute.HasField("g"):
+            yield attribute.g
+        yield from attribute.graphs
+
+
+def _iter_graphs(graph: Any) -> Iterator[Any]:
+    """Yield *graph* and every graph nested below it, depth first.
+
+    Args:
+        graph: ``GraphProto`` to walk.
+
+    Yields:
+        *graph* itself, then each subgraph reachable through its nodes' attributes.
+
+    Examples:
+        Needs an ``onnx.GraphProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> len(list(_iter_graphs(model.graph)))  # doctest: +SKIP
+        1
+    """
+    yield graph
+    for node in graph.node:
+        for subgraph in _subgraphs(node):
+            yield from _iter_graphs(subgraph)
+
+
+def _tensor_names(graph: Any) -> set[str]:
+    """Collect every tensor name bound anywhere in *graph*, subgraphs included.
+
+    Args:
+        graph: Graph to scan.
+
+    Returns:
+        Names claimed by inputs, outputs, initializers, ``value_info`` entries and node edges.
+
+    Examples:
+        Needs an ``onnx.GraphProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> sorted(_tensor_names(model.graph))  # doctest: +SKIP
+        ['input', 'output']
+    """
+    names: set[str] = set()
+    for nested in _iter_graphs(graph):
+        names.update(value.name for value in nested.input)
+        names.update(value.name for value in nested.output)
+        names.update(value.name for value in nested.value_info)
+        names.update(initializer.name for initializer in nested.initializer)
+        for node in nested.node:
+            names.update(node.input)
+            names.update(node.output)
+    return names
+
+
+def _unique_name(base: str, taken: set[str]) -> str:
+    """Derive a tensor name from *base* that no existing tensor claims, reserving it in *taken*.
+
+    Args:
+        base: Preferred name.
+        taken: Names already bound in the graph; the returned name is added to it.
+
+    Returns:
+        *base* when it is free, otherwise *base* with the smallest numeric suffix that is.
+
+    Examples:
+        >>> _unique_name("dets_fp16", {"dets"})
+        'dets_fp16'
+        >>> _unique_name("dets_fp16", {"dets_fp16"})
+        'dets_fp16_1'
+    """
+    candidate, suffix = base, 1
+    while candidate in taken:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    taken.add(candidate)
+    return candidate
+
+
+def _rename_tensor_uses(graph: Any, old: str, new: str) -> None:
+    """Repoint every consumer of *old* at *new*, following captures into nested subgraphs.
+
+    ``onnxconverter-common`` converts ``If``/``Loop``/``Scan`` bodies too, so a branch capturing an
+    outer-scope tensor has to follow the rename or it keeps reading the restored FP32 boundary tensor.
+    A subgraph binding its own tensor of that name shadows the outer one and is left alone.
+
+    Args:
+        graph: Graph whose node inputs are rewritten in place.
+        old: Tensor name to stop consuming.
+        new: Tensor name to consume instead.
+
+    Examples:
+        Needs an ``onnx.GraphProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> _rename_tensor_uses(model.graph, "dets", "dets_fp16")  # doctest: +SKIP
+    """
+    for node in graph.node:
+        for index, name in enumerate(node.input):
+            if name == old:
+                node.input[index] = new
+        for subgraph in _subgraphs(node):
+            shadowed = any(value.name == old for value in subgraph.input) or any(
+                initializer.name == old for initializer in subgraph.initializer
+            )
+            if not shadowed:
+                _rename_tensor_uses(subgraph, old, new)
+
+
+def _rebind_definition(graph: Any, name: str, inner: str) -> bool:
+    """Rename whatever defines *name* to *inner*, freeing the original name for a boundary cast.
+
+    Args:
+        graph: Graph searched for the definition, mutated in place.
+        name: Tensor name currently defined by a node output or an initializer.
+        inner: Name that definition is moved to.
+
+    Returns:
+        Whether a definition was found — a graph output defined by nothing is left untouched rather
+        than pointed at a name no node produces.
+
+    Examples:
+        Needs an ``onnx.GraphProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> _rebind_definition(model.graph, "dets", "dets_fp16")  # doctest: +SKIP
+        True
+    """
+    for node in graph.node:
+        for index, output in enumerate(node.output):
+            if output == name:
+                node.output[index] = inner
+                return True
+    for initializer in graph.initializer:
+        if initializer.name == name:
+            initializer.name = inner
+            return True
+    return False
+
+
+def _retarget_float_casts(graph: Any, declared: dict[str, int] | None = None) -> int:
     """Point pre-existing ``Cast(to=FLOAT)`` nodes at FLOAT16 after a graph-wide fp16 conversion.
 
     ``onnxconverter-common`` relabels tensors but leaves the ``to`` attribute of ``Cast`` nodes that
     were already in the source graph untouched. RF-DETR exports 33-35 such nodes, so the tensor stays
     float32 while its ``value_info`` claims float16 and TensorRT's strongly-typed parser rejects the
-    graph at the first convolution.
+    graph at the first convolution. The converter rewrites ``If``/``Loop``/``Scan`` bodies as well, so
+    nested graphs are walked too, with the enclosing declarations still in scope.
 
     Args:
         graph: Graph of an already-converted fp16 model, mutated in place.
+        declared: Tensor types declared by enclosing graphs, passed down when recursing into a subgraph.
 
     Returns:
-        Number of ``Cast`` nodes retargeted.
+        Number of ``Cast`` nodes retargeted, subgraphs included.
 
     Examples:
         Needs a converted fp16 ``ModelProto``; see ``TestCastOnnxToFp16`` for real invocations.
@@ -114,20 +337,100 @@ def _retarget_float_casts(graph: Any) -> int:
     """
     from onnx import TensorProto
 
-    declared = {value.name: value.type.tensor_type.elem_type for value in list(graph.value_info) + list(graph.output)}
+    in_scope = dict(declared or {})
+    in_scope.update(
+        {value.name: value.type.tensor_type.elem_type for value in list(graph.value_info) + list(graph.output)}
+    )
     retargeted = 0
     for node in graph.node:
         if node.op_type != "Cast":
+            for subgraph in _subgraphs(node):
+                retargeted += _retarget_float_casts(subgraph, in_scope)
             continue
         for attribute in node.attribute:
             if (
                 attribute.name == "to"
                 and attribute.i == TensorProto.FLOAT
-                and declared.get(node.output[0]) == TensorProto.FLOAT16
+                and in_scope.get(node.output[0]) == TensorProto.FLOAT16
             ):
                 attribute.i = TensorProto.FLOAT16
                 retargeted += 1
     return retargeted
+
+
+def _restore_fp32_inputs(graph: Any, taken: set[str]) -> int:
+    """Put an FP32 -> FP16 cast behind every fp16 graph input, restoring the FP32 input contract.
+
+    Args:
+        graph: Graph of an already-converted fp16 model, mutated in place.
+        taken: Tensor names already bound in the graph; generated names are uniquified against it.
+
+    Returns:
+        Number of boundary ``Cast`` nodes inserted.
+
+    Examples:
+        Needs a converted fp16 ``ModelProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> _restore_fp32_inputs(model.graph, set())  # doctest: +SKIP
+        1
+    """
+    from onnx import TensorProto, helper
+
+    inserted = 0
+    for tensor in graph.input:
+        if tensor.type.tensor_type.elem_type != TensorProto.FLOAT16:
+            continue
+        inner = _unique_name(f"{tensor.name}_fp16", taken)
+        _rename_tensor_uses(graph, tensor.name, inner)
+        graph.node.insert(
+            0, helper.make_node("Cast", [tensor.name], [inner], to=TensorProto.FLOAT16, name=f"Cast_{inner}_in")
+        )
+        tensor.type.tensor_type.elem_type = TensorProto.FLOAT
+        inserted += 1
+    return inserted
+
+
+def _restore_fp32_outputs(graph: Any, taken: set[str]) -> int:
+    """Put an FP16 -> FP32 cast in front of every fp16 graph output, restoring the FP32 output contract.
+
+    Whatever defines the output is renamed and its remaining consumers follow it, so a tensor that is
+    both a graph output and an internal input keeps reading the fp16 value while the boundary stays
+    FP32. An output that is also a graph input needs no cast at all: the input side already restored
+    the tensor itself, leaving only its output declaration to correct.
+
+    Args:
+        graph: Graph of an already-converted fp16 model, mutated in place.
+        taken: Tensor names already bound in the graph; generated names are uniquified against it.
+
+    Returns:
+        Number of boundary ``Cast`` nodes inserted.
+
+    Examples:
+        Needs a converted fp16 ``ModelProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> _restore_fp32_outputs(model.graph, set())  # doctest: +SKIP
+        2
+    """
+    from onnx import TensorProto, helper
+
+    graph_inputs = {value.name for value in graph.input}
+    inserted = 0
+    for tensor in graph.output:
+        if tensor.type.tensor_type.elem_type != TensorProto.FLOAT16:
+            continue
+        if tensor.name in graph_inputs:
+            tensor.type.tensor_type.elem_type = TensorProto.FLOAT
+            continue
+        inner = _unique_name(f"{tensor.name}_fp16", taken)
+        if not _rebind_definition(graph, tensor.name, inner):
+            continue
+        _rename_tensor_uses(graph, tensor.name, inner)
+        graph.node.append(
+            helper.make_node("Cast", [inner], [tensor.name], to=TensorProto.FLOAT, name=f"Cast_{inner}_out")
+        )
+        tensor.type.tensor_type.elem_type = TensorProto.FLOAT
+        inserted += 1
+    return inserted
 
 
 def _restore_fp32_io(graph: Any) -> int:
@@ -138,6 +441,10 @@ def _restore_fp32_io(graph: Any) -> int:
     rather than via ``convert_float_to_float16(keep_io_types=True)`` because that option wires the
     FP32 graph input straight into an FP16 convolution without inserting a ``Cast``, which TensorRT
     rejects.
+
+    Only the top-level graph carries the engine's I/O contract — a subgraph's inputs come from its
+    owning ``If``/``Loop`` node rather than from the caller — so the boundary casts are top-level by
+    construction; nested graphs are still followed wherever a renamed tensor is captured inside one.
 
     Args:
         graph: Graph of an already-converted fp16 model, mutated in place.
@@ -151,37 +458,8 @@ def _restore_fp32_io(graph: Any) -> int:
         >>> _restore_fp32_io(model.graph)  # doctest: +SKIP
         3
     """
-    from onnx import TensorProto, helper
-
-    inserted = 0
-
-    for tensor in graph.input:
-        if tensor.type.tensor_type.elem_type != TensorProto.FLOAT16:
-            continue
-        inner = f"{tensor.name}_fp16"
-        for node in graph.node:
-            for index, name in enumerate(node.input):
-                if name == tensor.name:
-                    node.input[index] = inner
-        graph.node.insert(
-            0, helper.make_node("Cast", [tensor.name], [inner], to=TensorProto.FLOAT16, name=f"Cast_{inner}_in")
-        )
-        tensor.type.tensor_type.elem_type = TensorProto.FLOAT
-        inserted += 1
-
-    for tensor in graph.output:
-        if tensor.type.tensor_type.elem_type != TensorProto.FLOAT16:
-            continue
-        inner = f"{tensor.name}_fp16"
-        for node in graph.node:
-            for index, name in enumerate(node.output):
-                if name == tensor.name:
-                    node.output[index] = inner
-        graph.node.append(
-            helper.make_node("Cast", [inner], [tensor.name], to=TensorProto.FLOAT, name=f"Cast_{inner}_out")
-        )
-        tensor.type.tensor_type.elem_type = TensorProto.FLOAT
-        inserted += 1
+    taken = _tensor_names(graph)
+    inserted = _restore_fp32_inputs(graph, taken) + _restore_fp32_outputs(graph, taken)
 
     # The boundary tensors are FP32 again, but the conversion left value_info entries still declaring
     # them FLOAT16. graph.input/graph.output already carry the authoritative type, so drop the
@@ -192,6 +470,45 @@ def _restore_fp32_io(graph: Any) -> int:
     graph.value_info.extend(keep)
 
     return inserted
+
+
+def _reject_uncastable_graph(graph: Any, onnx_path: str) -> None:
+    """Fail early on a graph that a blanket fp16 cast would invalidate rather than convert.
+
+    An explicitly quantized graph states its precision in its ``QuantizeLinear``/``DequantizeLinear``
+    pairs, and ``onnxconverter-common`` neither blocks nor special-cases those ops, so it casts their
+    float inputs like any other. Below opset 19 ``QuantizeLinear`` does not even accept a float16 input,
+    making the result structurally invalid; above it the cast is legal but silently restates the
+    quantization. Either way a strongly typed TensorRT wants the quantized graph as-is, so refusing here
+    names the real cause instead of leaving it to a parser error pointing at the wrong node.
+
+    Args:
+        graph: Graph about to be converted.
+        onnx_path: Source path, quoted in the error message.
+
+    Raises:
+        Fp16CastUnsupportedError: If the graph, or any graph nested in it, carries quantization nodes.
+
+    Examples:
+        Needs an ``onnx.GraphProto``; see ``TestCastOnnxToFp16`` for real invocations.
+
+        >>> _reject_uncastable_graph(model.graph, "model.onnx")  # doctest: +SKIP
+    """
+    quantized = sorted(
+        {
+            node.op_type
+            for nested in _iter_graphs(graph)
+            for node in nested.node
+            if node.op_type in _QUANTIZATION_OP_TYPES
+        }
+    )
+    if quantized:
+        raise Fp16CastUnsupportedError(
+            f"'{onnx_path}' is an explicitly quantized graph ({', '.join(quantized)}); casting it to fp16 "
+            "wholesale would contradict that quantization and produce a model TensorRT cannot parse. "
+            "Build this engine with fp16=False -- a strongly typed TensorRT takes the quantized "
+            "precision from the graph itself."
+        )
 
 
 def _cast_onnx_to_fp16(onnx_path: str) -> str:
@@ -211,6 +528,8 @@ def _cast_onnx_to_fp16(onnx_path: str) -> str:
 
     Raises:
         ImportError: If ``onnx``/``onnxconverter-common`` are not installed.
+        Fp16CastUnsupportedError: If the graph cannot be cast to fp16 — it is explicitly quantized, or
+            the converter rejects it (most often because the model already is fp16).
 
     Examples:
         >>> _cast_onnx_to_fp16("output/rfdetr-medium.onnx")  # doctest: +SKIP
@@ -227,7 +546,17 @@ def _cast_onnx_to_fp16(onnx_path: str) -> str:
     import onnx
     from onnxconverter_common import float16
 
-    model = float16.convert_float_to_float16(onnx.load(onnx_path), keep_io_types=False)
+    model = onnx.load(onnx_path)
+    _reject_uncastable_graph(model.graph, onnx_path)
+    try:
+        model = float16.convert_float_to_float16(model, keep_io_types=False)
+    except ValueError as error:
+        # The converter rejects an already-fp16 model by naming an internal keyword argument no rfdetr
+        # caller can reach; restate it in rfdetr terms and keep the original as the cause.
+        raise Fp16CastUnsupportedError(
+            f"'{onnx_path}' could not be cast to fp16 (most often because it already is fp16). Point the "
+            "export at a float32 ONNX model, or request an FP32 engine with fp16=False."
+        ) from error
     retargeted = _retarget_float_casts(model.graph)
     inserted = _restore_fp32_io(model.graph)
     logger.debug(f"fp16 cast: retargeted {retargeted} Cast node(s), inserted {inserted} boundary cast(s)")
@@ -242,6 +571,36 @@ def _cast_onnx_to_fp16(onnx_path: str) -> str:
         os.remove(fp16_path)
         raise
     return fp16_path
+
+
+@contextlib.contextmanager
+def fp16_source_graph(onnx_path: str) -> Iterator[str]:
+    """Provide an fp16 copy of *onnx_path* to build from, deleting it when the block exits.
+
+    The copy is a build intermediate, so it goes whether the build succeeds or fails. Removing it is
+    best effort on purpose: the file may already be gone, or still be held open by the parser (Windows
+    raises ``PermissionError`` then), and neither may replace the build's own exception.
+
+    Args:
+        onnx_path: Path to the float32 ``.onnx`` model to build from.
+
+    Yields:
+        Path to the fp16 copy, valid only inside the ``with`` block.
+
+    Raises:
+        ImportError: If ``onnx``/``onnxconverter-common`` are not installed.
+        Fp16CastUnsupportedError: If the graph cannot be cast to fp16.
+
+    Examples:
+        >>> with fp16_source_graph("output/rfdetr-medium.onnx") as fp16_path:  # doctest: +SKIP
+        ...     engine_from_network(network_from_onnx_path(fp16_path))
+    """
+    cast_path = _cast_onnx_to_fp16(onnx_path)
+    try:
+        yield cast_path
+    finally:
+        with contextlib.suppress(OSError):
+            Path(cast_path).unlink(missing_ok=True)
 
 
 def build_engine(
@@ -285,6 +644,8 @@ def build_engine(
     Raises:
         ImportError: If ``polygraphy``/``tensorrt`` are not installed, or if *fp16* is requested on a
             strongly typed TensorRT without ``onnx``/``onnxconverter-common`` available to cast the graph.
+        Fp16CastUnsupportedError: If *fp16* is requested on a strongly typed TensorRT for a graph that
+            cannot be cast to fp16 (already fp16, or explicitly quantized).
 
     Examples:
         >>> build_engine("output/rfdetr-medium.onnx", dry_run=True)  # doctest: +SKIP
@@ -324,56 +685,46 @@ def build_engine(
     # The precision the engine ends up with and the flag handed to the builder are not the same thing
     # under strong typing: TensorRT >= 11 has no FP16 flag, and reads precision off the graph instead.
     builder_fp16 = fp16
-    # Set only on the strongly typed path: the cast copy is ours to delete once the engine exists.
-    cast_onnx_path: str | None = None
-
+    strategy, trt_version = Fp16Strategy.BUILDER_FLAG, "unknown"
     if fp16:
-        # Two different situations present identically as a missing FP16 builder flag, and they need
-        # opposite handling, so disambiguate on the TensorRT major version rather than the flag alone.
         try:
-            import tensorrt as trt
-
-            trt_version = getattr(trt, "__version__", "unknown")
-            has_fp16_flag = hasattr(trt.BuilderFlag, "FP16")
+            import tensorrt as trt_module
         except ImportError:
-            trt_version = "unknown"
-            has_fp16_flag = True  # a missing/broken tensorrt import is surfaced by the build chain below
+            trt_module = None
+        strategy, trt_version = resolve_fp16_strategy(trt_module)
 
-        if not has_fp16_flag:
-            major = _tensorrt_major(trt_version)
-            if major is not None and major >= _STRONG_TYPING_MAJOR:
-                # Strongly typed: precision comes from the graph, so cast it and let the builder infer.
-                # Raises rather than quietly downgrading -- an FP32 engine returned for an FP16 request
-                # is reported as an FP16 latency by anyone benchmarking it.
-                onnx_path = cast_onnx_path = _cast_onnx_to_fp16(onnx_path)
-                builder_fp16 = False
-                logger.info(f"TensorRT {trt_version} is strongly typed; building the FP16 engine from a cast graph")
-                logger.debug(f"fp16 cast graph: {onnx_path}")
-            else:
-                # Lean/partial wheel on a weakly typed TensorRT: the flag is genuinely unavailable and
-                # there is no graph-level alternative, so fall back rather than failing the export.
-                logger.warning(
-                    "TensorRT %s does not expose the FP16 builder flag; building an FP32 engine instead. "
-                    "Pass fp16=False to silence this warning.",
-                    trt_version,
-                )
-                fp16 = False
-                builder_fp16 = False
-                engine_path = _engine_path(fp16_used=fp16)
+    with contextlib.ExitStack() as cleanup:
+        # Only the builder reads the cast intermediate; onnx_path keeps naming the caller's own model.
+        build_source = onnx_path
 
-    if verbose:
-        logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
+        if strategy is Fp16Strategy.CAST_GRAPH:
+            # Strongly typed: precision comes from the graph, so cast it and let the builder infer.
+            # Raises rather than quietly downgrading -- an FP32 engine returned for an FP16 request
+            # is reported as an FP16 latency by anyone benchmarking it.
+            build_source = cleanup.enter_context(fp16_source_graph(onnx_path))
+            builder_fp16 = False
+            logger.info(f"TensorRT {trt_version} is strongly typed; building the FP16 engine from a cast graph")
+            logger.debug(f"fp16 cast graph: {build_source}")
+        elif strategy is Fp16Strategy.UNAVAILABLE:
+            # Lean/partial wheel on a weakly typed TensorRT: the flag is genuinely unavailable and
+            # there is no graph-level alternative, so fall back rather than failing the export.
+            logger.warning(
+                "TensorRT %s does not expose the FP16 builder flag; building an FP32 engine instead. "
+                "Pass fp16=False to silence this warning.",
+                trt_version,
+            )
+            fp16 = False
+            builder_fp16 = False
+            engine_path = _engine_path(fp16_used=fp16)
 
-    try:
+        if verbose:
+            logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
+
         engine = engine_from_network(
-            network_from_onnx_path(onnx_path),
+            network_from_onnx_path(build_source),
             config=CreateConfig(fp16=builder_fp16),
         )
         save_engine(engine, path=engine_path)
-    finally:
-        # Runs on failure too: a failed build should not leave the cast graph behind either.
-        if cast_onnx_path is not None and os.path.exists(cast_onnx_path):
-            os.remove(cast_onnx_path)
 
     logger.info(f"Successfully built TensorRT engine: {engine_path}")
     return engine_path

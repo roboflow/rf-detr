@@ -38,7 +38,7 @@ try:
 except ImportError:
     cuda = None
 
-from rfdetr.export._tensorrt import _STRONG_TYPING_MAJOR, _cast_onnx_to_fp16, _tensorrt_major
+from rfdetr.export._tensorrt import Fp16Strategy, fp16_source_graph, resolve_fp16_strategy
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -429,28 +429,33 @@ class TRTInference:
         Returns:
             The serialized engine, or ``None`` if the ONNX file failed to parse.
 
+        Raises:
+            Fp16CastUnsupportedError: If a strongly typed TensorRT needs the graph cast to fp16 and it
+                cannot be (already fp16, or explicitly quantized).
+
         Examples:
             >>> TRTInference.build_engine(trt_inference, "model.onnx", "model.trt")  # doctest: +SKIP
         """
-        # A missing FP16 flag means two opposite things, so disambiguate on the major version.
-        use_fp16_flag = hasattr(trt.BuilderFlag, "FP16")
-        cast_onnx_path: str | None = None
-        if not use_fp16_flag:
-            trt_version = getattr(trt, "__version__", "unknown")
-            major = _tensorrt_major(trt_version)
-            if major is not None and major >= _STRONG_TYPING_MAJOR:
-                onnx_file_path = cast_onnx_path = _cast_onnx_to_fp16(onnx_file_path)
+        # Strong typing, not the absent flag, is what decides this -- see ``resolve_fp16_strategy``.
+        strategy, trt_version = resolve_fp16_strategy(trt)
+        use_fp16_flag = strategy is Fp16Strategy.BUILDER_FLAG
+
+        with contextlib.ExitStack() as cleanup:
+            # Only the parser reads the cast intermediate; the caller's own path keeps naming its model.
+            build_source = onnx_file_path
+
+            if strategy is Fp16Strategy.CAST_GRAPH:
+                build_source = cleanup.enter_context(fp16_source_graph(onnx_file_path))
                 logger.info(f"TensorRT {trt_version} is strongly typed; benchmarking a cast FP16 graph")
-            else:
+            elif strategy is Fp16Strategy.UNAVAILABLE:
                 logger.warning(
                     "TensorRT %s does not expose the FP16 builder flag; benchmarking an FP32 engine "
                     "instead, so these latencies are not comparable to FP16 numbers.",
                     trt_version,
                 )
 
-        try:
             # TensorRT 11 removed EXPLICIT_BATCH along with the FP16 flag -- explicit batch is the
-            # only mode there, so the flag set is empty. Resolved inside the try: on 11 the absent
+            # only mode there, so the flag set is empty. Resolved inside the block: on 11 the absent
             # member would otherwise raise after the cast graph is written, leaking it.
             network_flags = (
                 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
@@ -467,7 +472,7 @@ class TRTInference:
                 if use_fp16_flag:
                     config.set_flag(trt.BuilderFlag.FP16)
 
-                with open(onnx_file_path, "rb") as model:
+                with open(build_source, "rb") as model:
                     if not parser.parse(model.read()):
                         logger.error("ERROR: Failed to parse the ONNX file.")
                         for error in range(parser.num_errors):
@@ -479,9 +484,6 @@ class TRTInference:
                     f.write(serialized_engine)
 
                 return serialized_engine
-        finally:
-            if cast_onnx_path is not None and os.path.exists(cast_onnx_path):
-                os.remove(cast_onnx_path)
 
 
 class TimeProfiler(contextlib.ContextDecorator):
