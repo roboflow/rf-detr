@@ -54,7 +54,7 @@ Every format except ONNX sits behind an optional dependency, and none of them ma
 ```python
 REGISTRY: Mapping[str, ExporterEntry] = {
     "onnx": ExporterEntry("rfdetr.export._onnx.exporter", "OnnxExporter", "onnx", "ONNX", supports_dynamic_batch=True),
-    ...
+    # ...
 }
 ```
 
@@ -183,13 +183,16 @@ def _export_name(self, *, backbone_only: bool) -> str:
 ### 4. Register it
 
 ```python
-"myformat": ExporterEntry(
-    "rfdetr.export._myformat.exporter",
-    "MyFormatExporter",
-    "myformat",
-    "MyFormat",
-    dynamic_batch_reason="(the graph bakes a fixed input shape). Export one model per batch size instead.",
-),
+REGISTRY: Mapping[str, ExporterEntry] = {
+    # ...
+    "myformat": ExporterEntry(
+        "rfdetr.export._myformat.exporter",
+        "MyFormatExporter",
+        "myformat",
+        "MyFormat",
+        dynamic_batch_reason="(the graph bakes a fixed input shape). Export one model per batch size instead.",
+    ),
+}
 ```
 
 `supports_dynamic_batch`, `label` and `dynamic_batch_reason` must match your class attributes exactly — the mirror test enforces it. Add a short spelling to `ALIASES` if one is worth having (`"trt"`, `"pte"`). Set `preimport` only if your format has an import-order hazard; TFLite is the one precedent, because TensorFlow must load before anything pulls in ONNX's C extension.
