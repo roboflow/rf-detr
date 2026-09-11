@@ -38,6 +38,7 @@ try:
 except ImportError:
     cuda = None
 
+from rfdetr.export._tensorrt import _STRONG_TYPING_MAJOR, _cast_onnx_to_fp16, _tensorrt_major
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -416,29 +417,71 @@ class TRTInference:
     def build_engine(self, onnx_file_path: str, engine_file_path: str, max_batch_size: int = 32) -> Any:
         """Takes an ONNX file and creates a TensorRT engine to run inference with
         http://gitlab.baidu.com/paddle-inference/benchmark/blob/main/backend_trt.py#L57
+
+        FP16 is always requested. Following :func:`~rfdetr.export._tensorrt.build_engine`, TensorRT
+        11+ has no FP16 builder flag and takes precision from the graph, so the graph is cast first.
+
+        Args:
+            onnx_file_path: Path to the float32 ``.onnx`` model to build from.
+            engine_file_path: Path the serialized engine is written to.
+            max_batch_size: Unused; retained for call-site compatibility.
+
+        Returns:
+            The serialized engine, or ``None`` if the ONNX file failed to parse.
+
+        Examples:
+            >>> TRTInference.build_engine(trt_inference, "model.onnx", "model.trt")  # doctest: +SKIP
         """
-        explicit_batch_flag = 1 << (int)(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-        with (
-            trt.Builder(self.logger) as builder,
-            builder.create_network(explicit_batch_flag) as network,
-            trt.OnnxParser(network, self.logger) as parser,
-            builder.create_builder_config() as config,
-        ):
-            config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)  # 1024 MiB
-            config.set_flag(trt.BuilderFlag.FP16)
+        # A missing FP16 flag means two opposite things, so disambiguate on the major version.
+        use_fp16_flag = hasattr(trt.BuilderFlag, "FP16")
+        cast_onnx_path: str | None = None
+        if not use_fp16_flag:
+            trt_version = getattr(trt, "__version__", "unknown")
+            major = _tensorrt_major(trt_version)
+            if major is not None and major >= _STRONG_TYPING_MAJOR:
+                onnx_file_path = cast_onnx_path = _cast_onnx_to_fp16(onnx_file_path)
+                logger.info(f"TensorRT {trt_version} is strongly typed; benchmarking a cast FP16 graph")
+            else:
+                logger.warning(
+                    "TensorRT %s does not expose the FP16 builder flag; benchmarking an FP32 engine "
+                    "instead, so these latencies are not comparable to FP16 numbers.",
+                    trt_version,
+                )
 
-            with open(onnx_file_path, "rb") as model:
-                if not parser.parse(model.read()):
-                    logger.error("ERROR: Failed to parse the ONNX file.")
-                    for error in range(parser.num_errors):
-                        logger.error(parser.get_error(error))
-                    return None
+        try:
+            # TensorRT 11 removed EXPLICIT_BATCH along with the FP16 flag -- explicit batch is the
+            # only mode there, so the flag set is empty. Resolved inside the try: on 11 the absent
+            # member would otherwise raise after the cast graph is written, leaking it.
+            network_flags = (
+                1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+                if hasattr(trt.NetworkDefinitionCreationFlag, "EXPLICIT_BATCH")
+                else 0
+            )
+            with (
+                trt.Builder(self.logger) as builder,
+                builder.create_network(network_flags) as network,
+                trt.OnnxParser(network, self.logger) as parser,
+                builder.create_builder_config() as config,
+            ):
+                config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)  # 1024 MiB
+                if use_fp16_flag:
+                    config.set_flag(trt.BuilderFlag.FP16)
 
-            serialized_engine = builder.build_serialized_network(network, config)
-            with open(engine_file_path, "wb") as f:
-                f.write(serialized_engine)
+                with open(onnx_file_path, "rb") as model:
+                    if not parser.parse(model.read()):
+                        logger.error("ERROR: Failed to parse the ONNX file.")
+                        for error in range(parser.num_errors):
+                            logger.error(parser.get_error(error))
+                        return None
 
-            return serialized_engine
+                serialized_engine = builder.build_serialized_network(network, config)
+                with open(engine_file_path, "wb") as f:
+                    f.write(serialized_engine)
+
+                return serialized_engine
+        finally:
+            if cast_onnx_path is not None and os.path.exists(cast_onnx_path):
+                os.remove(cast_onnx_path)
 
 
 class TimeProfiler(contextlib.ContextDecorator):

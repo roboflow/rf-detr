@@ -1728,8 +1728,9 @@ class RFDETR:
                 ``"xnnpack"`` or ``"coreml"``.
             fp16: Build the TensorRT engine with FP16 precision.  Only applies when ``format="tensorrt"``
                 (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
-                on NVIDIA GPUs.  Pass ``False`` to build an FP32 engine — required on TensorRT builds that do
-                not expose the FP16 builder flag (``export()`` otherwise aborts while configuring FP16).
+                on NVIDIA GPUs.  TensorRT 11+ removed the FP16 builder flag, so there the engine is built
+                from an FP16-cast graph instead; engine I/O stays FP32 either way.  Pass ``False`` for an
+                FP32 engine.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
