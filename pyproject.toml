@@ -124,7 +124,7 @@ tensorrt-bench = [
     "pycuda>=2024.1",
 ]
 tflite = [
-    # TFLite conversion routes every export through the ONNX pipeline first (export_onnx's
+    # TFLite conversion routes every export through the ONNX pipeline first (the ONNX exporter's
     # graph optimization/simplification), so these are needed here directly rather than via
     # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
     # inference, never touched by the TFLite export path.
@@ -211,7 +211,7 @@ ci-gpu-pin = [
 #   validated: torch==2.12.1 + executorch==1.3.1 imports executorch.runtime cleanly; torch==2.13.0
 #   does not. Remove this group and the --group ci-executorch-pin reference in CI once executorch
 #   ships a release compatible with newer torch. Does not affect users installing rfdetr from PyPI —
-#   see rfdetr.export._executorch.converter._check_executorch_available(require_runtime=True) for the
+#   see rfdetr.export._executorch.exporter._check_executorch_available(require_runtime=True) for the
 #   equivalent runtime guidance surfaced to end users who hit this.
 ci-executorch-pin = [
     "torch<2.13",

@@ -96,7 +96,7 @@ jobs:
         # python on PATH, so this runs the script through it directly (no uv run needed).
         run: |
           from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
-          from rfdetr.export._executorch.converter import _check_executorch_available
+          from rfdetr.export._executorch.exporter import _check_executorch_available
 
           _check_executorch_available(require_runtime=True)
           assert _IS_EXECUTORCH_AVAILABLE, "executorch installed but not detected as available"
@@ -207,7 +207,7 @@ jobs:
         # Guard against a silently-skipped parity test: TestTensorRTEndToEnd is gated by a skipif on
         # tensorrt availability, so a broken/missing wheel would skip it (false green) instead of failing red.
         run: |
-          from rfdetr.export._tensorrt import _IS_TENSORRT_AVAILABLE
+          from rfdetr.export._tensorrt.exporter import _IS_TENSORRT_AVAILABLE
 
           assert _IS_TENSORRT_AVAILABLE, "tensorrt/polygraphy installed but not detected as available"
           print("tensorrt import OK")

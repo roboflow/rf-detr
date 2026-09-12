@@ -6,7 +6,7 @@
 """Tests for direct PyTorch -> OpenVINO IR (``.xml``/``.bin``) export.
 
 Covers:
-* ``export_openvino()`` — dependency-missing path, path-traversal sanitization, and the internal
+* ``OpenVINOExporter`` — dependency-missing path, path-traversal sanitization, and the internal
   ``ModelWrapper`` dict-output mapping (``openvino.convert_model``/``save_model`` stubbed via
   ``sys.modules`` injection so these run without the real ``openvino`` package installed).
 * ``OpenVINOInference.__init__`` — dependency-missing path.
@@ -33,8 +33,9 @@ import pytest
 import torch
 from numpy.typing import NDArray
 
-from rfdetr.export._openvino.exporter import export_openvino
+from rfdetr.export._openvino.exporter import OpenVINOConfig, OpenVINOExporter
 from rfdetr.export._openvino.inference import OpenVINOInference
+from rfdetr.export.prepare import ExportGraph
 from tests.export.conftest import (
     _parity_input_from_image,
     _structured_parity_input,
@@ -129,10 +130,40 @@ def _confident_query_diffs(
     return diffs
 
 
+def _export_graph(*, backbone_only: bool = False) -> ExportGraph:
+    """Build a throwaway ``ExportGraph`` for driving ``OpenVINOExporter`` without a real RF-DETR model.
+
+    The exporter reads only ``model``, ``input_tensors``, and ``backbone_only`` off the graph, so an ``Identity``
+    module and a tiny zero tensor are enough for the naming, precision, and dependency tests. The remaining fields
+    carry the values ``prepare_export_graph`` would produce for a plain detector, so the graph stays a faithful
+    stand-in rather than a partially-filled one.
+
+    Args:
+        backbone_only: Whether the graph stands in for a backbone-only export, which the filename marks.
+
+    Returns:
+        A graph whose model traces trivially.
+
+    Examples:
+        >>> graph = _export_graph(backbone_only=True)
+        >>> graph.backbone_only, tuple(graph.input_tensors.shape)
+        (True, (1, 3, 8, 8))
+    """
+    return ExportGraph(
+        model=torch.nn.Identity(),
+        input_tensors=torch.zeros(1, 3, 8, 8),
+        input_names=("input",),
+        output_names=("dets", "labels"),
+        dynamic_axes=None,
+        shape=(8, 8),
+        backbone_only=backbone_only,
+    )
+
+
 def _stub_openvino_module() -> types.ModuleType:
     """Build a minimal fake ``openvino`` module exposing ``convert_model``/``save_model``.
 
-    Injected into ``sys.modules`` so ``export_openvino()``'s ``from openvino import convert_model,
+    Injected into ``sys.modules`` so ``OpenVINOExporter``'s ``from openvino import convert_model,
     save_model`` succeeds without the real package installed, letting the naming/wrapping logic run
     end-to-end while the actual (heavy, unavailable) conversion is a no-op mock.
 
@@ -151,19 +182,17 @@ def _stub_openvino_module() -> types.ModuleType:
 
 
 # ---------------------------------------------------------------------------
-# export_openvino() — dependency-missing path (real environment, no openvino installed)
+# OpenVINOExporter — dependency-missing path (real environment, no openvino installed)
 # ---------------------------------------------------------------------------
 
 
 class TestExportOpenvinoMissingDependency:
-    """``export_openvino()``'s ``ImportError`` path, exercised for real (openvino not installed here)."""
+    """``OpenVINOExporter``'s ``ImportError`` path, exercised for real (openvino not installed here)."""
 
     def test_raises_import_error(self, tmp_path: Path) -> None:
         """Missing ``openvino`` must surface an ``ImportError``, not any other exception type."""
-        model = torch.nn.Identity()
-        example = torch.zeros(1, 3, 32, 32)
         with pytest.raises(ImportError):
-            export_openvino(model, example, str(tmp_path))
+            OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path))(_export_graph())
 
     def test_import_error_names_pip_install_hint(self, tmp_path: Path) -> None:
         """The raised ``ImportError`` must name the ``rfdetr[openvino]`` extra so users know how to fix it.
@@ -172,10 +201,8 @@ class TestExportOpenvinoMissingDependency:
         message itself (not merely logged separately), so a caller catching the exception — not just reading logs —
         still sees the fix.
         """
-        model = torch.nn.Identity()
-        example = torch.zeros(1, 3, 32, 32)
         with pytest.raises(ImportError, match="rfdetr\\[openvino\\]"):
-            export_openvino(model, example, str(tmp_path))
+            OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path))(_export_graph())
 
 
 class TestPublicInferenceFacade:
@@ -274,7 +301,7 @@ class TestOpenVINOInferenceInputValidation:
 
 
 # ---------------------------------------------------------------------------
-# export_openvino() — naming, path safety, and ModelWrapper dict-output mapping
+# OpenVINOExporter — naming, path safety, and ModelWrapper dict-output mapping
 # (openvino.convert_model/save_model stubbed; no real openvino needed)
 # ---------------------------------------------------------------------------
 
@@ -296,17 +323,11 @@ class TestExportOpenvinoNaming:
     ) -> None:
         """Backbone and detector exports must resolve distinct, predictable ``.xml`` stems."""
         fake_ov = _stub_openvino_module()
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, variant_name=variant_name, verbose=False))
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
-            output_xml = export_openvino(
-                torch.nn.Identity(),
-                torch.zeros(1, 3, 8, 8),
-                str(tmp_path),
-                backbone_only=backbone_only,
-                variant_name=variant_name,
-                verbose=False,
-            )
-        assert output_xml == str(tmp_path / f"{expected_stem}.xml")
-        fake_ov.save_model.assert_called_once_with(mock.ANY, output_xml, compress_to_fp16=True)
+            output_xml = exporter(_export_graph(backbone_only=backbone_only))
+        assert output_xml == tmp_path / f"{expected_stem}.xml"
+        fake_ov.save_model.assert_called_once_with(mock.ANY, str(output_xml), compress_to_fp16=True)
 
     @pytest.mark.parametrize(
         ("variant_name", "expected"),
@@ -324,19 +345,14 @@ class TestExportOpenvinoNaming:
 
         Regression coverage for the same ``os.path.splitext(os.path.basename(...))`` mitigation
         ``export_coreml`` applies (see ``tests/export/test_coreml_export.py::TestVariantNamePathSafety``);
-        ``export_openvino`` guards its ``variant_name`` the identical way.
+        ``OpenVINOExporter`` guards its ``variant_name`` the identical way.
         """
         fake_ov = _stub_openvino_module()
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, variant_name=variant_name, verbose=False))
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
-            output_xml = export_openvino(
-                torch.nn.Identity(),
-                torch.zeros(1, 3, 8, 8),
-                str(tmp_path),
-                variant_name=variant_name,
-                verbose=False,
-            )
-        assert output_xml == str(tmp_path / f"{expected}.xml")
-        assert ".." not in output_xml.removeprefix(str(tmp_path))
+            output_xml = exporter(_export_graph())
+        assert output_xml == tmp_path / f"{expected}.xml"
+        assert ".." not in str(output_xml).removeprefix(str(tmp_path))
 
 
 class TestExportOpenvinoPrecision:
@@ -359,20 +375,18 @@ class TestExportOpenvinoPrecision:
     ) -> None:
         """``precision`` must map to ``save_model``'s ``compress_to_fp16`` flag, not silently default."""
         fake_ov = _stub_openvino_module()
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, precision=precision, verbose=False))
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
-            export_openvino(
-                torch.nn.Identity(), torch.zeros(1, 3, 8, 8), str(tmp_path), precision=precision, verbose=False
-            )
+            exporter(_export_graph())
         assert fake_ov.save_model.call_args.kwargs["compress_to_fp16"] is expected_compress
 
     def test_invalid_precision_raises_value_error(self, tmp_path: Path) -> None:
         """An unrecognized ``precision`` value must raise ``ValueError`` before any conversion is attempted."""
         fake_ov = _stub_openvino_module()
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, precision="int8", verbose=False))
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             with pytest.raises(ValueError, match="precision must be"):
-                export_openvino(
-                    torch.nn.Identity(), torch.zeros(1, 3, 8, 8), str(tmp_path), precision="int8", verbose=False
-                )
+                exporter(_export_graph())
         fake_ov.convert_model.assert_not_called()
 
 
@@ -553,19 +567,20 @@ class TestExportFormatParameter:
         xml_out = tmp_path / "inference_model.xml"
         xml_out.write_bytes(b"<xml/>")
 
-        self._mock_stack = mock.patch.multiple(
-            "rfdetr.export.main",
-            make_infer_image=mock.DEFAULT,
-            export_onnx=mock.DEFAULT,
-        )
-        mocks = self._mock_stack.start()
-        mocks["make_infer_image"].return_value = torch.zeros(1, 3, 560, 560)
-        self._mock_make_infer_image = mocks["make_infer_image"]
-        self._mock_export_onnx = mocks["export_onnx"]
+        self._mock_stack = mock.patch("rfdetr.export.prepare.make_infer_image")
+        self._mock_make_infer_image = self._mock_stack.start()
+        self._mock_make_infer_image.return_value = torch.zeros(1, 3, 560, 560)
+        self._export_onnx_stack = mock.patch("rfdetr.export._onnx.exporter.OnnxExporter._convert")
+        self._mock_export_onnx = self._export_onnx_stack.start()
         self._mock_export_onnx.return_value = str(tmp_path / "inference_model.onnx")
 
-        self._mock_export_openvino = mock.patch(
-            "rfdetr.export._openvino.exporter.export_openvino", return_value=str(xml_out)
+        # autospec so the patched method still records the bound exporter as its first argument — the
+        # per-format settings the converter used to receive as keyword arguments now live on that
+        # instance's `config`, and the forwarding tests below read them back off it.
+        self._mock_openvino_convert = mock.patch(
+            "rfdetr.export._openvino.exporter.OpenVINOExporter._convert",
+            autospec=True,
+            return_value=str(xml_out),
         ).start()
 
         yield
@@ -595,31 +610,33 @@ class TestExportFormatParameter:
         "segmentation_head",
         [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")],
     )
-    def test_openvino_format_dispatches_to_export_openvino_not_onnx(self, segmentation_head: bool) -> None:
-        """``format="openvino"`` must dispatch to ``export_openvino`` (not ``export_onnx``)."""
+    def test_openvino_format_dispatches_to_openvino_exporter_not_onnx(self, segmentation_head: bool) -> None:
+        """``format="openvino"`` must dispatch to ``OpenVINOExporter`` (not the ONNX exporter)."""
         obj = self._make_rfdetr(segmentation_head=segmentation_head)
         output_path = obj.export(format="openvino", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_openvino.assert_called_once()
+        self._mock_openvino_convert.assert_called_once()
         self._mock_export_onnx.assert_not_called()
         assert output_path.suffix == ".xml"
 
-    def test_onnx_format_does_not_call_export_openvino(self) -> None:
+    def test_onnx_format_does_not_call_openvino_exporter(self) -> None:
         """``format="onnx"`` must not import/call the OpenVINO converter."""
         obj = self._make_rfdetr()
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_openvino.assert_not_called()
+        self._mock_openvino_convert.assert_not_called()
 
     def test_variant_name_forwarded_to_converter(self) -> None:
         """The model's ``size`` attribute must be forwarded as ``variant_name``."""
         obj = self._make_rfdetr()
         obj.export(format="openvino", output_dir=str(self._tmp_path / "out"))
-        assert self._mock_export_openvino.call_args.kwargs["variant_name"] == "rfdetr-nano"
+        exporter = self._mock_openvino_convert.call_args.args[0]
+        assert exporter.config.variant_name == "rfdetr-nano"
 
     def test_output_name_forwarded_to_converter(self) -> None:
         """An explicit ``output_name`` must be forwarded verbatim, overriding the variant-based name."""
         obj = self._make_rfdetr()
         obj.export(format="openvino", output_dir=str(self._tmp_path / "out"), output_name="my-model")
-        assert self._mock_export_openvino.call_args.kwargs["output_name"] == "my-model"
+        exporter = self._mock_openvino_convert.call_args.args[0]
+        assert exporter.config.output_name == "my-model"
 
     def test_dynamic_batch_raises_not_implemented(self) -> None:
         """``dynamic_batch=True`` must raise ``NotImplementedError``, matching CoreML/ExecuTorch's fixed-shape guard.
@@ -658,7 +675,7 @@ class TestExportFormatParameter:
         obj = self._make_rfdetr()
         with pytest.raises(ValueError, match="Unsupported export format"):
             obj.export(format="bogus", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_openvino.assert_not_called()
+        self._mock_openvino_convert.assert_not_called()
 
 
 class TestExportOpenvinoMissingDependencyViaPublicAPI:
@@ -668,7 +685,9 @@ class TestExportOpenvinoMissingDependencyViaPublicAPI:
     def _patch_light_export_deps(self, tmp_path: Path) -> Any:
         """Mock only ``make_infer_image``; the OpenVINO converter itself must run for real."""
         self._tmp_path = tmp_path
-        self._mock_stack = mock.patch("rfdetr.export.main.make_infer_image", return_value=torch.zeros(1, 3, 560, 560))
+        self._mock_stack = mock.patch(
+            "rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)
+        )
         self._mock_stack.start()
         yield
         self._mock_stack.stop()
@@ -695,7 +714,7 @@ class TestExportOpenvinoMissingDependencyViaPublicAPI:
         """Missing ``openvino`` must surface ``ImportError`` — the format itself must be accepted.
 
         Regression guard for the format-dispatch registry: ``format="openvino"`` must reach the real
-        ``export_openvino()`` call (and fail there, on the missing dependency) rather than being rejected
+        ``OpenVINOExporter`` conversion (and fail there, on the missing dependency) rather than being rejected
         upfront by ``_resolve_export_backend``'s ``_EXPORT_FORMATS`` membership check.
         """
         obj = self._make_rfdetr()

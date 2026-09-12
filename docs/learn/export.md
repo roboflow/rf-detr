@@ -14,6 +14,7 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment — see [Native CoreML Export](#native-coreml-export-mlpackage)
+    - Adding a format is an in-tree contribution — see [Exporter Blueprint](export-blueprint.md)
 
 RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
@@ -81,7 +82,7 @@ The `export()` method accepts several parameters to customize the export process
 | `verbose`            | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                                                                                                            |
 | `shape`              | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                                                                                                         |
 | `batch_size`         | `1`        | Batch size for the exported model.                                                                                                                                                                                                                                                                                                                      |
-| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                                                                                                                                                                             |
+| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime. Only supported for `format="onnx"` and `format="tflite"` — TensorRT, ExecuTorch, CoreML and OpenVINO bake a fixed batch size.                                                                                                               |
 | `patch_size`         | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                                                                                                                       |
 | `backend`            | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                                                                                                                                                                        |
 | `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                             |
@@ -174,6 +175,10 @@ model.export(format="tensorrt")
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](#export-parameters) — unless `output_name` is set).
 
+!!! note "`dynamic_batch=True` is not supported"
+
+    The engine is compiled without a TensorRT optimization profile, so it accepts only the batch size baked into the intermediate ONNX graph. Export one engine per batch size instead.
+
 !!! note "Who consumes the `.trt` engine?"
 
     The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw TensorRT deployment. It is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases.
@@ -186,16 +191,17 @@ Use this only to convert an **already-exported** `.onnx` file without re-running
 
 !!! warning "Internal API"
 
-    `rfdetr.export._tensorrt` is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. `RFDETR.export(format="tensorrt")` is the supported entry point.
+    `rfdetr.export._tensorrt.exporter` is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. `RFDETR.export(format="tensorrt")` is the supported entry point; use the class below only when you need to convert an already-exported `.onnx` file.
 
 ```python
-from rfdetr.export._tensorrt import build_engine
+from rfdetr.export._tensorrt.exporter import TensorRTConfig, TensorRTExporter
 
-engine_path = build_engine("output/inference_model.onnx", fp16=True)
+exporter = TensorRTExporter(TensorRTConfig(fp16=True))
+engine_path = exporter.build_engine("output/inference_model.onnx")
 # -> "output/inference_model_fp16.trt"
 ```
 
-`build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file. Pass `output_name="my-engine"` to write `output/my-engine.trt` verbatim instead.
+`TensorRTExporter.build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file. Precision and progress logging come from the `TensorRTConfig` the exporter is constructed with — pass `TensorRTConfig(output_name="my-engine")` to write `output/my-engine.trt` verbatim instead.
 
 ## Run Inference with `inference-models`
 
@@ -742,6 +748,12 @@ outputs = list(mlmodel.predict({"input": image_array.astype(np.float32)}).values
 boxes, labels = outputs[0], outputs[1]
 ```
 
+## How Export Works
+
+Every format is written by an `Exporter` class built from that format's own configuration, and `model.export()` is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent `ExportGraph`, and hands the graph to the exporter. The signature and return value on this page are the supported surface; the classes behind it are internal.
+
+If you want to add a format, or you are reading the export code, see [Exporter Blueprint](export-blueprint.md) for the contract each format implements and the steps a new one takes.
+
 ## Using the Exported Model
 
 Once exported, you can use the ONNX model with various inference frameworks:
@@ -843,3 +855,5 @@ After exporting your model, you may want to:
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
+
+- Read the [Exporter Blueprint](export-blueprint.md) to add a new export format
