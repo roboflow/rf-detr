@@ -47,6 +47,10 @@ _STACKED_COST_ELEMENT_LIMIT = 350_000
 _LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
 linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
+# Cost handed to padded (non-real) target columns so the assignment parks them on leftover queries.
+# Large enough to dominate any real class/bbox/GIoU cost, finite so the solver stays well conditioned.
+_PADDED_TARGET_COST = 1.0e4
+
 
 class _TargetSideSafety(NamedTuple):
     """A precomputed compact-path target-side safety result from
@@ -448,6 +452,12 @@ class HungarianMatcher(nn.Module):
             box_cxcywh_to_xyxy(padded_target_boxes),
         )
         padded_cost_matrix = self.cost_bbox * bbox_cost + self.cost_class * class_cost + self.cost_giou * giou_cost
+        if "valid" in targets[0]:
+            # Filler columns from fixed-size target padding. Their cost is the same for every query, so
+            # they add a constant n_pad * _PADDED_TARGET_COST to any assignment and cannot change which
+            # query each real target wins -- they simply take whatever queries are left over.
+            valid = torch.stack([target["valid"] for target in targets]).to(padded_cost_matrix.device)
+            padded_cost_matrix = padded_cost_matrix.masked_fill(~valid[:, None, :], _PADDED_TARGET_COST)
         return torch.cat(
             [padded_cost_matrix[index, :, :size] for index, size in enumerate(sizes)],
             dim=-1,
@@ -831,6 +841,14 @@ class HungarianMatcher(nn.Module):
                 + self.keypoint_nll_loss_coef * cost_nll
             )
         cost_matrix = cost_matrix.view(bs, num_queries, -1).float()
+        if "valid" in targets[0]:
+            # Same fixed-size target padding the compact path above masks. This full cartesian
+            # path is what a batch actually takes whenever `_compact_path_applicable` declines it
+            # (batch_size == 1, or a mask/keypoint target is present), so it needs the identical
+            # sentinel: without it, filler columns compete on their real (near-zero-box) cost and
+            # can displace a real target from its optimal query instead of only taking leftovers.
+            tgt_valid = torch.cat([target["valid"] for target in targets]).to(cost_matrix.device)
+            cost_matrix = cost_matrix.masked_fill(~tgt_valid[None, None, :], _PADDED_TARGET_COST)
 
         # We assume any good match will not cause NaN or Inf, so replace invalid
         # entries with a finite value that is larger than every valid cost.
