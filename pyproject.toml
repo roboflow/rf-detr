@@ -115,6 +115,11 @@ tensorrt = [
     "onnxruntime-gpu",
     "tensorrt>=8.6.1",
     "polygraphy",
+    # TensorRT >= 11 takes engine precision from the ONNX graph, so fp16=True must cast the graph
+    # first. This is that caster: an 87 KiB pure-Python wheel adding no transitive package this
+    # extra lacks. onnx is not otherwise reachable here (polygraphy declares no requirements).
+    "onnxconverter-common",
+    "onnx>=1.16.0,<2.0",
 ]
 # pycuda is only used by async TRTInference in rfdetr.export.benchmark. It ships as an sdist
 # and builds against the CUDA toolkit dev headers (cuda.h), which a GPU driver alone does not
@@ -234,6 +239,12 @@ tests = [
   "pyyaml",  # imported by .github/_tests to parse the workflows they assert on
   "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
   "packaging",  # imported by .github/scripts/inject_outdated_banner.py to order release dirs
+  # The fp16 graph cast behind `build_engine(fp16=True)` on strongly typed TensorRT is pure ONNX
+  # surgery, so it is testable on CPU without tensorrt. These live here rather than relying on the
+  # [tensorrt] extra (which pulls onnxruntime-gpu) so TestCastOnnxToFp16 actually runs in the CPU job
+  # instead of silently skipping.
+  "onnx>=1.16.0,<2.0",
+  "onnxconverter-common",
   "tomli>=2.0; python_version < '3.11'",
   # Generates the synthetic COCO fixtures in tests/conftest.py (replaced rfdetr.datasets.synthetic).
   # Pinned exactly: the project is pre-1.0 and only publishes dev releases, so a range would drift.
@@ -276,8 +287,12 @@ rfdetr = "rfdetr.cli:main"
 # tflite deps carry python_version>='3.12' and <'3.13' markers because onnx2tf's numpy pin
 # cannot be satisfied on 3.13 via any available release; when onnx2tf relaxes the exact pin,
 # remove the <'3.13' upper bound from the tflite deps AND from the override below.
+#
+# A uv override replaces a package's whole requirement set, so a lone 3.12-scoped entry would leave
+# ml-dtypes uninstalled everywhere else and break `import onnx`. Keep the markers complementary.
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
+    "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
 # ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
@@ -468,6 +483,7 @@ overrides = [
     "albumentations", "albumentations.*",
     "onnx", "onnx.*",
     "onnx2tf", "onnx2tf.*",
+    "onnxconverter_common", "onnxconverter_common.*",
     "onnx_graphsurgeon", "onnx_graphsurgeon.*",
     "onnxruntime", "onnxruntime.*",
     "onnxsim", "onnxsim.*",

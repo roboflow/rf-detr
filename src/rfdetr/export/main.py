@@ -60,8 +60,9 @@ def _convert_onnx_export(
             formats.
         max_images: Maximum images to load from a *calibration_data* directory (ignored for other formats).
         verbose: Print conversion progress information.
-        fp16: Build the TensorRT engine with FP16 precision (ignored for other formats). Pass ``False`` to
-            build an FP32 engine — useful on TensorRT builds that do not expose the FP16 builder flag.
+        fp16: Build the TensorRT engine with FP16 precision (ignored for other formats). TensorRT 11+
+            reaches FP16 by casting the ONNX graph rather than by a builder flag; see
+            :func:`~rfdetr.export._tensorrt.build_engine`. Pass ``False`` to build an FP32 engine.
         output_name: Full filename override (without extension); forwarded to :func:`build_engine` for
             ``format="tensorrt"`` (suppresses the ``_fp16``/``_fp32`` suffix). Not forwarded to
             :func:`export_tflite`, which has no such parameter — TFLite always inherits its stem from
