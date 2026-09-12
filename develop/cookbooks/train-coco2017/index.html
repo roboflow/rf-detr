@@ -27,7 +27,7 @@
   
     
       
-        <title>Train RF-DETR Nano on COCO2017 (high-end GPU) - RF-DETR</title>
+        <title>Train RF-DETR Nano on COCO2017 (single GPU) - RF-DETR</title>
       
     
   
@@ -82,7 +82,7 @@
   
   
   
-  <meta property="og:title" content="Train RF-DETR Nano on COCO2017 (high-end GPU) - RF-DETR">
+  <meta property="og:title" content="Train RF-DETR Nano on COCO2017 (single GPU) - RF-DETR">
   <meta property="og:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/train-coco2017/">
@@ -93,7 +93,7 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="Train RF-DETR Nano on COCO2017 (high-end GPU) - RF-DETR">
+  <meta name="twitter:title" content="Train RF-DETR Nano on COCO2017 (single GPU) - RF-DETR">
   <meta name="twitter:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
@@ -101,13 +101,13 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-10T10:19:36">
+  <meta property="article:modified_time" content="2026-09-12T22:10:31">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "Train RF-DETR Nano on COCO2017 (high-end GPU)",
+    "headline": "Train RF-DETR Nano on COCO2017 (single GPU)",
     "description": "Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python \u22653.10.",
     "url": "https://rfdetr.roboflow.com/develop/cookbooks/train-coco2017/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-10T10:19:36",
+    "dateModified": "2026-09-12T22:10:31",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -142,7 +142,7 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "Train RF-DETR Nano on COCO2017 (high-end GPU)",
+        "name": "Train RF-DETR Nano on COCO2017 (single GPU)",
         "item": "https://rfdetr.roboflow.com/develop/cookbooks/train-coco2017/"
       }
       
@@ -164,7 +164,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#train-rf-detr-nano-on-coco2017-high-end-gpu" class="md-skip">
+        <a href="#train-rf-detr-nano-on-coco2017-single-gpu" class="md-skip">
           Skip to content
         </a>
       
@@ -240,7 +240,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
             </a>
             
-              Train RF-DETR Nano on COCO2017 (high-end GPU)
+              Train RF-DETR Nano on COCO2017 (single GPU)
             
           </span>
         </div>
@@ -2389,10 +2389,21 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
-  <a href="#fp8-and-compilation" class="md-nav__link">
+  <a href="#compilation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        FP8 and compilation
+        Compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-fp8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: FP8
       
     </span>
   </a>
@@ -3157,22 +3168,27 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=62c7a28d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c8ea7204">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="train-rf-detr-nano-on-coco2017-high-end-gpu">Train RF-DETR Nano on COCO2017 (high-end GPU)<a class="anchor-link" href="#train-rf-detr-nano-on-coco2017-high-end-gpu">¶</a></h1><p><a href="https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/docs/cookbooks/train-coco2017.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a></p>
-<p>Downloads the full public <strong>COCO2017</strong> dataset and trains <strong>RF-DETR Nano</strong> for 40 epochs, end to end. This
-notebook uses <strong>FP8 and torch.compile on Linux x86-64 with a supported NVIDIA GPU</strong>, such as an H100 or
-RTX PRO 6000 Blackwell. Its batch size assumes an 80+ GB GPU. On smaller supported GPUs, choose a smaller
-integer <code>batch_size</code>; FP8 does not support automatic batch sizing. A100, T4, CPU, and Apple MPS cannot run this recipe; use
-<code>amp_dtype="bf16"</code>, or <code>amp_dtype="auto"</code> for ordinary training without Transformer Engine.
-Skip the RAM-disk move on a low-RAM host — it needs ~19 GB free in <code>/dev/shm</code>.</p>
-<p>In addition to default throughput improvements, this notebook enables FP8 and compilation, with host-adaptive knobs (<code>num_workers</code>,
-<code>seed</code>), a batch size measured on high-end hardware, and a learning-rate schedule sized for a 40-epoch run, each
-explained where it is set.</p>
+<h1 id="train-rf-detr-nano-on-coco2017-single-gpu">Train RF-DETR Nano on COCO2017 (single GPU)<a class="anchor-link" href="#train-rf-detr-nano-on-coco2017-single-gpu">¶</a></h1><p><a href="https://colab.research.google.com/github/roboflow/rf-detr/blob/develop/docs/cookbooks/train-coco2017.ipynb"><img alt="Open In Colab" src="https://colab.research.google.com/assets/colab-badge.svg"/></a></p>
+<p>Downloads the full public <strong>COCO2017</strong> dataset and trains <strong>RF-DETR Nano</strong> from scratch for 40 epochs, end to
+end — <code>pretrain_weights=None</code>, so no released detector checkpoint is loaded (section 4 covers what that costs
+in accuracy).</p>
+<p>This notebook uses <code>torch.compile</code> with automatic mixed precision (bf16 when supported, otherwise fp16) on any CUDA GPU. Measured on an RTX PRO 6000 (96 GB) an epoch takes
+about 7 minutes, so the 40-epoch run fits in about 5 hours; on an L4 (24 GB) an epoch takes about 36 minutes and
+the run needs several sessions with <code>resume</code>. A100, T4 and other CUDA GPUs run the same recipe with <code>batch_size</code>
+adjusted; CPU and Apple MPS do not benefit from compilation and should use the fine-tuning cookbooks instead.
+FP8 via Transformer Engine is optional and covered under the training settings in section 5: on Nano it is
+within a few percent of bf16 either way, because the 14 classification heads (91 outputs) are not FP8-shaped and
+stay in bf16.</p>
+<p>Skip the RAM-disk move on a low-RAM host — it needs ~19 GB free in <code>/dev/shm</code>.</p>
+<p>In addition to default throughput improvements, this notebook enables compilation, with host-adaptive knobs
+(<code>num_workers</code>, <code>seed</code>), a batch size measured on two GPUs, and a learning-rate schedule sized for a 40-epoch
+run, each explained where it is set.</p>
 <p>Kept deliberately minimal: download, train, plot the metrics <code>CSVLogger</code> wrote during training. For dataset
 preview, checkpoint saving, and inference visualization, see <code>fine-tune_detection.ipynb</code>.</p>
 <h2 id="why-this-notebook-is-simple-on-purpose">Why this notebook is simple on purpose<a class="anchor-link" href="#why-this-notebook-is-simple-on-purpose">¶</a></h2><p>Recent releases moved several training-throughput fixes directly into the default configuration, so a stock run
@@ -3189,22 +3205,53 @@ training batch no longer forces small (slower) evaluation batches.</li>
 <li><strong>The transformer skips materializing tensors it would otherwise reuse unchanged</strong> on the single-feature-level
 path that Nano (and every current detection size) uses by default.</li>
 <li><strong>Pre-training sanity-check validation is skipped by default.</strong></li>
+<li><strong>Measured end to end:</strong> the same recipe on rfdetr 1.9.0 takes 65 min/epoch on an RTX PRO 6000 and 97 min on
+an L4. The 1.9.0 pipeline was not GPU-bound (32 vs 22 img/s on those two cards); develop runs at 289 vs
+56 img/s.</li>
 </ul>
 <p>None of this needs a flag — it is what <code>RFDETRNano().train()</code> already does. TensorBoard logging is turned off so
 the notebook does not require the <code>loggers</code> extra; <code>CSVLogger</code> is always on and is what section 5 plots.</p>
 <h2 id="scope-and-honest-expectations">Scope and honest expectations<a class="anchor-link" href="#scope-and-honest-expectations">¶</a></h2><p>COCO2017 has 118,287 training images and 5,000 validation images — two to three orders of magnitude larger than
-the small Roboflow Universe datasets in the other fine-tuning cookbooks. There is no COCO2017-scale timing
-measurement in this repository yet, so no fixed "N minutes per epoch" number is given here. <strong>Time your own first
-epoch</strong> (the progress bar prints per-epoch elapsed time) before committing GPU time to all 40. As a rough anchor:
-an internal L4 measurement on a ~6,900-image dataset with <code>rfdetr-small</code> at batch 16 took ~324 s/epoch
-(train + validation); COCO2017 has about 17x more training images and 2.5x more validation images, and
-<code>rfdetr-nano</code> is smaller and runs at a lower resolution than <code>rfdetr-small</code>, which pulls the other way. Expect the
-full 40-epoch run to take multiple hours even on a fast GPU.</p>
+the small Roboflow Universe datasets in the other fine-tuning cookbooks. Measured per-epoch time (training plus
+validation), for RF-DETR Nano at a fixed 384 px with <code>seed=0</code>, torch 2.11.0+cu128 and Transformer Engine
+2.18/2.19, on 11-12 Sep 2026 — RTX PRO 6000 Blackwell 96 GB is the mean of epochs 1-2, L4 24 GB is epoch 1:</p>
+<table>
+<thead>
+<tr>
+<th>GPU</th>
+<th>rfdetr 1.9.0 (bf16, batch at ceiling)</th>
+<th>develop bf16 + compile</th>
+<th>develop FP8 + compile</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RTX PRO 6000</td>
+<td>65 min @ 128 (160 OOM)</td>
+<td>7.2 min @ 128 (40 % mem), 7.3 min @ 288</td>
+<td>7.0 min @ 128, 7.1 min @ 320</td>
+</tr>
+<tr>
+<td>L4</td>
+<td>97 min @ 32 (40 is slower)</td>
+<td>35 min @ 32 (46 % mem), 36 min @ 64</td>
+<td>40 min @ 32, 37 min @ 72</td>
+</tr>
+</tbody>
+</table>
+<p>Epoch 0 is slower (compile warm-up, annotation index, page cache): about 8 % on the RTX PRO 6000 and up to 40 %
+on an L4. Time epoch 1 onward.</p>
 <blockquote>
 <p><strong>Session limits vary; do not assume all 40 epochs will fit in one session.</strong> Training still checkpoints every
-<code>checkpoint_interval</code> epochs (10 by default) to <code>last.ckpt</code> as a safety net: if a session does disconnect,
-reopen the notebook, set <code>train_config.resume</code> to that file's path, and re-run the training cell to continue.
-On a free-tier T4/L4 the session is likely to end before 40 epochs do — plan on resuming.</p>
+<code>checkpoint_interval</code> epochs (10 by default) to <code>last.ckpt</code> as a safety net: if a session merely disconnects
+and the same runtime is still alive, reopen the notebook, set <code>train_config.resume</code> to that file's path, and
+re-run the training cell to continue. On a free-tier T4/L4 the session is likely to end before 40 epochs do —
+plan on resuming. <strong>But <code>OUTPUT_DIR</code> below is local runtime disk</strong>: once Colab recycles the runtime (idle
+timeout, 12/24h cap, or a paid-tier disconnect), <code>last.ckpt</code> is gone with it, and there is nothing left to
+resume from. For a run that genuinely needs several sessions, point <code>OUTPUT_DIR</code> at mounted Google Drive
+(<code>from google.colab import drive; drive.mount("/content/drive")</code>, then
+<code>OUTPUT_DIR = "/content/drive/MyDrive/rfdetr_coco2017"</code>) instead of local disk, or copy <code>last.ckpt</code> off the
+runtime before it ends and copy it back before resuming.</p>
 </blockquote>
 <p>COCO2017 also needs about 19 GB of disk once downloaded (the archives are deleted right after extraction to avoid
 a ~38 GB peak). Confirm your Colab runtime has that much free space before starting the download.</p>
@@ -3212,7 +3259,7 @@ a ~38 GB peak). Confirm your Colab runtime has that much free space before start
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8685391b">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b4595d41">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3234,7 +3281,7 @@ closing <code>df -h</code> shows the disk headroom left; the extracted dataset n
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=86e582e8">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=34bfb2ab">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3269,7 +3316,7 @@ closing <code>df -h</code> shows the disk headroom left; the extracted dataset n
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e54c87fb">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=08d9c98d">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3282,7 +3329,7 @@ seconds, instead of several epochs later when the training loop first reaches a 
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=71280763">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=1024dc05">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3337,25 +3384,21 @@ print("COCO2017 is complete.")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=29e2dc9d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b05eaf58">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="2-set-up-the-environment">2 - Set up the environment<a class="anchor-link" href="#2-set-up-the-environment">¶</a></h2><p>This recipe targets the maintained <code>develop</code> branch after FP8 support is merged; it requires the <code>cuda</code> extra.
-The extra installs <code>transformer-engine[pytorch]</code> (not <code>[torch]</code> or the empty metapackage).</p>
-<p>Before installation, provide CUDA-enabled PyTorch, CUDA toolkit headers, cuDNN, and a compiler for the
-PyTorch extension. Blackwell needs CUDA 12.8 or later; a GPU driver alone is insufficient. Match TE's
-<code>core_cu12</code> / <code>core_cu13</code> and extension build to your environment: the resolver may select CUDA 13 even
-when PyTorch reports CUDA 12.8. See the <a href="../learn/train/advanced.md#install-the-cuda-extra">advanced FP8 setup guide</a>
-and <a href="https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/installation.html">NVIDIA prerequisites</a>.
-Restart the kernel after installation. The verification cell below must succeed before training.</p>
+<h2 id="2-set-up-the-environment">2 - Set up the environment<a class="anchor-link" href="#2-set-up-the-environment">¶</a></h2><p>The throughput work described above has not shipped in a tagged release yet, so this cell installs from the
+<code>develop</code> branch. Once a release containing it is out, replace the git URL with a version pin.</p>
+<p><strong>GPU required.</strong> Training needs a CUDA GPU — in Colab: <strong>Runtime → Change runtime type → GPU</strong>. The optional
+FP8 path needs one extra dependency and is covered in section 5; the install below is the automatic mixed-precision recipe.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=af7ed6ba">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4d624a20">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3373,16 +3416,16 @@ Restart the kernel after installation. The verification cell below must succeed 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">pip</span> <span class="n">install</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">build</span><span class="o">-</span><span class="n">isolation</span> <span class="s2">"rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">pip</span> <span class="n">install</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">build</span><span class="o">-</span><span class="n">isolation</span> <span class="s2">"rfdetr[train,augment,visual] @ git+https://github.com/roboflow/rf-detr.git@develop"</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">%pip install --no-build-isolation "rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"</div>
+<div class="clipboard-copy-txt" id="cell-3">%pip install --no-build-isolation "rfdetr[train,augment,visual] @ git+https://github.com/roboflow/rf-detr.git@develop"</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=030d2c6a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a5da82a8">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3408,7 +3451,7 @@ skipped instead of nesting a second copy inside it.</p>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5d1ee6ac">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cb214fc3">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3437,23 +3480,31 @@ skipped instead of nesting a second copy inside it.</p>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=bd6645a5">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3df8f4bf">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="4-load-the-model">4 - Load the model<a class="anchor-link" href="#4-load-the-model">¶</a></h2><p><code>RFDETRNano()</code> loads the released COCO-pretrained Nano checkpoint by default — this notebook continues training
-from it rather than from random initialization. Training from scratch is not the recommended path for RF-DETR;
-continuing from the pretrained checkpoint on the same dataset it was pretrained on still exercises the full
-40-epoch training loop and every optimization listed above, which is what this notebook demonstrates.</p>
+<h2 id="4-load-the-model">4 - Load the model<a class="anchor-link" href="#4-load-the-model">¶</a></h2><p><code>pretrain_weights=None</code> skips the released COCO-pretrained Nano checkpoint, so the detection transformer and its
+heads start from random initialization — this notebook trains COCO2017 from scratch. The DINOv2 backbone still
+loads its self-supervised hub weights: RF-DETR requests them precisely when <code>pretrain_weights is None</code>, because
+a full checkpoint would otherwise carry the backbone with it.</p>
+<p>Instantiating with <code>pretrain_weights=None</code> raises a <code>PretrainWeightsCompatibilityWarning</code> saying the model is
+initialised from scratch. That is expected here; it is a warning, not an error.</p>
+<blockquote>
+<p><strong>Accuracy expectation.</strong> From scratch in 40 epochs lands far below the published Nano checkpoint. The released
+weights come from a much longer schedule with large-scale detection pretraining behind them. Fine-tune from the
+default checkpoint (drop the <code>pretrain_weights</code> argument) whenever accuracy, not the training loop itself, is
+the goal.</p>
+</blockquote>
 <p><code>num_classes</code> is left at its default of <code>90</code> — the standard COCO category-id space RF-DETR's <code>dataset_file="coco"</code>
-loader and the pretrained checkpoint both already use, so it does not need to be passed explicitly.</p>
+loader already uses, so it does not need to be passed explicitly.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4e42f49c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f79430ca">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3472,22 +3523,18 @@ loader and the pretrained checkpoint both already use, so it does not need to be
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">importlib.metadata</span><span class="w"> </span><span class="kn">import</span> <span class="n">version</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">transformer_engine.pytorch</span>  <span class="c1"># noqa: F401 - verify the compiled PyTorch extension imports</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.visualize.training</span><span class="w"> </span><span class="kn">import</span> <span class="n">plot_loss_metrics</span><span class="p">,</span> <span class="n">plot_map_metrics</span>
 
 <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
-    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This FP8 recipe requires a supported NVIDIA CUDA GPU, not CPU or MPS."</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This notebook requires a CUDA GPU. In Colab: Runtime -&gt; Change runtime type -&gt; GPU."</span><span class="p">)</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="s2">"Transformer Engine:"</span><span class="p">,</span> <span class="n">version</span><span class="p">(</span><span class="s2">"transformer-engine"</span><span class="p">))</span>
 <span class="nb">print</span><span class="p">(</span><span class="s2">"PyTorch:"</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">__version__</span><span class="p">,</span> <span class="s2">"CUDA:"</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">version</span><span class="o">.</span><span class="n">cuda</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="s2">"GPU:"</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
-<span class="c1"># Import and device checks do not prove FP8 kernel compatibility; run the short training check below.</span>
 
 <span class="c1"># Repeated from the verification cell so this section still runs on its own after a runtime restart.</span>
 <span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"datasets/coco2017"</span><span class="p">)</span>
@@ -3498,29 +3545,25 @@ loader and the pretrained checkpoint both already use, so it does not need to be
 <span class="n">EPOCHS</span> <span class="o">=</span> <span class="mi">40</span>
 <span class="c1"># Capped: measured on a 48-core host, uncapped workers sat ~15% CPU-utilized while holding ~70% of RAM.</span>
 <span class="n">NUM_WORKERS</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="ow">or</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>
-<span class="c1"># Starting batch for an 80+ GB GPU; FP8 + compile memory usage still needs measurement.</span>
-<span class="c1"># On a smaller supported GPU choose a smaller integer; FP8 cannot use automatic batch sizing.</span>
+<span class="c1"># RTX PRO 6000 / H100: 128 uses ~40 % of memory and already saturates the GPU (288 fits, same img/s).</span>
+<span class="c1"># L4 / T4 / A10: 32. A100 40 GB: 64.</span>
 <span class="n">BATCH_SIZE</span> <span class="o">=</span> <span class="mi">128</span>
 
-<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">pretrain_weights</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-5">import os
-from importlib.metadata import version
 from pathlib import Path
 
 import torch
-import transformer_engine.pytorch  # noqa: F401 - verify the compiled PyTorch extension imports
 
 from rfdetr import RFDETRNano
 from rfdetr.visualize.training import plot_loss_metrics, plot_map_metrics
 
 if not torch.cuda.is_available():
-    raise RuntimeError("This FP8 recipe requires a supported NVIDIA CUDA GPU, not CPU or MPS.")
+    raise RuntimeError("This notebook requires a CUDA GPU. In Colab: Runtime -&gt; Change runtime type -&gt; GPU.")
 
-print("Transformer Engine:", version("transformer-engine"))
 print("PyTorch:", torch.__version__, "CUDA:", torch.version.cuda)
 print("GPU:", torch.cuda.get_device_name(0))
-# Import and device checks do not prove FP8 kernel compatibility; run the short training check below.
 
 # Repeated from the verification cell so this section still runs on its own after a runtime restart.
 COCO_ROOT = Path("datasets/coco2017")
@@ -3531,18 +3574,18 @@ OUTPUT_DIR = "output/det_coco2017_nano"
 EPOCHS = 40
 # Capped: measured on a 48-core host, uncapped workers sat ~15% CPU-utilized while holding ~70% of RAM.
 NUM_WORKERS = min(os.cpu_count() or 2, 16)
-# Starting batch for an 80+ GB GPU; FP8 + compile memory usage still needs measurement.
-# On a smaller supported GPU choose a smaller integer; FP8 cannot use automatic batch sizing.
+# RTX PRO 6000 / H100: 128 uses ~40 % of memory and already saturates the GPU (288 fits, same img/s).
+# L4 / T4 / A10: 32. A100 40 GB: 64.
 BATCH_SIZE = 128
 
-model = RFDETRNano(compile=True)  # type: ignore[no-untyped-call]</div>
+model = RFDETRNano(compile=True, pretrain_weights=None)  # type: ignore[no-untyped-call]</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6bfb5398">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3fafcd94">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3557,13 +3600,13 @@ First try <code>EPOCHS=1</code> to verify training, validation, EMA, and shutdow
 <code>last.ckpt</code> is rewritten every epoch (the archive <code>checkpoint_&lt;epoch&gt;.ckpt</code> files follow <code>checkpoint_interval</code>,
 10 by default), so a disconnect costs at most the epoch in flight.</p>
 <h3 id="training-settings">Training settings<a class="anchor-link" href="#training-settings">¶</a></h3><ul>
-<li><strong><code>batch_size=128</code></strong> — a starting point for an 80+ GB GPU, not a measured FP8 + compile memory guarantee.
-Two things to know when changing it:
-the default <code>lr=1e-4</code> was tuned around an effective batch of 16, and this notebook leans on cosine-plus-warmup
-rather than rescaling <code>lr</code> for the 8x larger batch — if you tune, the linear-scaling heuristic is the place to
-start. On a smaller GPU, reduce the integer batch size and adjust <code>grad_accum_steps</code> to preserve the desired
-effective batch. FP8 rejects <code>batch_size="auto"</code>: its probe does not exercise Transformer Engine layers.
-With ordinary BF16/FP16, automatic sizing remains available through <code>model.train()</code>.</li>
+<li><strong><code>batch_size=128</code></strong> — throughput stops improving once the GPU is saturated: on the RTX PRO 6000, 128 and 288
+give the same images per second; on the L4, 32 and 64 do. Pick the batch that leaves memory headroom rather
+than the largest that fits. Two things to know when changing it: the default <code>lr=1e-4</code> was tuned around an
+effective batch of 16, and this notebook leans on cosine-plus-warmup rather than rescaling <code>lr</code> for the 8x
+larger batch — if you tune, the linear-scaling heuristic is the place to start. On a smaller GPU, reduce the
+integer batch size and adjust <code>grad_accum_steps</code> to preserve the desired effective batch; in bf16,
+<code>batch_size="auto"</code> also works and probes for the largest micro-batch that fits.</li>
 <li><strong><code>num_workers</code></strong> — the default is <code>2</code>, which is fine for the few-thousand-image datasets in the other
 cookbooks and far too low for COCO2017: 118k JPEGs have to be decoded and resized every epoch, and two worker
 processes cannot keep a modern GPU fed. But more is not simply better — on a 48-core host with this exact
@@ -3583,13 +3626,24 @@ from first step to last, so the mAP curve plateaus noisily with no final refinem
 from the run's own total step count, so it decays correctly no matter how many epochs or how large a batch the
 GPU ends up with, and the one-epoch linear warmup keeps the first steps stable.</li>
 </ul>
-<h3 id="fp8-and-compilation">FP8 and compilation<a class="anchor-link" href="#fp8-and-compilation">¶</a></h3><p><code>amp_dtype="fp8"</code> selects Lightning's Transformer Engine precision plugin; incompatible layers stay in
-higher precision. <code>RFDETRNano(compile=True)</code> enables CUDA compilation. This recipe uses <code>multi_scale=False</code>
-to train Nano at a fixed 384 px; CUDA compilation also supports multiscale training. This replaces
-the previous recipe's 544 px workload and may change accuracy.
-No combined FP8 + compile speedup is measured here. Compare compile on/off at the same fixed resolution,
-batch size, and precision; record warm-up separately, peak memory, and validation mAP. Validate resume
-separately before relying on full FP8 checkpoints. Never enable unsafe pickle loading as a routine workaround.</p>
+<h3 id="compilation">Compilation<a class="anchor-link" href="#compilation">¶</a></h3><p><code>RFDETRNano(compile=True)</code> is worth 21 % per epoch on the RTX PRO 6000 and 27 % on an L4 at the same batch,
+precision and resolution. Epoch 0 pays the warm-up. Inductor's coalesce tiling analysis is disabled by the
+library at the compile call (torch 2.11 asserts on it and would silently fall back to eager for the whole
+forward), so no user-side flag is needed.</p>
+<p><code>multi_scale=False</code> trains Nano at a fixed 384 px rather than the multi-scale ladder's 544 px top scale, which
+is the resolution every number above was measured at; it replaces the previous recipe's 544 px workload and may
+change accuracy.</p>
+<h3 id="optional-fp8">Optional: FP8<a class="anchor-link" href="#optional-fp8">¶</a></h3><p>Requires the <code>cuda</code> extra (Transformer Engine, Hopper/Ada/Blackwell, Linux x86-64), an integer <code>batch_size</code>, and
+<code>amp_dtype="fp8"</code>. Measured on Nano, FP8 changes throughput by +3 % per epoch on Blackwell and −11 % on an L4,
+and raises the memory ceiling to 320 from 288 (RTX PRO 6000) and to 72 from 64 (L4). Lightning warns at startup
+that 14 linear layers are not FP8-shaped; those are the per-layer classification heads and they run in bf16. Use
+FP8 when you are already set up for it and need the last few percent of batch headroom on Blackwell; otherwise
+bf16 is the recipe.</p>
+<pre><code>%pip install --no-build-isolation "rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"
+</code></pre>
+<p>The extra installs <code>transformer-engine[pytorch]</code>, which builds a PyTorch extension at install time: CUDA toolkit
+headers, cuDNN, and a compiler have to be present, Blackwell needs CUDA 12.8 or later, and the kernel has to be
+restarted afterwards. See the <a href="../learn/train/advanced.md#install-the-cuda-extra">advanced FP8 setup guide</a>.</p>
 <p>Separately, <code>augmentation_backend="gpu"</code> moves augmentation off the CPU workers — a
 rescue for CPU-starved runtimes (a 2-core Colab), and exactly backwards on this notebook's target: with the CPU
 mostly idle and the GPU saturated, it would add work to the bottleneck and take it away from idle cores.</p>
@@ -3597,7 +3651,7 @@ mostly idle and the GPU saturated, it would add work to the bottleneck and take 
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0c2750b4">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=dc680eaf">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3627,7 +3681,6 @@ mostly idle and the GPU saturated, it would add work to the bottleneck and take 
     <span class="n">warmup_epochs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">tensorboard</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
     <span class="n">progress_bar</span><span class="o">=</span><span class="s2">"tqdm"</span><span class="p">,</span>
-    <span class="n">amp_dtype</span><span class="o">=</span><span class="s2">"fp8"</span><span class="p">,</span>
     <span class="n">multi_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
@@ -3643,7 +3696,6 @@ mostly idle and the GPU saturated, it would add work to the bottleneck and take 
     warmup_epochs=1,
     tensorboard=False,
     progress_bar="tqdm",
-    amp_dtype="fp8",
     multi_scale=False,
 )</div>
 </div>
@@ -3652,7 +3704,7 @@ mostly idle and the GPU saturated, it would add work to the bottleneck and take 
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b1d9811f">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=35970966">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3667,7 +3719,7 @@ all; <code>val/mAP_75</code> reflects localization precision, not just whether o
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=094f17bc">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=8e207109">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3708,7 +3760,7 @@ plt.close(loss_figure)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a1b41af7">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=995bffd9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3766,7 +3818,7 @@ plt.close(map_figure)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 10, 2026 10:19:36 UTC">2026-09-10 10:19:36</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 12, 2026 22:10:31 UTC">2026-09-12 22:10:31</span>
   </span>
 
     

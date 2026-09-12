@@ -2334,7 +2334,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
              data-labels="TRAINING,COCO2017,PYTORCH LIGHTNING"
              data-version="v1.10.0"
              data-author="Borda"
-             data-description="Download the full public COCO2017 dataset and train RF-DETR Nano for 40 epochs end to end on a high-end GPU (A100 / H100 / RTX PRO 6000 — e.g. Colab Pro+ with an A100 runtime), using shipped defaults that already carry the latest training-throughput optimizations."></div>
+             data-description="Download the full public COCO2017 dataset and train RF-DETR Nano from scratch for 40 epochs end to end on a single CUDA GPU with torch.compile and automatic mixed precision (bf16 when supported, otherwise fp16), with optional FP8 via Transformer Engine."></div>
         </a>
       
         <a href="export-coreml/">
