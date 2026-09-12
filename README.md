@@ -43,6 +43,12 @@ pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip
 
 </details>
 
+## Project Activity
+
+<img src="docs/assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" width="100%" />
+
+PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirrors. New stars are calculated from consecutive scheduled GitHub snapshots.
+
 ## Benchmarks
 
 RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL (RF100-VL for detection only). The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All COCO accuracy numbers are measured in-house for every model shown, computed with pycocotools in SAB over the full 5,000-image `val2017` split, so every row is directly comparable and may differ from vendor-reported figures. The sole exception is rows marked †, which are quoted from the original authors' paper and were not measured in SAB. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Parameter counts are deployment (fused) `nn.Module` parameter counts (`model.parameters()`, not the raw tensor count of the saved checkpoint), except rows marked †, which are the authors' reported counts. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).

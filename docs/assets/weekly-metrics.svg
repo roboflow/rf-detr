@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title description">
+  <title id="title">RF-DETR weekly project metrics</title>
+  <desc id="description">For week ending 2026-08-30, RF-DETR had +70 new GitHub stars and 52,689 PyPI downloads.</desc>
+  <metadata id="weekly-metrics-state">{"history":[{"downloads":52689,"new_stars":70,"stars_total":9106,"week_end":"2026-08-30","week_start":"2026-08-24"}],"package":"rfdetr","repository":"roboflow/rf-detr","schema_version":1}</metadata>
+  <rect width="1200" height="640" rx="18" fill="#ffffff"/>
+  <text x="56" y="58" fill="#0b0b0b" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="700">RF-DETR weekly growth</text>
+  <text x="56" y="86" fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="15">Latest completed week · Aug 24–Aug 30, 2026</text>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+    <rect x="56" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
+    <text x="76" y="141" fill="#6b6a66" font-size="14">GITHUB STARS</text>
+    <text x="76" y="176" fill="#0b0b0b" font-size="28" font-weight="700">9,106</text>
+    <rect x="410" y="112" width="336" height="82" rx="10" fill="#f5f1fa"/>
+    <text x="430" y="141" fill="#6b6a66" font-size="14">WEEKLY STAR CHANGE</text>
+    <text x="430" y="176" fill="#8315f9" font-size="28" font-weight="700">+70 new stars</text>
+    <rect x="764" y="112" width="380" height="82" rx="10" fill="#f5f1fa"/>
+    <text x="784" y="141" fill="#6b6a66" font-size="14">PYPI · EXCLUDING MIRRORS</text>
+    <text x="784" y="176" fill="#2a78d6" font-size="28" font-weight="700">52,689 weekly downloads</text>
+  </g>
+  <g aria-hidden="true" fill="none" stroke="#e1e0d9" stroke-width="1">
+    <path d="M100 530.0H1100"/>
+    <path d="M100 385.0H1100"/>
+    <path d="M100 240.0H1100"/>
+  </g>
+  <path d="M100 240V530H1100" fill="none" stroke="#c3c2b7" stroke-width="1.5"/>
+  <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="13">
+    <text x="88" y="535.0" text-anchor="end">+0</text>
+    <text x="1112" y="535.0" text-anchor="start">0</text>
+    <text x="88" y="390.0" text-anchor="end">+35</text>
+    <text x="1112" y="390.0" text-anchor="start">26,344</text>
+    <text x="88" y="245.0" text-anchor="end">+70</text>
+    <text x="1112" y="245.0" text-anchor="start">52,689</text>
+    <text x="100" y="221" fill="#8315f9" font-size="14" font-weight="700">NEW STARS</text>
+    <text x="1100" y="221" fill="#2a78d6" font-size="14" font-weight="700" text-anchor="end">WEEKLY DOWNLOADS</text>
+  </g>
+  <g id="weekly-stars-bars">
+    <rect x="578.0" y="240.0" width="44.0" height="290.0" rx="4" fill="#8315f9"/>
+  </g>
+  <g id="weekly-downloads-line">
+    <circle cx="600.0" cy="240.0" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+  </g>
+  <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="middle">
+    <text x="600.0" y="552">Aug 30</text>
+  </g>
+  <g font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#52514e">
+    <rect x="396" y="593" width="18" height="12" rx="2" fill="#8315f9"/>
+    <text x="424" y="604">New GitHub stars</text>
+    <path d="M582 599H610" fill="none" stroke="#2a78d6" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="596" cy="599" r="4" fill="#2a78d6"/>
+    <text x="620" y="604">PyPI downloads</text>
+  </g>
+</svg>
