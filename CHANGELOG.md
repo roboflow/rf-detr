@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Multi-GPU keypoint training with `grad_accum_steps > 1` now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.
 
+- The ONNX Runtime CPU inference session built by `RFDETR.export(format="onnx")`'s inference helper no longer lets its intra-op thread pool busy-spin between calls. Spinning previously contended for CPU with any other work sharing the process — including this same helper's own torchvision-based preprocessing step — for as long as the session was alive.
+
 ### Deprecated
 
 ### Fixed
@@ -41,6 +43,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - WebDataset training keeps shard permutations consistent across ranks with real DataLoader workers, aligns accumulation at rank level, and sizes raw-label heads from all declared categories. Repacking is documented as offline-only; path and shard-helper doctests are portable and executable.
 
 - Distributed (DDP) training now preserves the minimum five optimizer steps per epoch for short datasets instead of losing the replacement sample count when Lightning injects its distributed sampler.
+
+- Installing the `[onnx]` extra from a source checkout with `uv` on Python 3.10, 3.11 or 3.13 now brings in `ml-dtypes` again; the `ml-dtypes==0.5.1` override, scoped to Python 3.12 for the TFLite stack, was dropping the requirement on every other interpreter and left `import onnx` failing with `ModuleNotFoundError`.
 
 - Kornia `Affine` now applies scalar `translate_percent` to both axes and reads scalar `scale` as a fixed range, avoiding silent horizontal-translation loss and construction failures. Scalar translation emits a warning because Kornia samples signed offsets while Albumentations applies the scalar as a fixed positive offset.
 

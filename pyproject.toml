@@ -278,6 +278,13 @@ rfdetr = "rfdetr.cli:main"
 # remove the <'3.13' upper bound from the tflite deps AND from the override below.
 override-dependencies = [
     "ml-dtypes==0.5.1; python_version >= '3.12' and python_version < '3.13'",
+    # An override replaces every requirement on ml-dtypes with the entries listed here, and an entry
+    # whose marker is false contributes nothing. With the 3.12 pin alone, `uv pip install -e ".[onnx]"`
+    # on 3.10, 3.11 or 3.13 installed no ml-dtypes at all, and `import onnx` (which loads ml_dtypes at
+    # module import) failed with ModuleNotFoundError. This entry restores the unpinned requirement on
+    # every other interpreter; it adds nothing where no package asks for ml-dtypes. Keep its marker the
+    # exact complement of the pinned entry's whenever that one changes.
+    "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
 # ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
