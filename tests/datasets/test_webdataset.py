@@ -1593,6 +1593,19 @@ class TestDataModuleStreaming:
         loader = module.train_dataloader()
         assert len(loader) % train_config.grad_accum_steps == 0
 
+    def test_training_loader_aligns_to_trainer_accumulation_override(self, datamodule: Any) -> None:
+        """Automatic optimization aligns the stream to the Trainer's effective accumulation value."""
+        trainer_grad_accum_steps = 3
+        datamodule.trainer = types.SimpleNamespace(
+            world_size=1,
+            global_rank=0,
+            accumulate_grad_batches=trainer_grad_accum_steps,
+        )
+
+        loader = datamodule.train_dataloader()
+
+        assert len(loader) % trainer_grad_accum_steps == 0
+
     def test_validation_loader_is_unsized_and_covers_the_split(self, datamodule: Any) -> None:
         loader = datamodule.val_dataloader()
         with pytest.raises(TypeError):

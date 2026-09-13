@@ -30,6 +30,7 @@ from torch.jit import TracerWarning
 from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 from rfdetr import detr as _detr_module
 from rfdetr.export import main as _cli_export_module
+from rfdetr.export._backend import _switch_to_export_mode
 from rfdetr.models.backbone.dinov2 import DinoV2
 
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
@@ -1422,3 +1423,110 @@ def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
     ):
         obj.export(format="tensorrt", backbone_only=backbone_only, output_name="custom", output_dir=str(tmp_path))
     assert build.call_args.kwargs["output_name"] == stem
+
+
+class TestSwitchToExportMode:
+    """``_switch_to_export_mode`` — the shared export-mode choke point for the non-ONNX backends.
+
+    RF-DETR's ``export()`` implementations are not all idempotent: ``LWDETR``, ``Backbone`` and
+    ``PositionEmbeddingSine`` each stash ``self._forward_origin = self.forward`` before swapping in
+    ``forward_export``, so calling ``export()`` twice replaces the saved original with the export
+    forward and loses the real one. These tests pin the guard that makes a second switch a no-op.
+    """
+
+    class _SwitchCountingModel(torch.nn.Module):
+        """Minimal stand-in reproducing the models' unguarded save-then-swap export mode.
+
+        Examples:
+            >>> model = TestSwitchToExportMode._SwitchCountingModel()
+            >>> model._export
+            False
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self._export = False
+            self.switches = 0
+            self._forward_origin = None
+
+        def export(self) -> None:
+            """Record the switch and stash the current forward, exactly as the real models do."""
+            self._export = True
+            self.switches += 1
+            self._forward_origin = self.forward
+
+    def test_switches_a_fresh_model(self) -> None:
+        """A model that has not been switched yet must have ``export()`` called on it.
+
+        This is the ordinary path taken by the ExecuTorch, CoreML and OpenVINO dispatchers, which receive a freshly
+        deepcopied module from ``RFDETR.export()``.
+        """
+        model = self._SwitchCountingModel()
+        _switch_to_export_mode(model)
+        assert model.switches == 1
+
+    def test_does_not_switch_twice(self) -> None:
+        """A model already in export mode must be left alone on a second call.
+
+        The failure this guards is silent and unrecoverable: the second ``export()`` would overwrite
+        ``_forward_origin`` with ``forward_export``, so the module could never be restored. Two
+        switches become reachable as soon as one exporter composes another (a TFLite or TensorRT
+        export running an ONNX export internally).
+        """
+        model = self._SwitchCountingModel()
+        _switch_to_export_mode(model)
+        _switch_to_export_mode(model)
+        assert model.switches == 1
+
+    def test_leaves_a_module_without_export_untouched(self) -> None:
+        """A plain ``nn.Module`` with no ``export`` attribute must pass through without raising.
+
+        Backbone-only exports hand the dispatchers a ``_BackboneExport`` wrapper, which exposes no ``export`` method —
+        that path must stay a silent no-op rather than an ``AttributeError``.
+        """
+        model = torch.nn.Linear(2, 2)
+        _switch_to_export_mode(model)
+        assert not hasattr(model, "_export")
+
+    def test_export_onnx_routes_through_the_guarded_switch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``export_onnx`` must share the choke point, so a composed ONNX export cannot switch twice.
+
+        A TFLite or TensorRT export runs an ONNX export internally after the model was already switched, so an unguarded
+        ``model.export()`` here would overwrite ``_forward_origin`` with the export forward.
+        """
+        from rfdetr.export._onnx.exporter import export_onnx
+
+        model = self._SwitchCountingModel()
+        _switch_to_export_mode(model)
+        monkeypatch.setattr(torch.onnx, "export", lambda *_args, **_kwargs: None)
+
+        export_onnx(
+            output_dir=str(tmp_path),
+            model=model,
+            input_names=["input"],
+            input_tensors=torch.zeros(1, 2),
+            output_names=["output"],
+            dynamic_axes=None,
+            verbose=False,
+        )
+        assert model.switches == 1
+
+    def test_export_onnx_still_switches_a_fresh_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Routing through the guarded helper must not drop the switch for a fresh model."""
+        from rfdetr.export._onnx.exporter import export_onnx
+
+        model = self._SwitchCountingModel()
+        monkeypatch.setattr(torch.onnx, "export", lambda *_args, **_kwargs: None)
+
+        export_onnx(
+            output_dir=str(tmp_path),
+            model=model,
+            input_names=["input"],
+            input_tensors=torch.zeros(1, 2),
+            output_names=["output"],
+            dynamic_axes=None,
+            verbose=False,
+        )
+        assert model.switches == 1

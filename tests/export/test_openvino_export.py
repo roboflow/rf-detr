@@ -21,6 +21,7 @@ exercise the real (uninstalled) code path directly rather than mocking an ``Impo
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -175,6 +176,42 @@ class TestExportOpenvinoMissingDependency:
         example = torch.zeros(1, 3, 32, 32)
         with pytest.raises(ImportError, match="rfdetr\\[openvino\\]"):
             export_openvino(model, example, str(tmp_path))
+
+
+class TestPublicInferenceFacade:
+    """``rfdetr.export.inference`` — the public import path for session-tier inference wrappers.
+
+    ``OpenVINOInference`` is re-exported there through a module ``__getattr__`` so that importing the
+    facade never pulls in the optional ``openvino`` dependency. Both halves of that contract are
+    pinned here: the re-export resolves to the same class object, and the import stays lazy.
+    """
+
+    def test_reexports_the_private_class(self) -> None:
+        """The facade attribute must be the class defined in the private module, not a copy of it."""
+        from rfdetr.export import inference as public_inference
+
+        assert public_inference.OpenVINOInference is OpenVINOInference
+
+    def test_unknown_attribute_raises_attribute_error(self) -> None:
+        """A name outside ``__all__`` must raise ``AttributeError`` rather than import something unexpected."""
+        from rfdetr.export import inference as public_inference
+
+        with pytest.raises(AttributeError, match="NotARuntime"):
+            _ = public_inference.NotARuntime
+
+    def test_import_does_not_load_openvino(self) -> None:
+        """Importing the facade must leave ``openvino`` out of ``sys.modules``.
+
+        Runs in a fresh interpreter on purpose: other tests in this suite import ``openvino``, so an
+        in-process check would pass for the wrong reason.
+        """
+        result = subprocess.run(
+            [sys.executable, "-c", "import rfdetr.export.inference, sys; print('openvino' in sys.modules)"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert result.stdout.strip() == "False"
 
 
 class TestOpenVINOInferenceMissingDependency:

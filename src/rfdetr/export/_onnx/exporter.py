@@ -20,6 +20,7 @@ from typing import Any, Protocol, TypeVar, cast
 import numpy as np
 import torch
 
+from rfdetr.export._backend import _switch_to_export_mode
 from rfdetr.export._naming import resolve_export_stem
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
 from rfdetr.utilities.logger import get_logger
@@ -210,10 +211,9 @@ def export_onnx(
     export_name = f"{stem}-backbone" if backbone_only and (variant_name or output_name) else stem
     output_file = os.path.join(output_dir, f"{export_name}.onnx")
 
-    # Prepare model for export
-    export_method = getattr(model, "export", None)
-    if callable(export_method):
-        export_method()
+    # Prepare model for export through the shared guarded switch, so an ONNX export composed after
+    # another exporter's switch does not switch (and clobber the saved forward) a second time.
+    _switch_to_export_mode(model)
 
     export_kwargs: dict[str, Any] = {}
     if "dynamo" in inspect.signature(torch.onnx.export).parameters:

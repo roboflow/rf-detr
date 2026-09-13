@@ -39,14 +39,25 @@ class _ExportableModule(Protocol):
 def _switch_to_export_mode(model: nn.Module) -> None:
     """Switch *model* into its export-friendly forward, if it exposes one.
 
-    Shared by the ExecuTorch, CoreML, and OpenVINO dispatch functions below -- each consumes a
-    ``torch.export``/``convert_model`` graph directly and needs the same zero-arg mode switch the
-    ONNX path performs inside ``export_onnx`` instead. A model without a callable ``export``
-    attribute (e.g. a plain ``nn.Module`` in a unit test) is left untouched rather than raising.
+    Shared by the ONNX exporter (``export_onnx``) and the ExecuTorch, CoreML, and OpenVINO dispatch
+    functions below, so every export path switches through one guarded choke point. A model without a
+    callable ``export`` attribute (e.g. a plain ``nn.Module`` in a unit test) is left untouched rather
+    than raising.
+
+    Switching a module that is already in export mode is a no-op here, because it is *not* a no-op in
+    the models: :meth:`rfdetr.models.lwdetr.LWDETR.export`,
+    :meth:`rfdetr.models.backbone.backbone.Backbone.export` and
+    :meth:`rfdetr.models.position_encoding.PositionEmbeddingSine.export` each stash
+    ``self._forward_origin = self.forward`` before swapping in ``forward_export``, so a second call
+    overwrites the saved original with the export forward and loses the real one for good.
+    (``DinoV2.export`` already guards itself; these three do not.) The guard lives here rather than in
+    the models so every export path shares one choke point.
 
     Args:
         model: The module to switch into export mode, if supported.
     """
+    if getattr(model, "_export", False):
+        return
     export_method = getattr(model, "export", None)
     if callable(export_method):
         cast(_ExportableModule, model).export()
@@ -472,7 +483,7 @@ def _export_openvino_format(
         )
         raise
     # OpenVINO's convert_model traces the model directly, so switch it into its export-friendly
-    # forward here (the ONNX path does this inside export_onnx; ExecuTorch/CoreML do it above).
+    # forward here (the ONNX path does this inside export_onnx, through the same guarded helper).
     _switch_to_export_mode(model)
     output_file = export_openvino(
         model=model,
