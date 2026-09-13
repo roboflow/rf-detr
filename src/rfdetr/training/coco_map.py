@@ -129,13 +129,12 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
     hotcoco reads as off-reference by ~2.4e-8, so those messages describe intended configuration and would
     otherwise repeat each validation epoch and each IoU type.
 
-    hotcoco 1.0.1 fixed the message firing twice (1.0.0 wrote it once from Rust straight to file descriptor 2,
-    bypassing :func:`contextlib.redirect_stdout`, and once as a :class:`UserWarning`) and routes
-    ``summarize()``'s table through :data:`sys.stdout`, so both are reachable through ordinary Python-level
-    redirection now. Every ``UserWarning`` raised inside the window is dropped rather than an enumerated set of
-    messages: hotcoco has four of them today, one firing only on empty state, and matching on text would
-    silently stop working when a release rewords one. Nothing but the three backend calls runs inside the
-    window, so no other source can be caught by it, and genuine failures still surface as exceptions.
+    Each message fires once, as a :class:`UserWarning`, and ``summarize()``'s table goes through
+    :data:`sys.stdout`, so ordinary Python-level redirection catches both. Every ``UserWarning`` raised inside
+    the window is dropped rather than an enumerated set of messages: hotcoco has four of them today, one firing
+    only on empty state, and matching on text would silently stop working when a release rewords one. Nothing
+    but the three backend calls runs inside the window, so no other source can be caught by it, and genuine
+    failures still surface as exceptions.
 
     TODO: narrow or drop this once hotcoco stops reporting RF-DETR's configuration as off-reference. Two of the
     four messages are false — the IoU and recall grids differ from the defaults only by torchmetrics' float32

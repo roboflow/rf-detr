@@ -880,9 +880,9 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) ->
     """Selecting hotcoco must not add backend chatter to a training run's console output.
 
     hotcoco 1.0.1 routes its COCO summary table through ``sys.stdout`` and raises configuration diagnostics as
-    ``UserWarning``s, so both are reachable with ordinary Python-level redirection. Without suppression, the table
-    would land on the console on every validation epoch of every run.
-    ``test_hotcoco_evaluation_raises_no_warnings`` covers the warning channel.
+    ``UserWarning``s, so both are reachable with ordinary Python-level redirection. Without suppression, the table would
+    land on the console on every validation epoch of every run. ``test_hotcoco_evaluation_raises_no_warnings`` covers
+    the warning channel.
     """
     pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
@@ -904,9 +904,9 @@ def test_hotcoco_evaluation_raises_no_warnings() -> None:
 
     hotcoco 1.0.1 reports every evaluator parameter differing from the COCO defaults as a Python warning (and prints a
     summary table on ``sys.stdout``). RF-DETR overrides ``maxDets``, and torchmetrics keeps its thresholds in float32,
-    so the IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three warnings per
-    ``compute()`` on a real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts
-    on; the warning channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run.
+    so the IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three warnings per ``compute()``
+    on a real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
+    channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run.
     """
     pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
