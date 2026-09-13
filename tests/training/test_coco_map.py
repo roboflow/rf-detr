@@ -803,7 +803,7 @@ def test_hotcoco_backend_matches_faster_coco_eval_for_segmentation() -> None:
 
     Segmentation is where the two backends diverge structurally: hotcoco returns a copy from its ``dataset``
     getter, so the ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs cannot reach its evaluator
-    unless the prediction dataset is rebuilt, and its RLE counts have to reach the constructor as text.
+    unless the prediction dataset is rebuilt. (hotcoco 1.0.1 fixed the earlier bytes-RLE constructor mismatch.)
     """
     pytest.importorskip("hotcoco")
     mask = torch.zeros(2, 16, 16, dtype=torch.bool)
@@ -879,11 +879,10 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
 def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
     """Selecting hotcoco must not add backend chatter to a training run's console output.
 
-    hotcoco prints from Rust straight to the output file descriptors, where Python-level redirection does not reach
-    it: a COCO summary table plus one message per overridden evaluator parameter would land on the console on every
-    validation epoch of every run. 1.0.0 additionally raises each message as a warning, which
-    ``test_hotcoco_evaluation_raises_no_warnings`` covers -- the two channels are independent and each needs its own
-    assertion.
+    hotcoco 1.0.1 routes its COCO summary table through ``sys.stdout`` and raises configuration diagnostics as
+    ``UserWarning``s, so both are reachable with ordinary Python-level redirection. Without suppression, the table
+    would land on the console on every validation epoch of every run.
+    ``test_hotcoco_evaluation_raises_no_warnings`` covers the warning channel.
     """
     pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
@@ -903,12 +902,11 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) ->
 def test_hotcoco_evaluation_raises_no_warnings() -> None:
     """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
 
-    hotcoco 1.0.0 reports every evaluator parameter differing from the COCO defaults on two independent channels: a
-    write to descriptor 2 from Rust, and a Python warning. RF-DETR overrides ``maxDets``, and torchmetrics keeps its
-    thresholds in float32, so the IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three of
-    each per ``compute()`` on a real configuration. The descriptor copy is what
-    ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning copy reaches a caller's ``catch_warnings``, a
-    notebook cell, or a ``-W error`` run whatever the descriptors do.
+    hotcoco 1.0.1 reports every evaluator parameter differing from the COCO defaults as a Python warning (and prints a
+    summary table on ``sys.stdout``). RF-DETR overrides ``maxDets``, and torchmetrics keeps its thresholds in float32,
+    so the IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three warnings per
+    ``compute()`` on a real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts
+    on; the warning channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run.
     """
     pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
