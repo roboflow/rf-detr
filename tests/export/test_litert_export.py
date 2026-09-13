@@ -440,7 +440,9 @@ class _SingleLevelCore(torch.nn.Module):
 
     def forward(self, value: torch.Tensor, locations: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
         spatial_shapes = torch.tensor(self.shapes_hw, dtype=torch.long)
-        return ms_deform_attn_core_pytorch(value, spatial_shapes, locations, weights, value_spatial_shapes_hw=self.shapes_hw)
+        return ms_deform_attn_core_pytorch(
+            value, spatial_shapes, locations, weights, value_spatial_shapes_hw=self.shapes_hw
+        )
 
 
 class TestDeformableCoreSplit:
@@ -484,7 +486,9 @@ class TestDeformableCoreSplit:
         shapes_hw = [(4, 4)]
         value, locations, weights = self._core_inputs(shapes_hw)
         spatial_shapes = torch.tensor(shapes_hw, dtype=torch.long)
-        with_hw = ms_deform_attn_core_pytorch(value, spatial_shapes, locations, weights, value_spatial_shapes_hw=shapes_hw)
+        with_hw = ms_deform_attn_core_pytorch(
+            value, spatial_shapes, locations, weights, value_spatial_shapes_hw=shapes_hw
+        )
         eager = ms_deform_attn_core_pytorch(value, spatial_shapes, locations, weights)
         torch.testing.assert_close(with_hw, eager)
 
@@ -605,7 +609,9 @@ class TestLiteRTEndToEnd:
         eager_tensors = eager_reference_tensors(model, example)
         litert_tensors = [torch.from_numpy(output) for output in _run_litert(tflite_path, example.numpy())]
 
-        assert len(litert_tensors) == 3, f"segmentation export must yield (boxes, logits, masks), got {len(litert_tensors)}"
+        assert len(litert_tensors) == 3, (
+            f"segmentation export must yield (boxes, logits, masks), got {len(litert_tensors)}"
+        )
         box_diff, label_diff, mask_diff = _confident_query_diffs(eager_tensors, litert_tensors, sigmoid_indices={2})
         assert box_diff < 1e-3, f"LiteRT segmentation boxes diverge from PyTorch: max abs diff {box_diff}"
         assert label_diff < 0.1, f"LiteRT segmentation logits diverge from PyTorch: max abs diff {label_diff}"
@@ -629,8 +635,8 @@ class TestLiteRTEndToEnd:
     def test_keypoint_export_is_rejected_by_converter(self, tmp_path: Path) -> None:
         """Pins the documented limitation: litert-torch 0.9.4 rejects the keypoint head's rank-4 ``batch_matmul``.
 
-        When a litert-torch release lowers it, this test fails — that is the cue to drop the keypoint caveat from
-        the ``format="litert"`` docs and add a keypoint parity test next to the detection one.
+        When a litert-torch release lowers it, this test fails — that is the cue to drop the keypoint caveat from the
+        ``format="litert"`` docs and add a keypoint parity test next to the detection one.
         """
         pytest.importorskip("litert_torch")
         import rfdetr
