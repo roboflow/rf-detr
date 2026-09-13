@@ -143,7 +143,7 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
     reporting them, only the genuine ``max_dets`` message remains and this can shrink to that one filter.
 
     Yields:
-        Nothing; the warning filter is restored on exit.
+        Nothing; standard output and the warning filter are restored on exit.
     """
     with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
         warnings.simplefilter("ignore", UserWarning)
