@@ -39,7 +39,7 @@ class _ExportableModule(Protocol):
 def _switch_to_export_mode(model: nn.Module) -> None:
     """Switch *model* into its export-friendly forward, if it exposes one.
 
-    Shared by the ONNX exporter (``export_onnx``) and the ExecuTorch, CoreML, and OpenVINO dispatch
+    Shared by the ONNX exporter (``export_onnx``) and the ExecuTorch, CoreML, OpenVINO, and LiteRT dispatch
     functions below, so every export path switches through one guarded choke point. A model without a
     callable ``export`` attribute (e.g. a plain ``nn.Module`` in a unit test) is left untouched rather
     than raising.
@@ -77,7 +77,9 @@ class _BackboneExport(nn.Module):
 
 
 # Every format accepted by :meth:`rfdetr.detr.RFDETR.export`.
-_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch", "coreml", "openvino"})
+_EXPORT_FORMATS: frozenset[str] = frozenset(
+    {"onnx", "tflite", "tensorrt", "executorch", "coreml", "openvino", "litert"}
+)
 # The subset of :data:`_EXPORT_FORMATS` that specialize for a hardware backend, and so require a ``backend`` argument
 # (the rest are backend-agnostic).  The accepted backends per format, and the backends that further require a ``soc``,
 # are owned by the converter (``_VALID_BACKENDS`` / ``_SOC_BACKENDS``).
@@ -497,3 +499,103 @@ def _export_openvino_format(
     )
     logger.info(f"Successfully exported OpenVINO model to: {output_file}")
     return Path(output_file)
+
+
+def _export_litert_format(
+    model: nn.Module,
+    input_tensors: Tensor,
+    output_dir_path: Path,
+    *,
+    backbone_only: bool,
+    verbose: bool,
+    variant_name: str | None,
+    dynamic_batch: bool,
+    notes: object,
+    quantization: str | None = None,
+    output_name: str | None = None,
+) -> Path:
+    """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the direct-conversion LiteRT exporter.
+
+    ``format="litert"`` converts straight from the PyTorch graph to a ``.tflite`` file via ``litert_torch.convert``
+    (``torch.export`` capture + litert-torch's own lowering) -- no ONNX and no TensorFlow step, distinct from the
+    ``format="tflite"`` route through ``onnx2tf``.
+
+    Args:
+        model: The prepared (CPU) PyTorch module to export.
+        input_tensors: Example input tensor used to trace the graph.
+        output_dir_path: Directory where the ``.tflite`` file is written.
+        backbone_only: Whether *model* is a backbone-only export graph; forwarded to
+            :func:`~rfdetr.export._litert.converter.export_litert` so the filename marks it.
+        verbose: Forwarded to :func:`~rfdetr.export._litert.converter.export_litert`.
+        variant_name: Model variant identifier used to name the output file.
+        dynamic_batch: Whether a dynamic batch dimension was requested (always rejected below -- the ``.tflite``
+            bakes a fixed input shape, matching CoreML/ExecuTorch/OpenVINO).
+        notes: User-supplied export metadata; a ``.tflite`` flatbuffer has no ONNX-style metadata slot, so a
+            non-``None`` value warns.
+        quantization: Only ``None`` and ``"fp32"`` are accepted -- this route writes a float32 ``.tflite``.  Any
+            other value (the ``"fp16"``/``"int8"`` modes of ``format="tflite"``) raises rather than being silently
+            ignored, since a ``.tflite`` caller would reasonably expect it to apply.
+        output_name: Full filename override (without extension); forwarded verbatim to
+            :func:`~rfdetr.export._litert.converter.export_litert`.
+
+    Returns:
+        Path to the exported ``.tflite`` file.
+
+    Raises:
+        ImportError: If the optional ``litert-torch`` dependency is not installed.
+        NotImplementedError: If ``dynamic_batch=True``, or if *quantization* is anything but ``None``/``"fp32"``.
+
+    Examples:
+        .. code-block:: python
+
+            _export_litert_format(
+                model, input_tensors, output_dir_path,
+                backbone_only=False, verbose=True, variant_name="rfdetr-nano",
+                dynamic_batch=False, notes=None,
+            )
+            # -> PosixPath('out/rfdetr-nano.tflite')
+    """
+    if notes is not None:
+        warnings.warn(
+            "`notes` is not forwarded to format='litert' (a .tflite flatbuffer has no ONNX-style metadata slot). "
+            "This argument is ignored.",
+            UserWarning,
+            stacklevel=3,
+        )
+    if dynamic_batch:
+        raise NotImplementedError(
+            "LiteRT export does not support dynamic_batch (the .tflite bakes a fixed input shape). "
+            "Export one model per batch size instead."
+        )
+    if quantization not in (None, "fp32"):
+        raise NotImplementedError(
+            f"LiteRT export writes a float32 .tflite; quantization={quantization!r} is not supported on this route "
+            "yet. Use format='tflite' for its fp16/int8 modes, or quantize the exported file with ai-edge-quantizer."
+        )
+    warnings.warn(
+        "LiteRT export is experimental and work-in-progress. Upstream dependency instabilities (litert-torch) "
+        "may affect results.",
+        UserWarning,
+        stacklevel=3,
+    )
+    try:
+        from rfdetr.export._litert.converter import export_litert
+    except ImportError:
+        logger.error(
+            'It seems litert-torch is not installed. Please run `pip install "rfdetr[litert]"` and try again.',
+        )
+        raise
+    # litert_torch.convert captures the model with torch.export directly, so switch it into its export-friendly
+    # forward here (the ONNX path does this inside export_onnx, through the same guarded helper).
+    _switch_to_export_mode(model)
+    output_file = export_litert(
+        model=model,
+        input_tensors=input_tensors,
+        output_dir=str(output_dir_path),
+        backbone_only=backbone_only,
+        verbose=verbose,
+        variant_name=variant_name,
+        output_name=output_name,
+    )
+    logger.info(f"Successfully exported LiteRT model to: {output_file}")
+    return output_file

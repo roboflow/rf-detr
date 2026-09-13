@@ -168,6 +168,13 @@ openvino = [
     # which this package calls directly and which can move across a major release.
     "openvino>=2024.0,<2027.0",
 ]
+litert = [
+    # torch.export -> .tflite through litert-torch's own lowering: no ONNX and no TensorFlow step, unlike the
+    # onnx2tf-based [tflite] extra above. Validated on 0.9.4; capped at the next major since the package is
+    # pre-1.0 and `convert(...).export(...)` is the only surface this package calls. litert-torch's own
+    # metadata pins torch<2.14, which the [tool.uv] conflicts below declare against the typing group.
+    "litert-torch>=0.9.4,<1.0",
+]
 loggers = [
     "tensorboard>=2.13.0",
     "protobuf>=3.20.0",  # Cap <4.0.0 removed — tensorflow>=2.16.0 (required by [tflite]) needs protobuf>=3.20.3 and is incompatible with <4.0.0 (see #1041)
@@ -321,6 +328,17 @@ conflicts = [
         { group = "typing" },
         { extra = "xla" },
     ],
+    # litert-torch 0.9.x pins torch<2.14 in its own metadata; the typing group pins torch==2.14.0.
+    [
+        { group = "typing" },
+        { extra = "litert" },
+    ],
+    # onnx2tf>=2.4.0 (the tflite extra) pins ai-edge-litert==2.1.2 exactly, while litert-torch 0.9.4 requires
+    # ai-edge-litert>=2.2.0 -- the two .tflite routes cannot share one environment, same fork rationale.
+    [
+        { extra = "litert" },
+        { extra = "tflite" },
+    ],
     [
         { group = "typing" },
         { group = "ci-gpu-pin" },
@@ -410,6 +428,7 @@ markers = [
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
     "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
+    "e2e_litert: LiteRT end-to-end .tflite export + numerical parity (opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
     "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",
 ]
@@ -480,6 +499,8 @@ overrides = [
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
     "openvino", "openvino.*",
+    "litert_torch", "litert_torch.*",
+    "ai_edge_litert", "ai_edge_litert.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
     "webdataset", "webdataset.*",

@@ -42,7 +42,13 @@ def ms_deform_attn_core_pytorch(
     merged_levels = sampling_locations.ndim == 5
     len_query = sampling_locations.shape[1]
     num_points = sampling_locations.shape[3] // num_levels if merged_levels else sampling_locations.shape[4]
-    value_list = value.split([int(height) * int(width) for height, width in shapes], dim=3)  # type: ignore[no-untyped-call]
+    # A single level needs no split: the one piece is `value` itself. Skipping the call keeps a one-output
+    # `aten.split_with_sizes` out of the exported graph, which litert-torch 0.9.4 cannot lower (its JAX bridge
+    # reads the element type off a one-element result list); multi-output splits lower fine.
+    if num_levels == 1:
+        value_list = [value]
+    else:
+        value_list = value.split([int(height) * int(width) for height, width in shapes], dim=3)  # type: ignore[no-untyped-call]
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
     for level_index, (height, width) in enumerate(shapes):

@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added `RFDETR.export(format="litert")`, a direct PyTorch → LiteRT `.tflite` route through [litert-torch](https://github.com/google-ai-edge/litert-torch) (`torch.export` capture, no ONNX or TensorFlow step), installed with `pip install "rfdetr[litert]"`. It writes one float32 file per export (`quantization` other than `None`/`"fp32"` and `dynamic_batch=True` raise `NotImplementedError`), runs on LiteRT's CPU (XNNPACK) delegate, and matches eager PyTorch to about `1e-5` for detection, segmentation and backbone-only exports (checked by the opt-in `e2e_litert` suite); keypoint models are not supported on litert-torch 0.9.4. The single-level deformable-attention core no longer emits a one-output `split` in export graphs — the one op litert-torch could not lower — which leaves every other export route's numbers unchanged. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
 - Added `TrainConfig.eval_backend`, selecting the COCO evaluator used for validation and test mAP. Both options now ship with `rfdetr[train]`; `"faster_coco_eval"` restores the previous evaluator. Keypoint OKS evaluation is unaffected, and the ONNX/TensorRT benchmark evaluator in `rfdetr.evaluation.coco_eval` continues to use `faster-coco-eval` directly.
 
 - Added `python -m rfdetr.cli.webdataset` as the dedicated packing entry point.

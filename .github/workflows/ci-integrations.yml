@@ -377,9 +377,61 @@ jobs:
         continue-on-error: true
         run: uv cache prune --ci
 
+  litert-parity:
+    name: LiteRT parity
+    # Real litert-torch convert + ai_edge_litert interpreter run on CPU (XNNPACK): no special hardware,
+    # ubuntu-latest is sufficient. litert-torch is a pure-Python wheel; its ai-edge-litert / litert-converter
+    # companions ship manylinux x86_64 wheels for cp310-cp314, and its own metadata pins torch<2.14.
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pytest-litert-${{ matrix.python-version }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: ${{ matrix.python-version }}
+          activate-environment: true
+
+      - name: 🚀 Install Packages (litert extra)
+        timeout-minutes: 8
+        run: uv pip install -e ".[litert,train,augment,cli,visual]" --group tests
+
+      - name: 🔎 Verify litert-torch import
+        # Guard against a silently-skipped parity test: TestLiteRTEndToEnd is gated by
+        # pytest.importorskip("litert_torch"), so a broken/missing wheel would skip it (false
+        # green) instead of failing red.
+        run: |
+          from rfdetr.export._litert import _IS_LITERT_AVAILABLE
+
+          assert _IS_LITERT_AVAILABLE, "litert-torch installed but not detected as available"
+          print("litert-torch import OK")
+        shell: python
+
+      - name: 🧪 Run LiteRT end-to-end parity tests
+        # Real litert_torch.convert + interpreter runs are heavy; single-worker, opt-in marker (see
+        # pyproject.toml `e2e_litert`) — deliberately excluded from the ci-tests-cpu.yml default
+        # filter (`and not e2e_litert`) so it only runs here.
+        run: |
+          uv run --no-sync pytest -m e2e_litert -n 1 \
+            --timeout=600 --durations=20
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
   export-priority-guardian:
     runs-on: ubuntu-latest
-    needs: [executorch-parity, coreml-parity, openvino-parity, tensorrt-parity]
+    needs: [executorch-parity, coreml-parity, openvino-parity, tensorrt-parity, litert-parity]
     if: always()
     steps:
       - name: 📋 Display parity job results
@@ -388,6 +440,7 @@ jobs:
           echo "coreml-parity:     ${{ needs.coreml-parity.result }}"
           echo "openvino-parity:   ${{ needs.openvino-parity.result }}"
           echo "tensorrt-parity:   ${{ needs.tensorrt-parity.result }}"
+          echo "litert-parity:     ${{ needs.litert-parity.result }}"
       # Fail explicitly on any non-success result (failure, cancelled, or skipped) instead of
       # relying on timeout behavior, so a cancelled or skipped parity job still blocks the gate.
       - name: ❌ Fail guardian unless every parity job succeeded
@@ -395,7 +448,8 @@ jobs:
           needs.executorch-parity.result != 'success' ||
           needs.coreml-parity.result != 'success' ||
           needs.openvino-parity.result != 'success' ||
-          needs.tensorrt-parity.result != 'success'
+          needs.tensorrt-parity.result != 'success' ||
+          needs.litert-parity.result != 'success'
         run: |
           echo "One or more export parity jobs did not succeed; failing explicitly."
           exit 1
