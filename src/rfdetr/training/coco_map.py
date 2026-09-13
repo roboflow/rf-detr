@@ -39,8 +39,6 @@ from __future__ import annotations
 import contextlib
 import inspect
 import io
-import os
-import sys
 import warnings
 from collections.abc import Callable, Iterator
 from typing import Any, Literal, cast
@@ -131,14 +129,13 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
     hotcoco reads as off-reference by ~2.4e-8, so those messages describe intended configuration and would
     otherwise repeat each validation epoch and each IoU type.
 
-    Both channels have to be closed, because hotcoco 1.0.0 reports each message **twice**: once written from Rust
-    straight to descriptor 2, where :func:`contextlib.redirect_stdout` cannot reach it, and once as a
-    :class:`UserWarning`, which a descriptor redirect only catches while ``warnings`` happens to be writing
-    through :data:`sys.stderr`. Every ``UserWarning`` raised inside the window is dropped rather than an
-    enumerated set of messages: hotcoco has four of them today, one firing only on empty state, and matching on
-    text would silently stop working when a release rewords one. Nothing but the three backend calls runs inside
-    the window, so no other source can be caught by it, and genuine failures still surface as exceptions rather
-    than as writes to descriptor 2.
+    hotcoco 1.0.1 fixed the message firing twice (1.0.0 wrote it once from Rust straight to file descriptor 2,
+    bypassing :func:`contextlib.redirect_stdout`, and once as a :class:`UserWarning`) and routes
+    ``summarize()``'s table through :data:`sys.stdout`, so both are reachable through ordinary Python-level
+    redirection now. Every ``UserWarning`` raised inside the window is dropped rather than an enumerated set of
+    messages: hotcoco has four of them today, one firing only on empty state, and matching on text would
+    silently stop working when a release rewords one. Nothing but the three backend calls runs inside the
+    window, so no other source can be caught by it, and genuine failures still surface as exceptions.
 
     TODO: narrow or drop this once hotcoco stops reporting RF-DETR's configuration as off-reference. Two of the
     four messages are false — the IoU and recall grids differ from the defaults only by torchmetrics' float32
@@ -146,63 +143,11 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
     reporting them, only the genuine ``max_dets`` message remains and this can shrink to that one filter.
 
     Yields:
-        Nothing; the descriptors and the warning filters are restored on exit.
+        Nothing; the warning filter is restored on exit.
     """
-    sys.stdout.flush()
-    sys.stderr.flush()
-    saved = {descriptor: os.dup(descriptor) for descriptor in (1, 2)}
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    try:
-        for descriptor in saved:
-            os.dup2(devnull, descriptor)
-        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
-            warnings.simplefilter("ignore", UserWarning)
-            yield
-    finally:
-        for descriptor, saved_descriptor in saved.items():
-            os.dup2(saved_descriptor, descriptor)
-            os.close(saved_descriptor)
-        os.close(devnull)
-
-
-class _HotCocoMaskUtils:
-    """Hotcoco's RLE mask utilities with the input coercion TorchMetrics' encode call needs.
-
-    TorchMetrics hands ``encode`` the boolean array it gets straight from the mask tensor. faster-coco-eval accepts
-    that; hotcoco's Rust binding accepts ``uint8`` only and rejects anything else with a bare
-    ``TypeError: 'ndarray' object is not an instance of 'ndarray'``. Every other utility is forwarded untouched.
-
-    TODO: remove this class once hotcoco's ``mask.encode`` accepts boolean arrays. Still present in 1.0.0, and
-    the ``train`` extra pins that version, so the removal is verifiable rather than a guess.
-
-    Args:
-        mask_utils: hotcoco's ``mask`` module.
-    """
-
-    def __init__(self, mask_utils: Any) -> None:
-        self._mask_utils = mask_utils
-
-    def encode(self, mask: np.ndarray[Any, Any]) -> dict[str, Any]:
-        """Return the run-length encoding of one binary mask.
-
-        Args:
-            mask: A two-dimensional binary mask.
-
-        Returns:
-            The COCO run-length encoding of the mask.
-        """
-        return cast(dict[str, Any], self._mask_utils.encode(np.asfortranarray(mask.astype(np.uint8))))
-
-    def __getattr__(self, name: str) -> Any:
-        """Forward every other mask utility to hotcoco unchanged.
-
-        Args:
-            name: The attribute to resolve on hotcoco's ``mask`` module.
-
-        Returns:
-            The resolved hotcoco attribute.
-        """
-        return getattr(self._mask_utils, name)
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore", UserWarning)
+        yield
 
 
 class _HotCocoBackend(CocoBackend):
@@ -234,7 +179,7 @@ class _HotCocoBackend(CocoBackend):
     @property
     def mask_utils(self) -> object:
         """Return hotcoco's RLE mask utilities."""
-        return _HotCocoMaskUtils(_hotcoco().mask)
+        return _hotcoco().mask
 
 
 class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
@@ -584,18 +529,6 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 coco.createIndex()
             return coco
 
-        for annotation in dataset["annotations"]:
-            segmentation = annotation.get("segmentation")
-            if not isinstance(segmentation, dict):
-                continue
-            # hotcoco's own `mask.encode` returns RLE counts as bytes, but its COCO constructor decodes only the
-            # string form and silently treats a bytes payload as an empty mask -- mask AP collapses to 0.0 with no
-            # error raised anywhere.
-            # TODO: remove once hotcoco's COCO constructor accepts bytes `counts` (or rejects them loudly).
-            # Still present in 1.0.0. Never delete this on inspection alone -- the failure is
-            # silent, and `test_hotcoco_backend_matches_faster_coco_eval_for_segmentation` is what proves it gone.
-            if isinstance(segmentation["counts"], bytes):
-                segmentation["counts"] = segmentation["counts"].decode("utf-8")
         return coco_factory(dataset)
 
     def _prediction_dataset_for_iou_type(
