@@ -35,6 +35,13 @@ def _create_onnx_session(model_path: str | Path, providers: list[str] | None = N
     installed, otherwise CPU (with a warning).  Pass an explicit list to pin the backend — useful for benchmarking
     CPU vs CUDA side-by-side.
 
+    The session's CPU intra-op thread pool -- the one actually created under this function's default sequential
+    execution mode -- is configured to block rather than busy-spin while idle, since spinning would otherwise contend
+    for CPU with any other work sharing the process for as long as the session lives, including this module's own
+    ``preprocess_to_nchw`` step, which prefers torchvision when it is installed. The inter-op entry is set for the
+    same reason but has no effect here: ONNX Runtime only creates an inter-op thread pool under
+    ``ExecutionMode.ORT_PARALLEL``, which this function never requests.
+
     Args:
         model_path: Path to the ``.onnx`` model file.
         providers: Ordered list of ORT execution providers, e.g.
@@ -69,7 +76,20 @@ def _create_onnx_session(model_path: str | Path, providers: list[str] | None = N
                 "CUDAExecutionProvider not available — running ONNX inference on CPU. "
                 "Install onnxruntime-gpu for GPU acceleration: `pip install onnxruntime-gpu`"
             )
-    session = ort.InferenceSession(str(model_path), providers=providers)
+    session_options = ort.SessionOptions()
+    # ORT's default CPU intra-op thread pool busy-spins while idle instead of blocking, trading
+    # wake-up latency for CPU usage between calls. That spinning contends for CPU with any other
+    # work in this process -- including this module's own torchvision-based preprocessing in
+    # ``preprocess_to_nchw`` -- for as long as the session lives, and measurably slows down the
+    # session's own next call too. Disabling it only changes how idle threads wait, not computed
+    # values. This session never sets ``execution_mode``, so it stays at ORT's default
+    # ExecutionMode.ORT_SEQUENTIAL, under which ORT never creates an inter-op thread pool at all --
+    # that pool only exists under ORT_PARALLEL. The inter-op entry below is set defensively for
+    # that case; it has no effect on this function's own (sequential) behavior, applies identically
+    # regardless of the requested execution provider, and does not change computed values either way.
+    session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    session_options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    session = ort.InferenceSession(str(model_path), sess_options=session_options, providers=providers)
     logger.debug("ONNX Runtime providers in use: %s", session.get_providers())
     for inp in session.get_inputs():
         logger.debug("Input  : name=%s  shape=%s  type=%s", inp.name, inp.shape, inp.type)
