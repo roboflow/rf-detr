@@ -13,7 +13,7 @@ module-level pytestmark.
 import pytest
 
 from rfdetr.config import (
-    RFDETRBaseConfig,
+    RFDETRNanoConfig,
     RFDETRSegNanoConfig,
     SegmentationTrainConfig,
     TrainConfig,
@@ -36,10 +36,10 @@ class TestBuildModelFromConfig:
     """Tests for build_model_from_config(model_config, defaults=MODEL_DEFAULTS)."""
 
     def test_returns_lwdetr_for_base_config(self) -> None:
-        """build_model_from_config with RFDETRBaseConfig returns an LWDETR instance."""
+        """build_model_from_config with RFDETRNanoConfig returns an LWDETR instance."""
         from rfdetr.models.lwdetr import LWDETR
 
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         model = build_model_from_config(mc)
         assert isinstance(model, LWDETR), f"Expected LWDETR instance, got {type(model).__name__}"
 
@@ -48,7 +48,7 @@ class TestBuildModelFromConfig:
 
         build_model adds +1 to num_classes (background class convention).
         """
-        mc = RFDETRBaseConfig(num_classes=5)
+        mc = RFDETRNanoConfig(num_classes=5)
         model = build_model_from_config(mc)
         assert model.class_embed.out_features == 6, (
             f"Expected class_embed.out_features=6 (num_classes+1), got {model.class_embed.out_features}"
@@ -59,7 +59,7 @@ class TestBuildModelFromConfig:
         from rfdetr._namespace import _namespace_from_configs
         from rfdetr.models.lwdetr import build_model
 
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
 
         model_config_native = build_model_from_config(mc, tc)
@@ -80,7 +80,7 @@ class TestBuildModelFromConfig:
 
     def test_drop_path_uses_train_config_value(self) -> None:
         """Non-default TrainConfig.drop_path must reach the model builder path."""
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp", drop_path=0.2)
         model = build_model_from_config(mc, tc)
 
@@ -95,7 +95,7 @@ class TestBuildModelFromConfig:
 
         from rfdetr.models import MODEL_DEFAULTS
 
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
 
         with pytest.raises(ValueError, match="encoder_only=False"):
             build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, encoder_only=True))
@@ -106,14 +106,14 @@ class TestBuildModelFromConfig:
 
         from rfdetr.models import MODEL_DEFAULTS
 
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
 
         with pytest.raises(ValueError, match="backbone_only=False"):
             build_model_from_config(mc, defaults=replace(MODEL_DEFAULTS, backbone_only=True))
 
     def test_none_train_config_uses_dummy(self) -> None:
         """build_model_from_config with train_config=None must not raise."""
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         model = build_model_from_config(mc, train_config=None)
         assert model is not None, "Expected a model, got None"
 
@@ -126,7 +126,7 @@ class TestBuildCriterionFromConfig:
         from rfdetr.models.criterion import SetCriterion
         from rfdetr.models.postprocess import PostProcess
 
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
         result = build_criterion_from_config(mc, tc)
         assert isinstance(result, tuple), f"Expected tuple, got {type(result).__name__}"
@@ -155,7 +155,7 @@ class TestBuildCriterionFromConfig:
 
         from rfdetr.models import MODEL_DEFAULTS
 
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp")
         custom_defaults = replace(MODEL_DEFAULTS, focal_alpha=0.5)
         criterion, _ = build_criterion_from_config(mc, tc, defaults=custom_defaults)
