@@ -110,15 +110,65 @@ class TestComputeMaskIou:
         assert result.shape == (n, m)
         assert torch.equal(result, expected)
 
+    def test_resizes_mismatched_ground_truths_in_chunks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The unequal-grid path must never send more than one GT chunk to interpolation.
+
+        Interpolation creates its float32 output before later IoU chunking can release it. Recording its input batch
+        sizes therefore catches the allocation path that a value-only parity test cannot observe.
+        """
+        monkeypatch.setattr("rfdetr.evaluation.matching._MASK_IOU_CHUNK", 4)
+        original_interpolate = torch.nn.functional.interpolate
+        resized_batch_sizes: list[int] = []
+
+        def record_interpolate(input: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record the GT batch size passed to the external interpolation boundary.
+
+            Examples:
+                This closure needs the enclosing test's mutable observation list.
+
+                >>> record_interpolate(torch.zeros(1, 1, 2, 2))  # doctest: +SKIP
+                tensor(...)
+            """
+            resized_batch_sizes.append(input.shape[0])
+            return original_interpolate(input, *args, **kwargs)
+
+        monkeypatch.setattr("rfdetr.evaluation.matching.F.interpolate", record_interpolate)
+        generator = torch.Generator().manual_seed(0)
+        pred = torch.rand((2, 6, 6), generator=generator) > 0.5
+        gt = torch.rand((9, 3, 3), generator=generator) > 0.5
+
+        resized_gt = original_interpolate(gt.float().unsqueeze(1), size=(6, 6), mode="nearest").squeeze(1)
+        pred_flat = pred.view(2, -1).float()
+        gt_flat = resized_gt.view(9, -1).float()
+        inter = torch.mm(pred_flat, gt_flat.t())
+        union = pred_flat.sum(dim=1, keepdim=True) + gt_flat.sum(dim=1).unsqueeze(0) - inter
+        expected = torch.where(union > 0, inter / union, torch.zeros_like(inter))
+
+        result = _compute_mask_iou(pred, gt)
+
+        assert resized_batch_sizes
+        assert max(resized_batch_sizes) <= 4
+        assert torch.equal(result, expected)
+
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    @pytest.mark.parametrize("m", [2, 256], ids=["gt-small", "gt-large"])
-    def test_bounds_transient_cuda_peak_by_chunk_size(self, monkeypatch: pytest.MonkeyPatch, m: int) -> None:
+    @pytest.mark.parametrize(
+        ("m", "gt_size"),
+        [
+            pytest.param(2, (256, 256), id="equal-grid-gt-small"),
+            pytest.param(256, (256, 256), id="equal-grid-gt-large"),
+            pytest.param(256, (128, 128), id="unequal-grid-gt-large"),
+        ],
+    )
+    def test_bounds_transient_cuda_peak_by_chunk_size(
+        self, monkeypatch: pytest.MonkeyPatch, m: int, gt_size: tuple[int, int]
+    ) -> None:
         """The boolean-to-float32 view of predictions AND ground truths is the allocation that OOMed real users
         validating segmentation at full image resolution (rf-detr#1084, rf-detr#1460): unbounded on either side, it
         scales with N x H x W or M x H x W regardless of how many rows are actually being compared at once. A class with
         a merely small GT count (``m=2``) is the common case; a densely annotated class making M comparable to N
-        (``m=256``) is the case that OOMed on an 8 GB GPU when only predictions were chunked.
+        (``m=256``) is the case that OOMed on an 8 GB GPU when only predictions were chunked. The unequal-grid case also
+        exercises the nearest-neighbor GT resize that must happen inside that same chunk bound.
 
         Pin the claim on the real CUDA peak, not on values, by calling the same function at a chunk size covering every
         row of both sides at once (the pre-fix shape) and at a small chunk size, and asserting the small one's transient
@@ -127,7 +177,7 @@ class TestComputeMaskIou:
         device = torch.device("cuda")
         n, h, w = 256, 256, 256
         pred = torch.rand((n, h, w), device=device) > 0.5
-        gt = torch.rand((m, h, w), device=device) > 0.5
+        gt = torch.rand((m, *gt_size), device=device) > 0.5
 
         def peak_extra_bytes(chunk_size: int) -> int:
             """Return transient CUDA bytes ``_compute_mask_iou`` uses beyond what it returns, at the given chunk size.

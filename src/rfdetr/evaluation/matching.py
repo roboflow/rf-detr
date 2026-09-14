@@ -84,16 +84,31 @@ def _mask_row_areas(masks: Tensor, hw: int) -> Tensor:
     return torch.cat(chunks, dim=0)
 
 
+def _resize_mask_chunk(masks: Tensor, size: tuple[int, int]) -> Tensor:
+    """Resize one boolean-mask chunk with nearest-neighbor sampling.
+
+    Resizes only a caller-bounded chunk so the temporary float32 interpolation
+    output cannot scale with every ground-truth mask in an image.
+
+    Args:
+        masks: Boolean mask tensor of shape [chunk, H, W].
+        size: Target height and width.
+
+    Returns:
+        Resized boolean mask tensor of shape [chunk, size[0], size[1]].
+    """
+    return F.interpolate(masks.float().unsqueeze(1), size=size, mode="nearest").squeeze(1).bool()
+
+
 def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """Compute pairwise boolean-mask IoU between N predictions and M ground truths.
 
-    Both predictions and ground truths are converted to float32 ``_MASK_IOU_CHUNK`` rows at a time,
-    so at most one prediction chunk and one ground-truth chunk are resident as float32 [chunk, H*W]
-    tensors at once, bounding that allocation to ``_MASK_IOU_CHUNK x H x W`` on each side instead of
-    ``N x H x W`` and ``M x H x W``. This changes only how much memory the call uses at once, not the
-    returned values: each output entry depends solely on its own prediction mask and its own
-    ground-truth mask, so chunking either axis changes neither the inputs nor the reduction each entry
-    is computed from.
+    Both predictions and ground truths are converted to float32 ``_MASK_IOU_CHUNK`` rows at a time.
+    When mask grids differ, ground truths are also resized one chunk at a time before conversion. At
+    most one prediction chunk and one ground-truth chunk are resident as float32 [chunk, H*W] tensors,
+    bounding that allocation to ``_MASK_IOU_CHUNK x H x W`` on each side instead of ``N x H x W`` and
+    ``M x H x W``. This changes only how much memory the call uses at once, not the returned values:
+    each output entry depends solely on its own prediction mask and ground-truth mask.
 
     Args:
         pred_masks: Boolean mask tensor of shape [N, H, W].
@@ -104,21 +119,34 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """
     n = pred_masks.shape[0]
     m = gt_masks.shape[0]
-    if pred_masks.shape[-2:] != gt_masks.shape[-2:]:
-        h, w = pred_masks.shape[-2:]
-        gt_masks = F.interpolate(gt_masks.float().unsqueeze(1), size=(h, w), mode="nearest").squeeze(1)
-    hw = pred_masks.shape[-2] * pred_masks.shape[-1]
+    mask_size = (pred_masks.shape[-2], pred_masks.shape[-1])
+    resize_ground_truths = mask_size != gt_masks.shape[-2:]
+    hw = mask_size[0] * mask_size[1]
 
     pred_area = _mask_row_areas(pred_masks, hw)  # [N, 1]
-    gt_area = _mask_row_areas(gt_masks, hw)  # [M, 1]
+    if resize_ground_truths:
+        gt_area_chunks = [
+            _mask_row_areas(_resize_mask_chunk(gt_masks[start : start + _MASK_IOU_CHUNK], mask_size), hw)
+            for start in range(0, m, _MASK_IOU_CHUNK)
+        ]
+        gt_area = (
+            torch.cat(gt_area_chunks, dim=0)
+            if gt_area_chunks
+            else torch.zeros((0, 1), dtype=torch.float32, device=gt_masks.device)
+        )
+    else:
+        gt_area = _mask_row_areas(gt_masks, hw)  # [M, 1]
 
     iou_rows: list[Tensor] = []
     for pstart in range(0, n, _MASK_IOU_CHUNK):
         pred_chunk = pred_masks[pstart : pstart + _MASK_IOU_CHUNK].bool().view(-1, hw).float()  # [c, HW]
-        inter_blocks = [
-            torch.mm(pred_chunk, gt_masks[gstart : gstart + _MASK_IOU_CHUNK].bool().view(-1, hw).float().t())
-            for gstart in range(0, m, _MASK_IOU_CHUNK)
-        ]  # each block [c, g]
+        inter_blocks = []
+        for gstart in range(0, m, _MASK_IOU_CHUNK):
+            gt_chunk = gt_masks[gstart : gstart + _MASK_IOU_CHUNK]
+            if resize_ground_truths:
+                gt_chunk = _resize_mask_chunk(gt_chunk, mask_size)
+            gt_flat = gt_chunk.bool().view(-1, hw).float()
+            inter_blocks.append(torch.mm(pred_chunk, gt_flat.t()))  # each block [c, g]
         inter = (
             torch.cat(inter_blocks, dim=1)
             if inter_blocks
