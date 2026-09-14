@@ -2466,6 +2466,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p><code>RFDETR.export(backbone_only=True)</code> now exports the encoder and feature projector instead of calling the full detector and failing with an <code>AttributeError</code>. ONNX exports retain every configured feature-pyramid level and support dynamic batches.</p>
 </li>
+<li>
+<p><code>pack_targets</code> correctness for segmentation targets (the <code>masks</code> field) is now covered by a dedicated regression test through the real <code>RFDETRDataModule</code> collate path, closing a parity gap #1399 shipped without. (<a href="https://github.com/roboflow/rf-detr/pull/1399">#1399</a>)</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
