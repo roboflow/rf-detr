@@ -158,8 +158,8 @@ jobs:
 
       - name: 🧪 Run CoreML end-to-end parity tests
         # Real ct.convert + mlmodel.predict + download_assets is heavy/network; single-worker,
-        # opt-in marker (see pyproject.toml `e2e_coreml`) — deliberately excluded from the
-        # ci-tests-cpu.yml default filter (`and not e2e_coreml`) so it only runs here.
+        # opt-in marker (see pyproject.toml `e2e_coreml`) — the class also carries the shared
+        # `integration` marker, excluded by ci-tests-cpu.yml (`and not integration`).
         run: |
           uv run --no-sync pytest tests/export/test_coreml_export.py \
             -m e2e_coreml -n 1 \
@@ -367,8 +367,8 @@ jobs:
 
       - name: 🧪 Run OpenVINO end-to-end parity tests
         # Real convert_model + save_model + Core().compile_model is heavy; single-worker,
-        # opt-in marker (see pyproject.toml `e2e_openvino`) — deliberately excluded from the
-        # ci-tests-cpu.yml default filter (`and not e2e_openvino`) so it only runs here.
+        # opt-in marker (see pyproject.toml `e2e_openvino`) — the class also carries the shared
+        # `integration` marker, excluded by ci-tests-cpu.yml (`and not integration`).
         run: |
           uv run --no-sync pytest -m e2e_openvino -n 1 \
             --timeout=600 --durations=20
