@@ -2472,7 +2472,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Multi-GPU keypoint training with <code>grad_accum_steps &gt; 1</code> now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.</li>
+<li>
+<p>Multi-GPU keypoint training with <code>grad_accum_steps &gt; 1</code> now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.</p>
+</li>
+<li>
+<p>The ONNX Runtime CPU inference session built by <code>RFDETR.export(format="onnx")</code>'s inference helper no longer lets its intra-op thread pool busy-spin between calls. Spinning previously contended for CPU with any other work sharing the process — including this same helper's own torchvision-based preprocessing step — for as long as the session was alive.</p>
+</li>
 </ul>
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
@@ -2485,6 +2490,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
 <li>
 <p>Distributed (DDP) training now preserves the minimum five optimizer steps per epoch for short datasets instead of losing the replacement sample count when Lightning injects its distributed sampler.</p>
+</li>
+<li>
+<p>Installing the <code>[onnx]</code> extra from a source checkout with <code>uv</code> on Python 3.10, 3.11 or 3.13 now brings in <code>ml-dtypes</code> again; the <code>ml-dtypes==0.5.1</code> override, scoped to Python 3.12 for the TFLite stack, was dropping the requirement on every other interpreter and left <code>import onnx</code> failing with <code>ModuleNotFoundError</code>.</p>
 </li>
 <li>
 <p>Kornia <code>Affine</code> now applies scalar <code>translate_percent</code> to both axes and reads scalar <code>scale</code> as a fixed range, avoiding silent horizontal-translation loss and construction failures. Scalar translation emits a warning because Kornia samples signed offsets while Albumentations applies the scalar as a fixed positive offset.</p>
