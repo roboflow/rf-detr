@@ -25,6 +25,11 @@ STATE_SCHEMA_VERSION = 1
 STATE_PATTERN = re.compile(r'<metadata id="weekly-metrics-state">(?P<payload>.*?)</metadata>', re.DOTALL)
 MAX_API_RESPONSE_BYTES = 5_000_000
 MAX_SVG_BYTES = 1_000_000
+PLOT_LEFT = 100.0
+PLOT_TOP = 240.0
+PLOT_WIDTH = 1000.0
+PLOT_HEIGHT = 290.0
+PLOT_BOTTOM = PLOT_TOP + PLOT_HEIGHT
 
 
 class MetricsError(RuntimeError):
@@ -416,26 +421,16 @@ def parse_state(svg: str, repository: str, package: str) -> MetricsState:
     return state
 
 
-def render_svg(state: MetricsState, window_weeks: int) -> str:
-    """Render metrics state as one self-contained SVG document.
+def _render_summary_cards(metadata: str, latest: WeeklyMetric | None) -> list[str]:
+    """Render the document header and the three headline metric cards.
 
     Args:
-        state: Metrics state embedded into output.
-        window_weeks: Maximum recent periods displayed in chart.
+        metadata: Serialized checkpoint state, already escaped for XML text content.
+        latest: Most recent displayed week, or None when no week has been recorded yet.
 
     Returns:
-        Deterministic SVG text.
-
-    Raises:
-        MetricsError: If display window is not positive.
+        Opening SVG lines, from the XML declaration through the card group.
     """
-    if isinstance(window_weeks, bool) or not isinstance(window_weeks, int) or window_weeks < 1:
-        msg = "Display window must be at least one week"
-        raise MetricsError(msg)
-    _validate_state(state)
-    metadata = escape(_serialize_state(state), quote=False)
-    display = state.history[-window_weeks:]
-    latest = display[-1] if display else None
     if latest is None:
         description = "Weekly GitHub star growth and PyPI download history. No completed periods recorded."
         latest_period = "Awaiting first completed week"
@@ -465,7 +460,7 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
         new_stars = f"{latest.new_stars:+,} new stars"
         downloads = f"{latest.downloads:,} weekly downloads"
 
-    lines = [
+    return [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" '
         'role="img" aria-labelledby="title description">',
@@ -490,39 +485,37 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
         "  </g>",
     ]
 
-    plot_left = 100.0
-    plot_top = 240.0
-    plot_width = 1000.0
-    plot_height = 290.0
-    plot_bottom = plot_top + plot_height
-    star_values = [metric.new_stars for metric in display if metric.new_stars is not None] or [0]
-    star_min = min(0, min(star_values))
-    star_max = max(0, max(star_values))
-    if star_min == star_max:
-        star_max = star_min + 1
-    download_max = max([metric.downloads for metric in display] or [1])
-    download_max = max(download_max, 1)
 
-    lines.extend(
-        [
-            '  <g aria-hidden="true" fill="none" stroke="#e1e0d9" stroke-width="1">',
-        ]
-    )
+def _render_axes(star_min: int, star_max: int, download_max: int) -> list[str]:
+    """Render the chart gridlines, frame, and the two opposing value axes.
+
+    Star counts read against the left axis and download counts against the right one, so both ranges
+    are drawn against the same three gridlines.
+
+    Args:
+        star_min: Lowest new-star value the left axis must reach, never above zero.
+        star_max: Highest new-star value the left axis must reach, never below zero.
+        download_max: Highest weekly download total the right axis must reach.
+
+    Returns:
+        SVG lines for the gridlines, the axis frame, the tick labels, and the axis captions.
+    """
+    lines = ['  <g aria-hidden="true" fill="none" stroke="#e1e0d9" stroke-width="1">']
     for step in range(3):
         fraction = step / 2
-        y = plot_bottom - fraction * plot_height
-        lines.append(f'    <path d="M{plot_left:.0f} {y:.1f}H{plot_left + plot_width:.0f}"/>')
+        y = PLOT_BOTTOM - fraction * PLOT_HEIGHT
+        lines.append(f'    <path d="M{PLOT_LEFT:.0f} {y:.1f}H{PLOT_LEFT + PLOT_WIDTH:.0f}"/>')
     lines.extend(
         [
             "  </g>",
-            f'  <path d="M{plot_left:.0f} {plot_top:.0f}V{plot_bottom:.0f}H{plot_left + plot_width:.0f}" '
+            f'  <path d="M{PLOT_LEFT:.0f} {PLOT_TOP:.0f}V{PLOT_BOTTOM:.0f}H{PLOT_LEFT + PLOT_WIDTH:.0f}" '
             'fill="none" stroke="#c3c2b7" stroke-width="1.5"/>',
             '  <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="13">',
         ]
     )
     for step in range(3):
         fraction = step / 2
-        y = plot_bottom - fraction * plot_height
+        y = PLOT_BOTTOM - fraction * PLOT_HEIGHT
         star_tick = round(star_min + fraction * (star_max - star_min))
         download_tick = round(fraction * download_max)
         lines.append(f'    <text x="88" y="{y + 5:.1f}" text-anchor="end">{star_tick:+,}</text>')
@@ -535,57 +528,102 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
             "  </g>",
         ]
     )
+    return lines
 
-    if display:
-        spacing = plot_width / len(display)
-        bar_width = min(44.0, spacing * 0.5)
-        zero_y = plot_bottom - ((0 - star_min) / (star_max - star_min)) * plot_height
-        points = []
-        lines.append('  <g id="weekly-stars-bars">')
-        for index, metric in enumerate(display):
-            x = plot_left + (index + 0.5) * spacing
-            if metric.new_stars is not None:
-                value_y = plot_bottom - ((metric.new_stars - star_min) / (star_max - star_min)) * plot_height
-                bar_y = min(value_y, zero_y)
-                bar_height = max(abs(zero_y - value_y), 1.0)
-                color = "#8315f9" if metric.new_stars >= 0 else "#e85d75"
-                lines.append(
-                    f'    <rect x="{x - bar_width / 2:.1f}" y="{bar_y:.1f}" width="{bar_width:.1f}" '
-                    f'height="{bar_height:.1f}" rx="4" fill="{color}"/>'
-                )
-            download_y = plot_bottom - (metric.downloads / download_max) * plot_height
-            points.append(f"{x:.1f},{download_y:.1f}")
-        lines.append("  </g>")
-        lines.append('  <g id="weekly-downloads-line">')
-        if len(points) > 1:
+
+def _render_marks(display: Sequence[WeeklyMetric], star_min: int, star_max: int, download_max: int) -> list[str]:
+    """Render one star bar and one download point per displayed week, plus the week labels.
+
+    Args:
+        display: Weeks shown in the chart, oldest first.
+        star_min: Lowest new-star value the left axis reaches, as used by `_render_axes`.
+        star_max: Highest new-star value the left axis reaches, as used by `_render_axes`.
+        download_max: Highest weekly download total the right axis reaches.
+
+    Returns:
+        SVG lines for the bars, the download line, and the week labels, or empty placeholder groups
+        and a waiting notice when no week has been recorded yet.
+    """
+    if not display:
+        return [
+            '  <g id="weekly-stars-bars"/>',
+            '  <g id="weekly-downloads-line"/>',
+            '  <text x="600" y="395" fill="#898781" font-family="DejaVu Sans, Arial, sans-serif" '
+            'font-size="18" text-anchor="middle">Metrics will appear after first scheduled update.</text>',
+        ]
+    spacing = PLOT_WIDTH / len(display)
+    bar_width = min(44.0, spacing * 0.5)
+    zero_y = PLOT_BOTTOM - ((0 - star_min) / (star_max - star_min)) * PLOT_HEIGHT
+    points = []
+    lines = ['  <g id="weekly-stars-bars">']
+    for index, metric in enumerate(display):
+        x = PLOT_LEFT + (index + 0.5) * spacing
+        if metric.new_stars is not None:
+            value_y = PLOT_BOTTOM - ((metric.new_stars - star_min) / (star_max - star_min)) * PLOT_HEIGHT
+            bar_y = min(value_y, zero_y)
+            bar_height = max(abs(zero_y - value_y), 1.0)
+            color = "#8315f9" if metric.new_stars >= 0 else "#e85d75"
             lines.append(
-                f'    <polyline points="{" ".join(points)}" fill="none" stroke="#2a78d6" stroke-width="4" '
-                'stroke-linecap="round" stroke-linejoin="round"/>'
+                f'    <rect x="{x - bar_width / 2:.1f}" y="{bar_y:.1f}" width="{bar_width:.1f}" '
+                f'height="{bar_height:.1f}" rx="4" fill="{color}"/>'
             )
-        for point in points:
-            point_x, point_y = point.split(",")
-            lines.append(
-                f'    <circle cx="{point_x}" cy="{point_y}" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>'
-            )
-        lines.append("  </g>")
+        download_y = PLOT_BOTTOM - (metric.downloads / download_max) * PLOT_HEIGHT
+        points.append(f"{x:.1f},{download_y:.1f}")
+    lines.append("  </g>")
+    lines.append('  <g id="weekly-downloads-line">')
+    if len(points) > 1:
         lines.append(
-            '  <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="middle">'
+            f'    <polyline points="{" ".join(points)}" fill="none" stroke="#2a78d6" stroke-width="4" '
+            'stroke-linecap="round" stroke-linejoin="round"/>'
         )
-        for index, metric in enumerate(display):
-            x = plot_left + (index + 0.5) * spacing
-            label = metric.week_end.strftime("%b %d").replace(" 0", " ")
-            lines.append(f'    <text x="{x:.1f}" y="552">{label}</text>')
-        lines.append("  </g>")
-    else:
-        lines.extend(
-            [
-                '  <g id="weekly-stars-bars"/>',
-                '  <g id="weekly-downloads-line"/>',
-                '  <text x="600" y="395" fill="#898781" font-family="DejaVu Sans, Arial, sans-serif" '
-                'font-size="18" text-anchor="middle">Metrics will appear after first scheduled update.</text>',
-            ]
+    for point in points:
+        point_x, point_y = point.split(",")
+        lines.append(
+            f'    <circle cx="{point_x}" cy="{point_y}" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>'
         )
+    lines.append("  </g>")
+    lines.append(
+        '  <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="middle">'
+    )
+    for index, metric in enumerate(display):
+        x = PLOT_LEFT + (index + 0.5) * spacing
+        label = metric.week_end.strftime("%b %d").replace(" 0", " ")
+        lines.append(f'    <text x="{x:.1f}" y="552">{label}</text>')
+    lines.append("  </g>")
+    return lines
 
+
+def render_svg(state: MetricsState, window_weeks: int) -> str:
+    """Render metrics state as one self-contained SVG document.
+
+    Args:
+        state: Metrics state embedded into output.
+        window_weeks: Maximum recent periods displayed in chart.
+
+    Returns:
+        Deterministic SVG text.
+
+    Raises:
+        MetricsError: If display window is not positive.
+    """
+    if isinstance(window_weeks, bool) or not isinstance(window_weeks, int) or window_weeks < 1:
+        msg = "Display window must be at least one week"
+        raise MetricsError(msg)
+    _validate_state(state)
+    metadata = escape(_serialize_state(state), quote=False)
+    display = state.history[-window_weeks:]
+    # Weeks opening a checkpoint gap carry no delta, and a flat range would divide by zero below.
+    star_values = [metric.new_stars for metric in display if metric.new_stars is not None] or [0]
+    star_min = min(0, min(star_values))
+    star_max = max(0, max(star_values))
+    if star_min == star_max:
+        star_max = star_min + 1
+    download_max = max([metric.downloads for metric in display] or [1])
+    download_max = max(download_max, 1)
+
+    lines = _render_summary_cards(metadata, display[-1] if display else None)
+    lines.extend(_render_axes(star_min, star_max, download_max))
+    lines.extend(_render_marks(display, star_min, star_max, download_max))
     lines.extend(
         [
             '  <g font-family="DejaVu Sans, Arial, sans-serif" font-size="13" fill="#52514e">',

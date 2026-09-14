@@ -4,7 +4,10 @@ on:
   schedule:
     # PyPI Stats starts its daily update around 01:00 UTC but publishes no completion SLA.
     # Monday 06:00 UTC leaves a buffer for Sunday data after the prior Mon–Sun week closes.
-    - cron: "0 6 * * 1"
+    # Tuesday through Thursday are retries: every run of the same calendar week resolves to the
+    # same completed Mon–Sun period, and re-recording that period refreshes only its download
+    # total, so a Monday lost to missing upstream data is recovered instead of skipped forever.
+    - cron: "0 6 * * 1-4"
   workflow_dispatch: {}
 
 permissions:
@@ -39,6 +42,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           METRICS_BRANCH: automation/update-weekly-metrics
         run: |
+          set -euo pipefail
           # Preserve checkpoints when the previous weekly pull request is still open.
           OPEN_PR_COUNT=$(gh pr list \
             --repo "$GITHUB_REPOSITORY" \
@@ -49,7 +53,13 @@ jobs:
             --jq length)
           if [ "$OPEN_PR_COUNT" -gt 0 ]; then
             git fetch --no-tags --depth=1 origin "$METRICS_BRANCH"
-            git show FETCH_HEAD:docs/assets/weekly-metrics.svg > docs/assets/weekly-metrics.svg
+            # The shell truncates a redirect target before the command on its left runs, so writing
+            # straight onto the tracked path would leave an empty SVG behind whenever git show fails.
+            git show FETCH_HEAD:docs/assets/weekly-metrics.svg > docs/assets/weekly-metrics.svg.tmp || {
+              echo "::error::git show failed to restore weekly-metrics.svg from $METRICS_BRANCH"
+              exit 1
+            }
+            mv docs/assets/weekly-metrics.svg.tmp docs/assets/weekly-metrics.svg
           fi
 
       - name: 📊 Generate weekly metrics SVG
@@ -57,6 +67,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/update_weekly_metrics.py
 
+      # Requires the repository setting "Allow GitHub Actions to create and approve pull requests"
+      # (Settings > Actions > General). Without it this step fails with HTTP 403 on every run.
       - name: 📨 Create or update metrics pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:

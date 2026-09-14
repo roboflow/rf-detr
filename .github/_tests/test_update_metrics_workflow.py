@@ -5,11 +5,162 @@
 # ------------------------------------------------------------------------
 """Tests for weekly metrics workflow's repository-writing contract."""
 
+import os
+import re
+import shutil
+import stat
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+ACTION_PIN = re.compile(r"(?P<action>[\w.-]+/[\w.-]+)@(?P<sha>[0-9a-f]{40})")
+RESTORE_STEP = "📚 Restore unmerged metrics history"
+TRACKED_SVG = "docs/assets/weekly-metrics.svg"
+CHECKED_IN_SVG = "<svg><!-- merged history --></svg>\n"
+UNMERGED_SVG = "<svg><!-- unmerged history --></svg>\n"
+STUB_LOG_NAME = "commands.log"
+requires_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="restore step is a bash run block")
+
+
+def sha_pinned_action(uses: str) -> str | None:
+    """Return the owner/repo behind a `uses:` reference pinned to a full commit SHA.
+
+    A tag or branch reference yields `None` instead. Those are mutable, so the action code a
+    supply-chain review signed off on can be swapped upstream without any edit landing here.
+
+    Args:
+        uses: Value of a workflow step's `uses` key.
+
+    Returns:
+        The pinned owner/repo, or `None` when the reference is not a full commit SHA.
+
+    Examples:
+        >>> sha_pinned_action("actions/checkout@" + "0" * 40)
+        'actions/checkout'
+        >>> sha_pinned_action("actions/checkout@v6.0.1") is None
+        True
+    """
+    match = ACTION_PIN.fullmatch(uses)
+    return match.group("action") if match else None
+
+
+def write_stub(directory: Path, name: str, body: str) -> Path:
+    """Write an executable shell stub that shadows a real command on PATH.
+
+    Args:
+        directory: Directory the stub is written into, to be prepended to PATH.
+        name: Command name the stub stands in for.
+        body: Shell body, without the shebang line.
+
+    Returns:
+        Path of the written stub.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     stub = write_stub(Path(tmp), "gh", "echo 1")
+        ...     (stub.name, os.access(stub, os.X_OK))
+        ('gh', True)
+    """
+    stub = directory / name
+    stub.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
+
+
+def run_step(run: str, workspace: Path, stubs: Path, stub_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Execute a workflow `run` block against a scratch workspace with stubbed commands.
+
+    The block is taken from the parsed workflow rather than copied, so it is the shipped shell that
+    runs here. Workflow expressions cannot be evaluated outside a runner and are rejected instead.
+
+    Args:
+        run: Body of a step's `run` block.
+        workspace: Directory the block runs in, standing in for the runner workspace.
+        stubs: Directory of executable stubs, prepended to PATH.
+        stub_env: Step environment plus any variables the stubs themselves read.
+
+    Returns:
+        The finished `bash` process, with output captured.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     run_step("exit 3", Path(tmp), Path(tmp), {}).returncode
+        3
+    """
+    assert "${{" not in run, "run block reads a workflow expression that only a runner can evaluate"
+    script = workspace / "step.sh"
+    script.write_text(run, encoding="utf-8")
+    env = {**os.environ, **stub_env, "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}"}
+    return subprocess.run(["bash", str(script)], cwd=workspace, env=env, text=True, capture_output=True, check=False)
+
+
+def restore_env(workspace: Path, open_prs: int, git_show_fails: bool = False) -> dict[str, str]:
+    """Build the environment a restore-step run sees, including the stub controls.
+
+    Args:
+        workspace: Directory the step runs in; the stub command log is written beside the step script.
+        open_prs: Number of open automation pull requests the `gh` stub reports.
+        git_show_fails: Whether the `git` stub rejects `git show` the way a missing path does.
+
+    Returns:
+        Environment overlay handed to `run_step`.
+
+    Examples:
+        >>> restore_env(Path("workspace"), open_prs=0)["STUB_OPEN_PR_COUNT"]
+        '0'
+    """
+    env = {
+        "GITHUB_REPOSITORY": "roboflow/rf-detr",
+        "DEFAULT_BRANCH": "develop",
+        "METRICS_BRANCH": "automation/update-weekly-metrics",
+        "GH_TOKEN": "stub-token",
+        "STUB_LOG": str(workspace / STUB_LOG_NAME),
+        "STUB_OPEN_PR_COUNT": str(open_prs),
+        "STUB_UNMERGED_SVG": UNMERGED_SVG,
+    }
+    if git_show_fails:
+        env["STUB_GIT_SHOW_FAILS"] = "1"
+    return env
+
+
+@pytest.fixture
+def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
+    """Workspace holding a checked-in SVG, plus stubs recording every `gh` and `git` call.
+
+    The `git` stub serves `git show` from `STUB_UNMERGED_SVG` and fails like a missing path when
+    `STUB_GIT_SHOW_FAILS` is set; the `gh` stub reports `STUB_OPEN_PR_COUNT` open pull requests.
+
+    Examples:
+        >>> restore_sandbox  # doctest: +SKIP
+        pytest fixture; builds a workspace and a stub directory under tmp_path.
+    """
+    workspace = tmp_path / "workspace"
+    (workspace / "docs" / "assets").mkdir(parents=True)
+    (workspace / TRACKED_SVG).write_text(CHECKED_IN_SVG, encoding="utf-8")
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    write_stub(stubs, "gh", 'echo "gh $*" >> "$STUB_LOG"\necho "$STUB_OPEN_PR_COUNT"')
+    write_stub(
+        stubs,
+        "git",
+        'echo "git $*" >> "$STUB_LOG"\n'
+        "case $1 in\n"
+        "  show)\n"
+        '    if [ -n "${STUB_GIT_SHOW_FAILS:-}" ]; then\n'
+        '      echo "fatal: path does not exist in FETCH_HEAD" >&2\n'
+        "      exit 128\n"
+        "    fi\n"
+        '    printf "%s" "$STUB_UNMERGED_SVG"\n'
+        "    ;;\n"
+        "esac",
+    )
+    return workspace, stubs
 
 
 @pytest.fixture(scope="session")
@@ -39,34 +190,210 @@ def metrics_steps(metrics_workflow: dict[str, Any]) -> dict[str, dict[str, Any]]
 class TestUpdateMetricsWorkflow:
     """Tests for scheduled metrics generation and pull-request wiring."""
 
-    def test_schedule_waits_for_completed_pypi_week(self, metrics_workflow: dict[str, Any]) -> None:
-        """Schedule must wait until completed Sunday data can be published."""
+    def test_schedule_waits_for_completed_pypi_week_and_retries_it(self, metrics_workflow: dict[str, Any]) -> None:
+        """Schedule must wait for completed Sunday data and retry the same week for three more days.
+
+        PyPI Stats publishes no completion SLA, so a Monday run can fail on data that is not there yet. Every weekday in
+        the Monday-to-Thursday window resolves to the same completed week, so the retries recover it; a Monday-only
+        schedule would lose that week permanently, because the next Monday sees a non-contiguous history instead.
+        """
         triggers = metrics_workflow[True] if True in metrics_workflow else metrics_workflow["on"]
 
-        assert triggers["schedule"] == [{"cron": "0 6 * * 1"}]
+        assert triggers["schedule"] == [{"cron": "0 6 * * 1-4"}]
         assert "workflow_dispatch" in triggers
 
     def test_workflow_has_only_required_write_permissions(self, metrics_workflow: dict[str, Any]) -> None:
         """Automation must receive only permissions needed to update its pull request."""
         assert metrics_workflow["permissions"] == {"contents": "write", "pull-requests": "write"}
 
+    def test_runs_never_cancel_one_another(self, metrics_workflow: dict[str, Any]) -> None:
+        """Overlapping runs must queue behind one another instead of cancelling.
+
+        Each run reads the previous checkpoint out of the committed SVG and writes the next one back. A cancelled run
+        can leave the automation branch a week behind, and the run that replaced it would then record a non-contiguous
+        week and drop its star delta.
+        """
+        assert metrics_workflow["concurrency"] == {"group": "weekly-metrics-svg", "cancel-in-progress": False}
+
+    def test_job_cannot_run_unbounded(self, metrics_workflow: dict[str, Any]) -> None:
+        """Job must carry an explicit timeout rather than inherit the six-hour default.
+
+        Both upstream APIs are unauthenticated reads with their own 30-second timeouts, so a run that is still alive
+        minutes later is stuck, not slow, and holds the serialized queue behind it.
+        """
+        assert metrics_workflow["jobs"]["update-metrics"]["timeout-minutes"] == 5
+
+    @pytest.mark.parametrize(
+        ("step_name", "action"),
+        [
+            pytest.param("📥 Checkout the repository", "actions/checkout", id="checkout"),
+            pytest.param("🐍 Install uv and set Python", "astral-sh/setup-uv", id="setup-uv"),
+            pytest.param(
+                "📨 Create or update metrics pull request",
+                "peter-evans/create-pull-request",
+                id="create-pull-request",
+            ),
+        ],
+    )
+    def test_third_party_actions_are_pinned_to_commit_shas(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        step_name: str,
+        action: str,
+    ) -> None:
+        """Every third-party action must be pinned to an immutable commit SHA.
+
+        This job holds write access to the repository, so a tag pin would let an upstream retag hand that access to code
+        nobody here reviewed.
+        """
+        assert sha_pinned_action(metrics_steps[step_name]["uses"]) == action
+
+    def test_checkout_reads_the_default_branch(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
+        """Checkout must read the default branch rather than the automation branch.
+
+        A scheduled run checks out whatever ref it is given. Taking the automation branch would stack each week's
+        generated SVG on the previous pull request instead of on the merged history.
+        """
+        assert metrics_steps["📥 Checkout the repository"]["with"]["ref"] == (
+            "${{ github.event.repository.default_branch }}"
+        )
+
     def test_open_pr_history_is_restored_from_fixed_branch(
         self,
         metrics_steps: dict[str, dict[str, Any]],
     ) -> None:
         """Open automation pull requests must retain their unmerged SVG checkpoints."""
-        restore = metrics_steps["📚 Restore unmerged metrics history"]
+        restore = metrics_steps[RESTORE_STEP]
 
         assert restore["env"]["METRICS_BRANCH"] == "automation/update-weekly-metrics"
         assert '--head "$METRICS_BRANCH"' in restore["run"]
-        assert "git show FETCH_HEAD:docs/assets/weekly-metrics.svg > docs/assets/weekly-metrics.svg" in restore["run"]
+        assert "FETCH_HEAD:docs/assets/weekly-metrics.svg" in restore["run"]
+
+    def test_restored_svg_lands_through_a_temporary_file(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
+        """Restore must never redirect `git show` straight onto the tracked SVG.
+
+        The shell truncates a redirect target before the command on its left runs. Writing onto the tracked path would
+        therefore empty the checked-in SVG whenever the metrics branch no longer carries it, and the generator would
+        then fail to parse its own checkpoint metadata.
+        """
+        run = metrics_steps[RESTORE_STEP]["run"]
+
+        assert "> docs/assets/weekly-metrics.svg.tmp" in run
+        assert "mv docs/assets/weekly-metrics.svg.tmp docs/assets/weekly-metrics.svg" in run
 
     def test_pull_request_updates_only_metrics_svg(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
         """Pull-request action must write only generated SVG on stable automation branch."""
         create_pull_request = metrics_steps["📨 Create or update metrics pull request"]
 
-        assert create_pull_request["uses"].startswith("peter-evans/create-pull-request@")
         assert create_pull_request["with"]["add-paths"] == "docs/assets/weekly-metrics.svg"
         assert create_pull_request["with"]["base"] == "${{ github.event.repository.default_branch }}"
         assert create_pull_request["with"]["branch"] == "automation/update-weekly-metrics"
         assert create_pull_request["with"]["delete-branch"] is True
+
+
+@requires_bash
+class TestRestoreUnmergedHistoryStep:
+    """Tests that run the restore step's own shell against stubbed `gh` and `git`.
+
+    The step is the only part of this workflow that is shell rather than Python, so nothing else in the suite covers
+    what it actually does to the working tree. These tests execute the `run` block straight out of the parsed workflow,
+    which keeps them honest about the shipped shell.
+    """
+
+    def test_open_pull_request_hands_back_its_unmerged_svg(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """An open automation pull request must hand its unmerged SVG to the next run.
+
+        The generator reads its previous checkpoint out of the SVG it is about to overwrite. Starting from the merged
+        copy while a pull request is open would silently drop every week recorded in that pull request and re-baseline
+        the star delta.
+        """
+        workspace, stubs = restore_sandbox
+
+        result = run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, restore_env(workspace, open_prs=1))
+
+        assert result.returncode == 0, result.stderr
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == UNMERGED_SVG
+
+    def test_failed_restore_leaves_the_checked_in_svg_intact(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A metrics branch no longer carrying the SVG must not empty the checked-in one.
+
+        This is the regression behind the temporary-file staging: a redirect straight onto the tracked
+        path truncates it before `git show` reports the missing path, and the generator would then read
+        an empty file as a corrupt checkpoint.
+        """
+        workspace, stubs = restore_sandbox
+
+        result = run_step(
+            metrics_steps[RESTORE_STEP]["run"],
+            workspace,
+            stubs,
+            restore_env(workspace, open_prs=1, git_show_fails=True),
+        )
+
+        assert result.returncode != 0
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
+
+    def test_failed_restore_reports_a_workflow_error_annotation(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A failed restore must name itself in the run summary.
+
+        A bare non-zero exit from a compound shell block points at the step, not at the command inside it that failed,
+        which is what makes a scheduled failure expensive to diagnose weeks later.
+        """
+        workspace, stubs = restore_sandbox
+
+        result = run_step(
+            metrics_steps[RESTORE_STEP]["run"],
+            workspace,
+            stubs,
+            restore_env(workspace, open_prs=1, git_show_fails=True),
+        )
+
+        assert "::error::" in result.stdout
+
+    def test_absent_pull_request_leaves_the_working_tree_alone(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """With no open automation pull request the step must fetch nothing and rewrite nothing.
+
+        Once the previous pull request merges, the checked-out default branch already holds the newest checkpoint;
+        fetching the stale automation branch over it would replay an older week.
+        """
+        workspace, stubs = restore_sandbox
+
+        result = run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, restore_env(workspace, open_prs=0))
+
+        assert "git fetch" not in (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
+        assert result.returncode == 0, result.stderr
+
+    def test_lookup_is_scoped_to_the_automation_branch(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        restore_sandbox: tuple[Path, Path],
+    ) -> None:
+        """The pull-request lookup must name both the automation head and the default base.
+
+        An unscoped `gh pr list` counts unrelated open pull requests, which would restore the stale automation branch
+        over the merged history on nearly every run.
+        """
+        workspace, stubs = restore_sandbox
+
+        run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, restore_env(workspace, open_prs=1))
+
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert "--head automation/update-weekly-metrics" in logged
+        assert "--base develop" in logged
