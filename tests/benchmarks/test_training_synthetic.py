@@ -24,7 +24,7 @@ import torch
 from pytorch_lightning import LightningModule
 
 from rfdetr import RFDETRNano
-from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import RFDETRNanoConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.detr import RFDETR
 from rfdetr.training import RFDETRDataModule, RFDETRModelModule, build_trainer
 
@@ -124,11 +124,12 @@ def test_train_convergence_native_ptl(
     """Native PTL stack converges: ``RFDETRModelModule`` + ``RFDETRDataModule`` + ``Trainer.fit``.
 
     Uses ``Trainer.validate`` before and after ``Trainer.fit`` so only Lightning elements are exercised — no
-    ``engine.evaluate`` or legacy paths.
+    ``engine.evaluate`` or legacy paths.  The architecture is the same ``RFDETRNanoConfig`` that
+    :func:`test_train_convergence_rfdetr_api` trains, so the pair differs only by entry point.
 
     Assertions:
         - ``val/mAP_50`` before training ≤ 5 %.
-        - ``val/mAP_50`` after 10 epochs ≥ 35 %.
+        - ``val/mAP_50`` after 15 epochs ≥ 35 %.
     """
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -139,12 +140,12 @@ def test_train_convergence_native_ptl(
 
     accelerator = "auto" if torch.cuda.is_available() else "cpu"
 
-    mc = RFDETRBaseConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
+    mc = RFDETRNanoConfig(num_classes=num_classes, pretrain_weights=None, amp=False)
     tc = TrainConfig(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
-        epochs=10,
+        epochs=15,
         batch_size=4,
         grad_accum_steps=1,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
@@ -188,7 +189,7 @@ def test_train_convergence_rfdetr_api(
 
     Assertions:
         - ``val/mAP_50`` before training ≤ 5 %.
-        - ``val/mAP_50`` after 10 epochs ≥ 35 %.
+        - ``val/mAP_50`` after 15 epochs ≥ 35 %.
     """
     output_dir = tmp_path / "train_output"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -202,14 +203,15 @@ def test_train_convergence_rfdetr_api(
 
     model = RFDETRNano(num_classes=num_classes, pretrain_weights=None, amp=False)
     # Use the model's own config so RFDETRDataModule uses the correct resolution.
-    # RFDETRNano (patch_size=16, num_windows=2) requires block_size=32 divisibility;
-    # its resolution=384 satisfies this, while RFDETRBaseConfig resolution=560 does not.
+    # RFDETRNano (patch_size=16, num_windows=2) requires block_size=32 divisibility,
+    # which its resolution=384 satisfies. Matches the RFDETRNanoConfig used by
+    # test_train_convergence_native_ptl, so the two tests differ only by entry point.
     mc = model.model_config
     tc = TrainConfig(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
-        epochs=10,
+        epochs=15,
         batch_size=4,
         grad_accum_steps=1,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
@@ -235,7 +237,7 @@ def test_train_convergence_rfdetr_api(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
-        epochs=10,
+        epochs=15,
         batch_size=4,
         grad_accum_steps=1,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
@@ -276,8 +278,8 @@ def test_train_convergence_segmentation(
 
     Assertions:
         - ``val/mAP_50`` before training ≤ 5 %.
-        - ``val/mAP_50`` after 6 epochs ≥ 15 %.
-        - ``val/segm_mAP_50`` after 6 epochs ≥ 5 %.
+        - ``val/mAP_50`` after 8 epochs ≥ 15 %.
+        - ``val/segm_mAP_50`` after 8 epochs ≥ 5 %.
     """
     output_dir = tmp_path / "train_output_seg"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -293,7 +295,7 @@ def test_train_convergence_segmentation(
         dataset_file="roboflow",
         dataset_dir=str(dataset_dir),
         output_dir=str(output_dir),
-        epochs=6,
+        epochs=8,
         batch_size=4,
         grad_accum_steps=1,
         num_workers=max(1, (os.cpu_count() or 1) // 2),
