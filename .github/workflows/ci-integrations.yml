@@ -425,7 +425,18 @@ jobs:
       - name: 🧪 Run ONNX Runtime session tests
         run: |
           uv run --no-sync pytest tests/export/test_onnx_inference.py -n 1 \
+            --cov=rfdetr --cov-report=xml \
             --timeout=300 --durations=20
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: "coverage.xml"
+          flags: integration,onnxruntime,${{ runner.os }},py${{ matrix.python-version }}
+          env_vars: OS,PYTHON
+          name: codecov-umbrella
+          fail_ci_if_error: false
 
       - name: Minimize uv cache
         continue-on-error: true
