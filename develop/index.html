@@ -1492,9 +1492,25 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
   
-    <li class="md-nav__item">
-      <a href="learn/export/" class="md-nav__link">
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
         
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1508,7 +1524,79 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Export Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="learn/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="learn/export-blueprint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exporter Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -2948,7 +3036,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><strong>How does RF-DETR compare to YOLOv11?</strong> RF-DETR-L achieves 56.5 AP50:95 on COCO at 6.8 ms latency on an NVIDIA T4, outperforming YOLOv11x (50.9 AP) at lower latency. The DINOv2 backbone gives RF-DETR stronger performance on domain-shift benchmarks such as RF100-VL.</p>
 <p><strong>What GPU is required to train RF-DETR?</strong> A CUDA-capable GPU with at least 8 GB VRAM (e.g., NVIDIA RTX 3060, T4, A10) is recommended for fine-tuning. Smaller models (RF-DETR-N and RF-DETR-S) can fit in 6 GB VRAM with reduced batch size. CPU inference is supported for evaluation.</p>
 <p><strong>Which dataset formats does RF-DETR support?</strong> RF-DETR supports COCO JSON and YOLO-format datasets (with <code>dataset_file: "yolo"</code>). Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.</p>
-<p><strong>Can RF-DETR run in real time?</strong> Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX and TFLite exports are available for edge deployment.</p>
+<p><strong>Can RF-DETR run in real time?</strong> Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX, TFLite, TensorRT, ExecuTorch, CoreML, and OpenVINO exports are available for edge deployment.</p>
 <p><strong>What is the difference between RF-DETR detection and segmentation models?</strong> Detection models (e.g., <code>RFDETRLarge</code>) output bounding boxes. Segmentation models (e.g., <code>RFDETRSegLarge</code>) additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.</p>
 <p><strong>Does RF-DETR support keypoint detection?</strong> RF-DETR Keypoint (Preview) detects 17 body keypoints per person on COCO, achieving 71.8 AP50:95 at 9.7 ms on NVIDIA T4. It is available in the <code>rfdetr</code> package as <code>RFDETRKeypointPreview</code>. See <a href="learn/run/keypoints/">Run Keypoint Models</a> for usage.</p>
 <p><strong>Is RF-DETR open source?</strong> Yes. Core models (Nano through Large) and all training/inference code are released under the Apache 2.0 license. XLarge and 2XLarge models require the <code>rfdetr[plus]</code> package (PML 1.0 license).</p>
@@ -2978,7 +3066,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="August 12, 2026 14:13:29 UTC">2026-08-12 14:13:29</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 14, 2026 09:02:20 UTC">2026-09-14 09:02:20</span>
   </span>
 
     

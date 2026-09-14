@@ -18,7 +18,7 @@
         <link rel="prev" href="../train/loggers/">
       
       
-        <link rel="next" href="../deploy/">
+        <link rel="next" href="../export-blueprint/">
       
       
         
@@ -31,7 +31,7 @@
   
     
       
-        <title>Export Model - RF-DETR</title>
+        <title>Overview - RF-DETR</title>
       
     
   
@@ -86,7 +86,7 @@
   
   
   
-  <meta property="og:title" content="Export Model - RF-DETR">
+  <meta property="og:title" content="Overview - RF-DETR">
   <meta property="og:description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/learn/export/">
@@ -97,7 +97,7 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="Export Model - RF-DETR">
+  <meta name="twitter:title" content="Overview - RF-DETR">
   <meta name="twitter:description" content="Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
@@ -105,13 +105,13 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-10T19:30:47">
+  <meta property="article:modified_time" content="2026-09-14T09:02:20">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "Export Model",
+    "headline": "Overview",
     "description": "Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.",
     "url": "https://rfdetr.roboflow.com/develop/learn/export/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-10T19:30:47",
+    "dateModified": "2026-09-14T09:02:20",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -146,13 +146,13 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "How to",
-        "item": "https://rfdetr.roboflow.com/develop"
+        "name": "Export Model",
+        "item": "https://rfdetr.roboflow.com/develop/learn/export/"
       },
       {
         "@type": "ListItem",
         "position": 3,
-        "name": "Export Model",
+        "name": "Overview",
         "item": "https://rfdetr.roboflow.com/develop/learn/export/"
       }
       
@@ -250,7 +250,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
             </a>
             
-              Export Model
+              Overview
             
           </span>
         </div>
@@ -1236,6 +1236,58 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
   
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export Model
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Export Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
     <li class="md-nav__item md-nav__item--active">
       
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
@@ -1251,7 +1303,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   <span class="md-ellipsis">
     
   
-    Export Model
+    Overview
   
 
     
@@ -1269,7 +1321,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   <span class="md-ellipsis">
     
   
-    Export Model
+    Overview
   
 
     
@@ -1821,6 +1873,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-export-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Export Works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#using-the-exported-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1862,6 +1925,42 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </ul>
   
 </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../export-blueprint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exporter Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
       
     </li>
   
@@ -3455,6 +3554,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-export-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Export Works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#using-the-exported-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3525,6 +3635,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Custom input resolutions supported (must be divisible by <code>patch_size × num_windows</code>, which varies by model variant)</li>
 <li>Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)</li>
 <li>Export directly to native CoreML (<code>.mlpackage</code>) for Xcode / Apple-platform deployment — see <a href="#native-coreml-export-mlpackage">Native CoreML Export</a></li>
+<li>Adding a format is an in-tree contribution — see <a href="../export-blueprint/">Exporter Blueprint</a></li>
 </ul>
 </div>
 <p>RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.</p>
@@ -3637,7 +3748,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>dynamic_batch</code></td>
 <td><code>False</code></td>
-<td>If <code>True</code>, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.</td>
+<td>If <code>True</code>, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime. Only supported for <code>format="onnx"</code> and <code>format="tflite"</code> — TensorRT, ExecuTorch, CoreML and OpenVINO bake a fixed batch size.</td>
 </tr>
 <tr>
 <td><code>patch_size</code></td>
@@ -3773,6 +3884,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span></code></pre></div>
 <p>This exports <code>output/inference_model.onnx</code> first and then produces <code>output/inference_model_fp16.trt</code> (the <code>_fp16</code>/<code>_fp32</code> suffix always reflects the precision actually built — see <code>fp16</code> in <a href="#export-parameters">Export Parameters</a> — unless <code>output_name</code> is set).</p>
 <div class="admonition note">
+<p class="admonition-title"><code>dynamic_batch=True</code> is not supported</p>
+<p>The engine is compiled without a TensorRT optimization profile, so it accepts only the batch size baked into the intermediate ONNX graph. Export one engine per batch size instead.</p>
+</div>
+<div class="admonition note">
 <p class="admonition-title">Who consumes the <code>.trt</code> engine?</p>
 <p>The <code>.trt</code> engine produced by <code>format="tensorrt"</code> is a standalone artifact for raw TensorRT deployment. It is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases.</p>
 <p>If you plan to run inference with <a href="#run-inference-with-inference-models"><code>inference-models</code></a> (the recommended path below), do <strong>not</strong> pass <code>format="tensorrt"</code> — <code>inference-models</code> builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let <code>inference-models</code> handle the backend.</p>
@@ -3781,14 +3896,15 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Use this only to convert an <strong>already-exported</strong> <code>.onnx</code> file without re-running the model export. To go straight from a checkpoint to an engine, use <a href="#export-directly-to-tensorrt"><code>format="tensorrt"</code></a> above.</p>
 <div class="admonition warning">
 <p class="admonition-title">Internal API</p>
-<p><code>rfdetr.export._tensorrt</code> is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. <code>RFDETR.export(format="tensorrt")</code> is the supported entry point.</p>
+<p><code>rfdetr.export._tensorrt.exporter</code> is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. <code>RFDETR.export(format="tensorrt")</code> is the supported entry point; use the class below only when you need to convert an already-exported <code>.onnx</code> file.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_engine</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorRTConfig</span><span class="p">,</span> <span class="n">TensorRTExporter</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">,</span> <span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
 </span></code></pre></div>
-<p><code>build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file. Pass <code>output_name="my-engine"</code> to write <code>output/my-engine.trt</code> verbatim instead.</p>
+<p><code>TensorRTExporter.build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file. Precision and progress logging come from the <code>TensorRTConfig</code> the exporter is constructed with — pass <code>TensorRTConfig(output_name="my-engine")</code> to write <code>output/my-engine.trt</code> verbatim instead.</p>
 <h2 id="run-inference-with-inference-models">Run Inference with <code>inference-models</code><a class="headerlink" href="#run-inference-with-inference-models" title="Permanent link">&para;</a></h2>
 <p><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.</p>
 <h3 id="installation_1">Installation<a class="headerlink" href="#installation_1" title="Permanent link">&para;</a></h3>
@@ -4259,6 +4375,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-36-20"><a id="__codelineno-36-20" name="__codelineno-36-20" href="#__codelineno-36-20"></a><span class="n">outputs</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">mlmodel</span><span class="o">.</span><span class="n">predict</span><span class="p">({</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)})</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
 </span><span id="__span-36-21"><a id="__codelineno-36-21" name="__codelineno-36-21" href="#__codelineno-36-21"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
 </span></code></pre></div>
+<h2 id="how-export-works">How Export Works<a class="headerlink" href="#how-export-works" title="Permanent link">&para;</a></h2>
+<p>Every format is written by an <code>Exporter</code> class built from that format's own configuration, and <code>model.export()</code> is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent <code>ExportGraph</code>, and hands the graph to the exporter. The signature and return value on this page are the supported surface; the classes behind it are internal.</p>
+<p>If you want to add a format, or you are reading the export code, see <a href="../export-blueprint/">Exporter Blueprint</a> for the contract each format implements and the steps a new one takes.</p>
 <h2 id="using-the-exported-model">Using the Exported Model<a class="headerlink" href="#using-the-exported-model" title="Permanent link">&para;</a></h2>
 <p>Once exported, you can use the ONNX model with various inference frameworks:</p>
 <h3 id="onnx-runtime">ONNX Runtime<a class="headerlink" href="#onnx-runtime" title="Permanent link">&para;</a></h3>
@@ -4358,6 +4477,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p>Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO</p>
 </li>
+<li>
+<p>Read the <a href="../export-blueprint/">Exporter Blueprint</a> to add a new export format</p>
+</li>
 </ul>
 
 
@@ -4379,7 +4501,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 10, 2026 19:30:47 UTC">2026-09-10 19:30:47</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 14, 2026 09:02:20 UTC">2026-09-14 09:02:20</span>
   </span>
 
     

@@ -1223,9 +1223,25 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
   
-    <li class="md-nav__item">
-      <a href="../learn/export/" class="md-nav__link">
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
         
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1239,7 +1255,79 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Export Model
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/export-blueprint/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exporter Blueprint
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -2406,6 +2494,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
 <li>
 <p>Renamed the optional installation extra from <code>webdataset</code> to <code>data</code>, without a compatibility alias. Use <code>pip install "rfdetr[data]"</code>; <code>dataset_file="webdataset"</code> is unchanged.</p>
+</li>
+<li>
+<p>Restructured the export internals into one <code>Exporter</code> class per format, each built from its own configuration dataclass and reached through a registry that maps a format name to the module defining it. <code>RFDETR.export()</code> is unchanged — same signature, same accepted formats, same return value — but the modules behind it moved: <code>rfdetr.export.main</code> (including <code>main()</code> and <code>make_infer_image</code>, now <code>rfdetr.export.prepare.make_infer_image</code>) and <code>rfdetr.export.protocols.ExporterProtocol</code> (now <code>rfdetr.export.base.Exporter</code>) are removed, the per-format <code>export_onnx</code>/<code>export_openvino</code>/<code>export_coreml</code>/<code>export_executorch</code>/<code>export_tflite</code> functions are replaced by <code>OnnxExporter</code>/<code>OpenVINOExporter</code>/<code>CoreMLExporter</code>/<code>ExecuTorchExporter</code>/<code>TFLiteExporter</code>, <code>rfdetr.export._tensorrt.build_engine</code> becomes <code>TensorRTExporter.build_engine</code> in <code>rfdetr.export._tensorrt.exporter</code>, and <code>rfdetr.export.benchmark.TRTInference</code> moves to <code>rfdetr.export._tensorrt.inference</code>. Every removed path except <code>rfdetr.export.main</code> and <code>rfdetr.export.protocols</code> already carried a leading underscore and no stability guarantee. The format-independent graph preparation every format shared now runs once in <code>rfdetr.export.prepare</code>, and requesting a capability a format lacks — <code>dynamic_batch</code> on CoreML, ExecuTorch or OpenVINO — is refused from the registry's own data before that format's optional dependency is imported, rather than after paying for it. The contract each format implements, and the steps a new one takes, are documented in the new Exporter Blueprint page under Export Model in the docs.</p>
+</li>
+<li>
+<p><code>RFDETR.export(format="tensorrt", backbone_only=True, output_name=...)</code> now writes <code>{output_name}-backbone.trt</code> instead of <code>{output_name}.trt</code>, matching every other format and what <code>export()</code>'s own documentation already described. Without the marker a backbone engine silently overwrote a full-detector engine exported under the same name; scripts that rebuilt the engine path from <code>output_name</code> need the suffix added.</p>
 </li>
 </ul>
 <hr />
