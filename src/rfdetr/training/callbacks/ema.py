@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING, Any, cast
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
 from torch import Tensor
+from torch.optim import Optimizer
 from torch.optim.swa_utils import AveragedModel
+from torch.utils.hooks import RemovableHandle
 
 if TYPE_CHECKING:
     from rfdetr.training.module_model import RFDETRModelModule
@@ -62,6 +64,7 @@ class RFDETREMACallback(Callback):
         self._latest_update_step = 0
         self._swapped_state_dict: dict[str, Any] | None = None
         self._pending_average_state_dict: dict[str, Any] | None = None
+        self._xla_optimizer_hook: RemovableHandle | None = None
 
     # Retained as the per-tensor fallback for non-floating-point groups (see
     # _multi_avg_fn) — no longer the registered AveragedModel avg_fn.
@@ -113,21 +116,22 @@ class RFDETREMACallback(Callback):
         """Update a (device, dtype) group of EMA tensors in-place via foreach kernels.
 
         ``AveragedModel.update_parameters`` routes to this grouped path when ``multi_avg_fn`` is set, replacing the
-        per-tensor ``avg_fn`` loop that performed one ``num_averaged.item()`` GPU→CPU sync *per tensor* per step with a
-        single sync per group. The float path applies ``ema * decay + model * (1 - decay)``, numerically equivalent
-        within floating-point tolerance to ``_avg_fn`` (``torch._foreach_add_(..., alpha=)`` may lower to an FMA
-        instruction, so the result can differ from separate mul-then-add by ~1 ULP); non-floating-point groups (e.g.
-        integer buffers when averaging buffers) fall back to the per-tensor formula to preserve its cast semantics.
+        per-tensor ``avg_fn`` loop that performed one ``num_averaged.item()`` device→CPU sync *per tensor* per step with
+        a single sync per eager-device group and a host counter on XLA. The float path applies
+        ``ema * decay + model * (1 - decay)``, numerically equivalent within floating-point tolerance to ``_avg_fn``
+        (``torch._foreach_add_(..., alpha=)`` may lower to an FMA instruction, so the result can differ from separate
+        mul-then-add by ~1 ULP); non-floating-point groups (e.g. integer buffers when averaging buffers) fall back to
+        the per-tensor formula to preserve its cast semantics.
 
         Args:
             averaged_params: EMA tensors of one device/dtype group, updated in-place.
             model_params: Matching live model tensors.
             num_averaged: Number of models averaged so far (0-indexed); passed by ``AveragedModel`` as a 0-dim tensor.
         """
-        num_averaged_value = int(num_averaged.item()) if isinstance(num_averaged, Tensor) else int(num_averaged)
-        effective_decay = self._effective_decay(num_averaged_value)
         if not averaged_params:
             return
+        num_averaged_value = self._num_averaged_value(num_averaged, averaged_params[0].device.type)
+        effective_decay = self._effective_decay(num_averaged_value)
         if not averaged_params[0].is_floating_point():
             for averaged_param, model_param in zip(averaged_params, model_params):
                 averaged_param.copy_(self._avg_fn(averaged_param, model_param, num_averaged_value))
@@ -137,6 +141,25 @@ class RFDETREMACallback(Callback):
         # Accepted risk — AveragedModel pairs matching tensors, so this cannot occur today.
         torch._foreach_mul_(averaged_params, effective_decay)
         torch._foreach_add_(averaged_params, model_params, alpha=1.0 - effective_decay)
+
+    def _num_averaged_value(self, num_averaged: Tensor | int, device_type: str) -> int:
+        """Read the EMA counter without materializing a lazy XLA scalar.
+
+        Args:
+            num_averaged: Per-device counter supplied by ``AveragedModel``.
+            device_type: Device type of the parameter group being averaged.
+
+        Returns:
+            Number of completed EMA updates.
+
+        Raises:
+            RuntimeError: If XLA averaging starts before the averaged model exists.
+        """
+        if device_type == "xla":
+            if self._average_model is None:
+                raise RuntimeError("XLA EMA averaging started before the averaged model was initialized.")
+            return int(self._average_model.n_averaged.item())
+        return int(num_averaged.item()) if isinstance(num_averaged, Tensor) else int(num_averaged)
 
     def _restore_pending_average_state(self, pl_module: LightningModule) -> None:
         """Restore a callback or legacy EMA state after constructing the averaged model.
@@ -251,9 +274,12 @@ class RFDETREMACallback(Callback):
         if not isinstance(device, torch.device):
             raise TypeError(f"Expected a torch.device from the Lightning module, got {type(device).__name__}.")
 
+        # AveragedModel evaluates n_averaged in Python. Keep that control-flow
+        # counter eager while its copied parameters remain on the XLA device.
+        averaged_model_device = None if device.type == "xla" else device
         self._average_model = AveragedModel(
             model=pl_module,
-            device=device,
+            device=averaged_model_device,
             use_buffers=self._use_buffers,
             multi_avg_fn=self._multi_avg_fn,
         )
@@ -282,6 +308,58 @@ class RFDETREMACallback(Callback):
         if trainer.global_step < self._latest_update_step:
             self._latest_update_step = trainer.global_step
         self._restore_pending_average_state(pl_module)
+        if pl_module.device.type == "xla":
+            self._register_xla_optimizer_hook(trainer, pl_module)
+
+    def _register_xla_optimizer_hook(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Queue EMA inside the optimizer step, before Lightning's XLA step marker.
+
+        Registers on ``trainer.optimizers[0]``, the raw ``torch.optim.Optimizer`` that both the automatic-
+        optimization path and ``LightningOptimizer.step()`` (the manual-optimization keypoint path) ultimately
+        call ``.step()`` on, so the hook fires for either lifecycle.
+
+        Args:
+            trainer: The Lightning Trainer instance; supplies the raw optimizer and the current step count.
+            pl_module: The ``RFDETRModelModule`` being trained.
+        """
+        if self._xla_optimizer_hook is not None:
+            self._xla_optimizer_hook.remove()
+
+        optimizer = trainer.optimizers[0]
+
+        def update_ema(
+            optimizer: Optimizer,
+            args: tuple[Any, ...],
+            kwargs: dict[str, Any],
+        ) -> None:
+            """Optimizer step-post-hook callback: update EMA for the step that just completed.
+
+            Args:
+                optimizer: The optimizer instance the hook fired on (unused; closed over instead).
+                args: Positional arguments passed to the wrapped ``step`` call (unused).
+                kwargs: Keyword arguments passed to the wrapped ``step`` call (unused).
+            """
+            del optimizer, args, kwargs
+            self._update_ema_for_step(pl_module, trainer.global_step + 1)
+
+        self._xla_optimizer_hook = optimizer.register_step_post_hook(update_ema)
+
+    def _update_ema_for_step(self, pl_module: LightningModule, global_step: int) -> None:
+        """Update EMA once for an eligible optimizer step.
+
+        Args:
+            pl_module: The ``RFDETRModelModule`` being trained.
+            global_step: Optimizer step count to evaluate for eligibility, already resolved to its post-step value
+                by the caller (eager accelerators pass ``trainer.global_step`` directly; the XLA hook passes
+                ``trainer.global_step + 1`` since it runs before Lightning's own counter advances).
+        """
+        if self._average_model is None or global_step <= self._latest_update_step:
+            return
+
+        self._latest_update_step = global_step
+        should_update_step = global_step % self._update_interval_steps == 0
+        if should_update_step and self.should_update(step_idx=global_step - 1):
+            self._average_model.update_parameters(pl_module)
 
     def should_update(
         self,
@@ -291,7 +369,7 @@ class RFDETREMACallback(Callback):
         """Return whether either trigger index is present.
 
         ``epoch_idx`` remains part of the callback interface for backwards compatibility and still counts as a
-        trigger when supplied. The callback now invokes this method only from ``on_train_batch_end`` with ``step_idx``;
+        trigger when supplied. The callback invokes this method from its optimizer-step lifecycle with ``step_idx``;
         it no longer dispatches an epoch-end EMA update, which previously double-counted the last step of each epoch
         and bypassed ``update_interval_steps``.
 
@@ -323,17 +401,10 @@ class RFDETREMACallback(Callback):
         batch: Any,
         batch_idx: int,
     ) -> None:
-        """Update EMA after optimizer steps."""
-        if self._average_model is None:
+        """Update EMA after optimizer steps on eager accelerators."""
+        if pl_module.device.type == "xla":
             return
-        step_idx = trainer.global_step - 1
-        if trainer.global_step <= self._latest_update_step:
-            return
-
-        self._latest_update_step = trainer.global_step
-        should_update_step = trainer.global_step % self._update_interval_steps == 0
-        if should_update_step and self.should_update(step_idx=step_idx):
-            self._average_model.update_parameters(pl_module)
+        self._update_ema_for_step(pl_module, trainer.global_step)
 
     def on_test_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Evaluate tests using averaged EMA weights unless the swap is suppressed."""
@@ -352,6 +423,19 @@ class RFDETREMACallback(Callback):
         if self._average_model is not None:
             self._load_ema_weights(pl_module, self._average_model.module.state_dict())
         self._swapped_state_dict = None
+
+    def teardown(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
+        """Remove the XLA optimizer hook when the fit lifecycle ends.
+
+        Args:
+            trainer: The Lightning Trainer instance (unused; the hook handle already closes over what it needs).
+            pl_module: The ``RFDETRModelModule`` being trained (unused).
+            stage: The lifecycle stage being torn down, e.g. ``"fit"`` (unused).
+        """
+        del trainer, pl_module, stage
+        if self._xla_optimizer_hook is not None:
+            self._xla_optimizer_hook.remove()
+            self._xla_optimizer_hook = None
 
     def state_dict(self) -> dict[str, Any]:
         """Return callback state for checkpointing."""
