@@ -99,30 +99,28 @@ def _run_step(run: str, workspace: Path, stubs: Path, stub_env: dict[str, str]) 
     return subprocess.run(["bash", str(script)], cwd=workspace, env=env, text=True, capture_output=True, check=False)
 
 
-def _restore_env(workspace: Path, open_prs: int, git_show_fails: bool = False) -> dict[str, str]:
+def _restore_env(workspace: Path, branch_exists: bool, git_show_fails: bool = False) -> dict[str, str]:
     """Build the environment a restore-step run sees, including the stub controls.
 
     Args:
         workspace: Directory the step runs in; the stub command log is written beside the step script.
-        open_prs: Number of open automation pull requests the `gh` stub reports.
+        branch_exists: Whether the `git` stub's `fetch` reports the automation branch as found.
         git_show_fails: Whether the `git` stub rejects `git show` the way a missing path does.
 
     Returns:
         Environment overlay handed to `_run_step`.
 
     Examples:
-        >>> _restore_env(Path("workspace"), open_prs=0)["STUB_OPEN_PR_COUNT"]
-        '0'
+        >>> _restore_env(Path("workspace"), branch_exists=False)["STUB_FETCH_FAILS"]
+        '1'
     """
     env = {
-        "GITHUB_REPOSITORY": "roboflow/rf-detr",
-        "DEFAULT_BRANCH": "develop",
         "METRICS_BRANCH": "automation/update-weekly-metrics",
-        "GH_TOKEN": "stub-token",
         "STUB_LOG": str(workspace / STUB_LOG_NAME),
-        "STUB_OPEN_PR_COUNT": str(open_prs),
         "STUB_UNMERGED_SVG": UNMERGED_SVG,
     }
+    if not branch_exists:
+        env["STUB_FETCH_FAILS"] = "1"
     if git_show_fails:
         env["STUB_GIT_SHOW_FAILS"] = "1"
     return env
@@ -130,10 +128,11 @@ def _restore_env(workspace: Path, open_prs: int, git_show_fails: bool = False) -
 
 @pytest.fixture
 def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
-    """Workspace holding a checked-in SVG, plus stubs recording every `gh` and `git` call.
+    """Workspace holding a checked-in SVG, plus a stub recording every `git` call.
 
-    The `git` stub serves `git show` from `STUB_UNMERGED_SVG` and fails like a missing path when
-    `STUB_GIT_SHOW_FAILS` is set; the `gh` stub reports `STUB_OPEN_PR_COUNT` open pull requests.
+    The stub's `fetch` reports the automation branch missing when `STUB_FETCH_FAILS` is set, the way a
+    branch that was never pushed (or was deleted after merge) does; its `show` serves `STUB_UNMERGED_SVG`
+    and fails like a missing path when `STUB_GIT_SHOW_FAILS` is set.
 
     Examples:
         >>> restore_sandbox  # doctest: +SKIP
@@ -145,12 +144,19 @@ def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
 
     stubs = tmp_path / "stubs"
     stubs.mkdir()
-    _write_stub(stubs, "gh", 'echo "gh $*" >> "$STUB_LOG"\necho "$STUB_OPEN_PR_COUNT"')
     _write_stub(
         stubs,
         "git",
         'echo "git $*" >> "$STUB_LOG"\n'
         "case $1 in\n"
+        "  fetch)\n"
+        '    if [ -n "${STUB_FETCH_FAILS:-}" ]; then\n'
+        '      echo "fatal: couldn'
+        "'"
+        't find remote ref $3" >&2\n'
+        "      exit 128\n"
+        "    fi\n"
+        "    ;;\n"
         "  show)\n"
         '    if [ -n "${STUB_GIT_SHOW_FAILS:-}" ]; then\n'
         '      echo "fatal: path does not exist in FETCH_HEAD" >&2\n'
@@ -258,15 +264,19 @@ class TestUpdateMetricsWorkflow:
             "${{ github.event.repository.default_branch }}"
         )
 
-    def test_open_pr_history_is_restored_from_fixed_branch(
+    def test_metrics_branch_history_is_restored_from_fixed_branch(
         self,
         metrics_steps: dict[str, dict[str, Any]],
     ) -> None:
-        """Open automation pull requests must retain their unmerged SVG checkpoints."""
+        """An existing automation branch must hand back its unmerged SVG checkpoints.
+
+        Restoration is keyed on the branch existing, not on whether it currently has an open pull request — a pull
+        request can go stale or be closed without the branch being deleted.
+        """
         restore = metrics_steps[RESTORE_STEP]
 
         assert restore["env"]["METRICS_BRANCH"] == "automation/update-weekly-metrics"
-        assert '--head "$METRICS_BRANCH"' in restore["run"]
+        assert 'git fetch --no-tags --depth=1 origin "$METRICS_BRANCH"' in restore["run"]
         assert "FETCH_HEAD:docs/assets/weekly-metrics.svg" in restore["run"]
 
     def test_restored_svg_lands_through_a_temporary_file(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
@@ -293,27 +303,29 @@ class TestUpdateMetricsWorkflow:
 
 @requires_bash
 class TestRestoreUnmergedHistoryStep:
-    """Tests that run the restore step's own shell against stubbed `gh` and `git`.
+    """Tests that run the restore step's own shell against a stubbed `git`.
 
     The step is the only part of this workflow that is shell rather than Python, so nothing else in the suite covers
     what it actually does to the working tree. These tests execute the `run` block straight out of the parsed workflow,
     which keeps them honest about the shipped shell.
     """
 
-    def test_open_pull_request_hands_back_its_unmerged_svg(
+    def test_existing_branch_hands_back_its_unmerged_svg(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         restore_sandbox: tuple[Path, Path],
     ) -> None:
-        """An open automation pull request must hand its unmerged SVG to the next run.
+        """An existing automation branch must hand its unmerged SVG to the next run.
 
         The generator reads its previous checkpoint out of the SVG it is about to overwrite. Starting from the merged
-        copy while a pull request is open would silently drop every week recorded in that pull request and re-baseline
-        the star delta.
+        copy while the automation branch still carries unmerged weeks would silently drop them and re-baseline the star
+        delta — regardless of whether a pull request for that branch happens to be open right now.
         """
         workspace, stubs = restore_sandbox
 
-        result = _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, open_prs=1))
+        result = _run_step(
+            metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, branch_exists=True)
+        )
 
         assert result.returncode == 0, result.stderr
         assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == UNMERGED_SVG
@@ -335,7 +347,7 @@ class TestRestoreUnmergedHistoryStep:
             metrics_steps[RESTORE_STEP]["run"],
             workspace,
             stubs,
-            _restore_env(workspace, open_prs=1, git_show_fails=True),
+            _restore_env(workspace, branch_exists=True, git_show_fails=True),
         )
 
         assert result.returncode != 0
@@ -357,43 +369,43 @@ class TestRestoreUnmergedHistoryStep:
             metrics_steps[RESTORE_STEP]["run"],
             workspace,
             stubs,
-            _restore_env(workspace, open_prs=1, git_show_fails=True),
+            _restore_env(workspace, branch_exists=True, git_show_fails=True),
         )
 
         assert "::error::" in result.stdout
 
-    def test_absent_pull_request_leaves_the_working_tree_alone(
+    def test_absent_branch_leaves_the_working_tree_alone(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         restore_sandbox: tuple[Path, Path],
     ) -> None:
-        """With no open automation pull request the step must fetch nothing and rewrite nothing.
+        """With no automation branch on the remote the step must rewrite nothing.
 
-        Once the previous pull request merges, the checked-out default branch already holds the newest checkpoint;
-        fetching the stale automation branch over it would replay an older week.
+        A first-ever run (or one after the automation branch was deleted on merge) has nothing to restore; the checked-
+        out default branch already holds the newest checkpoint.
         """
         workspace, stubs = restore_sandbox
 
-        result = _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, open_prs=0))
+        result = _run_step(
+            metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, branch_exists=False)
+        )
 
-        assert "git fetch" not in (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
         assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
         assert result.returncode == 0, result.stderr
 
-    def test_lookup_is_scoped_to_the_automation_branch(
+    def test_fetch_is_scoped_to_the_automation_branch(
         self,
         metrics_steps: dict[str, dict[str, Any]],
         restore_sandbox: tuple[Path, Path],
     ) -> None:
-        """The pull-request lookup must name both the automation head and the default base.
+        """The branch lookup must fetch only the fixed automation branch by name.
 
-        An unscoped `gh pr list` counts unrelated open pull requests, which would restore the stale automation branch
-        over the merged history on nearly every run.
+        An unscoped fetch would pull unrelated refs, which would restore the wrong branch's history over the merged copy
+        on nearly every run.
         """
         workspace, stubs = restore_sandbox
 
-        _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, open_prs=1))
+        _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, branch_exists=True))
 
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
-        assert "--head automation/update-weekly-metrics" in logged
-        assert "--base develop" in logged
+        assert "fetch --no-tags --depth=1 origin automation/update-weekly-metrics" in logged

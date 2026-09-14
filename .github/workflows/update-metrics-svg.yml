@@ -38,21 +38,14 @@ jobs:
 
       - name: 📚 Restore unmerged metrics history
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           METRICS_BRANCH: automation/update-weekly-metrics
         run: |
           set -euo pipefail
-          # Preserve checkpoints when the previous weekly pull request is still open.
-          OPEN_PR_COUNT=$(gh pr list \
-            --repo "$GITHUB_REPOSITORY" \
-            --base "$DEFAULT_BRANCH" \
-            --head "$METRICS_BRANCH" \
-            --state open \
-            --json number \
-            --jq length)
-          if [ "$OPEN_PR_COUNT" -gt 0 ]; then
-            git fetch --no-tags --depth=1 origin "$METRICS_BRANCH"
+          # Continue from the automation branch's own history whenever it exists, regardless of
+          # whether it currently has an open pull request — a pull request can go stale or be closed
+          # without the branch being deleted, and gating restoration on PR state would silently
+          # discard every checkpoint already accumulated there.
+          if git fetch --no-tags --depth=1 origin "$METRICS_BRANCH"; then
             # The shell truncates a redirect target before the command on its left runs, so writing
             # straight onto the tracked path would leave an empty SVG behind whenever git show fails.
             git show FETCH_HEAD:docs/assets/weekly-metrics.svg > docs/assets/weekly-metrics.svg.tmp || {
