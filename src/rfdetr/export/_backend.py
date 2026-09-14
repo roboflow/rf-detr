@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Backend/format resolution and export-format dispatch helpers for :meth:`rfdetr.detr.RFDETR.export`.
 
-These are utility functions shared by the export CLI (:mod:`rfdetr.export.main`) and the public
-:meth:`rfdetr.detr.RFDETR.export` API — kept in their own module so ``main.py`` stays focused on CLI orchestration.
+These are utility functions shared by :meth:`rfdetr.detr.RFDETR.export` and the exporter classes — kept in their own
+module so neither the public entry point nor any one format package owns them.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ from __future__ import annotations
 import importlib
 import sys
 import warnings
-from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Protocol, cast
 
 from torch import Tensor, nn
 
+from rfdetr.export.registry import REGISTRY
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.utilities.logger import get_logger
 
@@ -76,8 +76,9 @@ class _BackboneExport(nn.Module):
         return features if cross_attn_features is None else features + cross_attn_features
 
 
-# Every format accepted by :meth:`rfdetr.detr.RFDETR.export`.
-_EXPORT_FORMATS: frozenset[str] = frozenset({"onnx", "tflite", "tensorrt", "executorch", "coreml", "openvino"})
+# Every format accepted by :meth:`rfdetr.detr.RFDETR.export`, derived from the exporter registry so adding a
+# format stays a one-line data change there.
+_EXPORT_FORMATS: frozenset[str] = frozenset(REGISTRY)
 # The subset of :data:`_EXPORT_FORMATS` that specialize for a hardware backend, and so require a ``backend`` argument
 # (the rest are backend-agnostic).  The accepted backends per format, and the backends that further require a ``soc``,
 # are owned by the converter (``_VALID_BACKENDS`` / ``_SOC_BACKENDS``).
@@ -134,7 +135,7 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
     # format is primarily a data change (add entries below + update _EXPORT_FORMATS / _BACKEND_FORMATS), but also
     # requires a lazy import and an elif branch in export(). Imported lazily so that backend-agnostic exports never
     # pull in the (optional, heavy) executorch dependency.
-    from rfdetr.export._executorch.converter import SOC_BACKENDS, VALID_BACKENDS
+    from rfdetr.export._executorch.exporter import SOC_BACKENDS, VALID_BACKENDS
 
     accepted_backends: dict[str, frozenset[str]] = {"executorch": VALID_BACKENDS}
     soc_backends: dict[str, frozenset[str]] = {"executorch": SOC_BACKENDS}
@@ -204,7 +205,7 @@ def preload_tensorflow_before_onnx() -> None:
     Note:
         Does not re-import TensorFlow when it is already loaded, and stays silent when TensorFlow is not installed —
         the actionable missing-dependency error is raised later, by
-        :func:`~rfdetr.export._tflite.converter._check_onnx2tf_available`.
+        :func:`~rfdetr.export._tflite.exporter._check_onnx2tf_available`.
 
     Examples:
         >>> preload_tensorflow_before_onnx()  # returns when the top-level tensorflow package is unavailable
@@ -226,274 +227,3 @@ def preload_tensorflow_before_onnx() -> None:
             "cannot be repaired once both are loaded. If the export hangs with no output, import tensorflow before "
             "onnx or run the export in a fresh process."
         )
-
-
-def _export_executorch_format(
-    model: nn.Module,
-    input_tensors: Tensor,
-    output_dir_path: Path,
-    *,
-    backend: str | None,
-    soc: str | None,
-    variant_name: str | None,
-    dynamic_batch: bool,
-    notes: object,
-    output_name: str | None = None,
-    backbone_only: bool = False,
-) -> Path:
-    """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the ExecuTorch converter.
-
-    Args:
-        model: The prepared (CPU, export-mode) PyTorch module to export.
-        input_tensors: Example input tensor used to trace the graph.
-        output_dir_path: Directory where the ``.pte`` file is written.
-        backend: ExecuTorch delegation backend; must not be ``None`` (invariant enforced by
-            :func:`_resolve_export_backend`, which always sets a backend for ``format="executorch"``).
-        soc: Target SoC for backends that compile for a specific chip, or ``None``.
-        variant_name: Model variant identifier used to name the output file.
-        dynamic_batch: Whether a dynamic batch dimension was requested (always rejected below).
-        notes: User-supplied export metadata; ExecuTorch has no metadata slot, so a non-``None`` value warns.
-        output_name: Full filename override (without extension); forwarded verbatim to
-            :func:`~rfdetr.export._executorch.converter.export_executorch`.
-        backbone_only: Whether *model* is a backbone-only export graph; forwarded verbatim to
-            :func:`~rfdetr.export._executorch.converter.export_executorch` so the filename marks it and
-            never collides with a full-detector export of the same variant/backend.
-
-    Returns:
-        Path to the exported ``.pte`` file.
-
-    Raises:
-        RuntimeError: If ``backend`` is ``None`` (invariant violation — see Args).
-        ImportError: If the optional ``executorch`` dependency is not installed.
-
-    Examples:
-        >>> _export_executorch_format(  # doctest: +SKIP
-        ...     model, input_tensors, output_dir_path,
-        ...     backend="xnnpack", soc=None, variant_name="small",
-        ...     dynamic_batch=False, notes=None,
-        ... )
-        PosixPath('out/model.pte')
-    """
-    if notes is not None:
-        warnings.warn(
-            "`notes` is not forwarded to format='executorch' (ExecuTorch .pte has no metadata slot). "
-            "This argument is ignored.",
-            UserWarning,
-            stacklevel=3,
-        )
-    # Invariant: _resolve_export_backend always sets backend for executorch formats.
-    if backend is None:  # pragma: no cover
-        raise RuntimeError("backend must not be None for format='executorch' — invariant: _resolve_export_backend.")
-    warnings.warn(
-        "ExecuTorch export is experimental and work-in-progress.",
-        UserWarning,
-        stacklevel=3,
-    )
-    try:
-        from rfdetr.export._executorch.converter import export_executorch
-    except ImportError:
-        logger.error(
-            "It seems some dependencies for ExecuTorch export are missing."
-            " Please run `pip install rfdetr[executorch]` and try again.",
-        )
-        raise
-    _switch_to_export_mode(model)
-    # soc only applies to the qnn backend; _resolve_export_backend leaves it None otherwise.
-    soc_kwargs = {"soc": soc} if soc is not None else {}
-    # _resolve_export_backend already validated backend against _VALID_BACKENDS at runtime;
-    # narrow the static type to match export_executorch's Literal signature.
-
-    backend_literal = cast(Literal["xnnpack", "coreml", "qnn"], backend)
-    pte_path = export_executorch(
-        model=model,
-        input_tensors=input_tensors,
-        output_dir=str(output_dir_path),
-        backend=backend_literal,
-        variant_name=variant_name,
-        dynamic_batch=dynamic_batch,
-        output_name=output_name,
-        backbone_only=backbone_only,
-        **soc_kwargs,
-    )
-    logger.info(f"Successfully exported ExecuTorch model to: {pte_path}")
-    return pte_path
-
-
-def _export_coreml_format(
-    model: nn.Module,
-    input_tensors: Tensor,
-    output_dir_path: Path,
-    *,
-    variant_name: str | None,
-    verbose: bool,
-    notes: object,
-    compute_precision: str | None = None,
-    output_name: str | None = None,
-    backbone_only: bool = False,
-) -> Path:
-    """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the native CoreML converter.
-
-    This is ``format="coreml"`` → ``.mlpackage`` via ``torch.export`` + ``coremltools``. It is distinct from
-    ExecuTorch's ``format="executorch", backend="coreml"`` path, which produces a ``.pte``.
-
-    Args:
-        model: The prepared (CPU) PyTorch module to export.
-        input_tensors: Example input tensor used to trace the graph.
-        output_dir_path: Directory where the ``.mlpackage`` is written.
-        variant_name: Model variant identifier used to name the output bundle.
-        verbose: Forwarded to :func:`~rfdetr.export._coreml.converter.export_coreml`.
-        notes: User-supplied export metadata; CoreML has no ONNX-style metadata slot, so a non-``None`` value warns.
-        compute_precision: ``"float32"``/``"float16"``/``None`` — forwarded to
-            :func:`~rfdetr.export._coreml.converter.export_coreml`'s ``compute_precision``.
-        output_name: Full filename override (without extension); forwarded verbatim to
-            :func:`~rfdetr.export._coreml.converter.export_coreml`.
-        backbone_only: Whether *model* is a backbone-only export graph; forwarded verbatim to
-            :func:`~rfdetr.export._coreml.converter.export_coreml` so the filename marks it and never
-            collides with a full-detector export of the same variant/precision.
-
-    Note:
-        Unlike the ONNX path, output names are not forwarded to ``coremltools.convert`` —
-        coremltools infers its own output names for the ``.mlpackage`` spec. Consumers must rely on
-        **output position**, not name, to match the ``(dets, labels)`` / ``(dets, labels, masks)`` /
-        ``(dets, labels, keypoints)`` contract documented on :meth:`rfdetr.detr.RFDETR.export`.
-
-    Returns:
-        Path to the exported ``.mlpackage`` bundle.
-
-    Raises:
-        ImportError: If the optional ``coreml`` dependency is not installed.
-        NotImplementedError: If the exported graph has CoreML registry gaps.
-
-    Examples:
-        Requires the optional ``coremltools`` dependency and a prepared model/input pair, so this
-        is documentation only (not a doctest):
-
-        ```python
-        _export_coreml_format(
-            model, input_tensors, output_dir_path,
-            variant_name="small", verbose=True, notes=None,
-        )
-        # -> PosixPath('out/model.mlpackage')
-        ```
-    """
-    if notes is not None:
-        warnings.warn(
-            "`notes` is not forwarded to format='coreml' (CoreML .mlpackage has no ONNX-style metadata slot). "
-            "This argument is ignored.",
-            UserWarning,
-            stacklevel=3,
-        )
-    warnings.warn(
-        "CoreML export is experimental and work-in-progress. Dynamic batch is not supported.",
-        UserWarning,
-        stacklevel=3,
-    )
-    try:
-        from rfdetr.export._coreml.converter import export_coreml
-    except ImportError:
-        logger.error(
-            "It seems some dependencies for CoreML export are missing."
-            " Please run `pip install rfdetr[coreml]` and try again.",
-        )
-        raise
-    _switch_to_export_mode(model)
-    mlpackage_path = export_coreml(
-        model=model,
-        input_tensors=input_tensors,
-        output_dir=str(output_dir_path),
-        variant_name=variant_name,
-        verbose=verbose,
-        compute_precision=compute_precision,
-        output_name=output_name,
-        backbone_only=backbone_only,
-    )
-    logger.info(f"Successfully exported CoreML model to: {mlpackage_path}")
-    return mlpackage_path
-
-
-def _export_openvino_format(
-    model: nn.Module,
-    input_tensors: Tensor,
-    output_dir_path: Path,
-    *,
-    backbone_only: bool,
-    verbose: bool,
-    variant_name: str | None,
-    dynamic_batch: bool,
-    notes: object,
-    precision: str | None = None,
-    output_name: str | None = None,
-) -> Path:
-    """Dispatch :meth:`rfdetr.detr.RFDETR.export` to the direct-conversion OpenVINO exporter.
-
-    ``format="openvino"`` converts straight from the PyTorch graph to OpenVINO IR (``.xml``/``.bin``)
-    via ``openvino.convert_model`` -- no ONNX step, distinct from the ONNX/TFLite/TensorRT path.
-
-    Args:
-        model: The prepared (CPU) PyTorch module to export.
-        input_tensors: Example input tensor used to trace the graph.
-        output_dir_path: Directory where the ``.xml``/``.bin`` IR pair is written.
-        backbone_only: Whether *model* is a backbone-only export graph; forwarded to
-            :func:`~rfdetr.export._openvino.exporter.export_openvino` so the filename marks it.
-        verbose: Forwarded to :func:`~rfdetr.export._openvino.exporter.export_openvino`.
-        variant_name: Model variant identifier used to name the output file.
-        dynamic_batch: Whether a dynamic batch dimension was requested (always rejected below --
-            the OpenVINO IR graph bakes a fixed input shape, matching CoreML/ExecuTorch).
-        notes: User-supplied export metadata; OpenVINO IR has no ONNX-style metadata slot, so a
-            non-``None`` value warns.
-        precision: ``"float32"``/``"float16"``/``None`` -- forwarded to
-            :func:`~rfdetr.export._openvino.exporter.export_openvino`'s ``precision``.
-        output_name: Full filename override (without extension); forwarded verbatim to
-            :func:`~rfdetr.export._openvino.exporter.export_openvino`.
-
-    Returns:
-        Path to the exported OpenVINO IR model (``.xml`` file).
-
-    Raises:
-        ImportError: If the optional ``openvino`` dependency is not installed.
-        NotImplementedError: If ``dynamic_batch=True``.
-
-    Examples:
-        .. code-block:: python
-
-            _export_openvino_format(
-                model, input_tensors, output_dir_path,
-                backbone_only=False, verbose=True, variant_name="small",
-                dynamic_batch=False, notes=None,
-            )
-            # -> PosixPath('out/small.xml')
-    """
-    if notes is not None:
-        warnings.warn(
-            "`notes` is not forwarded to format='openvino' (OpenVINO IR has no ONNX-style metadata slot). "
-            "This argument is ignored.",
-            UserWarning,
-            stacklevel=3,
-        )
-    if dynamic_batch:
-        raise NotImplementedError(
-            "OpenVINO export does not support dynamic_batch (the IR graph bakes a fixed input shape). "
-            "Export one model per batch size instead."
-        )
-    try:
-        from rfdetr.export._openvino.exporter import export_openvino
-    except ImportError:
-        logger.error(
-            'It seems OpenVINO is not installed. Please run `pip install "rfdetr[openvino]"` and try again.',
-        )
-        raise
-    # OpenVINO's convert_model traces the model directly, so switch it into its export-friendly
-    # forward here (the ONNX path does this inside export_onnx, through the same guarded helper).
-    _switch_to_export_mode(model)
-    output_file = export_openvino(
-        model=model,
-        input_tensors=input_tensors,
-        output_dir=str(output_dir_path),
-        backbone_only=backbone_only,
-        verbose=verbose,
-        variant_name=variant_name,
-        output_name=output_name,
-        precision=precision,
-    )
-    logger.info(f"Successfully exported OpenVINO model to: {output_file}")
-    return Path(output_file)

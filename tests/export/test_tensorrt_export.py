@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for the in-process TensorRT engine builder (`build_engine`).
+"""Tests for the in-process TensorRT engine builder (`TensorRTExporter.build_engine`).
 
 The unit tests monkeypatch the polygraphy entry points so they run without TensorRT, a GPU, or `polygraphy` installed.
 The end-to-end class (``@pytest.mark.e2e_tensorrt``, GPU + ``rfdetr[tensorrt]``, opt-in) builds a real engine from an
@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from rfdetr.export import _tensorrt as tensorrt_export
-from rfdetr.export._tensorrt import _IS_TENSORRT_AVAILABLE
+from rfdetr.export._tensorrt import exporter as tensorrt_export
+from rfdetr.export._tensorrt.exporter import _IS_TENSORRT_AVAILABLE, TensorRTConfig, TensorRTExporter
 from tests.export.conftest import (
     _structured_parity_input,
     eager_reference_tensors,
@@ -81,7 +81,7 @@ class TestBuildEngineDryRun:
     )
     def test_derives_trt_path(self, onnx_path: str, expected_engine: str) -> None:
         """Only the final suffix is swapped to ``_fp16.trt``; earlier ``.onnx`` segments are never corrupted."""
-        result = tensorrt_export.build_engine(onnx_path, dry_run=True)
+        result = TensorRTExporter(TensorRTConfig()).build_engine(onnx_path, dry_run=True)
 
         assert result == expected_engine
 
@@ -90,20 +90,36 @@ class TestBuildEngineDryRun:
         called: list[str] = []
         monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda *a, **k: called.append("built"))
 
-        result = tensorrt_export.build_engine("/tmp/model.onnx", dry_run=True)
+        result = TensorRTExporter(TensorRTConfig()).build_engine("/tmp/model.onnx", dry_run=True)
 
         assert result == "/tmp/model_fp16.trt"
         assert not called, "dry_run must not invoke the polygraphy build chain"
 
     def test_output_name_overrides_and_suppresses_precision_suffix(self) -> None:
         """``output_name`` names the engine verbatim, in the ONNX's directory, with no ``_fp16``/``_fp32`` suffix."""
-        result = tensorrt_export.build_engine("/output/rfdetr-medium.onnx", dry_run=True, output_name="my-engine")
+        exporter = TensorRTExporter(TensorRTConfig(output_name="my-engine"))
+
+        result = exporter.build_engine("/output/rfdetr-medium.onnx", dry_run=True)
 
         assert result == "/output/my-engine.trt"
 
+    def test_output_name_argument_overrides_the_configured_one(self) -> None:
+        """An explicit ``output_name`` wins over the configured one — the channel a backbone export names through.
+
+        ``_convert`` passes the backbone-marked ONNX stem this way so the engine keeps its ``-backbone`` marker instead
+        of being named after the user's plain ``output_name``.
+        """
+        exporter = TensorRTExporter(TensorRTConfig(output_name="custom"))
+
+        result = exporter.build_engine("/output/custom-backbone.onnx", dry_run=True, output_name="custom-backbone")
+
+        assert result == "/output/custom-backbone.trt"
+
     def test_output_name_preserves_windows_directory_separators(self) -> None:
         """A Windows-style ``onnx_path`` keeps its backslash directory prefix verbatim (no ``os.sep`` rewrite)."""
-        result = tensorrt_export.build_engine(r"C:\out\m.onnx", dry_run=True, output_name="my-engine")
+        exporter = TensorRTExporter(TensorRTConfig(output_name="my-engine"))
+
+        result = exporter.build_engine(r"C:\out\m.onnx", dry_run=True)
 
         assert result == r"C:\out\my-engine.trt"
 
@@ -116,7 +132,7 @@ class TestBuildEngineDependencyGuard:
         monkeypatch.setattr(tensorrt_export, "engine_from_network", None)
 
         with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
-            tensorrt_export.build_engine("/tmp/model.onnx")
+            TensorRTExporter(TensorRTConfig()).build_engine("/tmp/model.onnx")
 
 
 class TestBuildEngineWiring:
@@ -146,7 +162,7 @@ class TestBuildEngineWiring:
         monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
         monkeypatch.setattr(tensorrt_export, "save_engine", _save_engine)
 
-        result = tensorrt_export.build_engine("/tmp/model.onnx", fp16=fp16)
+        result = TensorRTExporter(TensorRTConfig(fp16=fp16)).build_engine("/tmp/model.onnx")
         expected_path = f"/tmp/model_{'fp16' if fp16 else 'fp32'}.trt"
 
         assert result == expected_path
@@ -170,7 +186,7 @@ class TestBuildEngineFp16Fallback:
         config_kwargs = _patch_polygraphy_chain(monkeypatch)
         monkeypatch.setitem(sys.modules, "tensorrt", _FakeTrt)
 
-        result = tensorrt_export.build_engine("/tmp/model.onnx", fp16=True)
+        result = TensorRTExporter(TensorRTConfig(fp16=True)).build_engine("/tmp/model.onnx")
 
         assert result == "/tmp/model_fp32.trt"
         assert config_kwargs == {"fp16": False}
@@ -186,13 +202,13 @@ class TestTensorRTEndToEnd:
     def trt_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
         """Export RFDETRNano to ONNX, build a FP32 ``.trt`` engine, and reuse it across the parity checks."""
         from rfdetr import RFDETRNano
-        from rfdetr.export._tensorrt import build_engine
 
         torch.manual_seed(42)
         out_dir = tmp_path_factory.mktemp("tensorrt")
         detector = RFDETRNano(pretrain_weights=None)
         onnx_path = detector.export(output_dir=str(out_dir), format="onnx", verbose=False)
-        engine_path = build_engine(str(onnx_path), fp16=False, verbose=False)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, verbose=False))
+        engine_path = exporter.build_engine(str(onnx_path))
 
         model = detector.model.model.to("cpu").eval()
         model.export()

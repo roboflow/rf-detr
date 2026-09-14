@@ -6,12 +6,12 @@
 """Tests for the ONNX → TFLite export pipeline.
 
 Tests cover:
-* ``export_tflite()`` — the main conversion function (mocked ``onnx2tf``)
+* ``TFLiteExporter.convert_onnx()`` — the main conversion entry point (mocked ``onnx2tf``)
 * ``_check_onnx2tf_available()`` — import-based availability check
 * ``_numpy_allow_pickle()`` — NumPy monkey-patch context manager
 * ``_patch_validation_download()`` — validation download redirect
 * ``_interpreter_scripts_on_path()`` — PATH helper for onnx2tf's onnxsim subprocess
-* ``export_tflite()`` applies that helper around ``onnx2tf.convert()``
+* ``TFLiteExporter.convert_onnx()`` applies that helper around ``onnx2tf.convert()``
 * ``_get_onnx_input_info()`` — ONNX model input metadata reader
 * ``_prepare_calibration_data()`` — calibration data preparation
 * ``format="tflite"`` parameter wiring through ``RFDETR.export()``
@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import sysconfig
 import types
+import warnings
 from pathlib import Path
 from typing import Any, Generator
 from unittest import mock
@@ -32,12 +34,14 @@ import numpy as np
 import pytest
 
 from rfdetr.export._tflite import _IS_ONNX2TF_AVAILABLE
-from rfdetr.export._tflite.converter import (
+from rfdetr.export._tflite.exporter import (
     _DEFAULT_CALIB_SAMPLES,
     _DEFAULT_DIR_CALIB_SAMPLES,
     _IMAGE_EXTENSIONS,
     _NUMPY_LOAD_PATCH_LOCK,
     _VALID_QUANTIZATIONS,
+    TFLiteConfig,
+    TFLiteExporter,
     _check_onnx2tf_available,
     _get_onnx_input_info,
     _interpreter_scripts_on_path,
@@ -45,7 +49,6 @@ from rfdetr.export._tflite.converter import (
     _numpy_allow_pickle,
     _patch_validation_download,
     _prepare_calibration_data,
-    export_tflite,
 )
 
 onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
@@ -89,7 +92,7 @@ def _install_fake_onnx2tf() -> tuple[_FakeOnnx2tfModule, mock.MagicMock, dict[st
     pkg.convert = fake.convert  # type: ignore[attr-defined]
     pkg.__version__ = "2.4.0"  # type: ignore[attr-defined]
 
-    # onnx2tf.onnx2tf — force-imported by export_tflite() before patching
+    # onnx2tf.onnx2tf — force-imported by TFLiteExporter before patching
     inner_mod = types.ModuleType("onnx2tf.onnx2tf")
     inner_mod.download_test_image_data = mock.MagicMock(  # type: ignore[attr-defined]
         return_value=np.zeros((20, 128, 128, 3), dtype=np.float32),
@@ -144,6 +147,40 @@ def _remove_fake_onnx2tf(saved: dict[str, object] | None = None) -> None:
                 del sys.modules[key]
 
 
+def _run_convert_onnx(
+    onnx_path: str | os.PathLike[str],
+    output_dir: str | os.PathLike[str],
+    **config_kwargs: Any,
+) -> Path:
+    """Convert *onnx_path* to TFLite through a freshly built ``TFLiteExporter``.
+
+    ``TFLiteConfig`` defaults ``verbose`` to ``True``; the exporter is built with ``verbose=False`` unless a
+    case overrides it, so ``onnx2tf`` is invoked silently as the conversion's own default has always been.
+    Construction emits the format's "experimental" ``UserWarning``, suppressed here so it cannot interfere
+    with what a case arranges or asserts.
+
+    Args:
+        onnx_path: Path to the source ``.onnx`` file.
+        output_dir: Directory the TFLite artifacts are written to.
+        **config_kwargs: Further ``TFLiteConfig`` settings, e.g. ``quantization`` or ``max_images``.
+
+    Returns:
+        Path to the primary ``.tflite`` artifact.
+
+    Examples:
+        Needs a fake ``onnx2tf`` installed in ``sys.modules`` by the ``fake_onnx2tf`` fixture, so the live
+        call is covered by the tests below rather than by a doctest.
+
+        >>> callable(_run_convert_onnx)  # doctest: +SKIP
+        True
+    """
+    config_kwargs.setdefault("verbose", False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=Path(output_dir), **config_kwargs))
+    return exporter.convert_onnx(onnx_path)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -158,7 +195,7 @@ def fake_onnx2tf():
     """
     fake, convert_mock, saved = _install_fake_onnx2tf()
     with mock.patch(
-        "rfdetr.export._tflite.converter._replace_gridsample_for_tflite",
+        "rfdetr.export._tflite.exporter._replace_gridsample_for_tflite",
         side_effect=lambda path, _dir: path,
     ):
         yield fake, convert_mock
@@ -177,14 +214,14 @@ def onnx_model(tmp_path: Path) -> Path:
 def mock_prepare_calib(tmp_path: Path) -> Generator:
     """Mock ``_prepare_calibration_data`` so dummy ONNX files work.
 
-    ``export_tflite`` calls ``_prepare_calibration_data`` which calls ``_get_onnx_input_info`` (requiring a real ONNX
-    file).  Since the ``onnx_model`` fixture writes only stub bytes, this mock prevents the ONNX parse from being
-    attempted.
+    ``TFLiteExporter.convert_onnx`` calls ``_prepare_calibration_data`` which calls ``_get_onnx_input_info`` (requiring
+    a real ONNX file).  Since the ``onnx_model`` fixture writes only stub bytes, this mock prevents the ONNX parse from
+    being attempted.
     """
     dummy_npy = tmp_path / "_rfdetr_calib_data.npy"
     np.save(str(dummy_npy), np.zeros((1, 64, 64, 3), dtype=np.float32))
     with mock.patch(
-        "rfdetr.export._tflite.converter._prepare_calibration_data",
+        "rfdetr.export._tflite.exporter._prepare_calibration_data",
         return_value=dummy_npy,
     ) as m:
         yield m
@@ -192,7 +229,7 @@ def mock_prepare_calib(tmp_path: Path) -> Generator:
 
 @pytest.fixture()
 def tflite_output(tmp_path: Path, onnx_model: Path) -> Path:
-    """Create expected TFLite output file so export_tflite finds it."""
+    """Create expected TFLite output file so the conversion finds it."""
     out = tmp_path / "output"
     out.mkdir()
     (out / f"{onnx_model.stem}_float32.tflite").write_bytes(b"tflite")
@@ -206,15 +243,15 @@ def tflite_output(tmp_path: Path, onnx_model: Path) -> Path:
 
 @onnx2tf_available
 class TestExportTfliteConverter:
-    """Tests for ``export_tflite()``."""
+    """Tests for ``TFLiteExporter.convert_onnx()``."""
 
     def test_missing_onnx_raises_file_not_found(self, tmp_path: Path, fake_onnx2tf: Any) -> None:
         with pytest.raises(FileNotFoundError, match="ONNX model not found"):
-            export_tflite(tmp_path / "nope.onnx", tmp_path / "out")
+            _run_convert_onnx(tmp_path / "nope.onnx", tmp_path / "out")
 
     def test_invalid_quantization_raises_value_error(self, onnx_model: Path, tmp_path: Path, fake_onnx2tf: Any) -> None:
         with pytest.raises(ValueError, match="Unsupported quantization"):
-            export_tflite(onnx_model, tmp_path / "out", quantization="q4")
+            _run_convert_onnx(onnx_model, tmp_path / "out", quantization="q4")
 
     @pytest.mark.parametrize(
         "static_mode",
@@ -230,7 +267,7 @@ class TestExportTfliteConverter:
         Static INT8 is intentionally unsupported; only dynamic-range 'int8' is offered.
         """
         with pytest.raises(ValueError, match="[Ss]tatic / full-integer INT8 is not supported"):
-            export_tflite(onnx_model, tmp_path / "out", quantization=static_mode)
+            _run_convert_onnx(onnx_model, tmp_path / "out", quantization=static_mode)
 
     def test_default_quantization_calls_convert(
         self,
@@ -240,7 +277,7 @@ class TestExportTfliteConverter:
         mock_prepare_calib: Any,
     ) -> None:
         _, convert_mock = fake_onnx2tf
-        result = export_tflite(onnx_model, tflite_output)
+        result = _run_convert_onnx(onnx_model, tflite_output)
 
         convert_mock.assert_called_once()
         kwargs = convert_mock.call_args.kwargs
@@ -263,7 +300,7 @@ class TestExportTfliteConverter:
         The onnx2tf custom_input code path triggers a tf.tile rank mismatch with DINOv2-style backbones when N > 1.
         """
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output)
+        _run_convert_onnx(onnx_model, tflite_output)
 
         kwargs = convert_mock.call_args.kwargs
         assert "custom_input_op_name_np_data_path" not in kwargs
@@ -281,7 +318,7 @@ class TestExportTfliteConverter:
         pattern. Enabling signature defs bypasses this restriction.
         """
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output)
+        _run_convert_onnx(onnx_model, tflite_output)
 
         kwargs = convert_mock.call_args.kwargs
         assert kwargs["output_signaturedefs"] is True
@@ -299,7 +336,7 @@ class TestExportTfliteConverter:
         time on RF-DETR's encoder TopK node.  tf_converter is forced unconditionally.
         """
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output)
+        _run_convert_onnx(onnx_model, tflite_output)
 
         assert convert_mock.call_args.kwargs["tflite_backend"] == "tf_converter"
 
@@ -316,7 +353,7 @@ class TestExportTfliteConverter:
         Erf / GeLU kernels.
         """
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output)
+        _run_convert_onnx(onnx_model, tflite_output)
 
         pseudo_ops = convert_mock.call_args.kwargs.get("replace_to_pseudo_operators", [])
         assert "Erf" in pseudo_ops
@@ -330,7 +367,7 @@ class TestExportTfliteConverter:
         mock_prepare_calib: Any,
     ) -> None:
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output, quantization="fp32")
+        _run_convert_onnx(onnx_model, tflite_output, quantization="fp32")
         assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
 
     def test_fp16_quantization_no_int8_flag(
@@ -341,7 +378,7 @@ class TestExportTfliteConverter:
         mock_prepare_calib: Any,
     ) -> None:
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output, quantization="fp16")
+        _run_convert_onnx(onnx_model, tflite_output, quantization="fp16")
         assert "output_integer_quantized_tflite" not in convert_mock.call_args.kwargs
 
     @pytest.mark.parametrize(
@@ -371,26 +408,42 @@ class TestExportTfliteConverter:
         _, convert_mock = fake_onnx2tf
         dyn_path = tflite_output / "model_dynamic_range_quant.tflite"
         with mock.patch(
-            "rfdetr.export._tflite.converter._quantize_dynamic_range",
+            "rfdetr.export._tflite.exporter._quantize_dynamic_range",
             return_value=dyn_path,
         ) as quant_mock:
-            result = export_tflite(onnx_model, tflite_output, quantization="int8", calibration_data=calibration_data)
+            result = _run_convert_onnx(
+                onnx_model, tflite_output, quantization="int8", calibration_data=calibration_data
+            )
         kwargs = convert_mock.call_args.kwargs
         assert "output_integer_quantized_tflite" not in kwargs
         assert "representative_dataset" not in kwargs
         quant_mock.assert_called_once()
         assert result == dyn_path
 
+    @pytest.mark.parametrize(
+        ("verbose", "expected_verbosity"),
+        [
+            pytest.param(True, "info", id="verbose"),
+            pytest.param(False, "error", id="silent"),
+        ],
+    )
     def test_verbosity_forwarded(
         self,
         onnx_model: Path,
         tflite_output: Path,
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
+        verbose: bool,
+        expected_verbosity: str,
     ) -> None:
+        """The configured ``verbose`` flag selects the ``verbosity`` level onnx2tf is called with.
+
+        ``verbosity`` is not a knob of its own on the exporter — it is derived from ``TFLiteConfig.verbose``, so a
+        regression that stopped forwarding it would leave onnx2tf silent on a verbose export.
+        """
         _, convert_mock = fake_onnx2tf
-        export_tflite(onnx_model, tflite_output, verbosity="debug")
-        assert convert_mock.call_args.kwargs["verbosity"] == "debug"
+        _run_convert_onnx(onnx_model, tflite_output, verbose=verbose)
+        assert convert_mock.call_args.kwargs["verbosity"] == expected_verbosity
 
     def test_convert_failure_raises_runtime_error(
         self,
@@ -402,7 +455,7 @@ class TestExportTfliteConverter:
         _, convert_mock = fake_onnx2tf
         convert_mock.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError, match="onnx2tf conversion failed"):
-            export_tflite(onnx_model, tmp_path / "out")
+            _run_convert_onnx(onnx_model, tmp_path / "out")
 
     def test_fallback_when_primary_tflite_missing(
         self,
@@ -418,7 +471,7 @@ class TestExportTfliteConverter:
         # ("_float16") to mirror onnx2tf's real output naming -- _rename_precision_outputs renames it
         # to "_fp16" before the fallback glob runs.
         (out / "model_float16.tflite").write_bytes(b"fb")
-        result = export_tflite(onnx_model, out)
+        result = _run_convert_onnx(onnx_model, out)
         assert result.name == "model_fp16.tflite"
 
     def test_fallback_does_not_return_unrelated_tflite(
@@ -434,7 +487,7 @@ class TestExportTfliteConverter:
         # Unrelated file — does NOT match model_*.tflite.
         (out / "other_model.tflite").write_bytes(b"stale")
         with pytest.raises(RuntimeError, match="no .tflite file matching"):
-            export_tflite(onnx_model, out)
+            _run_convert_onnx(onnx_model, out)
 
     def test_no_tflite_output_raises_runtime_error(
         self,
@@ -447,7 +500,7 @@ class TestExportTfliteConverter:
         out = tmp_path / "empty_out"
         out.mkdir()
         with pytest.raises(RuntimeError, match="no .tflite file matching"):
-            export_tflite(onnx_model, out)
+            _run_convert_onnx(onnx_model, out)
 
     def test_returns_path_object(
         self,
@@ -456,7 +509,7 @@ class TestExportTfliteConverter:
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
-        result = export_tflite(onnx_model, tflite_output)
+        result = _run_convert_onnx(onnx_model, tflite_output)
         assert isinstance(result, Path)
 
     def test_calibration_data_forwarded_to_prepare(
@@ -468,7 +521,7 @@ class TestExportTfliteConverter:
     ) -> None:
         """Verify that calibration_data is passed to _prepare_calibration_data."""
         calib_path = "/some/calib.npy"
-        export_tflite(onnx_model, tflite_output, calibration_data=calib_path)
+        _run_convert_onnx(onnx_model, tflite_output, calibration_data=calib_path)
         call_args = mock_prepare_calib.call_args
         assert call_args[0][1] == calib_path  # second positional arg
 
@@ -480,7 +533,7 @@ class TestExportTfliteConverter:
         mock_prepare_calib: Any,
     ) -> None:
         """Verify that max_images is passed to _prepare_calibration_data."""
-        export_tflite(onnx_model, tflite_output, max_images=42)
+        _run_convert_onnx(onnx_model, tflite_output, max_images=42)
         call_kwargs = mock_prepare_calib.call_args
         assert call_kwargs.kwargs.get("max_images") == 42
 
@@ -492,7 +545,7 @@ class TestExportTfliteConverter:
         mock_prepare_calib: Any,
     ) -> None:
         """Verify that max_images defaults to 100 when not specified."""
-        export_tflite(onnx_model, tflite_output)
+        _run_convert_onnx(onnx_model, tflite_output)
         call_kwargs = mock_prepare_calib.call_args
         assert call_kwargs.kwargs.get("max_images") == 100
 
@@ -508,7 +561,7 @@ class TestExportTfliteConverter:
         """A real RF-DETR export always contains GridSample nodes (module docstring), so
         ``_replace_gridsample_for_tflite`` always renames the ONNX stem with a ``_gs_patched`` infix before ``onnx2tf``
         ever runs. ``output_name="my-model"`` (already baked into the ONNX filename by ``export_onnx``, per
-        ``_convert_onnx_export``'s docstring) must therefore produce ``my-model_gs_patched_fp32.tflite`` — not ``my-
+        ``TFLiteExporter``'s ONNX stage) must therefore produce ``my-model_gs_patched_fp32.tflite`` — not ``my-
         model_fp32.tflite`` — confirming the actually-produced filename rather than the docstring's simplified "inherits
         its stem" claim.
 
@@ -522,10 +575,10 @@ class TestExportTfliteConverter:
         (out_dir / "my-model_gs_patched_float32.tflite").write_bytes(b"tflite")
 
         with mock.patch(
-            "rfdetr.export._tflite.converter._replace_gridsample_for_tflite",
+            "rfdetr.export._tflite.exporter._replace_gridsample_for_tflite",
             side_effect=lambda path, output_dir: output_dir / f"{path.stem}_gs_patched.onnx",
         ):
-            result = export_tflite(onnx_path, out_dir)
+            result = _run_convert_onnx(onnx_path, out_dir)
 
         assert result.name == "my-model_gs_patched_fp32.tflite"
 
@@ -551,22 +604,24 @@ class TestExportFormatParameter:
 
         # Mock export_onnx to return a fake ONNX file path
         self._mock_export_onnx = self._mock_stack.enter_context(
-            mock.patch("rfdetr.export.main.export_onnx", return_value=str(onnx_out))
+            mock.patch("rfdetr.export._onnx.exporter.OnnxExporter._convert", return_value=str(onnx_out))
         )
         # Mock make_infer_image to return a small tensor
         import torch
 
         self._mock_stack.enter_context(
             mock.patch(
-                "rfdetr.export.main.make_infer_image",
+                "rfdetr.export.prepare.make_infer_image",
                 return_value=torch.zeros(1, 3, 560, 560),
             )
         )
-        # Mock export_tflite
-        self._mock_export_tflite = self._mock_stack.enter_context(
+        # Mock the ONNX -> TFLite conversion; autospec captures the exporter, whose config carries the
+        # settings RFDETR.export() forwarded.
+        self._mock_convert_onnx = self._mock_stack.enter_context(
             mock.patch(
-                "rfdetr.export._tflite.converter.export_tflite",
-                return_value=tmp_path / "inference_model_float32.tflite",
+                "rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx",
+                autospec=True,
+                return_value=tmp_path / "inference_model_fp32.tflite",
             )
         )
         yield
@@ -588,24 +643,36 @@ class TestExportFormatParameter:
         obj.model_config.num_windows = 1
         return obj
 
-    def test_tflite_format_calls_export_tflite(self) -> None:
+    def _exported_config(self) -> Any:
+        """Return the ``TFLiteConfig`` the exporter was built with on the last export.
+
+        Returns:
+            The configuration carried by the ``TFLiteExporter`` whose ``convert_onnx`` was called.
+        """
+        return self._mock_convert_onnx.call_args[0][0].config
+
+    def test_tflite_format_calls_convert_onnx(self) -> None:
         obj = self._make_rfdetr()
         obj.export(format="tflite", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_tflite.assert_called_once()
+        self._mock_convert_onnx.assert_called_once()
 
-    def test_onnx_format_does_not_call_export_tflite(self) -> None:
+    def test_onnx_format_does_not_call_convert_onnx(self) -> None:
         obj = self._make_rfdetr()
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_tflite.assert_not_called()
+        self._mock_convert_onnx.assert_not_called()
 
     def test_tflite_format_preloads_tensorflow_before_first_onnx_package_import(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """TensorFlow is preloaded before importing the module that first loads ONNX.
 
-        The usual ``main.export_onnx`` patch imports ``rfdetr.export.main`` while arranging the test, which masks a
+        The usual ``OnnxExporter._convert`` patch imports the ONNX exporter while arranging the test, which masks a
         regression that moves the preload below that import.  Intercepting the first ``onnx`` import instead keeps it
         inside the action under test.
+
+        ``RFDETR.export()`` legitimately preloads twice — the registry's ``preimport`` runs before it imports the
+        exporter module, and ``TFLiteExporter._convert`` runs before its ONNX stage — so this pins the ordering, not the
+        count.
         """
         obj = self._make_rfdetr()
         calls: list[str] = []
@@ -624,7 +691,6 @@ class TestExportFormatParameter:
                 raise RuntimeError("onnx import probe")
             return original_import(name, globals, locals, fromlist, level)
 
-        monkeypatch.delitem(sys.modules, "rfdetr.export.main", raising=False)
         monkeypatch.delitem(sys.modules, "rfdetr.export._onnx.exporter", raising=False)
         with (
             mock.patch(
@@ -636,8 +702,8 @@ class TestExportFormatParameter:
             with pytest.raises(RuntimeError, match="onnx import probe"):
                 obj.export(format="tflite", output_dir=str(self._tmp_path / "out"))
 
-        assert calls == ["preload", "first_onnx_package_import"], (
-            f"Expected preload before the first ONNX package import, got {calls}"
+        assert calls[-1] == "first_onnx_package_import" and calls[:-1] and set(calls[:-1]) == {"preload"}, (
+            f"Expected every preload before the first ONNX package import, got {calls}"
         )
 
     def test_onnx_format_does_not_preload_tensorflow(self) -> None:
@@ -655,8 +721,7 @@ class TestExportFormatParameter:
             output_dir=str(self._tmp_path / "out"),
             quantization="int8",
         )
-        call_kwargs = self._mock_export_tflite.call_args
-        assert call_kwargs[1].get("quantization") == "int8" or call_kwargs.kwargs.get("quantization") == "int8"
+        assert self._exported_config().quantization == "int8"
 
     @pytest.mark.parametrize(
         "quant",
@@ -674,7 +739,7 @@ class TestExportFormatParameter:
             output_dir=str(self._tmp_path / "out"),
             quantization=quant,
         )
-        self._mock_export_tflite.assert_called_once()
+        self._mock_convert_onnx.assert_called_once()
 
     def test_unsupported_format_raises(self) -> None:
         obj = self._make_rfdetr()
@@ -682,7 +747,7 @@ class TestExportFormatParameter:
             obj.export(format="banana", output_dir=str(self._tmp_path / "out"))
 
     def test_calibration_data_forwarded(self) -> None:
-        """Verify calibration_data kwarg reaches export_tflite."""
+        """Verify calibration_data kwarg reaches the TFLite conversion."""
         obj = self._make_rfdetr()
         calib = "/my/calib.npy"
         obj.export(
@@ -690,19 +755,17 @@ class TestExportFormatParameter:
             output_dir=str(self._tmp_path / "out"),
             calibration_data=calib,
         )
-        call_kwargs = self._mock_export_tflite.call_args
-        assert call_kwargs[1].get("calibration_data") == calib or call_kwargs.kwargs.get("calibration_data") == calib
+        assert self._exported_config().calibration_data == calib
 
     def test_max_images_forwarded(self) -> None:
-        """Verify max_images kwarg reaches export_tflite."""
+        """Verify max_images kwarg reaches the TFLite conversion."""
         obj = self._make_rfdetr()
         obj.export(
             format="tflite",
             output_dir=str(self._tmp_path / "out"),
             max_images=50,
         )
-        call_kwargs = self._mock_export_tflite.call_args
-        assert call_kwargs[1].get("max_images") == 50 or call_kwargs.kwargs.get("max_images") == 50
+        assert self._exported_config().max_images == 50
 
     def test_max_images_default_is_100(self) -> None:
         """Verify max_images defaults to 100 when not specified."""
@@ -711,8 +774,7 @@ class TestExportFormatParameter:
             format="tflite",
             output_dir=str(self._tmp_path / "out"),
         )
-        call_kwargs = self._mock_export_tflite.call_args
-        assert call_kwargs[1].get("max_images") == 100 or call_kwargs.kwargs.get("max_images") == 100
+        assert self._exported_config().max_images == 100
 
 
 # ---------------------------------------------------------------------------
@@ -908,7 +970,7 @@ class TestPrepareCalibrationData:
     def _mock_onnx_info(self) -> Generator:
         """Mock ``_get_onnx_input_info`` to return a known shape."""
         with mock.patch(
-            "rfdetr.export._tflite.converter._get_onnx_input_info",
+            "rfdetr.export._tflite.exporter._get_onnx_input_info",
             return_value=("input", [1, 3, 256, 256]),
         ):
             yield
@@ -931,7 +993,7 @@ class TestPrepareCalibrationData:
         onnx_path = tmp_path / "model.onnx"
         onnx_path.write_bytes(b"\x00")
 
-        with mock.patch("rfdetr.export._tflite.converter.logger") as mock_logger:
+        with mock.patch("rfdetr.export._tflite.exporter.logger") as mock_logger:
             _prepare_calibration_data(onnx_path, None, tmp_path)
 
         mock_logger.warning.assert_not_called()
@@ -1204,7 +1266,7 @@ class TestGridSampleOnnxRewrite:
 
     def test_module_import_does_not_raise(self) -> None:
         """Importing the converter module must succeed regardless of onnx2tf version."""
-        import rfdetr.export._tflite.converter  # noqa: F401
+        import rfdetr.export._tflite.exporter  # noqa: F401
 
     @onnx_gs_available
     def test_no_gridsample_nodes_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
@@ -1212,7 +1274,7 @@ class TestGridSampleOnnxRewrite:
         import onnx
         import onnx_graphsurgeon as gs
 
-        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
 
         patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
 
@@ -1227,7 +1289,7 @@ class TestGridSampleOnnxRewrite:
         import onnx
         import onnx_graphsurgeon as gs
 
-        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
 
         patched_path = _replace_gridsample_for_tflite(gridsample_onnx, tmp_path)
 
@@ -1243,7 +1305,7 @@ class TestGridSampleOnnxRewrite:
         import torch
         import torch.nn.functional as F  # noqa: N812
 
-        from rfdetr.export._tflite.converter import _replace_gridsample_for_tflite
+        from rfdetr.export._tflite.exporter import _replace_gridsample_for_tflite
 
         rng = np.random.default_rng(0)
         im_np = rng.standard_normal((1, 4, 8, 8)).astype(np.float32)
@@ -1405,10 +1467,10 @@ class TestPreloadTensorflowBeforeOnnx:
 
 
 class TestExportTflitePreloadOrder:
-    """``export_tflite()`` preloads TensorFlow before it touches onnx.
+    """``TFLiteExporter.convert_onnx()`` preloads TensorFlow before it touches onnx.
 
     Deliberately **not** gated on ``onnx2tf_available``: the ``fake_onnx2tf`` fixture injects a stub module and the
-    availability check is patched out, so this runs — and covers the preload call inside ``export_tflite()`` — in CI,
+    availability check is patched out, so this runs — and covers the preload call inside ``convert_onnx()`` — in CI,
     which never installs the ``tflite`` extra.
     """
 
@@ -1419,7 +1481,7 @@ class TestExportTflitePreloadOrder:
         fake_onnx2tf: Any,
         mock_prepare_calib: Any,
     ) -> None:
-        """The preload is the first thing ``export_tflite`` does, ahead of the onnx2tf availability check."""
+        """The preload is the first thing ``convert_onnx`` does, ahead of the onnx2tf availability check."""
         calls: list[str] = []
         with (
             mock.patch(
@@ -1427,17 +1489,17 @@ class TestExportTflitePreloadOrder:
                 side_effect=lambda: calls.append("preload"),
             ),
             mock.patch(
-                "rfdetr.export._tflite.converter._check_onnx2tf_available",
+                "rfdetr.export._tflite.exporter._check_onnx2tf_available",
                 side_effect=lambda: calls.append("check"),
             ),
         ):
-            export_tflite(onnx_path=onnx_model, output_dir=tflite_output)
+            _run_convert_onnx(onnx_model, tflite_output)
 
         assert calls == ["preload", "check"], f"Expected preload before the onnx2tf check, got {calls}"
 
 
 class TestExportTfliteAppliesInterpreterPath:
-    """``export_tflite()`` must apply :func:`_interpreter_scripts_on_path` around ``onnx2tf.convert``.
+    """``convert_onnx()`` must apply :func:`_interpreter_scripts_on_path` around ``onnx2tf.convert``.
 
     Deliberately **not** gated on ``onnx2tf_available``: ``fake_onnx2tf`` injects a stub so this runs in CI.
     """
@@ -1460,14 +1522,14 @@ class TestExportTfliteAppliesInterpreterPath:
 
         convert_mock.side_effect = _capture_path
 
-        export_tflite(onnx_path=onnx_model, output_dir=tflite_output)
+        _run_convert_onnx(onnx_model, tflite_output)
 
         assert seen, "onnx2tf.convert was not called"
         first = seen[0].split(os.pathsep)[0]
         assert first == str(Path(sys.executable).parent), (
             f"Expected the interpreter script dir first during convert(), got {first!r}"
         )
-        assert os.environ["PATH"] == "/usr/bin", "PATH must be restored after export_tflite() returns"
+        assert os.environ["PATH"] == "/usr/bin", "PATH must be restored after convert_onnx() returns"
 
 
 # ---------------------------------------------------------------------------
@@ -1535,7 +1597,7 @@ class TestInterpreterScriptsOnPath:
     )
     def test_skips_empty_or_relative_executable(self, monkeypatch: pytest.MonkeyPatch, executable: str) -> None:
         """Invalid executable paths do not add the current directory to PATH."""
-        monkeypatch.setattr("rfdetr.export._tflite.converter.sys.executable", executable)
+        monkeypatch.setattr("rfdetr.export._tflite.exporter.sys.executable", executable)
         scripts_dir = sysconfig.get_path("scripts")
         monkeypatch.setenv("PATH", "/usr/bin")
 
@@ -1563,3 +1625,58 @@ class TestInterpreterScriptsOnPath:
             assert os.environ["PATH"]
 
         assert "PATH" not in os.environ
+
+
+class TestTFLitePreloadOrdering:
+    """The TensorFlow preload must still happen before anything on the TFLite path imports ONNX.
+
+    ``onnx``'s C extension and TensorFlow both statically link Abseil and export its symbols weakly, so whichever loads
+    first supplies them to both. When ONNX wins, the TFLite conversion blocks forever restoring the SavedModel bundle —
+    a 0%-CPU hang with no traceback (issue #1322). ``TFLiteExporter`` guards that by calling
+    ``preload_tensorflow_before_onnx()`` before it touches the ONNX stage. Both halves of the guard are pinned here:
+    that nothing imports ONNX earlier, and that the preload really does run first.
+    """
+
+    def test_importing_the_exporter_does_not_load_onnx_first(self) -> None:
+        """Importing the TFLite exporter module must not put ONNX ahead of TensorFlow in ``sys.modules``.
+
+        Runs in a fresh interpreter because this suite has already imported ONNX by the time it executes. The
+        regression it catches is a plain-looking one: hoisting ``OnnxExporter``'s import to module scope in
+        ``rfdetr.export._tflite.exporter`` would load ONNX at import time, long before the preload runs, and the
+        symptom would surface as an unexplained CI timeout rather than a failure.
+        """
+        script = (
+            "import rfdetr.export._tflite.exporter\n"
+            "from rfdetr.export._backend import _onnx_imported_before_tensorflow\n"
+            "print(_onnx_imported_before_tensorflow())\n"
+        )
+        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+
+        assert result.stdout.strip().splitlines()[-1] == "False", (
+            f"importing the TFLite exporter loaded onnx ahead of tensorflow: {result.stdout!r}"
+        )
+
+    def test_preload_runs_before_the_onnx_stage(self, tmp_path: Path) -> None:
+        """``TFLiteExporter`` must call the preload before it runs its ONNX export, not after."""
+        calls: list[str] = []
+        graph = mock.MagicMock()
+        graph.backbone_only = False
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+
+        with (
+            mock.patch(
+                "rfdetr.export._backend.preload_tensorflow_before_onnx", side_effect=lambda: calls.append("preload")
+            ),
+            mock.patch(
+                "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+                side_effect=lambda _self, _graph: (calls.append("onnx"), str(tmp_path / "model.onnx"))[1],
+                autospec=True,
+            ),
+            mock.patch(
+                "rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx",
+                side_effect=lambda *_a, **_kw: (calls.append("tflite"), tmp_path / "model_fp32.tflite")[1],
+            ),
+        ):
+            exporter(graph)
+
+        assert calls == ["preload", "onnx", "tflite"]
