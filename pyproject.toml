@@ -58,14 +58,15 @@ train = [
     # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
     # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
     # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The exact pin is
-    # deliberate: two of the hotcoco behaviors the adapter works around still fail silently rather than loudly on
-    # 1.0.0 — its `dataset` getter returns a copy, and its own `mask.encode` emits RLE counts as bytes that its
-    # own COCO constructor reads back as an empty mask, collapsing mask AP to 0.0 without raising. Pinning exactly
-    # makes every hotcoco release an explicit, parity-tested upgrade rather than something a user's resolver can
-    # pick up unverified. Installing it also puts a generically-named `coco` console script on PATH.
-    # TODO: once a hotcoco release fixes both behaviors, drop the matching workarounds
-    # in src/rfdetr/training/coco_map.py (each carries its own TODO) and reconsider widening this to a range.
-    "hotcoco==1.0.0",
+    # deliberate: one of the hotcoco behaviors the adapter works around still fails silently rather than loudly on
+    # 1.0.1 — its `dataset` getter returns a copy, so an in-place annotation edit is invisible to it. (1.0.1 fixed
+    # the other: `mask.encode` emitting RLE counts as bytes that its own COCO constructor read back as an empty
+    # mask, collapsing mask AP to 0.0 without raising.) Pinning exactly makes every hotcoco release an explicit,
+    # parity-tested upgrade rather than something a user's resolver can pick up unverified. Installing it also
+    # puts a generically-named `coco` console script on PATH.
+    # TODO: once a hotcoco release fixes the dataset-copy behavior too, drop the matching workaround
+    # in src/rfdetr/training/coco_map.py (_prediction_dataset_for_iou_type) and reconsider widening this to a range.
+    "hotcoco==1.0.1",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
