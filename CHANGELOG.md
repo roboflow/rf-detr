@@ -42,6 +42,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Segmentation validation/test mAP no longer risks CUDA OOM in `_compute_mask_iou`'s boolean-to-float32 mask conversion, which previously materialized every matched prediction of a class at once (`N x H x W`, full image resolution by default) and every ground truth at once (`M x H x W`) — a densely annotated class can make `M` comparable to `N`, since GT count is bounded only by the image's own annotations, not by `eval_max_dets`. Both sides are now converted 32 rows at a time. For any nonzero prediction and ground-truth count, output is unchanged — bit-identical to the previous implementation; for a zero count on either side, the previous implementation raised an ambiguous-reshape `RuntimeError` instead of returning a value, and now returns an empty result. ([#1460](https://github.com/roboflow/rf-detr/issues/1460))
+
 - WebDataset validation/test-only runs retain the training index's class names even when evaluation categories are a subset, for both raw and remapped labels.
 
 - WebDataset training keeps shard permutations consistent across ranks with real DataLoader workers, aligns accumulation at rank level, and sizes raw-label heads from all declared categories. Repacking is documented as offline-only; path and shard-helper doctests are portable and executable.

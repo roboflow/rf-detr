@@ -50,8 +50,65 @@ _ClassSlice: TypeAlias = tuple[
 _NO_INDICES: np.ndarray[Any, np.dtype[np.intp]] = np.zeros(0, dtype=np.intp)
 
 
+#: Number of mask rows converted to a float32 [chunk, H*W] view per side, per ``_compute_mask_iou()``
+#: call. Left unbounded on either side, that view scales as N x H x W (predictions) or M x H x W
+#: (ground truths) and is the exact allocation that exhausted GPU memory validating real segmentation
+#: datasets at full image resolution (rf-detr#1084, rf-detr#1460). A class's GT count is bounded by
+#: the image's own annotation count rather than the evaluator's per-image detection cap
+#: (``eval_max_dets``, default 500), but nothing caps that count itself: a densely annotated class can
+#: make M comparable to N, so both sides are chunked with the same bound.
+_MASK_IOU_CHUNK: int = 32
+
+
+def _mask_row_areas(masks: Tensor, hw: int) -> Tensor:
+    """Sum each mask's true pixels, ``_MASK_IOU_CHUNK`` rows at a time.
+
+    Matches ``masks.bool().view(-1, hw).float().sum(dim=1, keepdim=True)`` row for row: a row's sum
+    only reads that row's own pixels, so batching rows into chunks changes neither the per-row
+    floating-point reduction nor its result — only how many rows are converted to float32 at once.
+
+    Args:
+        masks: Boolean mask tensor of shape [count, H, W].
+        hw: Flattened pixel count ``H * W`` each mask reshapes to.
+
+    Returns:
+        Float32 tensor of shape [count, 1] with each row's true-pixel count.
+    """
+    count = masks.shape[0]
+    chunks = [
+        masks[start : start + _MASK_IOU_CHUNK].bool().view(-1, hw).float().sum(dim=1, keepdim=True)
+        for start in range(0, count, _MASK_IOU_CHUNK)
+    ]
+    if not chunks:
+        return torch.zeros((0, 1), dtype=torch.float32, device=masks.device)
+    return torch.cat(chunks, dim=0)
+
+
+def _resize_mask_chunk(masks: Tensor, size: tuple[int, int]) -> Tensor:
+    """Resize one boolean-mask chunk with nearest-neighbor sampling.
+
+    Resizes only a caller-bounded chunk so the temporary float32 interpolation
+    output cannot scale with every ground-truth mask in an image.
+
+    Args:
+        masks: Boolean mask tensor of shape [chunk, H, W].
+        size: Target height and width.
+
+    Returns:
+        Resized boolean mask tensor of shape [chunk, size[0], size[1]].
+    """
+    return F.interpolate(masks.float().unsqueeze(1), size=size, mode="nearest").squeeze(1).bool()
+
+
 def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """Compute pairwise boolean-mask IoU between N predictions and M ground truths.
+
+    Both predictions and ground truths are converted to float32 ``_MASK_IOU_CHUNK`` rows at a time.
+    When mask grids differ, ground truths are also resized one chunk at a time before conversion. At
+    most one prediction chunk and one ground-truth chunk are resident as float32 [chunk, H*W] tensors,
+    bounding that allocation to ``_MASK_IOU_CHUNK x H x W`` on each side instead of ``N x H x W`` and
+    ``M x H x W``. This changes only how much memory the call uses at once, not the returned values:
+    each output entry depends solely on its own prediction mask and ground-truth mask.
 
     Args:
         pred_masks: Boolean mask tensor of shape [N, H, W].
@@ -62,16 +119,44 @@ def _compute_mask_iou(pred_masks: Tensor, gt_masks: Tensor) -> Tensor:
     """
     n = pred_masks.shape[0]
     m = gt_masks.shape[0]
-    if pred_masks.shape[-2:] != gt_masks.shape[-2:]:
-        h, w = pred_masks.shape[-2:]
-        gt_masks = F.interpolate(gt_masks.float().unsqueeze(1), size=(h, w), mode="nearest").squeeze(1)
-    pred_flat = pred_masks.bool().view(n, -1).float()  # [N, HW]
-    gt_flat = gt_masks.bool().view(m, -1).float()  # [M, HW]
-    inter = torch.mm(pred_flat, gt_flat.t())  # [N, M]
-    pred_area = pred_flat.sum(dim=1, keepdim=True)  # [N, 1]
-    gt_area = gt_flat.sum(dim=1, keepdim=True)  # [M, 1]
-    union = pred_area + gt_area.t() - inter  # [N, M]
-    return torch.where(union > 0, inter / union, torch.zeros_like(inter))
+    mask_size = (pred_masks.shape[-2], pred_masks.shape[-1])
+    resize_ground_truths = mask_size != gt_masks.shape[-2:]
+    hw = mask_size[0] * mask_size[1]
+
+    pred_area = _mask_row_areas(pred_masks, hw)  # [N, 1]
+    if resize_ground_truths:
+        gt_area_chunks = [
+            _mask_row_areas(_resize_mask_chunk(gt_masks[start : start + _MASK_IOU_CHUNK], mask_size), hw)
+            for start in range(0, m, _MASK_IOU_CHUNK)
+        ]
+        gt_area = (
+            torch.cat(gt_area_chunks, dim=0)
+            if gt_area_chunks
+            else torch.zeros((0, 1), dtype=torch.float32, device=gt_masks.device)
+        )
+    else:
+        gt_area = _mask_row_areas(gt_masks, hw)  # [M, 1]
+
+    iou_rows: list[Tensor] = []
+    for pstart in range(0, n, _MASK_IOU_CHUNK):
+        pred_chunk = pred_masks[pstart : pstart + _MASK_IOU_CHUNK].bool().view(-1, hw).float()  # [c, HW]
+        inter_blocks = []
+        for gstart in range(0, m, _MASK_IOU_CHUNK):
+            gt_chunk = gt_masks[gstart : gstart + _MASK_IOU_CHUNK]
+            if resize_ground_truths:
+                gt_chunk = _resize_mask_chunk(gt_chunk, mask_size)
+            gt_flat = gt_chunk.bool().view(-1, hw).float()
+            inter_blocks.append(torch.mm(pred_chunk, gt_flat.t()))  # each block [c, g]
+        inter = (
+            torch.cat(inter_blocks, dim=1)
+            if inter_blocks
+            else torch.zeros((pred_chunk.shape[0], 0), dtype=pred_chunk.dtype, device=pred_chunk.device)
+        )  # [c, M]
+        union = pred_area[pstart : pstart + _MASK_IOU_CHUNK] + gt_area.t() - inter  # [c, M]
+        iou_rows.append(torch.where(union > 0, inter / union, torch.zeros_like(inter)))
+    if not iou_rows:
+        return torch.zeros((n, m), dtype=pred_area.dtype, device=pred_area.device)
+    return torch.cat(iou_rows, dim=0)
 
 
 def _match_sorted_iou_matrix(
