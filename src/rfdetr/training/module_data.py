@@ -163,6 +163,16 @@ class RFDETRDataModule(LightningDataModule):
             block_size=block_size,
             pack=train_config.pack_targets,
         )
+        # Training only. Padding the eval loaders would feed the filler rows to COCO matching as real
+        # ground truth and quietly deflate mAP, and evaluation does not need shape stability anyway.
+        # Carries pack=train_config.pack_targets too: padding runs first in the collate seam (see
+        # make_collate_fn), so a training batch with both options set still packs, and packs every
+        # sample at one uniform shape instead of the variable-length one.
+        self._collate_fn_train = make_collate_fn(
+            block_size=block_size,
+            pack=train_config.pack_targets,
+            pad_targets_to=train_config.pad_targets_to,
+        )
 
         self._dataset_train: torch.utils.data.Dataset[Any] | None = None
         self._dataset_val: torch.utils.data.Dataset[Any] | None = None
@@ -263,6 +273,17 @@ class RFDETRDataModule(LightningDataModule):
                 raise ValueError(
                     f"augmentation_backend='{resolved}' does not support keypoint transforms. "
                     "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
+                )
+            if self.train_config.pad_targets_to is not None and is_gpu_postprocess(resolved):
+                # The Kornia GPU pipeline's own collate_boxes/unpack_boxes (kornia_transforms.py)
+                # rebuild their own real/filler mask from each image's box count -- they don't know
+                # about pad_targets_to's "valid" key, so they treat every padded filler row as real,
+                # then unpack_boxes strips the zero-area fillers back out and leaves the fixed row
+                # count (and the "valid" key itself) undone, defeating the padding this option exists
+                # for. Reject the combination instead of silently losing shape stability.
+                raise ValueError(
+                    f"augmentation_backend='{resolved}' does not support pad_targets_to. "
+                    "Set pad_targets_to=None or augmentation_backend='cpu'/'albumentations'."
                 )
             if self._dataset_train is None:
                 self._dataset_train = build_dataset("train", ns, resolution)
@@ -401,7 +422,10 @@ class RFDETRDataModule(LightningDataModule):
         return build_webdataset_loader(
             dataset,
             batch_size=batch_size,
-            collate_fn=self._collate_fn,
+            # fixed_epoch is only ever True for the training call (train_dataloader); eval loaders
+            # (val/test/predict) must keep the real, unpadded targets -- see the comment on
+            # self._collate_fn_train above.
+            collate_fn=self._collate_fn_train if fixed_epoch else self._collate_fn,
             num_workers=self._num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,
@@ -439,7 +463,9 @@ class RFDETRDataModule(LightningDataModule):
 
         Returns:
             DataLoader for the training dataset. With ``TrainConfig.pack_targets=True`` (the default), its collated
-            batches contain ``PackedTargets`` for losslessly packable target batches.
+            batches contain ``PackedTargets`` for losslessly packable target batches. With
+            ``TrainConfig.pad_targets_to`` set, every target is padded to that row count before packing, so a
+            batch always packs (every sample already shares one shape) and every packed shape is fixed too.
         """
         dataset: torch.utils.data.Dataset[Any] = self._require_dataset(self._dataset_train, "fit")
         batch_size = self._resolve_batch_size()
@@ -466,7 +492,7 @@ class RFDETRDataModule(LightningDataModule):
                 dataset,
                 batch_size=batch_size,
                 sampler=sampler,
-                collate_fn=self._collate_fn,
+                collate_fn=self._collate_fn_train,
                 num_workers=num_workers,
                 pin_memory=self._pin_memory,
                 persistent_workers=self._persistent_workers,
@@ -500,7 +526,7 @@ class RFDETRDataModule(LightningDataModule):
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,  # no-op after alignment, but keeps intent explicit
-            collate_fn=self._collate_fn,
+            collate_fn=self._collate_fn_train,
             num_workers=num_workers,
             pin_memory=self._pin_memory,
             persistent_workers=self._persistent_workers,

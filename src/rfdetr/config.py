@@ -1026,6 +1026,12 @@ class TrainConfig(BaseConfig):
     # accepts no "auto": it is never probed, and an explicit value stays usable even when batch_size="auto"
     # has not been resolved.
     eval_batch_size: int | None = None
+    # Pad every training image's targets to this many rows so the loss keeps one shape across batches. XLA keys
+    # its compiled graph on shapes, and the detection loss is shaped by the ground-truth box count, so on TPU an
+    # unpadded run recompiles whenever a batch presents a new per-image box-count tuple. ``None`` keeps the
+    # variable-length path, which is what CUDA wants. Composes with ``pack_targets``: padding runs first in the
+    # collate seam, so the packer always sees one shape.
+    pad_targets_to: int | None = None
     # Global effective batch size target, divided across devices and nodes. This is a floor, not a cap: the probe
     # only raises grad_accum_steps to *reach* it (see recommend_grad_accum_steps), and never shrinks the micro-batch
     # to hold it. Once the probed micro-batch already meets or exceeds this value, grad_accum_steps stays at 1 and
@@ -1296,6 +1302,18 @@ class TrainConfig(BaseConfig):
         """Validate eval_batch_size is None (inherit the train batch size) or >= 1."""
         if v is not None and v < 1:
             raise ValueError("eval_batch_size must be >= 1 when provided.")
+        return v
+
+    @field_validator("pad_targets_to", mode="after")
+    @classmethod
+    def validate_pad_targets_to(cls, v: int | None) -> int | None:
+        """Validate pad_targets_to is None (keep the variable-length path) or >= 1.
+
+        Catches a non-positive value at construction instead of at the first DataLoader collate, which can run inside a
+        worker process.
+        """
+        if v is not None and v < 1:
+            raise ValueError("pad_targets_to must be a positive integer when provided.")
         return v
 
     @field_validator(
