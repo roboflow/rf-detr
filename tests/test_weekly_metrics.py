@@ -322,13 +322,18 @@ class TestSvgState:
 
         state = update_weekly_metrics.load_state(output, "roboflow/rf-detr", "rfdetr")
 
-        assert len(state.history) == 1
-        checkpoint = state.history[0]
-        assert checkpoint.week_start.weekday() == 0
-        assert checkpoint.week_end.weekday() == 6
-        assert checkpoint.new_stars is None
-        assert checkpoint.stars_total >= 0
-        assert checkpoint.downloads >= 0
+        assert len(state.history) >= 1
+        for index, checkpoint in enumerate(state.history):
+            assert checkpoint.week_start.weekday() == 0
+            assert checkpoint.week_end.weekday() == 6
+            assert checkpoint.stars_total >= 0
+            assert checkpoint.downloads >= 0
+            if index == 0:
+                assert checkpoint.new_stars is None
+            else:
+                previous = state.history[index - 1]
+                assert checkpoint.week_start == previous.week_end + timedelta(days=1)
+                assert checkpoint.new_stars == checkpoint.stars_total - previous.stars_total
 
     def test_load_state_rejects_oversized_existing_svg(self, tmp_path: Path) -> None:
         """An existing artifact past the byte cap must fail closed instead of being parsed unbounded.
