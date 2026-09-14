@@ -26,7 +26,7 @@ RF-DETR is a real-time transformer architecture for object detection and instanc
 uv sync --all-groups
 
 # Run tests (always before committing)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
+uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
 
 # Build package
 uv build
@@ -114,7 +114,7 @@ from tqdm.auto import tqdm  # NOT from tqdm import tqdm
 
 Before submitting changes:
 
-1. ✅ Run tests: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
+1. ✅ Run tests: `uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu"`
 2. ✅ Run pre-commit: `pre-commit run --all-files`
 3. ✅ Verify new functions have type hints + docstrings
 4. ✅ Review changes for minimal scope

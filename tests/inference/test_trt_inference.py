@@ -13,7 +13,8 @@ import torch
 from PIL import Image
 
 import rfdetr.export.benchmark as benchmark
-from rfdetr.export.benchmark import TRTInference, infer_transforms
+from rfdetr.export._tensorrt.inference import TRTInference
+from rfdetr.export.benchmark import infer_transforms
 
 
 class TestTRTInference:

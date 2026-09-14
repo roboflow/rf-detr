@@ -510,6 +510,20 @@ class TestTrainConfigT42PromotedFields:
         tc = self._tc(tmp_path, batch_size="auto")
         assert tc.batch_size == "auto"
 
+    def test_fp8_rejects_auto_batch(self, tmp_path: Path) -> None:
+        """The ordinary autocast probe cannot size a Transformer Engine model."""
+        with pytest.raises(ValueError, match="FP8.*explicit.*batch_size"):
+            self._tc(tmp_path, batch_size="auto", amp_dtype="fp8")
+
+    @pytest.mark.parametrize("amp_dtype", ["auto", "bf16", "fp16"])
+    def test_other_precisions_allow_auto_batch(self, tmp_path: Path, amp_dtype: str) -> None:
+        """Existing autocast modes retain automatic batch sizing."""
+        assert self._tc(tmp_path, batch_size="auto", amp_dtype=amp_dtype).batch_size == "auto"
+
+    def test_fp8_allows_explicit_batch(self, tmp_path: Path) -> None:
+        """An explicit FP8 micro-batch does not need the unsupported probe."""
+        assert self._tc(tmp_path, batch_size=1, amp_dtype="fp8").batch_size == 1
+
     @pytest.mark.parametrize(
         "field,value",
         [
