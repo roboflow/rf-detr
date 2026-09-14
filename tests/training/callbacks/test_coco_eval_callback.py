@@ -16,7 +16,7 @@ import torch
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend, _UfcocoBackend
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -178,6 +178,24 @@ class TestSetup:
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert isinstance(cb.map_metric._coco_backend, _HotCocoBackend)
+
+    @pytest.mark.parametrize("segmentation", [False, True])
+    def test_ufcoco_eval_backend_reaches_every_metric(self, segmentation: bool) -> None:
+        """The optional ufcoco backend must reach the validation, train-split and EMA metrics alike.
+
+        Same three call sites as ``test_eval_backend_reaches_every_metric``, asserted positively on the backend type so
+        that a call site falling back to the default would fail here rather than evaluate part of a run on hotcoco.
+        """
+        pytest.importorskip("ultrafast_pycocotools")
+        cb = COCOEvalCallback(segmentation=segmentation, eval_backend="ufcoco")
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer())
+
+        assert cb.map_metric_ema is not None, "EMA metric must exist or this asserts nothing"
+        for metric in (cb.map_metric, cb.map_metric_train, cb.map_metric_ema):
+            assert isinstance(metric._coco_backend, _UfcocoBackend)
+            assert metric._coco_backend.backend == "faster_coco_eval"
 
     def test_constructor_parameter_order_is_append_only(self) -> None:
         """New constructor parameters must be appended, never inserted among the existing ones.

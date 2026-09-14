@@ -145,10 +145,11 @@ class COCOEvalCallback(Callback):
             is skipped and its predictions are routed to the EMA track. When ``True``,
             ``validation_step`` forwards the base model and this callback runs the second, EMA
             forward pass, so both models are evaluated from independent predictions.
-        eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`. Both
-            backends return identical metrics; ``"hotcoco"`` is the faster default and ``"faster_coco_eval"`` is
-            the previous evaluator. Appended after the existing parameters rather than grouped with the other
-            evaluation knobs, so that positional callers keep binding the arguments they always did.
+        eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`.
+            ``"hotcoco"`` is the faster default, ``"faster_coco_eval"`` is the previous evaluator and ``"ufcoco"``
+            selects ultrafast-pycocotools; all three ship with ``rfdetr[train]`` and return identical metrics.
+            Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
+            positional callers keep binding the arguments they always did.
     """
 
     def __init__(
@@ -161,7 +162,7 @@ class COCOEvalCallback(Callback):
         in_notebook: bool | None = None,
         eval_ema_only: bool | None = None,
         eval_base_model: bool | None = None,
-        eval_backend: Literal["hotcoco", "faster_coco_eval"] = "hotcoco",
+        eval_backend: Literal["hotcoco", "faster_coco_eval", "ufcoco"] = "hotcoco",
     ) -> None:
         super().__init__()
         self._max_dets = max_dets

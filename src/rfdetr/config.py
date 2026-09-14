@@ -1138,12 +1138,12 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
-    eval_backend: Literal["hotcoco", "faster_coco_eval"] = Field(
+    eval_backend: Literal["hotcoco", "faster_coco_eval", "ufcoco"] = Field(
         default="hotcoco",
         description=(
-            "COCO evaluation backend used for validation and test mAP. Both ship with 'rfdetr[train]' and produce "
-            "identical metrics; 'hotcoco' is several times faster to compute. Set 'faster_coco_eval' to fall back "
-            "to the previous evaluator."
+            "COCO evaluation backend used for validation and test mAP. All three ship with 'rfdetr[train]' and "
+            "produce identical metrics; 'hotcoco' is several times faster to compute than 'faster_coco_eval', the "
+            "previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
