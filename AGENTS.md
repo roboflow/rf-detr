@@ -238,10 +238,11 @@ uv run twine check --strict dist/*
 - `src/rfdetr/export/prepare.py` does the format-independent graph work once and returns an `ExportGraph`. Never duplicate it into a format.
 - Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/learn/export-blueprint.md](docs/learn/export-blueprint.md).
 
-**Model Selection (examples, docs, tests, defaults):**
+**Model Selection (examples, docs, CI, tests, defaults):**
 
-- **Default to `RFDETRSmall` / `"rfdetr-small"`.** Use it wherever an example needs a concrete detection model.
-- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, or tests — treat as deprecated; substitute `small`.
+- **Default to `RFDETRSmall` / `"rfdetr-small"` in docs and examples.** Use it wherever an example needs a concrete detection model.
+- **Default to `RFDETRNano` / `"rfdetr-nano"` in CI and tests.**
+- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, CI, or tests — treat as deprecated; substitute `small` in docs/examples and `nano` in CI/tests.
 - **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
 - **Released segmentation sizes** — `RFDETRSegNano`/`Small`/`Medium`/`Large` / `"rfdetr-seg-{nano,small,medium,large}"` (plus `xlarge`/`2xlarge`). Use a sized seg model for segmentation; `RFDETRSegPreview` / `"rfdetr-seg-preview"` is now superseded — do not use it in new examples, docs, or tests.
 - **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
