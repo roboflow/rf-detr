@@ -6451,7 +6451,27 @@ https://github.com/Lightning-AI/pytorch-lightning/issues/19987).</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>batches contain <code>PackedTargets</code> for losslessly packable target batches.</p>
+                <p>batches contain <code>PackedTargets</code> for losslessly packable target batches. With</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>TrainConfig.pad_targets_to</code> set, every target is padded to that row count before packing, so a</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="torch.utils.data.DataLoader">DataLoader</span>[<span title="typing.Any">Any</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>batch always packs (every sample already shares one shape) and every packed shape is fixed too.</p>
               </div>
             </td>
           </tr>
