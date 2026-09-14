@@ -1729,8 +1729,11 @@ class RFDETR:
                 ``"xnnpack"`` or ``"coreml"``.
             fp16: Build the TensorRT engine with FP16 precision.  Only applies when ``format="tensorrt"``
                 (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
-                on NVIDIA GPUs.  Pass ``False`` to build an FP32 engine — required on TensorRT builds that do
-                not expose the FP16 builder flag (``export()`` otherwise aborts while configuring FP16).
+                on NVIDIA GPUs.  TensorRT 11+ removed the FP16 builder flag, so there the engine is built
+                from an FP16-cast graph instead; engine I/O stays FP32 either way.  A lean/partial
+                TensorRT < 11 wheel that lacks the FP16 builder flag falls back to an FP32 engine with a
+                warning instead — see :meth:`~rfdetr.export._tensorrt.exporter.TensorRTExporter.build_engine`
+                for the full precision-resolution logic.  Pass ``False`` for an FP32 engine.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -1785,7 +1788,10 @@ class RFDETR:
                 ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
                 ``backend="coreml"``, ``openvino`` for OpenVINO export,
                 or an ExecuTorch source build against the QAIRT SDK for
-                ``backend="qnn"``).
+                ``backend="qnn"``); also raised for ``format="tensorrt"`` with ``fp16=True`` on a
+                strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
+                to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
+                ``fp16=False``.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
