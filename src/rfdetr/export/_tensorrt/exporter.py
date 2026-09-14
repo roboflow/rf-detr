@@ -29,11 +29,14 @@ import importlib.util
 import os
 import tempfile
 from collections.abc import Iterator
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from rfdetr.export._naming import resolve_export_stem
+from rfdetr.export.base import ExportConfig, Exporter
+from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -51,13 +54,14 @@ try:
     )
 
     _IS_TENSORRT_AVAILABLE = True
-except ImportError:  # pragma: no cover - exercised via the guard in build_engine
+except ImportError:  # pragma: no cover - exercised via TensorRTExporter._require_tensorrt
     CreateConfig = None
     engine_from_network = None
     network_from_onnx_path = None
     save_engine = None
 
     _IS_TENSORRT_AVAILABLE = False
+
 
 # TensorRT 11 removed weak typing: ``BuilderFlag.FP16`` no longer exists and engine precision is
 # taken from the ONNX graph's dtypes. Building FP16 there means casting the graph first, which needs
@@ -603,57 +607,152 @@ def fp16_source_graph(onnx_path: str) -> Iterator[str]:
             Path(cast_path).unlink(missing_ok=True)
 
 
-def build_engine(
-    onnx_path: str,
-    *,
-    fp16: bool = True,
-    verbose: bool = False,
-    dry_run: bool = False,
-    output_name: str | None = None,
-) -> str:
-    """Build a serialized TensorRT engine from an ONNX model, in-process.
+@dataclass(frozen=True, slots=True)
+class TensorRTConfig(ExportConfig):
+    """Settings for ``format="tensorrt"``, which builds an engine from an ONNX export.
 
-    Uses the TensorRT Python API through ``polygraphy`` — no ``trtexec`` subprocess.
-    Workspace size is left to the TensorRT default (it auto-sizes to the available
-    device memory), which meets or exceeds the historical 4 GiB cap.
-
-    An ``fp16=True`` request never silently yields an FP32 engine on a strongly typed TensorRT; see
-    *fp16* below for how each TensorRT generation is handled.
-
-    Args:
-        onnx_path: Path to the source ``.onnx`` file. Its stem (typically the model variant name,
-            e.g. ``"rfdetr-medium"``) is reused for the engine filename unless *output_name* is given.
+    Attributes:
+        opset_version: ONNX opset the intermediate graph targets.
         fp16: Enable FP16 precision when building the engine. How this is achieved depends on the
             installed TensorRT: weakly typed builds (TensorRT < 11) set the FP16 builder flag, while
             strongly typed ones (TensorRT >= 11, which removed that flag) get an FP16 engine by casting
             the ONNX graph to FP16 first — the engine's own inputs and outputs stay FP32 either way.
             Only downgraded to FP32 (with a warning) on a lean/partial TensorRT < 11 wheel that does not
             expose the flag, where no graph-level alternative exists; the engine filename then reflects
-            the precision actually built (except under *dry_run*, where nothing is built or probed, so
-            the requested value is used as-is).
-        verbose: Emit extra progress logging.
-        dry_run: Log the intended build and return the engine path without
-            building anything (no TensorRT / GPU required).
-        output_name: Full filename override (without extension). Takes precedence over the ONNX
-            stem and suppresses the ``_fp16``/``_fp32`` suffix — the engine is named
-            ``{output_name}.trt`` verbatim, written alongside *onnx_path*.
+            the precision actually built (except under :meth:`TensorRTExporter.build_engine`'s *dry_run*,
+            where nothing is built or probed, so the requested value is used as-is).
+    """
 
-    Returns:
-        Path to the generated ``.trt`` engine file.
+    opset_version: int = 17
+    fp16: bool = True
 
-    Raises:
-        ImportError: If ``polygraphy``/``tensorrt`` are not installed, or if *fp16* is requested on a
-            strongly typed TensorRT without ``onnx``/``onnxconverter-common`` available to cast the graph.
-        Fp16CastUnsupportedError: If *fp16* is requested on a strongly typed TensorRT for a graph that
-            cannot be cast to fp16 (already fp16, or explicitly quantized).
+    def onnx_stage(self) -> Any:
+        """Return the configuration for the ONNX export this format builds from.
+
+        Returns:
+            An :class:`~rfdetr.export._onnx.exporter.OnnxConfig` carrying the settings the intermediate graph needs.
+
+        Examples:
+            >>> TensorRTConfig(fp16=False).onnx_stage().opset_version
+            17
+        """
+        from rfdetr.export._onnx.exporter import OnnxConfig
+
+        return OnnxConfig.derive(self, opset_version=self.opset_version)
+
+
+class TensorRTExporter(Exporter[TensorRTConfig]):
+    """Export to TensorRT by running an ONNX export first and compiling its output into an engine.
+
+    Unlike the portable formats, the engine is compiled for the machine that builds it: it is tied to that GPU and
+    TensorRT version and does not move to another host.
 
     Examples:
-        >>> build_engine("output/rfdetr-medium.onnx", dry_run=True)  # doctest: +SKIP
-        'output/rfdetr-medium_fp16.trt'
-    """
-    onnx_stem = os.path.splitext(onnx_path)[0]
+        Requires the optional ``tensorrt`` dependency and a prepared graph, so this is documentation only
+        (not a doctest):
 
-    def _engine_path(*, fp16_used: bool) -> str:
+        ```python
+        TensorRTExporter(TensorRTConfig(variant_name="rfdetr-small"))(graph)
+        # -> PosixPath('output/rfdetr-small_fp16.trt')
+        ```
+    """
+
+    config_class = TensorRTConfig
+    setting_names = {"opset_version": "opset_version", "fp16": "fp16"}
+    format = "tensorrt"
+    display_name = "TensorRT"
+    dynamic_batch_reason = (
+        "(the engine is compiled without a TensorRT optimization profile, so it accepts only the exported batch"
+        " size). Export one engine per batch size instead."
+    )
+    supports_notes = True
+    pip_extra = "tensorrt"
+
+    def _convert(self, graph: ExportGraph) -> str:
+        """Export to ONNX, build the engine from it, and return the engine's path."""
+        from rfdetr.export._onnx.exporter import OnnxExporter
+
+        onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
+        # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
+        # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
+        output_name = onnx_path.stem if graph.backbone_only and self.config.output_name else self.config.output_name
+        logger.info("Converting ONNX model to TensorRT engine")
+        return self.build_engine(str(onnx_path), output_name=output_name)
+
+    def build_engine(self, onnx_path: str, *, dry_run: bool = False, output_name: str | None = None) -> str:
+        """Build a serialized TensorRT engine from an already-exported ONNX model, in-process.
+
+        Uses the TensorRT Python API through ``polygraphy`` — no ``trtexec`` subprocess. Workspace size is left to
+        the TensorRT default (it auto-sizes to the available device memory), which meets or exceeds the historical
+        4 GiB cap. Precision and progress logging come from the exporter's configuration (``fp16``, ``verbose``).
+
+        An ``fp16=True`` request never silently yields an FP32 engine on a strongly typed TensorRT; see
+        :attr:`TensorRTConfig.fp16` for how each TensorRT generation is handled.
+
+        Args:
+            onnx_path: Path to the source ``.onnx`` file. Its stem (typically the model variant name, e.g.
+                ``"rfdetr-medium"``) is reused for the engine filename unless an output name is given.
+            dry_run: Log the intended build and return the engine path without building anything (no TensorRT /
+                GPU required).
+            output_name: Full filename override (without extension), or ``None`` to fall back to the
+                configuration's ``output_name``. Takes precedence over the ONNX stem and suppresses the
+                ``_fp16``/``_fp32`` suffix — the engine is named ``{output_name}.trt`` verbatim, written alongside
+                *onnx_path*. :meth:`_convert` passes the backbone-marked ONNX stem through here.
+
+        Returns:
+            Path to the generated ``.trt`` engine file.
+
+        Raises:
+            ImportError: If ``polygraphy``/``tensorrt`` are not installed, or if ``fp16`` is requested on a
+                strongly typed TensorRT without ``onnx``/``onnxconverter-common`` available to cast the graph.
+            Fp16CastUnsupportedError: If ``fp16`` is requested on a strongly typed TensorRT for a graph that
+                cannot be cast to fp16 (already fp16, or explicitly quantized).
+
+        Examples:
+            The build logs its progress, so this is documentation rather than a doctest:
+
+            ```python
+            TensorRTExporter(TensorRTConfig()).build_engine("output/rfdetr-medium.onnx", dry_run=True)
+            # -> 'output/rfdetr-medium_fp16.trt'
+            ```
+        """
+        name = output_name if output_name is not None else self.config.output_name
+        fp16 = self.config.fp16
+        engine_path = self._engine_path(onnx_path, fp16_used=fp16, output_name=name)
+
+        if dry_run:
+            logger.info(f"[dry-run] Would build TensorRT engine (fp16={fp16}): {onnx_path} -> {engine_path}")
+            return engine_path
+
+        self._require_tensorrt()
+
+        strategy, trt_version = self._fp16_strategy() if fp16 else (Fp16Strategy.BUILDER_FLAG, "unknown")
+        if strategy is Fp16Strategy.UNAVAILABLE:
+            # Lean/partial wheel on a weakly typed TensorRT: the flag is genuinely unavailable and
+            # there is no graph-level alternative, so fall back rather than failing the export.
+            logger.warning(
+                "TensorRT %s does not expose the FP16 builder flag; building an FP32 engine instead. "
+                "Pass fp16=False to silence this warning.",
+                trt_version,
+            )
+            fp16 = False
+            engine_path = self._engine_path(onnx_path, fp16_used=fp16, output_name=name)
+
+        self._compile(onnx_path, engine_path, fp16=fp16, strategy=strategy, trt_version=trt_version)
+        return engine_path
+
+    def _engine_path(self, onnx_path: str, *, fp16_used: bool, output_name: str | None) -> str:
+        """Derive the ``.trt`` path the engine is written to, beside *onnx_path*.
+
+        Args:
+            onnx_path: Path to the source ``.onnx`` file, whose directory prefix and stem the engine inherits.
+            fp16_used: The precision actually being built, which the filename encodes.
+            output_name: Full filename override (without extension), or ``None`` to derive the name from the ONNX
+                stem plus a precision suffix.
+
+        Returns:
+            Path to the ``.trt`` file the engine is written to.
+        """
         if output_name:
             # Delegate output_name sanitize to the shared resolver so the custom-name stem is derived
             # identically to the ONNX/CoreML/ExecuTorch backends (single source of truth for basename +
@@ -671,60 +770,69 @@ def build_engine(
         # rebuilding the whole path) keeps any earlier ".onnx"-like segment intact and never aliases
         # the input path; a string-level split (not pathlib) preserves separators verbatim (pathlib
         # rewrites "/" to "\\" on Windows).
+        onnx_stem = os.path.splitext(onnx_path)[0]
         return f"{onnx_stem}_{'fp16' if fp16_used else 'fp32'}.trt"
 
-    engine_path = _engine_path(fp16_used=fp16)
+    def _require_tensorrt(self) -> None:
+        """Fail early when the ``rfdetr[tensorrt]`` extra is missing.
 
-    if dry_run:
-        logger.info(f"[dry-run] Would build TensorRT engine (fp16={fp16}): {onnx_path} -> {engine_path}")
-        return engine_path
+        Raises:
+            ImportError: If ``polygraphy``/``tensorrt`` are not installed.
+        """
+        if engine_from_network is None:
+            raise ImportError(
+                "TensorRT export requires the 'tensorrt' extra. Install with: pip install rfdetr[tensorrt]"
+            )
 
-    if engine_from_network is None:
-        raise ImportError("TensorRT export requires the 'tensorrt' extra. Install with: pip install rfdetr[tensorrt]")
+    def _fp16_strategy(self) -> tuple[Fp16Strategy, str]:
+        """Resolve how the installed TensorRT can produce the requested FP16 engine.
 
-    # The precision the engine ends up with and the flag handed to the builder are not the same thing
-    # under strong typing: TensorRT >= 11 has no FP16 flag, and reads precision off the graph instead.
-    builder_fp16 = fp16
-    strategy, trt_version = Fp16Strategy.BUILDER_FLAG, "unknown"
-    if fp16:
+        Returns:
+            The strategy from :func:`resolve_fp16_strategy`, paired with the version TensorRT reports. A
+            missing/broken ``tensorrt`` import is left to the polygraphy build chain to surface.
+        """
         try:
             import tensorrt as trt_module
         except ImportError:
             trt_module = None
-        strategy, trt_version = resolve_fp16_strategy(trt_module)
+        return resolve_fp16_strategy(trt_module)
 
-    with contextlib.ExitStack() as cleanup:
-        # Only the builder reads the cast intermediate; onnx_path keeps naming the caller's own model.
-        build_source = onnx_path
+    def _compile(
+        self, onnx_path: str, engine_path: str, *, fp16: bool, strategy: Fp16Strategy, trt_version: str
+    ) -> None:
+        """Build the engine through polygraphy and serialize it to *engine_path*.
 
-        if strategy is Fp16Strategy.CAST_GRAPH:
-            # Strongly typed: precision comes from the graph, so cast it and let the builder infer.
-            # Raises rather than quietly downgrading -- an FP32 engine returned for an FP16 request
-            # is reported as an FP16 latency by anyone benchmarking it.
-            build_source = cleanup.enter_context(fp16_source_graph(onnx_path))
-            builder_fp16 = False
-            logger.info(f"TensorRT {trt_version} is strongly typed; building the FP16 engine from a cast graph")
-            logger.debug(f"fp16 cast graph: {build_source}")
-        elif strategy is Fp16Strategy.UNAVAILABLE:
-            # Lean/partial wheel on a weakly typed TensorRT: the flag is genuinely unavailable and
-            # there is no graph-level alternative, so fall back rather than failing the export.
-            logger.warning(
-                "TensorRT %s does not expose the FP16 builder flag; building an FP32 engine instead. "
-                "Pass fp16=False to silence this warning.",
-                trt_version,
+        Args:
+            onnx_path: Path to the source ``.onnx`` file.
+            engine_path: Path the serialized engine is written to.
+            fp16: The precision the engine is built with, after the FP16 availability probe.
+            strategy: How FP16 is obtained from the installed TensorRT (see :func:`resolve_fp16_strategy`).
+            trt_version: The version TensorRT reports, for logging.
+        """
+        # The precision the engine ends up with and the flag handed to the builder are not the same thing
+        # under strong typing: TensorRT >= 11 has no FP16 flag, and reads precision off the graph instead.
+        builder_fp16 = fp16
+
+        with contextlib.ExitStack() as cleanup:
+            # Only the builder reads the cast intermediate; onnx_path keeps naming the caller's own model.
+            build_source = onnx_path
+
+            if strategy is Fp16Strategy.CAST_GRAPH:
+                # Strongly typed: precision comes from the graph, so cast it and let the builder infer.
+                # Raises rather than quietly downgrading -- an FP32 engine returned for an FP16 request
+                # is reported as an FP16 latency by anyone benchmarking it.
+                build_source = cleanup.enter_context(fp16_source_graph(onnx_path))
+                builder_fp16 = False
+                logger.info(f"TensorRT {trt_version} is strongly typed; building the FP16 engine from a cast graph")
+                logger.debug(f"fp16 cast graph: {build_source}")
+
+            if self.config.verbose:
+                logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
+
+            engine = engine_from_network(
+                network_from_onnx_path(build_source),
+                config=CreateConfig(fp16=builder_fp16),
             )
-            fp16 = False
-            builder_fp16 = False
-            engine_path = _engine_path(fp16_used=fp16)
+            save_engine(engine, path=engine_path)
 
-        if verbose:
-            logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
-
-        engine = engine_from_network(
-            network_from_onnx_path(build_source),
-            config=CreateConfig(fp16=builder_fp16),
-        )
-        save_engine(engine, path=engine_path)
-
-    logger.info(f"Successfully built TensorRT engine: {engine_path}")
-    return engine_path
+        logger.info(f"Successfully built TensorRT engine: {engine_path}")
