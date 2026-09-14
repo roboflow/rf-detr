@@ -2492,6 +2492,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p>TFLite INT8 documentation and warnings now reflect that dynamic-range quantization needs no calibration data. (<a href="https://github.com/roboflow/rf-detr/issues/1363">#1363</a>)</p>
 </li>
+<li>
+<p><code>RFDETR.export(format="tensorrt", fp16=True)</code> now actually builds an FP16 engine on strongly typed TensorRT (11+) instead of silently falling back to FP32, by casting the ONNX graph to FP16 first (<code>rfdetr[tensorrt]</code> now also pulls <code>onnx</code> and <code>onnxconverter-common</code>). This graph cast raises <code>ImportError</code> if those two packages are missing — previously such a setup silently produced an FP32 engine reported as FP16. (<a href="https://github.com/roboflow/rf-detr/issues/1453">#1453</a>)</p>
+</li>
 </ul>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
