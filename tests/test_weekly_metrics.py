@@ -20,6 +20,65 @@ import pytest
 from scripts import update_weekly_metrics
 
 
+def _metric(week_start: date, stars_total: int, new_stars: int | None, downloads: int) -> object:
+    """Build one checkpoint for a Monday-to-Sunday week starting at ``week_start``.
+
+    ``week_end`` is the only derived field; every value a test asserts on stays explicit at the call site. A case that
+    needs a deliberately invalid (non-calendar) period constructs ``WeeklyMetric`` inline instead.
+
+    Examples:
+        >>> _metric(date(2026, 8, 24), stars_total=12_000, new_stars=None, downloads=70_000).week_end
+        datetime.date(2026, 8, 30)
+    """
+    return update_weekly_metrics.WeeklyMetric(
+        week_start=week_start,
+        week_end=week_start + timedelta(days=6),
+        stars_total=stars_total,
+        new_stars=new_stars,
+        downloads=downloads,
+    )
+
+
+def _state(
+    *history: object,
+    repository: str = "roboflow/rf-detr",
+    package: str = "rfdetr",
+) -> object:
+    """Build metrics state over ``history``, defaulting to this repository's own source identifiers.
+
+    Examples:
+        >>> _state().repository
+        'roboflow/rf-detr'
+        >>> len(_state(_metric(date(2026, 8, 24), 12_000, None, 70_000)).history)
+        1
+    """
+    return update_weekly_metrics.MetricsState(repository=repository, package=package, history=tuple(history))
+
+
+def _body_response(body: bytes) -> MagicMock:
+    """Build a urlopen stand-in whose context-managed ``read`` returns ``body``.
+
+    Examples:
+        >>> _body_response(b"{}").__enter__().read(4)
+        b'{}'
+    """
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = body
+    return response
+
+
+def _failing_response(read_error: Exception) -> MagicMock:
+    """Build a urlopen stand-in that opens normally and then fails during ``read``.
+
+    Examples:
+        >>> _failing_response(TimeoutError("timed out")).__enter__().read  # doctest: +ELLIPSIS
+        <MagicMock ...>
+    """
+    response = MagicMock()
+    response.__enter__.return_value.read.side_effect = read_error
+    return response
+
+
 class TestCompletedWeek:
     """Tests for selecting stable Monday-to-Sunday download periods."""
 
@@ -87,14 +146,8 @@ class TestRecordWeek:
 
     def test_first_observation_establishes_unknown_delta_baseline(self) -> None:
         """First star count must not claim growth without an earlier checkpoint."""
-        state = update_weekly_metrics.MetricsState(
-            repository="roboflow/rf-detr",
-            package="rfdetr",
-            history=(),
-        )
-
         updated = update_weekly_metrics.record_week(
-            state,
+            _state(),
             start=date(2026, 8, 24),
             end=date(2026, 8, 30),
             stars_total=12_000,
@@ -102,29 +155,14 @@ class TestRecordWeek:
             history_limit=52,
         )
 
-        assert updated.history == (
-            update_weekly_metrics.WeeklyMetric(
-                week_start=date(2026, 8, 24),
-                week_end=date(2026, 8, 30),
-                stars_total=12_000,
-                new_stars=None,
-                downloads=70_000,
-            ),
-        )
+        assert updated.history == (_metric(date(2026, 8, 24), stars_total=12_000, new_stars=None, downloads=70_000),)
 
     def test_next_observation_records_star_delta(self) -> None:
         """New period must calculate star growth from previous cumulative checkpoint."""
-        previous = update_weekly_metrics.WeeklyMetric(
-            week_start=date(2026, 8, 17),
-            week_end=date(2026, 8, 23),
-            stars_total=12_000,
-            new_stars=75,
-            downloads=70_000,
-        )
-        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (previous,))
+        previous = _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000)
 
         updated = update_weekly_metrics.record_week(
-            state,
+            _state(previous),
             start=date(2026, 8, 24),
             end=date(2026, 8, 30),
             stars_total=12_125,
@@ -136,17 +174,10 @@ class TestRecordWeek:
 
     def test_gap_establishes_unknown_delta_baseline(self) -> None:
         """A skipped checkpoint must not be reported as one week's star growth."""
-        previous = update_weekly_metrics.WeeklyMetric(
-            week_start=date(2026, 8, 17),
-            week_end=date(2026, 8, 23),
-            stars_total=12_000,
-            new_stars=75,
-            downloads=70_000,
-        )
-        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (previous,))
+        previous = _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000)
 
         updated = update_weekly_metrics.record_week(
-            state,
+            _state(previous),
             start=date(2026, 8, 31),
             end=date(2026, 9, 6),
             stars_total=12_250,
@@ -163,24 +194,11 @@ class TestRecordWeek:
         it against the completed week would move that growth backwards and leave the next scheduled run undercounting by
         the same amount.
         """
-        first = update_weekly_metrics.WeeklyMetric(
-            week_start=date(2026, 8, 17),
-            week_end=date(2026, 8, 23),
-            stars_total=12_000,
-            new_stars=75,
-            downloads=70_000,
-        )
-        current = update_weekly_metrics.WeeklyMetric(
-            week_start=date(2026, 8, 24),
-            week_end=date(2026, 8, 30),
-            stars_total=12_100,
-            new_stars=100,
-            downloads=79_000,
-        )
-        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (first, current))
+        first = _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000)
+        current = _metric(date(2026, 8, 24), stars_total=12_100, new_stars=100, downloads=79_000)
 
         updated = update_weekly_metrics.record_week(
-            state,
+            _state(first, current),
             start=date(2026, 8, 24),
             end=date(2026, 8, 30),
             stars_total=12_125,
@@ -190,13 +208,7 @@ class TestRecordWeek:
 
         assert updated.history == (
             first,
-            update_weekly_metrics.WeeklyMetric(
-                week_start=date(2026, 8, 24),
-                week_end=date(2026, 8, 30),
-                stars_total=12_100,
-                new_stars=100,
-                downloads=80_000,
-            ),
+            _metric(date(2026, 8, 24), stars_total=12_100, new_stars=100, downloads=80_000),
         )
 
     def test_same_period_rerun_keeps_delta_at_minimum_history_limit(self) -> None:
@@ -206,17 +218,10 @@ class TestRecordWeek:
         predecessor has already been truncated away. Recomputing the delta there has nothing to measure against, so a
         week of recorded growth would be published as an unknown baseline instead.
         """
-        current = update_weekly_metrics.WeeklyMetric(
-            week_start=date(2026, 8, 24),
-            week_end=date(2026, 8, 30),
-            stars_total=12_100,
-            new_stars=100,
-            downloads=79_000,
-        )
-        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (current,))
+        current = _metric(date(2026, 8, 24), stars_total=12_100, new_stars=100, downloads=79_000)
 
         updated = update_weekly_metrics.record_week(
-            state,
+            _state(current),
             start=date(2026, 8, 24),
             end=date(2026, 8, 30),
             stars_total=12_250,
@@ -224,30 +229,15 @@ class TestRecordWeek:
             history_limit=1,
         )
 
-        assert updated.history == (
-            update_weekly_metrics.WeeklyMetric(
-                week_start=date(2026, 8, 24),
-                week_end=date(2026, 8, 30),
-                stars_total=12_100,
-                new_stars=100,
-                downloads=80_000,
-            ),
-        )
+        assert updated.history == (_metric(date(2026, 8, 24), stars_total=12_100, new_stars=100, downloads=80_000),)
 
     def test_rejects_period_older_than_checkpoint(self) -> None:
         """Clock or input regressions must not corrupt ordered checkpoint history."""
-        current = update_weekly_metrics.WeeklyMetric(
-            week_start=date(2026, 8, 24),
-            week_end=date(2026, 8, 30),
-            stars_total=12_100,
-            new_stars=100,
-            downloads=79_000,
-        )
-        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (current,))
+        current = _metric(date(2026, 8, 24), stars_total=12_100, new_stars=100, downloads=79_000)
 
         with pytest.raises(update_weekly_metrics.MetricsError, match="older than latest checkpoint"):
             update_weekly_metrics.record_week(
-                state,
+                _state(current),
                 start=date(2026, 8, 17),
                 end=date(2026, 8, 23),
                 stars_total=12_125,
@@ -261,17 +251,10 @@ class TestRecordWeek:
         Only the missing-previous-checkpoint path (tested above) is expected to render '-- baseline'; a real contiguous
         pair with no star movement must compute an explicit 0, which is a materially different claim.
         """
-        previous = update_weekly_metrics.WeeklyMetric(
-            week_start=date(2026, 8, 17),
-            week_end=date(2026, 8, 23),
-            stars_total=12_000,
-            new_stars=75,
-            downloads=70_000,
-        )
-        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (previous,))
+        previous = _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000)
 
         updated = update_weekly_metrics.record_week(
-            state,
+            _state(previous),
             start=date(2026, 8, 24),
             end=date(2026, 8, 30),
             stars_total=12_000,
@@ -283,20 +266,18 @@ class TestRecordWeek:
 
     def test_retains_only_configured_latest_history(self) -> None:
         """Bounded history must keep latest checkpoints and their recorded deltas."""
-        history = tuple(
-            update_weekly_metrics.WeeklyMetric(
-                week_start=date(2026, 8, 3) + timedelta(weeks=index),
-                week_end=date(2026, 8, 9) + timedelta(weeks=index),
+        history = [
+            _metric(
+                date(2026, 8, 3) + timedelta(weeks=index),
                 stars_total=12_000 + index * 100,
                 new_stars=0 if index == 0 else 100,
                 downloads=70_000 + index * 1_000,
             )
             for index in range(3)
-        )
-        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", history)
+        ]
 
         updated = update_weekly_metrics.record_week(
-            state,
+            _state(*history),
             start=date(2026, 8, 24),
             end=date(2026, 8, 30),
             stars_total=12_300,
@@ -349,19 +330,7 @@ class TestSvgState:
 
     def test_rendered_metadata_round_trips_complete_state(self) -> None:
         """SVG metadata must remain sole machine-readable checkpoint source."""
-        state = update_weekly_metrics.MetricsState(
-            repository="roboflow/rf-detr",
-            package="rfdetr",
-            history=(
-                update_weekly_metrics.WeeklyMetric(
-                    week_start=date(2026, 8, 24),
-                    week_end=date(2026, 8, 30),
-                    stars_total=12_125,
-                    new_stars=125,
-                    downloads=80_000,
-                ),
-            ),
-        )
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000))
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
         parsed = update_weekly_metrics.parse_state(svg, "roboflow/rf-detr", "rfdetr")
@@ -395,11 +364,7 @@ class TestSvgState:
 
     def test_metadata_escapes_xml_characters_and_round_trips(self) -> None:
         """Source identifiers must not break XML or change after extraction."""
-        state = update_weekly_metrics.MetricsState(
-            repository="owner/repo&mirror",
-            package="package<nightly",
-            history=(),
-        )
+        state = _state(repository="owner/repo&mirror", package="package<nightly")
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
 
@@ -413,19 +378,7 @@ class TestSvgRendering:
 
     def test_baseline_does_not_claim_zero_weekly_star_growth(self) -> None:
         """Missing prior checkpoint must render as baseline rather than measured zero growth."""
-        state = update_weekly_metrics.MetricsState(
-            repository="roboflow/rf-detr",
-            package="rfdetr",
-            history=(
-                update_weekly_metrics.WeeklyMetric(
-                    week_start=date(2026, 8, 24),
-                    week_end=date(2026, 8, 30),
-                    stars_total=12_125,
-                    new_stars=None,
-                    downloads=80_000,
-                ),
-            ),
-        )
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=None, downloads=80_000))
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
 
@@ -438,25 +391,9 @@ class TestSvgRendering:
         ``new_stars is None`` means the week has no delta context; plotting its download total anyway would leave a lone
         blue dot with no matching purple bar, which reads as a rendering glitch rather than a chart baseline.
         """
-        state = update_weekly_metrics.MetricsState(
-            repository="roboflow/rf-detr",
-            package="rfdetr",
-            history=(
-                update_weekly_metrics.WeeklyMetric(
-                    week_start=date(2026, 8, 17),
-                    week_end=date(2026, 8, 23),
-                    stars_total=12_000,
-                    new_stars=None,
-                    downloads=70_000,
-                ),
-                update_weekly_metrics.WeeklyMetric(
-                    week_start=date(2026, 8, 24),
-                    week_end=date(2026, 8, 30),
-                    stars_total=12_125,
-                    new_stars=125,
-                    downloads=80_000,
-                ),
-            ),
+        state = _state(
+            _metric(date(2026, 8, 17), stars_total=12_000, new_stars=None, downloads=70_000),
+            _metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000),
         )
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
@@ -472,19 +409,7 @@ class TestSvgRendering:
         The axis-scaling ``download_max`` guard clamps to a minimum of 1 so a genuinely empty week does not divide the
         y-position of every mark by zero.
         """
-        state = update_weekly_metrics.MetricsState(
-            repository="roboflow/rf-detr",
-            package="rfdetr",
-            history=(
-                update_weekly_metrics.WeeklyMetric(
-                    week_start=date(2026, 8, 24),
-                    week_end=date(2026, 8, 30),
-                    stars_total=12_125,
-                    new_stars=None,
-                    downloads=0,
-                ),
-            ),
-        )
+        state = _state(_metric(date(2026, 8, 24), stars_total=12_125, new_stars=None, downloads=0))
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=12)
 
@@ -492,25 +417,9 @@ class TestSvgRendering:
 
     def test_chart_uses_display_window_and_latest_summary(self) -> None:
         """Chart marks must show only configured recent periods plus latest totals."""
-        state = update_weekly_metrics.MetricsState(
-            repository="roboflow/rf-detr",
-            package="rfdetr",
-            history=(
-                update_weekly_metrics.WeeklyMetric(
-                    week_start=date(2026, 8, 17),
-                    week_end=date(2026, 8, 23),
-                    stars_total=12_000,
-                    new_stars=75,
-                    downloads=70_000,
-                ),
-                update_weekly_metrics.WeeklyMetric(
-                    week_start=date(2026, 8, 24),
-                    week_end=date(2026, 8, 30),
-                    stars_total=12_125,
-                    new_stars=125,
-                    downloads=80_000,
-                ),
-            ),
+        state = _state(
+            _metric(date(2026, 8, 17), stars_total=12_000, new_stars=75, downloads=70_000),
+            _metric(date(2026, 8, 24), stars_total=12_125, new_stars=125, downloads=80_000),
         )
 
         svg = update_weekly_metrics.render_svg(state, window_weeks=1)
@@ -530,61 +439,28 @@ class TestFetchJson:
     directly here rather than only indirectly through ``fetch_star_count``/``fetch_daily_downloads``.
     """
 
-    def test_reports_http_error_as_metrics_error(self) -> None:
-        """A non-2xx HTTP status must surface as MetricsError carrying the status code, not an HTTPError traceback."""
-        error = HTTPError("https://example.invalid/api", 404, "Not Found", None, None)
+    @pytest.mark.parametrize(
+        ("error", "match"),
+        [
+            pytest.param(
+                HTTPError("https://example.invalid/api", 404, "Not Found", None, None),
+                "HTTP 404",
+                id="http-error",
+            ),
+            pytest.param(URLError("Name or service not known"), "Name or service not known", id="url-error"),
+        ],
+    )
+    def test_reports_connection_failure_as_metrics_error(self, error: Exception, match: str) -> None:
+        """A failure raised by urlopen itself must surface as MetricsError, not a raw urllib traceback.
 
+        Both a non-2xx status and a DNS/connection-refused failure reach the caller from urlopen, so each must be
+        translated with the detail (status code, resolver reason) that makes a scheduled-run log actionable.
+        """
         with (
             patch("scripts.update_weekly_metrics.urlopen", side_effect=error),
-            pytest.raises(update_weekly_metrics.MetricsError, match="HTTP 404"),
+            pytest.raises(update_weekly_metrics.MetricsError, match=match),
         ):
             update_weekly_metrics._fetch_json("https://example.invalid/api", {})
-
-    def test_reports_url_error_as_metrics_error(self) -> None:
-        """A DNS or connection-refused failure must surface as MetricsError, not a raw URLError."""
-        error = URLError("Name or service not known")
-
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", side_effect=error),
-            pytest.raises(update_weekly_metrics.MetricsError, match="Name or service not known"),
-        ):
-            update_weekly_metrics._fetch_json("https://example.invalid/api", {})
-
-    def test_reports_oversized_response_as_metrics_error(self) -> None:
-        """A response exceeding the byte cap must fail closed instead of buffering unbounded data."""
-        response = MagicMock()
-        response.__enter__.return_value.read.return_value = b"x" * 11
-
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=response),
-            patch("scripts.update_weekly_metrics.MAX_API_RESPONSE_BYTES", 10),
-            pytest.raises(update_weekly_metrics.MetricsError, match="exceeds 10 bytes"),
-        ):
-            update_weekly_metrics._fetch_json("https://example.invalid/api", {})
-
-    def test_reports_invalid_json_as_metrics_error(self) -> None:
-        """A non-JSON body must fail closed instead of raising a raw JSONDecodeError."""
-        response = io.BytesIO(b"not json")
-
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=response),
-            pytest.raises(update_weekly_metrics.MetricsError, match="invalid JSON"),
-        ):
-            update_weekly_metrics._fetch_json("https://example.invalid/api", {})
-
-    def test_reports_non_dict_json_as_metrics_error(self) -> None:
-        """A JSON array or scalar body must fail closed instead of a later AttributeError on ``.get``."""
-        response = io.BytesIO(b"[1, 2, 3]")
-
-        with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=response),
-            pytest.raises(update_weekly_metrics.MetricsError, match="not an object"),
-        ):
-            update_weekly_metrics._fetch_json("https://example.invalid/api", {})
-
-
-class TestMetricsApis:
-    """Tests for upstream API boundary parsing."""
 
     @pytest.mark.parametrize(
         "read_error",
@@ -593,21 +469,43 @@ class TestMetricsApis:
             pytest.param(http.client.IncompleteRead(b"partial"), id="incomplete-read"),
         ],
     )
-    def test_fetch_star_count_reports_transport_failure_as_metrics_error(self, read_error: Exception) -> None:
+    def test_reports_body_read_failure_as_metrics_error(self, read_error: Exception) -> None:
         """A connection lost after the response opens must fail closed, not escape as a traceback.
 
         urlopen returns normally and only the body read fails, so the failure misses both the HTTPError and URLError
         branches. main() reports MetricsError alone, so any other exception reaches the scheduled workflow log as an
         unhandled traceback.
         """
-        response = MagicMock()
-        response.__enter__.return_value.read.side_effect = read_error
-
         with (
-            patch("scripts.update_weekly_metrics.urlopen", return_value=response),
+            patch("scripts.update_weekly_metrics.urlopen", return_value=_failing_response(read_error)),
             pytest.raises(update_weekly_metrics.MetricsError, match="API request failed"),
         ):
-            update_weekly_metrics.fetch_star_count("roboflow/rf-detr")
+            update_weekly_metrics._fetch_json("https://example.invalid/api", {})
+
+    @pytest.mark.parametrize(
+        ("body", "match"),
+        [
+            pytest.param(b"x" * 11, "exceeds 10 bytes", id="over-byte-cap"),
+            pytest.param(b"not json", "invalid JSON", id="not-json"),
+            pytest.param(b"[1, 2, 3]", "not an object", id="json-array"),
+        ],
+    )
+    def test_reports_invalid_body_as_metrics_error(self, body: bytes, match: str) -> None:
+        """A body that is oversized, unparsable, or not a JSON object must fail closed.
+
+        The byte cap is lowered to 10 for every case so the oversized body stays small; the two well-formed-length
+        bodies sit under that cap and therefore still reach the parsing branches they target.
+        """
+        with (
+            patch("scripts.update_weekly_metrics.urlopen", return_value=_body_response(body)),
+            patch("scripts.update_weekly_metrics.MAX_API_RESPONSE_BYTES", 10),
+            pytest.raises(update_weekly_metrics.MetricsError, match=match),
+        ):
+            update_weekly_metrics._fetch_json("https://example.invalid/api", {})
+
+
+class TestMetricsApis:
+    """Tests for upstream API boundary parsing."""
 
     def test_fetch_star_count_uses_repository_api_and_token_header(self) -> None:
         """GitHub request must authenticate through header and return validated count."""
