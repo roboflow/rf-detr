@@ -45,7 +45,7 @@ pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip
 
 ## Project Activity
 
-<img src="docs/assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" width="100%" />
+<img src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" role="img" width="100%" />
 
 PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirrors. New stars are calculated from consecutive scheduled GitHub snapshots.
 

@@ -116,7 +116,7 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 ## Project Activity
 
-<img src="assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" width="100%" />
+<img src="assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" role="img" width="100%" />
 
 PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirrors. New stars are calculated from consecutive scheduled GitHub snapshots.
 
