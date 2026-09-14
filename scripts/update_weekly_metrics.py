@@ -6,6 +6,7 @@
 """Generate RF-DETR's self-contained weekly metrics SVG."""
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -91,6 +92,12 @@ def _fetch_json(url: str, headers: Mapping[str, str]) -> dict[str, object]:
         raise MetricsError(msg) from error
     except URLError as error:
         msg = f"API request failed: {url}: {error.reason}"
+        raise MetricsError(msg) from error
+    except (OSError, http.client.HTTPException) as error:
+        # Timeouts, TLS failures, and truncated bodies surface from read() rather than from urlopen().
+        # HTTPException is not an OSError, so both bases are needed to keep every transport failure inside
+        # the MetricsError contract that main() reports instead of an unhandled traceback.
+        msg = f"API request failed: {url}: {error!r}"
         raise MetricsError(msg) from error
     if len(body) > MAX_API_RESPONSE_BYTES:
         msg = f"API response exceeds {MAX_API_RESPONSE_BYTES:,} bytes: {url}"
@@ -222,7 +229,7 @@ def write_svg(output: Path, svg: str) -> None:
         svg: Complete generated SVG document.
 
     Raises:
-        MetricsError: If directory creation or atomic replacement fails.
+        MetricsError: If directory creation, buffered write, or atomic replacement fails.
     """
     temporary_path: Path | None = None
     try:
@@ -236,8 +243,10 @@ def write_svg(output: Path, svg: str) -> None:
             dir=output.parent,
             delete=False,
         ) as temporary:
-            temporary.write(svg)
+            # Record the path before writing: the file already exists on disk with delete=False, so a
+            # failed write would otherwise leave it behind with no handle for the cleanup branch.
             temporary_path = Path(temporary.name)
+            temporary.write(svg)
         temporary_path.chmod(0o644)
         os.replace(temporary_path, output)
     except OSError as error:
@@ -554,8 +563,10 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
                 'stroke-linecap="round" stroke-linejoin="round"/>'
             )
         for point in points:
-            x, y = point.split(",")
-            lines.append(f'    <circle cx="{x}" cy="{y}" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>')
+            point_x, point_y = point.split(",")
+            lines.append(
+                f'    <circle cx="{point_x}" cy="{point_y}" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>'
+            )
         lines.append("  </g>")
         lines.append(
             '  <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="middle">'
@@ -649,11 +660,15 @@ def record_week(
 ) -> MetricsState:
     """Append one completed week, resetting star baseline after any checkpoint gap.
 
+    Rerunning an already recorded week refreshes only its download total. ``stars_total`` is a cumulative
+    reading taken at run time, so a later reading for the same week already counts stars earned during the
+    in-progress week; keeping the first reading holds each week's growth attribution where it belongs.
+
     Args:
         state: Existing embedded metrics state.
         start: First date in completed week.
         end: Last date in completed week.
-        stars_total: Current GitHub stargazer count.
+        stars_total: Current GitHub stargazer count. Ignored when this week is already recorded.
         downloads: PyPI downloads during completed week.
         history_limit: Maximum number of weekly records retained.
 
@@ -674,15 +689,18 @@ def record_week(
     if history and start < history[-1].week_start:
         msg = f"Week {start.isoformat()} is older than latest checkpoint {history[-1].week_start.isoformat()}"
         raise MetricsError(msg)
-    if history and history[-1].week_start == start:
+    replaced = history[-1] if history and history[-1].week_start == start else None
+    if replaced is not None:
         history = history[:-1]
-    new_stars = None
-    if history and start == history[-1].week_end + timedelta(days=1):
-        new_stars = stars_total - history[-1].stars_total
+        recorded_stars, new_stars = replaced.stars_total, replaced.new_stars
+    elif history and start == history[-1].week_end + timedelta(days=1):
+        recorded_stars, new_stars = stars_total, stars_total - history[-1].stars_total
+    else:
+        recorded_stars, new_stars = stars_total, None
     metric = WeeklyMetric(
         week_start=start,
         week_end=end,
-        stars_total=stars_total,
+        stars_total=recorded_stars,
         new_stars=new_stars,
         downloads=downloads,
     )

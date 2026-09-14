@@ -5,13 +5,14 @@
 # ------------------------------------------------------------------------
 """Tests for weekly project metrics SVG generation."""
 
+import http.client
 import io
 import json
 import runpy
 import stat
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -155,7 +156,12 @@ class TestRecordWeek:
         assert updated.history[-1].new_stars is None
 
     def test_same_period_replaces_observation_without_resetting_delta(self) -> None:
-        """A rerun must update one period relative to its preceding checkpoint."""
+        """A rerun must refresh one period's downloads while holding its star checkpoint.
+
+        A manually dispatched rerun reads a cumulative star count that already includes the in-progress week. Recording
+        it against the completed week would move that growth backwards and leave the next scheduled run undercounting by
+        the same amount.
+        """
         first = update_weekly_metrics.WeeklyMetric(
             week_start=date(2026, 8, 17),
             week_end=date(2026, 8, 23),
@@ -181,9 +187,51 @@ class TestRecordWeek:
             history_limit=52,
         )
 
-        assert len(updated.history) == 2
-        assert updated.history[-1].new_stars == 125
-        assert updated.history[-1].downloads == 80_000
+        assert updated.history == (
+            first,
+            update_weekly_metrics.WeeklyMetric(
+                week_start=date(2026, 8, 24),
+                week_end=date(2026, 8, 30),
+                stars_total=12_100,
+                new_stars=100,
+                downloads=80_000,
+            ),
+        )
+
+    def test_same_period_rerun_keeps_delta_at_minimum_history_limit(self) -> None:
+        """A rerun under ``--history-limit 1`` must keep the delta its predecessor established.
+
+        One retained checkpoint is the smallest configuration the CLI accepts, and it is the only one where the rerun's
+        predecessor has already been truncated away. Recomputing the delta there has nothing to measure against, so a
+        week of recorded growth would be published as an unknown baseline instead.
+        """
+        current = update_weekly_metrics.WeeklyMetric(
+            week_start=date(2026, 8, 24),
+            week_end=date(2026, 8, 30),
+            stars_total=12_100,
+            new_stars=100,
+            downloads=79_000,
+        )
+        state = update_weekly_metrics.MetricsState("roboflow/rf-detr", "rfdetr", (current,))
+
+        updated = update_weekly_metrics.record_week(
+            state,
+            start=date(2026, 8, 24),
+            end=date(2026, 8, 30),
+            stars_total=12_250,
+            downloads=80_000,
+            history_limit=1,
+        )
+
+        assert updated.history == (
+            update_weekly_metrics.WeeklyMetric(
+                week_start=date(2026, 8, 24),
+                week_end=date(2026, 8, 30),
+                stars_total=12_100,
+                new_stars=100,
+                downloads=80_000,
+            ),
+        )
 
     def test_rejects_period_older_than_checkpoint(self) -> None:
         """Clock or input regressions must not corrupt ordered checkpoint history."""
@@ -369,6 +417,29 @@ class TestSvgRendering:
 class TestMetricsApis:
     """Tests for upstream API boundary parsing."""
 
+    @pytest.mark.parametrize(
+        "read_error",
+        [
+            pytest.param(TimeoutError("timed out"), id="timeout"),
+            pytest.param(http.client.IncompleteRead(b"partial"), id="incomplete-read"),
+        ],
+    )
+    def test_fetch_star_count_reports_transport_failure_as_metrics_error(self, read_error: Exception) -> None:
+        """A connection lost after the response opens must fail closed, not escape as a traceback.
+
+        urlopen returns normally and only the body read fails, so the failure misses both the HTTPError and URLError
+        branches. main() reports MetricsError alone, so any other exception reaches the scheduled workflow log as an
+        unhandled traceback.
+        """
+        response = MagicMock()
+        response.__enter__.return_value.read.side_effect = read_error
+
+        with (
+            patch("scripts.update_weekly_metrics.urlopen", return_value=response),
+            pytest.raises(update_weekly_metrics.MetricsError, match="API request failed"),
+        ):
+            update_weekly_metrics.fetch_star_count("roboflow/rf-detr")
+
     def test_fetch_star_count_uses_repository_api_and_token_header(self) -> None:
         """GitHub request must authenticate through header and return validated count."""
         response = io.BytesIO(json.dumps({"stargazers_count": 12_125}).encode())
@@ -466,13 +537,17 @@ class TestMetricsUpdate:
         assert output.read_text().startswith('<?xml version="1.0" encoding="UTF-8"?>')
 
     def test_same_week_rerun_is_byte_identical(self, tmp_path: Path) -> None:
-        """Unchanged API observations must not create SVG content changes."""
+        """Unchanged download data must not create SVG content changes as the star count moves.
+
+        Stars accrue continuously, so a rerun minutes later reads a larger total. Only a rerun that leaves the artifact
+        untouched keeps the scheduled workflow from opening an empty pull request every time it is dispatched manually.
+        """
         output = tmp_path / "metrics.svg"
         start = date(2026, 8, 24)
         daily_downloads = {start + timedelta(days=offset): 100 for offset in range(7)}
 
         with (
-            patch("scripts.update_weekly_metrics.fetch_star_count", return_value=12_125),
+            patch("scripts.update_weekly_metrics.fetch_star_count", side_effect=[12_125, 12_310]),
             patch("scripts.update_weekly_metrics.fetch_daily_downloads", return_value=daily_downloads),
         ):
             first = update_weekly_metrics.update_metrics(
@@ -502,6 +577,28 @@ class TestMetricsUpdate:
         fetch_stars.assert_not_called()
         fetch_downloads.assert_not_called()
         assert output.read_bytes() == malformed
+
+    def test_failed_write_removes_its_temporary_file(self, tmp_path: Path) -> None:
+        """A write that fails part way must not leave a temporary file beside the artifact.
+
+        The temporary is created with delete=False so the completed file can be renamed into place atomically. A failure
+        between creation and rename therefore strands a dotfile in docs/assets/, which the next automated commit would
+        publish alongside the real SVG.
+        """
+        output = tmp_path / "metrics.svg"
+        stranded = tmp_path / ".metrics.svg.stranded.tmp"
+        stranded.write_text("partial")
+        temporary = MagicMock()
+        temporary.__enter__.return_value.name = str(stranded)
+        temporary.__enter__.return_value.write.side_effect = OSError("no space left on device")
+
+        with (
+            patch("scripts.update_weekly_metrics.tempfile.NamedTemporaryFile", return_value=temporary),
+            pytest.raises(update_weekly_metrics.MetricsError, match="Could not write generated SVG"),
+        ):
+            update_weekly_metrics.write_svg(output, "<svg/>")
+
+        assert not stranded.exists()
 
     def test_script_entry_point_executes_after_all_helpers_are_defined(self, tmp_path: Path) -> None:
         """Direct script execution must not call main before later definitions exist."""
