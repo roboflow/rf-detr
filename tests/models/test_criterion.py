@@ -12,7 +12,13 @@ import torch
 from torch import Tensor
 
 import rfdetr.models.criterion as criterion_module
-from rfdetr.models.criterion import SetCriterion
+from rfdetr.models.criterion import (
+    SetCriterion,
+    dice_loss,
+    dice_loss_jit,
+    sigmoid_ce_loss,
+    sigmoid_ce_loss_jit,
+)
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.matcher import HungarianMatcher
@@ -160,6 +166,82 @@ class TestLossMasksEmptyMatch:
 
 class TestTargetMaskPointSampling:
     """Tests for the guarded direct sampling of matched ground-truth masks."""
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize(
+        "variant", ["random", "ties", "outside", "nan", "strided", "empty", "coords_grad", "negative", "cuda_indices"]
+    )
+    def test_cuda_samples_per_image_without_changing_bytes(self, monkeypatch: pytest.MonkeyPatch, variant: str) -> None:
+        """Sampling per CUDA image preserves native labels and matched-group order."""
+        torch.manual_seed(51)
+        masks = [torch.rand(3, 211, 673, device="cuda") > 0.5 for _ in range(3)]
+        matched = [torch.tensor([2, 0, 1, 2, 1, 0]) for _ in masks]
+        if variant == "empty":
+            matched[1] = torch.empty(0, dtype=torch.int64)
+        elif variant == "negative":
+            matched = [index - 3 for index in matched]
+        elif variant == "cuda_indices":
+            matched = [index.cuda() for index in matched]
+        if variant == "strided":
+            masks = [mask.transpose(1, 2) for mask in masks]
+        coords = torch.rand(sum(index.numel() for index in matched), 17, 2, device="cuda")
+        if variant == "ties":
+            coords[:] = torch.tensor([1 / 673, 1 / 211], device="cuda")
+        elif variant == "outside":
+            coords[0, 0] = torch.tensor([-0.2, 1.2], device="cuda")
+        elif variant == "nan":
+            coords[0, 0] = float("nan")
+        elif variant == "coords_grad":
+            coords.requires_grad_()
+        reference_masks = torch.cat([mask[index] for mask, index in zip(masks, matched)])
+        expected = criterion_module.point_sample(
+            reference_masks.unsqueeze(1).float(), coords, align_corners=False, mode="nearest"
+        ).squeeze(1)
+        sampler = MagicMock(wraps=criterion_module.point_sample)
+        monkeypatch.setattr(criterion_module, "point_sample", sampler)
+
+        actual = criterion_module._sample_target_masks_at_points(
+            [{"masks": mask} for mask in masks], [(index, index) for index in matched], coords
+        )
+
+        assert torch.equal(actual.detach().view(torch.uint8), expected.detach().view(torch.uint8))
+        assert [call.args[0].shape[0] for call in sampler.call_args_list] == [
+            index.numel() for index in matched if index.numel()
+        ]
+        if coords.requires_grad:
+            expected_grad = torch.autograd.grad(expected.sum(), coords)[0]
+            actual_grad = torch.autograd.grad(actual.sum(), coords)[0]
+            assert torch.equal(actual_grad.view(torch.uint8), expected_grad.view(torch.uint8))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize("variant", ["float", "all_empty", "different_shapes", "wrong_count"])
+    def test_cuda_per_image_sampling_retains_fallback(self, monkeypatch: pytest.MonkeyPatch, variant: str) -> None:
+        """Unsupported inputs retain native concatenation and sampler validation."""
+        masks = [torch.ones(2, 24, 24, dtype=torch.bool, device="cuda") for _ in range(2)]
+        matched = torch.arange(2) if variant != "all_empty" else torch.empty(0, dtype=torch.int64)
+        coords = torch.zeros(matched.numel() * 2, 7, 2, device="cuda")
+        if variant == "float":
+            masks = [mask.float() for mask in masks]
+        elif variant == "different_shapes":
+            masks[1] = masks[1][:, :12]
+        elif variant == "wrong_count":
+            coords = coords[:1]
+        sampler = MagicMock(wraps=criterion_module.point_sample)
+        monkeypatch.setattr(criterion_module, "point_sample", sampler)
+        if variant in ("different_shapes", "wrong_count"):
+            with pytest.raises(RuntimeError, match="Sizes of tensors must match|same batch size"):
+                criterion_module._sample_target_masks_at_points(
+                    [{"masks": mask} for mask in masks], [(matched, matched)] * 2, coords
+                )
+        else:
+            actual = criterion_module._sample_target_masks_at_points(
+                [{"masks": mask} for mask in masks], [(matched, matched)] * 2, coords
+            )
+            assert actual.shape == (matched.numel() * 2, 7)
+            assert torch.equal(actual, torch.ones_like(actual))
+            sampler.assert_called_once()
 
     @pytest.mark.parametrize(
         ("height", "width", "groups", "expected_fallback_calls"),
@@ -503,8 +585,8 @@ class TestTargetMaskPointSampling:
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_cuda_masks_use_fallback_until_cuda_path_is_benchmarked(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """CUDA masks retain the fallback path until direct-route synchronization is benchmarked."""
+    def test_single_cuda_image_retains_native_sampler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A single CUDA image needs no per-image split and retains the native sampler."""
         torch.manual_seed(0)  # deterministic and, at this point count, verified to land no exact-tie coordinate.
         masks = (torch.rand(8, 96, 96, device="cuda") > 0.5).contiguous()
         matched = torch.arange(8)
@@ -868,3 +950,298 @@ class TestBatchedFastPathRespectsMatcherOverrides:
             "the overridden forward() must run once per output layer (final + aux + enc); a call count below 3 "
             "means the batched fast path silently bypassed the subclass override"
         )
+
+
+class TestMaskLossDenominatorStaysOnDevice:
+    """The JIT mask losses take their denominator as a Tensor, so the mask path never reads it back.
+
+    ``loss_masks`` normalizes by ``num_boxes``, which is either ``num_boxes_for_targets``'s all-reduced (across
+    distributed ranks) Tensor, or an explicit grad-accum-aware override a manual-optimization caller supplies instead --
+    segmentation models train on Lightning's automatic-optimization path (``module_model.py``'s ``training_step`` calls
+    ``self.criterion(outputs, targets)`` with no override), so in practice they get the former, not the latter. While
+    ``dice_loss``/``sigmoid_ce_loss`` were TorchScripted with ``num_masks: float`` the caller had to unwrap that Tensor
+    to a Python scalar, and on XLA every unwrap is a device-to-host sync that cuts the lazy graph.
+    ``SetCriterion.forward`` calls ``loss_masks`` once per matched output layer (the final layer, every aux layer, and
+    the enc layer), so a segmentation model's training step pays this sync several times, not once -- 5 times for
+    SegNano/SegSmall (``dec_layers=4``), 6 for SegMedium/SegLarge (``dec_layers=5``), 7 for SegXLarge/Seg2XLarge
+    (``dec_layers=6``).
+    """
+
+    def test_loss_masks_hands_the_jit_losses_the_num_boxes_tensor_unconverted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Prove the *production* call site, not just the two JIT leaves in isolation.
+
+        Before this fix, ``loss_masks`` called ``float(num_boxes)`` ONCE and reused that single Python float for both
+        JIT calls -- one host read per ``loss_masks`` call, not two (and ``loss_masks`` itself runs once per matched
+        output layer per training step, see the class docstring above).  Spying on the module-level JIT functions from
+        ``loss_masks``'s real call site shows there is now no ``float()``/``.item()`` conversion anywhere on the path:
+        the exact same ``num_boxes`` Tensor object reaches both calls untouched.
+        """
+        criterion = _bare_criterion()
+        criterion.mask_point_sample_ratio = 16
+        pred_masks = torch.randn(1, 8, 24, 24, requires_grad=True)
+        targets = [{"masks": torch.rand(8, 96, 96) > 0.5}]
+        matched = torch.arange(8)
+        indices = [(matched, matched)]
+        num_boxes = torch.tensor(8.0)
+        dice_spy = MagicMock(wraps=criterion_module.dice_loss_jit)
+        ce_spy = MagicMock(wraps=criterion_module.sigmoid_ce_loss_jit)
+        monkeypatch.setattr(criterion_module, "dice_loss_jit", dice_spy)
+        monkeypatch.setattr(criterion_module, "sigmoid_ce_loss_jit", ce_spy)
+
+        criterion.loss_masks({"pred_masks": pred_masks}, targets, indices, num_boxes=num_boxes)
+
+        dice_spy.assert_called_once()
+        ce_spy.assert_called_once()
+        assert dice_spy.call_args.args[2] is num_boxes
+        assert ce_spy.call_args.args[2] is num_boxes
+
+    def test_jit_signatures_declare_a_triple_typed_denominator(self) -> None:
+        """Pin the scripted signature itself.
+
+        TorchScript does not reject a Tensor passed for a ``float`` parameter -- it converts it inside the scripted
+        function, which is exactly the host read this change removes.  Asserting on the value alone would therefore pass
+        either way; the compiled schema is what actually distinguishes the two.  The signature accepts ``Union[Tensor,
+        float, int]`` rather than ``Tensor`` alone, because ``dice_loss``/``sigmoid_ce_loss`` are re-exported from
+        ``lwdetr.py`` as backward-compat symbols (``lwdetr.py``'s "Backward-compat re-exports" import block) -- an
+        external caller of the old ``float``-only signature must keep working, and ``int`` is included because
+        TorchScript's ``Union`` argument binding does not implicitly widen a Python ``int`` to ``float`` the way a
+        plain single-typed ``float`` parameter does (see ``test_int_denominator_matches_the_pre_fix_signature`` below).
+        """
+        assert "Union(Tensor, float, int) num_masks" in str(dice_loss_jit.schema)
+        assert "Union(Tensor, float, int) num_masks" in str(sigmoid_ce_loss_jit.schema)
+
+    def test_int_denominator_matches_the_pre_fix_signature(self) -> None:
+        """A bare Python ``int`` denominator must keep working, bit-for-bit against the pre-fix ``float``-only call.
+
+        Before this PR, ``dice_loss_jit``/``sigmoid_ce_loss_jit`` declared ``num_masks: float``; TorchScript's binding
+        for a single declared type widens a Python ``int`` to ``float`` implicitly, so ``dice_loss_jit(a, b, 5)``
+        worked. A naive ``Union[Tensor, float]`` widening does NOT inherit that implicit int->float widening --
+        TorchScript's ``Union`` argument binding requires an exact type match per member and rejects ``int`` outright
+        with a ``RuntimeError`` (verified against this schema before ``int`` was added to the ``Union``). ``int`` must
+        be its own explicit member of the ``Union`` for a bare-int caller to keep working.
+        """
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16)
+        targets = torch.randint(0, 2, (2, 16)).float()
+
+        assert torch.equal(dice_loss_jit(inputs, targets, 5), dice_loss_jit(inputs, targets, 5.0))
+        assert torch.equal(sigmoid_ce_loss_jit(inputs, targets, 5), sigmoid_ce_loss_jit(inputs, targets, 5.0))
+
+    def test_jit_numpy_scalar_denominator_is_a_documented_incompatibility(self) -> None:
+        """The scripted wrappers reject a NumPy scalar, unlike the pre-fix ``float``-only signature.
+
+        Under the old single-typed ``float`` signature, TorchScript's binding called a generic Python-to-double coercion
+        that happened to also accept a NumPy scalar (or even a 0-d Tensor, silently reading it to the host). A ``Union``
+        argument requires TorchScript to pick exactly one member without ambiguity, so it uses a strict type check per
+        member instead of that generic coercion -- a NumPy scalar matches neither ``Tensor``, ``float``, nor ``int`` and
+        is rejected. This is an inherent TorchScript ``Union``-binding limitation, not a choice made by this fix, and no
+        caller inside this repository passes a NumPy scalar for this argument (production always converts through
+        ``torch.as_tensor`` in ``SetCriterion.forward``, keeping this off the real training path). External callers of
+        the ``_jit`` symbols must convert with ``float(...)`` first; the eager Python functions retain their ordinary
+        numeric behavior and are covered separately below.
+        """
+        np = pytest.importorskip("numpy")
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16)
+        targets = torch.randint(0, 2, (2, 16)).float()
+
+        with pytest.raises(RuntimeError):
+            dice_loss_jit(inputs, targets, np.float32(5.0))
+        with pytest.raises(RuntimeError):
+            sigmoid_ce_loss_jit(inputs, targets, np.float32(5.0))
+
+    @pytest.mark.parametrize("denominator", [5.0, 5])
+    def test_eager_denominator_branches_match_scripted_float_behavior(self, denominator: float | int) -> None:
+        """Cover eager float and int denominator branches with the legacy numeric result.
+
+        The production path exercises the Tensor branch while Codecov reports the float and int branches separately.
+        Comparing with the float-only scripted call preserves the pre-fix numeric oracle without testing branch
+        internals.
+        """
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16)
+        targets = torch.randint(0, 2, (2, 16)).float()
+
+        assert torch.equal(dice_loss(inputs, targets, denominator), dice_loss_jit(inputs, targets, float(denominator)))
+        assert torch.equal(
+            sigmoid_ce_loss(inputs, targets, denominator), sigmoid_ce_loss_jit(inputs, targets, float(denominator))
+        )
+
+    def test_eager_functions_accept_numpy_scalar_denominators(self) -> None:
+        """Keep the eager documentation accurate for NumPy scalar callers.
+
+        TorchScript restricts its Union binding, but directly calling the eager re-exports continues through Python's
+        ordinary tensor division and must not inherit that scripted-wrapper restriction.
+        """
+        np = pytest.importorskip("numpy")
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16)
+        targets = torch.randint(0, 2, (2, 16)).float()
+        denominator = np.float32(5.0)
+
+        assert torch.equal(dice_loss(inputs, targets, denominator), dice_loss(inputs, targets, float(denominator)))
+        assert torch.equal(
+            sigmoid_ce_loss(inputs, targets, denominator), sigmoid_ce_loss(inputs, targets, float(denominator))
+        )
+
+    def test_jit_losses_accept_a_tensor_denominator(self) -> None:
+        """The scripted and eager forms agree when handed an on-device denominator."""
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16)
+        targets = torch.randint(0, 2, (2, 16)).float()
+        denominator = torch.tensor(2.0)
+
+        assert torch.allclose(dice_loss_jit(inputs, targets, denominator), dice_loss(inputs, targets, denominator))
+        assert torch.allclose(
+            sigmoid_ce_loss_jit(inputs, targets, denominator), sigmoid_ce_loss(inputs, targets, denominator)
+        )
+
+    def test_tensor_denominator_divides_exactly_as_before(self) -> None:
+        """Normalizing by ``n`` must equal normalizing by 1 and dividing by ``n`` afterwards."""
+        torch.manual_seed(0)
+        inputs = torch.randn(3, 32)
+        targets = torch.randint(0, 2, (3, 32)).float()
+        one = torch.tensor(1.0)
+        n = 5.0
+
+        assert torch.allclose(dice_loss_jit(inputs, targets, torch.tensor(n)), dice_loss_jit(inputs, targets, one) / n)
+        assert torch.allclose(
+            sigmoid_ce_loss_jit(inputs, targets, torch.tensor(n)), sigmoid_ce_loss_jit(inputs, targets, one) / n
+        )
+
+    def test_float_denominator_still_matches_the_pre_fix_signature_bit_for_bit(self) -> None:
+        """Backward compat for ``lwdetr.py``'s re-exports: a caller stuck on the old ``float`` signature must see the
+        exact same numbers it always did, not merely "close" ones.
+
+        Before this PR, ``dice_loss``/``sigmoid_ce_loss`` declared ``num_masks: float`` and divided by it directly.
+        Wrapping that float in a Tensor before dividing (an earlier version of this fix did exactly that) changes the
+        result under reduced precision, because ``tensor / python_float`` and ``tensor / tensor_wrapping_that_float``
+        are not the same operation once the tensor's dtype has fewer mantissa bits than the float needs -- dividing by
+        the wrapped Tensor quantizes the denominator to the tensor's dtype first, while dividing by the bare Python
+        float does not.  So the fix must branch on ``num_masks``'s type and let the ``float`` branch divide by the
+        unwrapped Python float exactly as the old code did, never materializing a Tensor for it.
+        """
+        torch.manual_seed(0)
+        inputs = torch.randn(3, 47).to(torch.bfloat16)  # a non-power-of-two shape and a reduced dtype are
+        targets = torch.randint(0, 2, (3, 47)).float()  # both required to expose a quantization regression
+        denom = 17.0  # a non-power-of-two value: exact division by 2**k would hide a quantization bug
+
+        dice_out = dice_loss_jit(inputs, targets, denom)
+        ce_out = sigmoid_ce_loss_jit(inputs, targets, denom)
+
+        # Reference: the literal pre-fix computation, with num_masks used as a bare Python float throughout.
+        sig = inputs.sigmoid().flatten(1)
+        numerator = 2 * (sig * targets).sum(-1)
+        denominator = sig.sum(-1) + targets.sum(-1)
+        expected_dice = (1 - (numerator + 1) / (denominator + 1)).sum() / denom
+        expected_ce = (
+            torch.nn.functional.binary_cross_entropy_with_logits(inputs, targets, reduction="none").mean(1).sum()
+            / denom
+        )
+
+        assert torch.equal(dice_out, expected_dice)
+        assert torch.equal(ce_out, expected_ce)
+
+    @pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16])
+    def test_reduced_precision_predictions_with_production_shaped_targets_match_the_pre_fix_value(
+        self, input_dtype: torch.dtype
+    ) -> None:
+        """The fix must not change loss values on the dtype combination training actually produces.
+
+        ``_sample_target_masks_at_points`` always ends with ``.float()`` (criterion.py's point-sampling helper), so
+        ``point_labels`` is ``float32`` in every real training step regardless of the model's autocast dtype --  only
+        ``point_logits`` (the predictions) can be at a reduced dtype.  That asymmetry already promotes ``dice_loss``'s
+        ``inputs * targets`` and ``sigmoid_ce_loss``'s ``binary_cross_entropy_with_logits`` to ``float32`` before the
+        denominator is ever involved, so switching the denominator from a Python float to a Tensor changes neither the
+        dtype nor the value on this, the only combination ``loss_masks`` actually feeds these functions.
+        """
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16).to(input_dtype)
+        targets = torch.randint(0, 2, (2, 16)).float()  # always float32, matching real point-label sampling
+        denom = 2.0
+
+        dice_new = dice_loss_jit(inputs, targets, torch.tensor(denom))
+        ce_new = sigmoid_ce_loss_jit(inputs, targets, torch.tensor(denom))
+        dice_old = dice_loss_jit(inputs, targets, denom)  # the pre-fix call shape: a bare Python float
+        ce_old = sigmoid_ce_loss_jit(inputs, targets, denom)
+
+        assert dice_new.dtype == torch.float32
+        assert ce_new.dtype == torch.float32
+        assert torch.equal(dice_new, dice_old)
+        assert torch.equal(ce_new, ce_old)
+
+    @pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16])
+    def test_reduced_precision_targets_are_a_documented_boundary_training_never_reaches(
+        self, input_dtype: torch.dtype
+    ) -> None:
+        """Reducing BOTH inputs and targets -- a combination real training cannot produce, see the test above -- is the
+        one case where the Tensor-denominator path's ``float32`` promotion measurably changes the value versus the old
+        Python-float division, which stayed at the narrower dtype throughout.
+
+        This pins that documented boundary without implying it is reachable from ``loss_masks``.
+        """
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16).to(input_dtype)
+        targets = torch.randint(0, 2, (2, 16)).float().to(input_dtype)
+        denom = 2.0
+
+        dice_new = dice_loss_jit(inputs, targets, torch.tensor(denom))
+        ce_new = sigmoid_ce_loss_jit(inputs, targets, torch.tensor(denom))
+
+        assert dice_new.dtype == torch.float32
+        assert ce_new.dtype == torch.float32
+        assert torch.allclose(dice_new, dice_loss(inputs, targets, torch.tensor(denom)))
+        assert torch.allclose(ce_new, sigmoid_ce_loss(inputs, targets, torch.tensor(denom)))
+
+    def test_tensor_denominator_now_carries_gradient_a_new_capability_not_a_regression(self) -> None:
+        """Passing a ``requires_grad=True`` Tensor now backpropagates into the denominator; it never could before.
+
+        Under the pre-fix ``float``-only signature, TorchScript's single-type binding accepted a Tensor too (by silently
+        coercing it through the same generic Python-to-double path a NumPy scalar used, itself an undocumented host
+        read), which detached it from the autograd graph -- the gradient was always ``None`` no matter what was passed,
+        because a Tensor could never reach the function still carrying its graph connection. A ``Union[Tensor, float,
+        int]`` denominator instead passes a Tensor through unchanged, so if that Tensor requires grad, the gradient now
+        flows. No prior caller could have depended on the old dropped-gradient behavior for a Tensor input, because
+        passing a Tensor through the scripted call boundary was never a documented, type-checked contract before this
+        PR.
+        """
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16)
+        targets = torch.randint(0, 2, (2, 16)).float()
+        denominator = torch.tensor(2.0, requires_grad=True)
+
+        dice_loss_jit(inputs, targets, denominator).backward()
+
+        assert denominator.grad is not None
+
+    @pytest.mark.xla
+    def test_denominator_is_not_read_back_to_the_host_on_xla(self) -> None:
+        """No ``_local_scalar_dense`` and no ``aten::`` fallback: the whole call stays on device.
+
+        Runs on any PJRT backend -- ``device.type`` is ``"xla"`` under ``PJRT_DEVICE=CPU`` too, which is all the
+        host-sync counter depends on, so this needs no TPU silicon.
+        """
+        pytest.importorskip("torch_xla")
+        import torch_xla
+        import torch_xla.debug.metrics as met
+
+        device = torch_xla.device()
+        torch.manual_seed(0)
+        inputs = torch.randn(2, 16, device=device)
+        targets = torch.randint(0, 2, (2, 16), device=device).float()
+        denominator = torch.tensor(2.0, device=device)
+
+        # Warm up so one-off compilation transfers do not land in the measured counters.
+        dice_loss_jit(inputs, targets, denominator)
+        sigmoid_ce_loss_jit(inputs, targets, denominator)
+        torch_xla.sync()
+
+        met.clear_all()
+        dice_loss_jit(inputs, targets, denominator)
+        sigmoid_ce_loss_jit(inputs, targets, denominator)
+        torch_xla.sync()
+
+        assert met.counter_value("aten::_local_scalar_dense") is None
+        assert [name for name in met.counter_names() if name.startswith("aten::")] == []

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Callable
 from typing import cast
 
 import torch
@@ -167,8 +166,9 @@ class MSDeformAttn(nn.Module):
             expected_len_in = (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum()
         error_msg = "input_spatial_shapes must match the flattened input length"
         if self._export:
-            torch_assert = cast(Callable[[bool | Tensor, str], None], torch._assert)
-            torch_assert(expected_len_in == len_input, error_msg)
+            # Keep the assertion call direct. A typing.cast whose signature contains ``bool | Tensor`` makes
+            # Dynamo evaluate the union type inside forward(), inserting one graph break per decoder call.
+            torch._assert(expected_len_in == len_input, error_msg)
         else:
             assert expected_len_in == len_input, error_msg
 

@@ -22,9 +22,9 @@ from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
-from rfdetr.export._class_layout import _exclude_background_class
 from rfdetr.export._resize import _bilinear_resize_half_pixel
-from rfdetr.export._topk import _select_topk_multiclass
+from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -124,9 +124,10 @@ def _preprocess_image(
 ) -> NDArray[np.float32]:
     """Resize and ImageNet-normalise an image to match ``RFDETR.predict()``.
 
-    Uses ``torchvision.transforms.functional`` when importable for bit-exact parity, and falls back
-    to the pure-NumPy ``_bilinear_resize_half_pixel`` for torch-free deployments. Both paths resize
-    with predict()'s convention: bilinear, half-pixel centers, ``antialias=False``.
+    Thin NHWC adapter over :func:`~rfdetr.export._runtime.preprocess.preprocess_to_nchw`, which uses
+    ``torchvision.transforms.functional`` when importable for bit-exact parity and falls back to the pure-NumPy
+    ``_bilinear_resize_half_pixel`` for torch-free deployments. Both paths resize with predict()'s convention:
+    bilinear, half-pixel centers, ``antialias=False``.
 
     Args:
         pil_img: Source PIL image at native resolution.
@@ -142,37 +143,9 @@ def _preprocess_image(
         ``torchvision`` are importable.
     """
     height, width = hw
-    pil_mode = "L" if channels == 1 else "RGB"
-    pil_rgb = pil_img.convert(pil_mode)
-
-    with contextlib.suppress(ImportError):
-        # Match PyTorch.predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
-        # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
-        import torch
-        import torchvision.transforms.functional as _F  # noqa: N812
-
-        with torch.no_grad():
-            t = _F.to_tensor(pil_rgb)
-            t = _F.resize(t, list(hw), antialias=False)
-            mean_list = [_IMAGENET_MEAN[i % 3] for i in range(channels)]
-            std_list = [_IMAGENET_STD[i % 3] for i in range(channels)]
-            t = _F.normalize(t, mean_list, std_list)
-        nchw_float = np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
-        # NCHW -> NHWC for the TFLite interpreter.
-        return np.asarray(nchw_float.transpose(0, 2, 3, 1), dtype=np.float32)
-
-    # Torch-free fallback: same antialias-free half-pixel bilinear as predict(), in NumPy.
-    # PIL resize is not an option here: both BILINEAR and BICUBIC apply an adaptive antialias
-    # filter when downscaling and diverge from predict() by up to ~1.7 in normalised space.
-    arr = np.asarray(pil_rgb, dtype=np.float32) / 255.0
-    if arr.ndim == 2:  # "L" -> (height, width); TFLite needs (height, width, 1).
-        arr = arr[:, :, np.newaxis]
-    arr = _bilinear_resize_half_pixel(arr.transpose(2, 0, 1), height, width).transpose(1, 2, 0)
-
-    mean = np.array([_IMAGENET_MEAN[i % 3] for i in range(channels)], dtype=np.float32)
-    std = np.array([_IMAGENET_STD[i % 3] for i in range(channels)], dtype=np.float32)
-
-    return np.asarray(((arr - mean) / std)[np.newaxis], dtype=np.float32)
+    nchw = preprocess_to_nchw(pil_img, height, width, channels)
+    # NCHW -> NHWC for the TFLite interpreter, which consumes the layout onnx2tf transposed to at export time.
+    return np.asarray(nchw.transpose(0, 2, 3, 1), dtype=np.float32)
 
 
 def _run_inference(
@@ -291,42 +264,15 @@ def _run_inference(
     # Background placement is checkpoint-dependent and cannot be inferred from the tensor width alone.
     logits = interp.get_tensor(out_det[logits_idx]["index"])[0]
 
-    # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
-    if logits.size:
-        logger.debug(
-            "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
-            logits.shape,
-            float(logits.min()),
-            float(logits.max()),
-            float(logits.mean()),
-        )
-    else:
-        logger.debug("Logits stats: empty shape=%s", logits.shape)
-    one = np.asarray(1, dtype=logits.dtype)
-    scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
-    scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
-    # Flatten (Q, C) to Q*C query/class pairs and take the top-scoring ones before thresholding —
-    # mirrors PostProcess._select_topk. A per-query argmax (the previous approach) keeps at most
-    # one class per query, silently dropping legitimate detections whenever a query scores above
-    # threshold on more than one class; see _topk.py for why that happens routinely here.
-    selection_cap = logits.shape[0] if num_select is None else num_select
-    scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold, num_select=selection_cap)
-    cls = class_ids[cls]
-    if scores_all.size:
-        logger.debug(
-            "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
-            float(scores_all.min()),
-            float(scores_all.max()),
-            threshold,
-            int(scores.shape[0]),
-        )
-    else:
-        logger.debug("Scores stats: empty — detections above threshold %.2f: %d", threshold, int(scores.shape[0]))
-
-    cx, cy, bw, bh = boxes_cwh[query_idx].T
-    ow, oh = pil_img.size
-    xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
-    xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
+    decoded = decode_detections(
+        boxes_cwh,
+        logits,
+        pil_img.size,
+        threshold=threshold,
+        num_select=num_select,
+        background_class_id=background_class_id,
+    )
+    query_idx = decoded.query_index
 
     # Segmentation exports add a rank-4 mask output; decode it when present. Keypoint exports add a rank-4
     # output too (pred_keypoints), and the ONNX output names rarely survive the conversion, so an anonymous
@@ -354,7 +300,9 @@ def _run_inference(
         # Fancy-index by query_idx, NOT a boolean mask: a query can now contribute more than one
         # detection (see _select_topk_multiclass), so its mask must be gathered once per detection,
         # repeats included, rather than once per unique query.
-        masks = _decode_masks(raw_masks[query_idx], (ow, oh))
+        masks = _decode_masks(raw_masks[query_idx], pil_img.size)
 
-    detections = Detections(xyxy=xyxy, confidence=scores, class_id=cls.astype(int), mask=masks)
+    detections = Detections(
+        xyxy=decoded.xyxy, confidence=decoded.confidence, class_id=decoded.class_id.astype(int), mask=masks
+    )
     return detections, pil_img

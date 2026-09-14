@@ -11,18 +11,15 @@ RF-DETR training stack — only ``onnxruntime``, ``numpy``, ``supervision``, and
 
 from __future__ import annotations
 
-import contextlib
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from numpy.typing import NDArray
 from PIL import Image as PILImage
 from supervision import Detections
 
-from rfdetr.export._class_layout import _exclude_background_class
-from rfdetr.export._resize import _bilinear_resize_half_pixel
-from rfdetr.export._topk import _select_topk_multiclass
+from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -81,65 +78,6 @@ def _create_onnx_session(model_path: str | Path, providers: list[str] | None = N
     return session
 
 
-def _preprocess_pil_to_nchw(
-    image: PILImage.Image,
-    height: int,
-    width: int,
-    channels: int = 3,
-) -> NDArray[np.float32]:
-    """Resize and normalise a PIL image to an ``(1, C, H, W)`` float32 NCHW tensor.
-
-    Resizes with ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
-    ``antialias=False`` — via ``torchvision`` when importable (bit-exact parity) or the pure-NumPy
-    ``_bilinear_resize_half_pixel`` otherwise (float32 op-order noise only). PIL resize is not used:
-    both its BILINEAR and BICUBIC filters apply adaptive antialiasing when downscaling and diverge
-    from predict(), shifting confidence scores. Normalises with ImageNet statistics:
-    ``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``.
-
-    Args:
-        image: Input PIL image; any mode — converted to ``"RGB"`` (3-channel) or ``"L"`` (1-channel) internally.
-        height: Target spatial height expected by the model.
-        width: Target spatial width expected by the model.
-        channels: Number of channels the model expects (``1`` for grayscale, ``3`` for RGB).
-
-    Returns:
-        Float32 ndarray of shape ``(1, channels, height, width)``.
-
-    Examples:
-        .. code-block:: python
-
-            inp = _preprocess_pil_to_nchw(image, height=640, width=640)
-    """
-    _imagenet_mean = [0.485, 0.456, 0.406]
-    _imagenet_std = [0.229, 0.224, 0.225]
-    pil_mode = "L" if channels == 1 else "RGB"
-    pil_img = image.convert(pil_mode)
-    mean_list = [_imagenet_mean[i % 3] for i in range(channels)]
-    std_list = [_imagenet_std[i % 3] for i in range(channels)]
-
-    with contextlib.suppress(ImportError):
-        # Match predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
-        # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
-        import torch
-        import torchvision.transforms.functional as _F  # noqa: N812
-
-        with torch.no_grad():
-            t = _F.to_tensor(pil_img)
-            t = _F.resize(t, [height, width], antialias=False)
-            t = _F.normalize(t, mean_list, std_list)
-        return np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
-
-    # Torch-free fallback: same antialias-free half-pixel bilinear as predict(), in NumPy.
-    arr = np.asarray(pil_img, dtype=np.float32) / 255.0
-    if arr.ndim == 2:  # "L" → (H, W); needs (H, W, 1)
-        arr = arr[:, :, np.newaxis]
-    chw = _bilinear_resize_half_pixel(arr.transpose(2, 0, 1), height, width)
-    mean = np.array(mean_list, dtype=np.float32)[:, np.newaxis, np.newaxis]
-    std = np.array(std_list, dtype=np.float32)[:, np.newaxis, np.newaxis]
-    chw = (chw - mean) / std
-    return np.expand_dims(chw, axis=0).astype(np.float32)  # (1, C, H, W)
-
-
 def _run_inference(
     session: Any,
     image_path: str | Path,
@@ -159,7 +97,8 @@ def _run_inference(
       (1-channel greyscale) depending on the model's channel count. PIL is used only to decode and
       convert — never to resize.
     - Resize follows ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
-      ``antialias=False`` — applied by :func:`_preprocess_pil_to_nchw` via ``torchvision`` when importable
+      ``antialias=False`` — applied by :func:`~rfdetr.export._runtime.preprocess.preprocess_to_nchw` via
+      ``torchvision`` when importable
       (bit-exact) or the pure-NumPy ``_bilinear_resize_half_pixel`` fallback. PIL's own BILINEAR/BICUBIC
       filters apply adaptive antialiasing when downscaling and would shift pixel values away from predict(),
       degrading confidence.
@@ -199,7 +138,7 @@ def _run_inference(
     _, channels, height, width = inputs[0].shape
 
     with PILImage.open(image_path) as pil_img:
-        inp_tensor = _preprocess_pil_to_nchw(pil_img, height, width, channels)
+        inp_tensor = preprocess_to_nchw(pil_img, height, width, channels)
 
     raw_outputs = session.run(None, {input_name: inp_tensor})
 
@@ -247,44 +186,17 @@ def _run_inference(
     # Background placement is checkpoint-dependent and cannot be inferred from the tensor width alone.
     logits = raw_outputs[logits_idx][0]
 
-    # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
-    if logits.size:
-        logger.debug(
-            "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
-            logits.shape,
-            float(logits.min()),
-            float(logits.max()),
-            float(logits.mean()),
-        )
-    else:
-        logger.debug("Logits stats: empty shape=%s", logits.shape)
-    one = np.asarray(1, dtype=logits.dtype)
-    scores_all = one / (one + np.exp(-logits.clip(-88, 88)))
-    scores_all, class_ids = _exclude_background_class(scores_all, background_class_id)
-    # Flatten (Q, C) to Q*C query/class pairs and take the top-scoring ones before thresholding —
-    # mirrors PostProcess._select_topk. A per-query argmax (the previous approach) keeps at most
-    # one class per query, silently dropping legitimate detections whenever a query scores above
-    # threshold on more than one class; see _topk.py for why that happens routinely here.
-    selection_cap = boxes_cwh.shape[0] if num_select is None else num_select
-    scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold, num_select=selection_cap)
-    cls = class_ids[cls]
-    if scores_all.size:
-        logger.debug(
-            "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
-            float(scores_all.min()),
-            float(scores_all.max()),
-            threshold,
-            int(scores.shape[0]),
-        )
-    else:
-        logger.debug("Scores stats: empty — detections above threshold %.2f: %d", threshold, int(scores.shape[0]))
+    decoded = decode_detections(
+        boxes_cwh,
+        logits,
+        pil_img.size,
+        threshold=threshold,
+        num_select=num_select,
+        background_class_id=background_class_id,
+    )
 
-    cx, cy, bw, bh = boxes_cwh[query_idx].T
-    ow, oh = pil_img.size
-    xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
-    xyxy *= np.array([ow, oh, ow, oh], dtype=np.float32)
-
-    return Detections(xyxy=xyxy, confidence=scores, class_id=cls.astype(int)), pil_img
+    detections = Detections(xyxy=decoded.xyxy, confidence=decoded.confidence, class_id=decoded.class_id.astype(int))
+    return detections, pil_img
 
 
 # Benchmarking helper — not part of production inference API; subject to removal.
@@ -330,7 +242,7 @@ def _onnx_runtime(
         )
     input_meta = sess.get_inputs()[0]
     _, channels, height, width = input_meta.shape
-    inp = _preprocess_pil_to_nchw(image, height, width, channels)
+    inp = preprocess_to_nchw(image, height, width, channels)
     feed = {input_meta.name: inp}
 
     for _ in range(warmup):

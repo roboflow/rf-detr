@@ -54,6 +54,19 @@ train = [
     "peft",                            # LoRA backbone fine-tuning (available during training)
     "pytorch_lightning>=2.6,<3,!=2.6.2,!=2.6.3",  # Keep exclusions; see issue #1016 / related advisory for why 2.6.2 and 2.6.3 are blocked
     "torchmetrics[detection]>=1.8.2,<1.9.0",  # one-pass COCO adapter validates the TorchMetrics 1.8 private backend contract; re-verify _validate_private_contract() (src/rfdetr/training/coco_map.py) against 1.9+ before widening this pin
+    # Default COCO evaluation backend (MIT, numpy-only runtime dependency, cp39-abi3 wheels for manylinux2014
+    # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
+    # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
+    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The exact pin is
+    # deliberate: one of the hotcoco behaviors the adapter works around still fails silently rather than loudly on
+    # 1.0.1 — its `dataset` getter returns a copy, so an in-place annotation edit is invisible to it. (1.0.1 fixed
+    # the other: `mask.encode` emitting RLE counts as bytes that its own COCO constructor read back as an empty
+    # mask, collapsing mask AP to 0.0 without raising.) Pinning exactly makes every hotcoco release an explicit,
+    # parity-tested upgrade rather than something a user's resolver can pick up unverified. Installing it also
+    # puts a generically-named `coco` console script on PATH.
+    # TODO: once a hotcoco release fixes the dataset-copy behavior too, drop the matching workaround
+    # in src/rfdetr/training/coco_map.py (_prediction_dataset_for_iou_type) and reconsider widening this to a range.
+    "hotcoco==1.0.1",
     "faster-coco-eval>=1.7.2",
     "pycocotools",
     "scipy",
@@ -70,9 +83,22 @@ train = [
     "torch-hungarian==0.1.0rc0",
     "roboflow",
 ]
+# Transformer Engine's PyTorch extension needs NVIDIA CUDA and a Linux x86-64 build environment.
+# Keep macOS/MPS and Windows installs free of this optional CUDA dependency.
+cuda = [
+    "transformer-engine[pytorch]>=2.18,<3; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 augment = [
     "albumentations>=1.4.24,<3.0.0",  # optional custom CPU augmentations
     "kornia>=0.7,<1",                  # optional GPU-side augmentation
+]
+data = [
+    # Streaming tar-shard training input (dataset_file="webdataset"). Only the reader needs it: shards are packed
+    # with the standard library's tarfile, so `python -m rfdetr.cli.webdataset` runs without this extra.
+    # Floored at 1.0, the series whose WebDataset(...) signature this integrates against: the loader
+    # passes workersplitter, nodesplitter, empty_check and seed explicitly.
+    # Integration tested against webdataset==1.0.2; the supported dependency range remains below.
+    "webdataset>=1.0,<2",
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
@@ -99,7 +125,7 @@ tensorrt-bench = [
     "pycuda>=2024.1",
 ]
 tflite = [
-    # TFLite conversion routes every export through the ONNX pipeline first (export_onnx's
+    # TFLite conversion routes every export through the ONNX pipeline first (the ONNX exporter's
     # graph optimization/simplification), so these are needed here directly rather than via
     # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
     # inference, never touched by the TFLite export path.
@@ -137,6 +163,11 @@ coreml = [
     # during convert) is present at some low rate on torch<2.12 too. Raise this cap once the root
     # cause is understood/fixed upstream; don't treat it as a guaranteed-deterministic fix.
     "torch<2.12",
+]
+openvino = [
+    # Calendar-versioned (year.minor.patch); cap at next major to guard convert_model/save_model/Core,
+    # which this package calls directly and which can move across a major release.
+    "openvino>=2024.0,<2027.0",
 ]
 loggers = [
     "tensorboard>=2.13.0",
@@ -181,7 +212,7 @@ ci-gpu-pin = [
 #   validated: torch==2.12.1 + executorch==1.3.1 imports executorch.runtime cleanly; torch==2.13.0
 #   does not. Remove this group and the --group ci-executorch-pin reference in CI once executorch
 #   ships a release compatible with newer torch. Does not affect users installing rfdetr from PyPI —
-#   see rfdetr.export._executorch.converter._check_executorch_available(require_runtime=True) for the
+#   see rfdetr.export._executorch.exporter._check_executorch_available(require_runtime=True) for the
 #   equivalent runtime guidance surfaced to end users who hit this.
 ci-executorch-pin = [
     "torch<2.13",
@@ -205,6 +236,9 @@ tests = [
   "jinja2",  # imported by .github/_tests to render the docs theme block they assert on
   "packaging",  # imported by .github/scripts/inject_outdated_banner.py to order release dirs
   "tomli>=2.0; python_version < '3.11'",
+  # Generates the synthetic COCO fixtures in tests/conftest.py (replaced rfdetr.datasets.synthetic).
+  # Pinned exactly: the project is pre-1.0 and only publishes dev releases, so a range would drift.
+  "fuse-augmentations==0.10.0.dev0",
 ]
 
 typing = [
@@ -376,6 +410,7 @@ markers = [
     "flaky: tests that may fail due to nondeterminism and are retried via pytest-rerunfailures",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
+    "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
     "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",
 ]
@@ -445,8 +480,10 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "openvino", "openvino.*",
     "roboflow", "roboflow.*",
     "rfdetr_plus", "rfdetr_plus.*",
+    "webdataset", "webdataset.*",
   ], ignore_missing_imports = true },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the

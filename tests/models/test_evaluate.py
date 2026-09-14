@@ -430,6 +430,37 @@ def test_auto_batch_probe_not_invoked(nano_model: RFDETRNano, tmp_path: Path) ->
     assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default
 
 
+def test_evaluate_fp8_auto_batch_uses_default_micro_batch(nano_model: RFDETRNano, tmp_path: Path) -> None:
+    """``evaluate(amp_dtype="fp8", batch_size="auto")`` must not raise before ``for_eval`` is consulted.
+
+    ``TrainConfig.validate_fp8_batch_size`` rejects ``amp_dtype="fp8"`` with ``batch_size="auto"`` unconditionally at
+    construction time, because the training-only probe never runs against a converted Transformer Engine model. That
+    validator fires before ``_prepare_run_config``'s ``for_eval`` branch — which already skips the probe and would
+    happily substitute the default micro-batch — is ever reached, so the combination must be resolved before
+    ``TrainConfig`` is constructed, not after.
+    """
+    from rfdetr.config import TrainConfig
+
+    trainer = _mock_trainer()
+    with (
+        patch("rfdetr.training.RFDETRModelModule"),
+        patch("rfdetr.training.RFDETRDataModule"),
+        patch("rfdetr.training.build_trainer", return_value=trainer) as mock_build_trainer,
+        patch("rfdetr.training.auto_batch.resolve_auto_batch_config") as mock_probe,
+    ):
+        nano_model.evaluate(
+            dataset_dir=str(tmp_path),
+            split="test",
+            amp_dtype="fp8",
+            batch_size="auto",
+            output_dir=str(tmp_path / "o"),
+        )
+    mock_probe.assert_not_called()
+    passed_config = mock_build_trainer.call_args.args[0]
+    assert passed_config.amp_dtype == "fp8"
+    assert passed_config.batch_size == TrainConfig.model_fields["batch_size"].default
+
+
 def test_train_then_from_checkpoint_then_evaluate(synthetic_shape_dataset_dir: Path, tmp_path: Path) -> None:
     """Train() writes a real checkpoint; from_checkpoint() reloads it; evaluate() runs without the PTL ``ckpt_path``
     ``KeyError``.
