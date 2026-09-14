@@ -197,6 +197,8 @@ def tiny_onnx_model(tmp_path: Path) -> Path:
     return onnx_path
 
 
+@pytest.mark.integration
+@pytest.mark.e2e_onnxruntime
 class TestCreateOnnxSession:
     """Tests for ``_create_onnx_session``'s CPU thread-pool configuration.
 

@@ -833,6 +833,7 @@ def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[
     return reference_model, example, Path(xml_path)
 
 
+@pytest.mark.integration
 @pytest.mark.e2e_openvino
 class TestOpenVINOEndToEnd:
     """Real OpenVINO IR export + CPU numerical parity (``-m e2e_openvino``, requires ``openvino`` installed)."""

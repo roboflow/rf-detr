@@ -423,8 +423,10 @@ jobs:
         shell: python
 
       - name: 🧪 Run ONNX Runtime session tests
+        # The dedicated marker keeps this integration-only coverage independent from file layout and
+        # prevents unrelated ONNX inference unit tests from becoming an accidental CI requirement.
         run: |
-          uv run --no-sync pytest tests/export/test_onnx_inference.py -n 1 \
+          uv run --no-sync pytest tests/ -m e2e_onnxruntime -n 1 \
             --cov=rfdetr --cov-report=xml \
             --timeout=300 --durations=20
 

@@ -516,6 +516,7 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
 
 
 @coreml_only
+@pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
