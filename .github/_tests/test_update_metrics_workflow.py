@@ -25,7 +25,7 @@ STUB_LOG_NAME = "commands.log"
 requires_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="restore step is a bash run block")
 
 
-def sha_pinned_action(uses: str) -> str | None:
+def _sha_pinned_action(uses: str) -> str | None:
     """Return the owner/repo behind a `uses:` reference pinned to a full commit SHA.
 
     A tag or branch reference yields `None` instead. Those are mutable, so the action code a
@@ -38,16 +38,16 @@ def sha_pinned_action(uses: str) -> str | None:
         The pinned owner/repo, or `None` when the reference is not a full commit SHA.
 
     Examples:
-        >>> sha_pinned_action("actions/checkout@" + "0" * 40)
+        >>> _sha_pinned_action("actions/checkout@" + "0" * 40)
         'actions/checkout'
-        >>> sha_pinned_action("actions/checkout@v6.0.1") is None
+        >>> _sha_pinned_action("actions/checkout@v6.0.1") is None
         True
     """
     match = ACTION_PIN.fullmatch(uses)
     return match.group("action") if match else None
 
 
-def write_stub(directory: Path, name: str, body: str) -> Path:
+def _write_stub(directory: Path, name: str, body: str) -> Path:
     """Write an executable shell stub that shadows a real command on PATH.
 
     Args:
@@ -61,7 +61,7 @@ def write_stub(directory: Path, name: str, body: str) -> Path:
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     stub = write_stub(Path(tmp), "gh", "echo 1")
+        ...     stub = _write_stub(Path(tmp), "gh", "echo 1")
         ...     (stub.name, os.access(stub, os.X_OK))
         ('gh', True)
     """
@@ -71,7 +71,7 @@ def write_stub(directory: Path, name: str, body: str) -> Path:
     return stub
 
 
-def run_step(run: str, workspace: Path, stubs: Path, stub_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_step(run: str, workspace: Path, stubs: Path, stub_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Execute a workflow `run` block against a scratch workspace with stubbed commands.
 
     The block is taken from the parsed workflow rather than copied, so it is the shipped shell that
@@ -89,7 +89,7 @@ def run_step(run: str, workspace: Path, stubs: Path, stub_env: dict[str, str]) -
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     run_step("exit 3", Path(tmp), Path(tmp), {}).returncode
+        ...     _run_step("exit 3", Path(tmp), Path(tmp), {}).returncode
         3
     """
     assert "${{" not in run, "run block reads a workflow expression that only a runner can evaluate"
@@ -99,7 +99,7 @@ def run_step(run: str, workspace: Path, stubs: Path, stub_env: dict[str, str]) -
     return subprocess.run(["bash", str(script)], cwd=workspace, env=env, text=True, capture_output=True, check=False)
 
 
-def restore_env(workspace: Path, open_prs: int, git_show_fails: bool = False) -> dict[str, str]:
+def _restore_env(workspace: Path, open_prs: int, git_show_fails: bool = False) -> dict[str, str]:
     """Build the environment a restore-step run sees, including the stub controls.
 
     Args:
@@ -108,10 +108,10 @@ def restore_env(workspace: Path, open_prs: int, git_show_fails: bool = False) ->
         git_show_fails: Whether the `git` stub rejects `git show` the way a missing path does.
 
     Returns:
-        Environment overlay handed to `run_step`.
+        Environment overlay handed to `_run_step`.
 
     Examples:
-        >>> restore_env(Path("workspace"), open_prs=0)["STUB_OPEN_PR_COUNT"]
+        >>> _restore_env(Path("workspace"), open_prs=0)["STUB_OPEN_PR_COUNT"]
         '0'
     """
     env = {
@@ -145,8 +145,8 @@ def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
 
     stubs = tmp_path / "stubs"
     stubs.mkdir()
-    write_stub(stubs, "gh", 'echo "gh $*" >> "$STUB_LOG"\necho "$STUB_OPEN_PR_COUNT"')
-    write_stub(
+    _write_stub(stubs, "gh", 'echo "gh $*" >> "$STUB_LOG"\necho "$STUB_OPEN_PR_COUNT"')
+    _write_stub(
         stubs,
         "git",
         'echo "git $*" >> "$STUB_LOG"\n'
@@ -246,7 +246,7 @@ class TestUpdateMetricsWorkflow:
         This job holds write access to the repository, so a tag pin would let an upstream retag hand that access to code
         nobody here reviewed.
         """
-        assert sha_pinned_action(metrics_steps[step_name]["uses"]) == action
+        assert _sha_pinned_action(metrics_steps[step_name]["uses"]) == action
 
     def test_checkout_reads_the_default_branch(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
         """Checkout must read the default branch rather than the automation branch.
@@ -313,7 +313,7 @@ class TestRestoreUnmergedHistoryStep:
         """
         workspace, stubs = restore_sandbox
 
-        result = run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, restore_env(workspace, open_prs=1))
+        result = _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, open_prs=1))
 
         assert result.returncode == 0, result.stderr
         assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == UNMERGED_SVG
@@ -331,11 +331,11 @@ class TestRestoreUnmergedHistoryStep:
         """
         workspace, stubs = restore_sandbox
 
-        result = run_step(
+        result = _run_step(
             metrics_steps[RESTORE_STEP]["run"],
             workspace,
             stubs,
-            restore_env(workspace, open_prs=1, git_show_fails=True),
+            _restore_env(workspace, open_prs=1, git_show_fails=True),
         )
 
         assert result.returncode != 0
@@ -353,11 +353,11 @@ class TestRestoreUnmergedHistoryStep:
         """
         workspace, stubs = restore_sandbox
 
-        result = run_step(
+        result = _run_step(
             metrics_steps[RESTORE_STEP]["run"],
             workspace,
             stubs,
-            restore_env(workspace, open_prs=1, git_show_fails=True),
+            _restore_env(workspace, open_prs=1, git_show_fails=True),
         )
 
         assert "::error::" in result.stdout
@@ -374,7 +374,7 @@ class TestRestoreUnmergedHistoryStep:
         """
         workspace, stubs = restore_sandbox
 
-        result = run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, restore_env(workspace, open_prs=0))
+        result = _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, open_prs=0))
 
         assert "git fetch" not in (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
         assert (workspace / TRACKED_SVG).read_text(encoding="utf-8") == CHECKED_IN_SVG
@@ -392,7 +392,7 @@ class TestRestoreUnmergedHistoryStep:
         """
         workspace, stubs = restore_sandbox
 
-        run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, restore_env(workspace, open_prs=1))
+        _run_step(metrics_steps[RESTORE_STEP]["run"], workspace, stubs, _restore_env(workspace, open_prs=1))
 
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
         assert "--head automation/update-weekly-metrics" in logged
