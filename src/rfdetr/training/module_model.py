@@ -446,9 +446,27 @@ class RFDETRModelModule(LightningModule):
             # would cause PendingUnbackedSymbolNotFound (which only occurs without dynamic).
             torch._dynamo.config.suppress_errors = True
             torch._dynamo.config.capture_scalar_outputs = True
+            # Inductor's coalesce tiling analysis is unsupported on the dynamic-shape path
+            # (torch/_inductor/config.py: "coalesce_tiling_analysis does not yet apply to
+            # dynamic shapes"), yet it still runs and reaches an assert in
+            # tiling_utils.get_pw_red_splits comparing size hints. That assert has no
+            # symbolic-shape escape, unlike the CantSplit branch below it, so entire forward
+            # frames fall back to eager. Turning the analysis off costs nothing under
+            # dynamic=True. Passed as a compile option rather than assigned on the inductor
+            # config module, so the default is preserved for any other compilation in this
+            # process. The knob is absent on older torch versions, where passing it would raise
+            # RuntimeError("Unexpected optimization option ..."), hence the hasattr guard.
+            # Local import: pulls in inductor, which an uncompiled run never needs.
+            import torch._inductor.config as inductor_config
+
+            compile_options: dict[str, Any] = {}
+            if hasattr(inductor_config.triton, "coalesce_tiling_analysis"):
+                compile_options["triton.coalesce_tiling_analysis"] = False
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
-            self.model = torch.compile(self.model, dynamic=True)  # type: ignore[assignment]
+            self.model = torch.compile(  # type: ignore[assignment]
+                self.model, dynamic=True, options=compile_options or None
+            )
 
     # ------------------------------------------------------------------
     # PTL lifecycle hooks
