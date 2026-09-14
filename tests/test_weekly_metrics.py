@@ -432,6 +432,40 @@ class TestSvgRendering:
         assert "— baseline" in svg
         assert "+0 new stars" not in svg
 
+    def test_baseline_week_draws_no_download_mark(self) -> None:
+        """A baseline week must draw no download point either, so both series start together.
+
+        ``new_stars is None`` means the week has no delta context; plotting its download total anyway would leave a lone
+        blue dot with no matching purple bar, which reads as a rendering glitch rather than a chart baseline.
+        """
+        state = update_weekly_metrics.MetricsState(
+            repository="roboflow/rf-detr",
+            package="rfdetr",
+            history=(
+                update_weekly_metrics.WeeklyMetric(
+                    week_start=date(2026, 8, 17),
+                    week_end=date(2026, 8, 23),
+                    stars_total=12_000,
+                    new_stars=None,
+                    downloads=70_000,
+                ),
+                update_weekly_metrics.WeeklyMetric(
+                    week_start=date(2026, 8, 24),
+                    week_end=date(2026, 8, 30),
+                    stars_total=12_125,
+                    new_stars=125,
+                    downloads=80_000,
+                ),
+            ),
+        )
+
+        svg = update_weekly_metrics.render_svg(state, window_weeks=12)
+
+        # r="5" is the data-point radius; the legend swatch circle uses r="4" and must not be counted.
+        assert svg.count('r="5"') == 1
+        # rx="4" is the bar corner radius; summary-card (rx="10") and legend (rx="2") rects must not be counted.
+        assert svg.count('rx="4"') == 1
+
     def test_renders_zero_downloads_week_without_dividing_by_zero(self) -> None:
         """A week with zero downloads must not collapse the download axis scale.
 

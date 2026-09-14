@@ -27,9 +27,9 @@
     <text x="88" y="535.0" text-anchor="end">+0</text>
     <text x="1112" y="535.0" text-anchor="start">0</text>
     <text x="88" y="390.0" text-anchor="end">+100</text>
-    <text x="1112" y="390.0" text-anchor="start">50,185</text>
+    <text x="1112" y="390.0" text-anchor="start">26,344</text>
     <text x="88" y="245.0" text-anchor="end">+201</text>
-    <text x="1112" y="245.0" text-anchor="start">100,370</text>
+    <text x="1112" y="245.0" text-anchor="start">52,689</text>
     <text x="100" y="221" fill="#8315f9" font-size="14" font-weight="700">NEW STARS</text>
     <text x="1100" y="221" fill="#2a78d6" font-size="14" font-weight="700" text-anchor="end">WEEKLY DOWNLOADS</text>
   </g>
@@ -39,11 +39,10 @@
     <rect x="953.0" y="284.7" width="44.0" height="245.3" rx="4" fill="#8315f9"/>
   </g>
   <g id="weekly-downloads-line">
-    <polyline points="225.0,240.0 475.0,377.8 725.0,402.3 975.0,380.1" fill="none" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="225.0" cy="240.0" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-    <circle cx="475.0" cy="377.8" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-    <circle cx="725.0" cy="402.3" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-    <circle cx="975.0" cy="380.1" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <polyline points="475.0,240.0 725.0,286.7 975.0,244.5" fill="none" stroke="#2a78d6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="475.0" cy="240.0" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="725.0" cy="286.7" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="975.0" cy="244.5" r="5" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
   </g>
   <g fill="#6b6a66" font-family="DejaVu Sans, Arial, sans-serif" font-size="12" text-anchor="middle">
     <text x="225.0" y="552">Aug 23</text>

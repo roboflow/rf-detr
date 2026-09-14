@@ -534,6 +534,10 @@ def _render_axes(star_min: int, star_max: int, download_max: int) -> list[str]:
 def _render_marks(display: Sequence[WeeklyMetric], star_min: int, star_max: int, download_max: int) -> list[str]:
     """Render one star bar and one download point per displayed week, plus the week labels.
 
+    A week with no known star delta (``new_stars is None``, a checkpoint gap or the chain's first
+    entry) is a baseline used only to compute the next week's delta: it draws neither a star bar nor
+    a download point, so both series visually start at the same first fully-known week.
+
     Args:
         display: Weeks shown in the chart, oldest first.
         star_min: Lowest new-star value the left axis reaches, as used by `_render_axes`.
@@ -567,8 +571,8 @@ def _render_marks(display: Sequence[WeeklyMetric], star_min: int, star_max: int,
                 f'    <rect x="{x - bar_width / 2:.1f}" y="{bar_y:.1f}" width="{bar_width:.1f}" '
                 f'height="{bar_height:.1f}" rx="4" fill="{color}"/>'
             )
-        download_y = PLOT_BOTTOM - (metric.downloads / download_max) * PLOT_HEIGHT
-        points.append(f"{x:.1f},{download_y:.1f}")
+            download_y = PLOT_BOTTOM - (metric.downloads / download_max) * PLOT_HEIGHT
+            points.append(f"{x:.1f},{download_y:.1f}")
     lines.append("  </g>")
     lines.append('  <g id="weekly-downloads-line">')
     if len(points) > 1:
@@ -618,7 +622,10 @@ def render_svg(state: MetricsState, window_weeks: int) -> str:
     star_max = max(0, max(star_values))
     if star_min == star_max:
         star_max = star_min + 1
-    download_max = max([metric.downloads for metric in display] or [1])
+    # A baseline week draws no download mark either (see _render_marks), so its downloads must not
+    # stretch the axis scale for marks that are never shown.
+    plotted_downloads = [metric.downloads for metric in display if metric.new_stars is not None]
+    download_max = max(plotted_downloads or [1])
     download_max = max(download_max, 1)
 
     lines = _render_summary_cards(metadata, display[-1] if display else None)
