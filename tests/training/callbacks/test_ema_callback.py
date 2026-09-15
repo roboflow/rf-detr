@@ -881,6 +881,70 @@ class TestRealTrainerResume:
         assert int(ema_cb2._average_model.n_averaged) == expected_updates + len(train_loader)
 
 
+class TestRealXLATrainerEMA:
+    """Run the XLA optimizer-hook lifecycle through a real Lightning Trainer when hardware is available."""
+
+    @pytest.mark.xla
+    def test_optimizer_hook_updates_once_per_interval_across_resume(self, tmp_path: Path) -> None:
+        """A real XLA Trainer updates EMA at steps 2 and 4, including after checkpoint resume.
+
+        CPU-PJRT provides an XLA device for device-level tests but Lightning refuses its ``"tpu"`` Trainer accelerator
+        without actual XLA hardware. This test therefore remains hardware-gated while exercising the production
+        optimizer hook, rather than replacing that lifecycle with the existing raw-optimizer simulation.
+        """
+        pytest.importorskip("torch_xla")
+        from pytorch_lightning.accelerators import XLAAccelerator
+
+        if not XLAAccelerator.is_available():
+            pytest.skip(
+                "a real Lightning XLA Trainer requires TPU or other available XLA hardware; CPU-PJRT cannot launch it"
+            )
+
+        x = torch.ones(4, 4)
+        y = torch.zeros(4, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=1)
+        checkpoint_path = tmp_path / "xla-ema-resume.ckpt"
+
+        first_callback = RFDETREMACallback(decay=0.5, tau=0, update_interval_steps=2)
+        first_trainer = Trainer(
+            max_epochs=1,
+            accelerator="tpu",
+            devices=1,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            limit_train_batches=2,
+            callbacks=[first_callback],
+            default_root_dir=str(tmp_path),
+        )
+        first_trainer.fit(_EMAResumeModule(), train_dataloaders=train_loader)
+        first_trainer.save_checkpoint(str(checkpoint_path))
+
+        assert first_callback._average_model is not None
+        assert first_trainer.global_step == 2
+        assert int(first_callback._average_model.n_averaged) == 1
+
+        resumed_callback = RFDETREMACallback(decay=0.5, tau=0, update_interval_steps=2)
+        resumed_trainer = Trainer(
+            max_epochs=2,
+            accelerator="tpu",
+            devices=1,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            limit_train_batches=2,
+            callbacks=[resumed_callback],
+            default_root_dir=str(tmp_path),
+        )
+        resumed_trainer.fit(_EMAResumeModule(), train_dataloaders=train_loader, ckpt_path=str(checkpoint_path))
+
+        assert resumed_callback._average_model is not None
+        assert resumed_trainer.global_step == 4
+        assert int(resumed_callback._average_model.n_averaged) == 2
+
+
 class TestSuppressTestSwap:
     """suppress_test_swap must disable the test-time EMA weight swap while leaving defaults unchanged."""
 
