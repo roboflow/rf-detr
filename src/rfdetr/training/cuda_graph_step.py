@@ -48,8 +48,8 @@ def _cuda_autocast_dtype() -> torch.dtype:
 class _GraphableForward(nn.Module):
     """Adapt ``LWDETR`` inputs to the Tensor-only CUDA graph API.
 
-    ``LWDETR.forward`` does not read ``targets``; the variable-length targets remain
-    outside capture and enter the unchanged eager criterion after this call.
+    ``LWDETR.forward`` does not read ``targets``; the variable-length targets remain outside capture and enter the
+    unchanged eager criterion after this call.
     """
 
     def __init__(self, inner: nn.Module) -> None:
