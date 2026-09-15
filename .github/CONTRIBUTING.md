@@ -39,7 +39,7 @@ Your contributions can be in many forms—whether it’s enhancing existing feat
     git commit -m "A brief description of your changes"
     git push -u origin your-descriptive-name
     ```
-6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Please detail your changes and link any related issues.
+6. [Open a Pull Request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request): Submit your pull request against the main development branch. Fill in the [PR template](PULL_REQUEST_TEMPLATE.md) — summary, verification commands and their results, and any related issues.
 
 Before merging, check that all tests pass and that your changes adhere to our development and documentation standards.
 
@@ -136,7 +136,7 @@ uv venv
 
 # Install the extras and groups the CPU test job uses (add ,coreml on macOS).
 # --torch-backend=cpu keeps this from pulling a CUDA build of PyTorch.
-uv pip install -e ".[train,augment,cli,visual]" --group tests --torch-backend=cpu
+uv pip install -e ".[train,augment,cli,visual,data]" --group tests --torch-backend=cpu
 
 # Docs or build work only, without the test extras
 uv sync --group docs       # Documentation dependencies only
@@ -151,6 +151,7 @@ The test suite imports the training and augmentation dependencies, so installing
 
 ### Optional Extras
 
+- `rfdetr[data]` installs the WebDataset streaming reader.
 - `rfdetr[train]` installs the minimal training loop dependencies and uses torchvision-native default augmentations.
 - `rfdetr[augment]` installs Albumentations (custom CPU `aug_config` dictionaries and built-in presets) and Kornia (GPU-side augmentation with `augmentation_backend="gpu"` or `"auto"`).
 
@@ -160,13 +161,13 @@ The test suite imports the training and augmentation dependencies, so installing
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch and not e2e_roboflow and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
+uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
 uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
 
-The marker expressions exclude suites that need assets or hardware a local checkout does not have: `coco17` needs the COCO dataset, `e2e_roboflow` needs a Roboflow API key, and `xla` / `tpu` / `e2e_tensorrt` need accelerators. Dropping them from the expression is what produces most local-only failures.
+The marker expressions exclude suites that need assets, optional integrations, or unavailable hardware: `coco17` needs the COCO dataset, `integration` covers tests owned by dedicated integration jobs, and `xla` / `tpu` need accelerators. Dropping them from the expression is what produces most local-only failures.
 
 **Development vs. PR Requirements:**
 
@@ -284,6 +285,10 @@ def test_model_training():
 
 Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run separately on GPU infrastructure.
 
+**Use dedicated markers for integration-only CI jobs:**
+
+Mark tests that require an optional integration dependency with both the shared `@pytest.mark.integration` marker and a registered `e2e_<integration>` marker in `pyproject.toml`. The dedicated workflow must select the specific marker (for example, `pytest -m e2e_onnxruntime`) rather than a test-file path; generic CPU collection excludes only `integration`, keeping its marker expression short while dedicated jobs retain their precise contracts.
+
 ### CI Testing
 
 > [!NOTE]
@@ -316,7 +321,7 @@ This ensures your changes work across all supported platforms and Python version
 
 ```bash
 # Run tests with parallel execution (recommended)
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50
 
 # Run a specific test file
 uv run --no-sync pytest tests/models/test_model.py
@@ -443,6 +448,8 @@ This step is essential before any merge can occur.
 ## Google-Style Docstrings and Mandatory Type Hints
 
 For clarity and maintainability, any new functions or classes must include [Google-style docstrings](https://google.github.io/styleguide/pyguide.html) and use Python type hints. Type hints are mandatory in all function definitions, ensuring explicit parameter and return type declarations.
+
+Document constants with `#: explanation` immediately above the assignment, not standalone triple-quoted strings. Keep docstrings for modules, classes and functions.
 
 > [!IMPORTANT]
 >

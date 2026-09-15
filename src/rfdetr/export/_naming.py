@@ -69,6 +69,33 @@ def resolve_export_stem(
     return default, False
 
 
+def append_backbone_marker(export_name: str, *, backbone_only: bool, named: bool) -> str:
+    """Append the structural ``-backbone`` marker to an artifact name when one is needed.
+
+    ``-backbone`` marks a distinct model graph, not a precision or backend detail, so every backend appends it after
+    whatever detail suffix it already added. It is appended whenever a name was supplied — custom or variant-derived —
+    but never onto the bare ``backbone_model`` default, which already spells it out. Without the marker a backbone
+    export silently overwrites a full-detector export of the same name.
+
+    Args:
+        export_name: The artifact name resolved so far, including any precision or backend suffix.
+        backbone_only: Whether the artifact is a backbone-only export.
+        named: Whether the caller supplied a ``variant_name`` or ``output_name``.
+
+    Returns:
+        *export_name*, with ``-backbone`` appended when the marker applies.
+
+    Examples:
+        >>> append_backbone_marker("rfdetr-small_fp16", backbone_only=True, named=True)
+        'rfdetr-small_fp16-backbone'
+        >>> append_backbone_marker("backbone_model", backbone_only=True, named=False)
+        'backbone_model'
+        >>> append_backbone_marker("rfdetr-small", backbone_only=False, named=True)
+        'rfdetr-small'
+    """
+    return f"{export_name}-backbone" if backbone_only and named else export_name
+
+
 def _sanitize(name: str) -> str:
     """Strip directory components and extension from a caller-supplied name."""
     return os.path.splitext(re.split(r"[\\/]", name)[-1])[0]

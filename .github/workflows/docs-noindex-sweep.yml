@@ -1,0 +1,120 @@
+# Patch already-published archive pages with noindex metadata and the current outdated banner.
+# A pull request performs the complete rewrite as a dry run; a typed manual dispatch commits
+# the resulting gh-pages diff. This mirrors the one-workflow docs-backfill convention.
+name: Docs noindex Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type BACKFILL to rewrite archived pages on gh-pages"
+        required: true
+        default: ""
+  pull_request:
+    paths:
+      - ".github/workflows/docs-noindex-sweep.yml"
+      - ".github/scripts/inject_outdated_banner.py"
+      - "docs/javascripts/version-banner.js"
+      - "docs/theme/main.html"
+      - "docs/root-static/robots.txt"
+      - "docs/root-static/mike-redirect.html"
+
+permissions:
+  contents: write
+
+concurrency:
+  # This sweep and Build and Publish Docs both write gh-pages, so a dispatched run joins that
+  # shared non-cancelling queue: a rewrite must never race a mike deploy, whose generated pages
+  # a retry cannot safely rebase. PR dry runs push nothing, so they get their own cancellable
+  # per-ref group rather than queueing a real backfill behind CI.
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || 'gh-pages-writer' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  sweep:
+    name: Inject noindex into archived doc versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate confirmation
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ "${{ inputs.confirm }}" != "BACKFILL" ]]; then
+            echo "::error::Backfill requires confirm=BACKFILL."
+            exit 1
+          fi
+
+      - name: 📥 Checkout gh-pages
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: gh-pages
+          fetch-depth: 1
+
+      - name: 🏷️ Inject noindex
+        run: |
+          set -euo pipefail
+          META='<meta name="robots" content="noindex, follow">'
+          PATCHED=0
+          SKIPPED=0
+          for dir in */; do
+            VERSION="${dir%/}"
+            # Use explicit guards because a false short-circuit command exits under set -e.
+            if [ "$VERSION" = "latest" ]; then
+              continue
+            fi
+            if [ ! -f "$VERSION/index.html" ]; then
+              continue
+            fi
+            while IFS= read -r -d '' page; do
+              if grep -qi 'name="robots"' "$page"; then
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+              # Rewrite only the first head tag so code samples cannot be altered.
+              awk -v meta="    $META" \
+                'done_ins == 0 && /<head>/ { sub(/<head>/, "<head>\n" meta); done_ins = 1 } { print }' \
+                "$page" > "$page.tmp"
+              mv "$page.tmp" "$page"
+              PATCHED=$((PATCHED + 1))
+            done < <(find "$VERSION" -name '*.html' -print0)
+          done
+          echo "patched=$PATCHED skipped=$SKIPPED"
+          git diff --stat
+
+      # The injector belongs to the source revision, not the published gh-pages tree.
+      - name: 📥 Checkout banner injector
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          path: _source
+          sparse-checkout: |
+            .github/scripts/inject_outdated_banner.py
+            docs/javascripts/version-banner.js
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: 🐍 Install banner script dependencies
+        # The injector orders release directories with packaging.version, which the runner's
+        # system python3 does not ship.
+        run: python3 -m pip install --quiet --disable-pip-version-check packaging
+
+      - name: 🏷️ Inject outdated-version banner, styling, and offset script
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/_source/.github/scripts/inject_outdated_banner.py" .
+          git diff --stat
+
+      - name: 📤 Commit and push
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          # The injector creates version scripts, so stage that narrow untracked path too.
+          git add -- '[0-9]*/javascripts/version-banner.js'
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(docs): noindex and banner archived doc versions"
+          git push origin gh-pages || (git pull --rebase origin gh-pages && git push origin gh-pages)

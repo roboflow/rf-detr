@@ -55,6 +55,7 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 | `export-coreml.ipynb`               | Export to Native CoreML & Run Inference         | v1.9.0  |
 | `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.9.0  |
 | `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.9.0  |
+| `export-tflite.ipynb`               | Export to TFLite (INT8) & Run Inference         | v1.11.0 |
 | `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection              | v1.8.0  |
 | `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
 | `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |

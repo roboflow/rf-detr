@@ -114,6 +114,12 @@ You can install and use `rfdetr` in a [**Python>=3.10**](https://www.python.org/
 
 </div>
 
+## Project Activity
+
+<img src="assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" role="img" width="100%" />
+
+PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirrors. New stars are calculated from consecutive scheduled GitHub snapshots.
+
 ## Benchmarks
 
 RF-DETR achieves the best accuracy–latency trade-off among real-time object detection and instance segmentation models. It also provides keypoint detection (preview) on COCO person keypoints. For detailed benchmark tables and methodology, check out our [benchmarks](learn/benchmarks.md) page.
@@ -164,7 +170,7 @@ RF-DETR achieves the best accuracy–latency trade-off among real-time object de
 
 **Which dataset formats does RF-DETR support?** RF-DETR supports COCO JSON and YOLO-format datasets (with `dataset_file: "yolo"`). Roboflow datasets export directly to both formats. Detection and segmentation datasets use the same format — the model variant determines the task.
 
-**Can RF-DETR run in real time?** Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX and TFLite exports are available for edge deployment.
+**Can RF-DETR run in real time?** Yes. RF-DETR-N runs at 2.3 ms per frame on a T4 GPU (TensorRT FP16, batch 1), and RF-DETR-L at 6.8 ms — both well within real-time thresholds. ONNX, TFLite, TensorRT, ExecuTorch, CoreML, and OpenVINO exports are available for edge deployment.
 
 **What is the difference between RF-DETR detection and segmentation models?** Detection models (e.g., `RFDETRLarge`) output bounding boxes. Segmentation models (e.g., `RFDETRSegLarge`) additionally output instance masks. Both share the same backbone and training API; segmentation adds a mask head and requires COCO-format segmentation annotations.
 

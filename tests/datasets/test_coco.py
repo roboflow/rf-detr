@@ -30,6 +30,7 @@ from rfdetr.datasets.coco import (
     filter_parent_categories,
     scale_coco_annotation,
 )
+from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 from rfdetr.detr import RFDETR
 from rfdetr.utilities import PackedTargets, pack_targets
 
@@ -1795,6 +1796,46 @@ class TestPhantomRootConsistency:
         dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
         names = RFDETR._load_classes(str(tmp_path))
         assert names == [dataset.coco.cats[dataset.label2cat[label]]["name"] for label in range(len(names))]
+
+
+class TestDetectNumClassesWebDataset:
+    """A packed webdataset shard directory carries the answer directly, without a raw annotation file to read.
+
+    Regression coverage for class-count autodetection: _detect_num_classes_for_training previously had no
+    webdataset-aware branch, so a shard directory (no train/_annotations.coco.json, no data.yaml) always fell
+    through to _load_classes, raised FileNotFoundError, and was swallowed at logger.debug by the caller
+    (_align_num_classes_from_dataset) -- num_classes auto-detection silently never worked for this dataset_file.
+    """
+
+    def test_remap_policy_matches_the_filtered_category_count(self, tmp_path: Path) -> None:
+        """A 'remap' pack detects the same class count the loose-file COCO path would for the same categories."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train", category_ids="remap")
+        assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == len(set(dataset.cat2label.values()))
+
+    def test_raw_policy_uses_max_category_id_plus_one(self, tmp_path: Path) -> None:
+        """A 'raw' pack detects max(category_id) + 1, matching dataset_file='coco''s existing convention."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train", category_ids="raw")
+        assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
+
+    def test_raw_policy_retains_unannotated_declared_category(self, tmp_path: Path) -> None:
+        """Evaluation may contain the highest declared category even when training has no instance of it."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1])
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, category_ids="raw")
+        assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
+
+    def test_keypoint_mode_does_not_read_the_shard_index(self, tmp_path: Path) -> None:
+        """Keypoint training never reaches the webdataset branch: that format rejects keypoints outright."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train")
+        with pytest.raises(FileNotFoundError):
+            RFDETR._detect_num_classes_for_training(str(shard_dir), use_grouppose_keypoints=True)
 
 
 class TestCrossSplitLabelSpace:

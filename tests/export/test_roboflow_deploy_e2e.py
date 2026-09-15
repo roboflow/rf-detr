@@ -121,6 +121,7 @@ def _poll_until_trained(workspace: str, project: str, version: str, api_key: str
 
 
 @pytest.mark.skipif(not all([_API_KEY, _WORKSPACE, _PROJECT]), reason=_MISSING_ENV_REASON)
+@pytest.mark.integration
 @pytest.mark.e2e_roboflow
 class TestDeployToRoboflowEndToEnd:
     """``deploy_to_roboflow`` must land a genuinely trained model server-side (``-m e2e_roboflow``)."""

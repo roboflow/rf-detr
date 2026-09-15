@@ -23,6 +23,12 @@ cards:
     version: v1.9.0
     author: Borda
     description: "Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) and run it on the CPU — on-device mobile and edge deployment with supervision-annotated detections."
+  - href: export-tflite/
+    name: "Export to TFLite (INT8) & Run Inference"
+    labels: [EXPORT, TFLITE, DEPLOY]
+    version: v1.11.0
+    author: Borda
+    description: "Export RF-DETR to TensorFlow Lite with INT8 dynamic-range quantization and run it directly with tensorflow.lite.Interpreter — mobile and edge deployment, validated against a fp32 PyTorch baseline."
   - href: fine-tune_detection/
     name: "Fine-Tune RF-DETR Object Detection"
     labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]

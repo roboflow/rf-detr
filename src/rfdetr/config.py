@@ -1026,6 +1026,12 @@ class TrainConfig(BaseConfig):
     # accepts no "auto": it is never probed, and an explicit value stays usable even when batch_size="auto"
     # has not been resolved.
     eval_batch_size: int | None = None
+    # Pad every training image's targets to this many rows so the loss keeps one shape across batches. XLA keys
+    # its compiled graph on shapes, and the detection loss is shaped by the ground-truth box count, so on TPU an
+    # unpadded run recompiles whenever a batch presents a new per-image box-count tuple. ``None`` keeps the
+    # variable-length path, which is what CUDA wants. Composes with ``pack_targets``: padding runs first in the
+    # collate seam, so the packer always sees one shape.
+    pad_targets_to: int | None = None
     # Global effective batch size target, divided across devices and nodes. This is a floor, not a cap: the probe
     # only raises grad_accum_steps to *reach* it (see recommend_grad_accum_steps), and never shrinks the micro-batch
     # to hold it. Once the probed micro-batch already meets or exceeds this value, grad_accum_steps stays at 1 and
@@ -1057,7 +1063,9 @@ class TrainConfig(BaseConfig):
     keypoint_visible_loss_coef: float = 0
     keypoint_nll_loss_coef: float = 0
     keypoint_oks_sigmas: list[float] | None = None
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo"] = "roboflow"
+    # "webdataset" streams pre-packed tar shards instead of loose image files; see
+    # rfdetr.datasets.webdataset for the packer and the sizing contract it imposes on the loaders.
+    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "webdataset"] = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
@@ -1093,14 +1101,15 @@ class TrainConfig(BaseConfig):
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
-    amp_dtype: Literal["auto", "bf16", "fp16"] = Field(
+    amp_dtype: Literal["auto", "bf16", "fp16", "fp8"] = Field(
         default="auto",
         description=(
             "Mixed-precision autocast dtype. "
             "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
             "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
             "'fp16' forces fp16. "
-            "Has no effect when model_config.amp=False or when training on CPU."
+            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU. "
+            "Non-FP8 choices have no effect when model_config.amp=False or when training on CPU."
         ),
     )
     best_model_metric: Literal["map", "mar"] = Field(
@@ -1129,6 +1138,14 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
+    eval_backend: Literal["hotcoco", "faster_coco_eval"] = Field(
+        default="hotcoco",
+        description=(
+            "COCO evaluation backend used for validation and test mAP. Both ship with 'rfdetr[train]' and produce "
+            "identical metrics; 'hotcoco' is several times faster to compute. Set 'faster_coco_eval' to fall back "
+            "to the previous evaluator."
+        ),
+    )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
     # validation/test, returning them at the mask head's native (lower) resolution instead —
     # cheaper, but ground-truth masks must then be compared at that same lower resolution
@@ -1214,10 +1231,10 @@ class TrainConfig(BaseConfig):
         Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
         dtype rather than failing the whole training run.
         """
-        if value not in ("auto", "bf16", "fp16"):
+        if value not in ("auto", "bf16", "fp16", "fp8"):
             # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
             warnings.warn(
-                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16'. Falling back to 'auto'.",
+                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16', 'fp8'. Falling back to 'auto'.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -1285,6 +1302,18 @@ class TrainConfig(BaseConfig):
         """Validate eval_batch_size is None (inherit the train batch size) or >= 1."""
         if v is not None and v < 1:
             raise ValueError("eval_batch_size must be >= 1 when provided.")
+        return v
+
+    @field_validator("pad_targets_to", mode="after")
+    @classmethod
+    def validate_pad_targets_to(cls, v: int | None) -> int | None:
+        """Validate pad_targets_to is None (keep the variable-length path) or >= 1.
+
+        Catches a non-positive value at construction instead of at the first DataLoader collate, which can run inside a
+        worker process.
+        """
+        if v is not None and v < 1:
+            raise ValueError("pad_targets_to must be a positive integer when provided.")
         return v
 
     @field_validator(
@@ -1375,6 +1404,16 @@ class TrainConfig(BaseConfig):
         if "." not in optimizer:
             _resolve_native_optimizer(optimizer)
         return optimizer
+
+    @model_validator(mode="after")
+    def validate_fp8_batch_size(self) -> "TrainConfig":
+        """Require an explicit FP8 micro-batch until auto-sizing probes converted layers."""
+        if self.amp_dtype == "fp8" and self.batch_size == "auto":
+            raise ValueError(
+                "FP8 training requires an explicit integer batch_size: automatic batch sizing does not "
+                "probe Transformer Engine layers. Choose batch_size manually or use amp_dtype='bf16'/'fp16'."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_eval_ema_only(self) -> "TrainConfig":
