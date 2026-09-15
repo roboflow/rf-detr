@@ -42,6 +42,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Deprecated
 
+- `ModelConfig.amp` is deprecated, **removal in v1.14**, superseded by `TrainConfig.amp_dtype`, which now accepts `None` to disable autocast. The two settings previously split one decision across both configs: the boolean gated AMP on the model config while the dtype was chosen on the train config, and `amp=False` silently voided any `amp_dtype`. `amp_dtype` is now the single authority — an explicitly set value always wins, including `"fp8"`, which reaches the Transformer Engine hardware checks instead of being turned off. The legacy toggle still applies while `amp_dtype` is left at its default `"auto"`, emitting a `FutureWarning`; "left at its default" is evaluated by value rather than by which fields were passed, so a config reloaded from `training_config.json` keeps honoring it. Replace `amp=False` with `amp_dtype=None`. One behavior change is not covered by that fallback: `amp=False` combined with an explicit `amp_dtype="fp8"` previously raised `amp_dtype='fp8' requires model_config.amp=True` and now runs FP8.
+
+- `TrainConfig.fp16_eval` is deprecated, **removal in v1.14**. It has had no runtime consumer since the PyTorch Lightning migration — evaluation precision follows `amp_dtype` — so it is warned about rather than migrated. Setting it to `True` emits a `FutureWarning`; the default stays silent, including on a dumped-config reload. Use `amp_dtype="fp16"` to evaluate in FP16.
+
 ### Fixed
 
 - TPU/XLA training with EMA now keeps its control-flow counter on the host and queues parameter averaging inside the optimizer step, before Lightning's existing XLA step marker. This prevents the deleted-buffer failure seen after a few optimizer steps without adding another per-step synchronization; CPU and CUDA EMA updates are unchanged. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
