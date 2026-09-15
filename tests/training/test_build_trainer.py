@@ -769,8 +769,20 @@ class TestBuildTrainerAmpDtype:
     """
 
     @staticmethod
-    def _resolved_precision(tmp_path, *, cuda: bool, bf16: bool = False, mps: bool = False, amp_dtype: str = "auto"):
+    def _resolved_precision(
+        tmp_path,
+        *,
+        cuda: bool,
+        bf16: bool = False,
+        mps: bool = False,
+        amp_dtype: str | None = "auto",
+        amp: bool = True,
+    ):
         """Resolve the Lightning precision string for a mocked device capability and ``amp_dtype``.
+
+        The capability probes are mocked so the expected precision is a property of the config under test rather than of
+        whichever machine runs the suite — an unmocked call resolves to ``"16-mixed"`` on an MPS host and ``"32-true"``
+        on a CPU-only one.
 
         Args:
             tmp_path: pytest temporary directory fixture.
@@ -778,6 +790,7 @@ class TestBuildTrainerAmpDtype:
             bf16: Value returned by the mocked ``torch.cuda.is_bf16_supported``.
             mps: Value returned by the mocked ``torch.backends.mps.is_available``.
             amp_dtype: The ``TrainConfig.amp_dtype`` value under test.
+            amp: The deprecated ``ModelConfig.amp`` value under test.
 
         Returns:
             The ``precision`` string passed to the (mocked) ``Trainer``.
@@ -796,7 +809,7 @@ class TestBuildTrainerAmpDtype:
             mock.patch("torch.backends.mps.is_available", return_value=mps),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=amp_dtype), _mc(amp=True))
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=amp_dtype), _mc(amp=amp))
         return captured["precision"]
 
     def test_amp_dtype_is_a_train_kwarg_not_dropped(self, tmp_path):
@@ -832,20 +845,32 @@ class TestBuildTrainerAmpDtype:
         assert precision == "16-mixed"
 
     def test_explicit_amp_dtype_overrides_deprecated_amp_false(self, tmp_path):
-        """An explicit amp_dtype wins over the deprecated amp flag: the stale amp=False is ignored."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=False))
-        assert trainer.precision == "16-mixed"
+        """An explicit amp_dtype wins over the deprecated amp flag: the stale amp=False is ignored.
+
+        Mocked onto a bf16-capable CUDA device, so the fp16 request is distinguishable both from the '32-true' the old
+        amp=False precedence produced and from the 'bf16-mixed' the hardware would otherwise select.
+        """
+        resolved = self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype="fp16", amp=False)
+        assert resolved == "16-mixed"
 
     def test_deprecated_amp_false_applies_when_amp_dtype_is_default(self, tmp_path):
-        """Amp=False still disables AMP while amp_dtype is left at its default, and warns."""
+        """Amp=False still disables AMP while amp_dtype is left at its default, and warns.
+
+        The mocked device is bf16-capable CUDA, which would resolve to 'bf16-mixed' on its own — so '32-true' can only
+        come from the legacy toggle still being honored.
+        """
         with pytest.warns(FutureWarning, match="ModelConfig.amp is deprecated"):
-            trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False))
-        assert trainer.precision == "32-true"
+            resolved = self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype="auto", amp=False)
+        assert resolved == "32-true"
 
     def test_amp_dtype_none_disables_amp(self, tmp_path):
-        """amp_dtype=None is the replacement for the deprecated amp=False and needs no model flag."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=None), _mc(amp=True))
-        assert trainer.precision == "32-true"
+        """amp_dtype=None is the replacement for the deprecated amp=False and needs no model flag.
+
+        Mocked onto bf16-capable CUDA with amp left at its default True, so '32-true' is attributable to amp_dtype=None
+        alone rather than to absent hardware.
+        """
+        resolved = self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype=None, amp=True)
+        assert resolved == "32-true"
 
     def test_cpu_accelerator_ignores_amp_dtype(self, tmp_path):
         """Explicit accelerator='cpu' yields '32-true' regardless of amp_dtype."""
