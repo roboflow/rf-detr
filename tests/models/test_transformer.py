@@ -1914,3 +1914,90 @@ def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory
             f"full sum(H*W)={total_hw} encoder positions (Transformer.forward two-stage top-k gather); "
             f"got input shape {tuple(shape)}"
         )
+
+
+def _make_cuda_graph_transformer_inputs(
+    spatial_shapes_hw: list[tuple[int, int]], batch_size: int = 2, hidden_dim: int = 16, num_queries: int = 3
+) -> tuple[Transformer, list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], torch.Tensor, torch.Tensor]:
+    """Build a small two-stage Transformer and matching forward inputs.
+
+    Examples:
+        >>> transformer, srcs, *_ = _make_cuda_graph_transformer_inputs([(2, 2)])
+        >>> len(srcs), transformer.num_feature_levels
+        (1, 1)
+    """
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 5)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    srcs = [torch.randn(batch_size, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+    masks = [torch.zeros(batch_size, height, width, dtype=torch.bool) for height, width in spatial_shapes_hw]
+    pos_embeds = [torch.randn(batch_size, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
+    return transformer, srcs, masks, pos_embeds, refpoint_embed, query_feat
+
+
+def test_cuda_graph_spatial_shapes_cache_reuses_tensor_per_device_and_resolution() -> None:
+    """Repeated capture warmups reuse the exact device shape tensor."""
+    transformer, srcs, masks, pos_embeds, refpoint_embed, query_feat = _make_cuda_graph_transformer_inputs(
+        [(4, 4), (2, 2)]
+    )
+    transformer.enable_cuda_graph_capture()
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+    assert transformer._cuda_graph_spatial_shapes is not None
+    assert len(transformer._cuda_graph_spatial_shapes) == 1
+    cached = next(iter(transformer._cuda_graph_spatial_shapes.values()))
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+    assert next(iter(transformer._cuda_graph_spatial_shapes.values())) is cached
+
+
+def test_cuda_graph_spatial_shapes_cache_keys_distinct_resolutions() -> None:
+    """Each multi-scale resolution gets its own static shape tensor."""
+    transformer, srcs, masks, pos_embeds, refpoint_embed, query_feat = _make_cuda_graph_transformer_inputs(
+        [(4, 4), (2, 2)]
+    )
+    transformer.enable_cuda_graph_capture()
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+
+    _, srcs_b, masks_b, pos_embeds_b, _, _ = _make_cuda_graph_transformer_inputs([(6, 6), (3, 3)])
+    transformer(srcs_b, masks_b, pos_embeds_b, refpoint_embed, query_feat)
+
+    assert transformer._cuda_graph_spatial_shapes is not None
+    assert {key[1] for key in transformer._cuda_graph_spatial_shapes} == {
+        ((4, 4), (2, 2)),
+        ((6, 6), (3, 3)),
+    }
+
+
+def test_cuda_graph_spatial_shapes_cache_preserves_forward_values() -> None:
+    """The cache changes tensor construction, not model arithmetic."""
+    torch.manual_seed(7)
+    baseline, srcs, masks, pos_embeds, refpoint_embed, query_feat = _make_cuda_graph_transformer_inputs(
+        [(4, 4), (2, 2)]
+    )
+    baseline_output = baseline(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+
+    torch.manual_seed(7)
+    cached, *_ = _make_cuda_graph_transformer_inputs([(4, 4), (2, 2)])
+    cached.enable_cuda_graph_capture()
+    cached_output = cached(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+
+    for expected, actual in zip(baseline_output, cached_output):
+        if expected is None:
+            assert actual is None
+        else:
+            assert torch.equal(actual, expected)

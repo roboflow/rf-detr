@@ -419,6 +419,25 @@ model.train(dataset_dir="path/to/dataset", scale_jitter=False)
 
 ---
 
+## CUDA Graph Training
+
+For a long-running detection job on one NVIDIA GPU, enable CUDA graph replay on the model constructor:
+
+```python
+from rfdetr import RFDETRNano
+
+model = RFDETRNano(cuda_graphs=True)
+model.train(dataset_dir="path/to/dataset")
+```
+
+The first batch at each input shape runs CUDA graph warm-up and capture. Later batches with the same batch size, resolution, dtype, device, and autocast mode replay the captured forward and backward. This makes the option most useful for jobs long enough to amortize capture; multi-scale training creates one cached graph per resolution. Graphs also keep their private CUDA memory pools alive, so compare peak memory and the largest usable batch size as well as step time on your own workload.
+
+The option supports detection training on a single CUDA GPU with BF16 precision (`amp_dtype="bf16"` or `"auto"` resolving to BF16). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, and any other trainer precision (FP16, FP32, FP8/Transformer Engine) stay on the eager path and log the reason — only BF16 has real-CUDA capture/replay coverage today. `cuda_graphs=True` and `compile=True` are mutually exclusive; gradient checkpointing instead disables graph capture for that run and falls back to eager, rather than raising. Gradient accumulation is supported; first-use capture preserves gradients already accumulated by earlier microbatches. A capture failure is isolated to that execution signature and falls back to eager execution instead of stopping training.
+
+As one reference point, RF-DETR Nano on an NVIDIA L4 with BF16, batch 4, deterministic synthetic detection batches, and a fixed 8-resolution multi-scale set (`expanded_scales=False`) reduced the median Lightning training batch from 149.8 ms to 101.7 ms across five runs — a 32.4% median reduction in the five paired per-run measurements. Peak allocated memory increased from 2,395 MiB to 3,466 MiB, and peak reserved memory increased from 2,754 MiB to 14,550 MiB for those 8 captured graph pools. `TrainConfig`'s own default is `expanded_scales=True`, which resolves to 11 multi-scale resolutions for this model and was not benchmarked; expect proportionally more graph pools and higher peak reserved memory under that default. Real-dataset throughput was not measured. The speed and memory cost depend on the model, shapes, batch size, GPU, and PyTorch version; this option is not a good fit when memory already limits the batch size.
+
+---
+
 ## Memory Optimization
 
 ### Gradient Checkpointing
