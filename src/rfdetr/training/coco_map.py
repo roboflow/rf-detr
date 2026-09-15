@@ -244,6 +244,7 @@ class _UfcocoMaskTools:
         return _ufcoco().mask.encode(mask)
 
     def __getattr__(self, name: str) -> Any:
+        """Forward every other RLE utility, such as ``area``, to ultrafast-pycocotools' ``mask`` module."""
         return getattr(_ufcoco().mask, name)
 
 
