@@ -218,6 +218,7 @@ def _ufcoco_evaluator_type() -> type:
 
     class _UfcocoCocoEval(evaluator_type):  # type: ignore[misc,valid-type]
         def summarize(self) -> None:
+            """Summarize results and report aggregate AP at the configured detection limit."""
             super().summarize()
             max_detections = self.params.maxDets[-1]
             if self.params.iouType in ("bbox", "segm") and max_detections != 100:

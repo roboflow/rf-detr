@@ -1053,7 +1053,13 @@ class TestUfcocoArraysMatchPycocotools:
 
     @staticmethod
     def _metric_inputs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Return tied predictions, a crowd target, and images missing predictions or targets."""
+        """Return tied predictions, a crowd target, and images missing predictions or targets.
+
+        Examples:
+            >>> predictions, targets = TestUfcocoArraysMatchPycocotools._metric_inputs()
+            >>> len(predictions), len(targets)
+            (3, 3)
+        """
         boxes = torch.tensor([[1.0, 2.0, 11.0, 12.0], [1.0, 2.0, 11.0, 12.0], [20.0, 20.0, 25.0, 25.0]])
         masks = torch.zeros((3, 32, 32), dtype=torch.bool)
         masks[:2, 2:12, 1:11] = True
