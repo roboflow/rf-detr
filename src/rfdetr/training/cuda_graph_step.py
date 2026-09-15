@@ -12,10 +12,7 @@ from typing import Any, Callable, cast
 import torch
 from torch import Tensor, nn
 
-from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
-
-logger = get_logger()
 
 _GraphedCallable = Callable[[Tensor, Tensor], dict[str, Any]]
 _ExecutionKey = tuple[
@@ -66,8 +63,8 @@ class CudaGraphTrainingRunner:
 
     This deliberately is not an :class:`~torch.nn.Module`: the original model remains
     registered on the Lightning module, so checkpoint keys, optimizers, and EMA keep the
-    same parameter ownership and names. Capture failures are memoized per signature and
-    fall back to eager execution.
+    same parameter ownership and names. Capture failures stop training because an
+    invalidated capture can leave CUDA state unsafe for an eager retry.
 
     Args:
         inner: Detection model to execute.
@@ -78,7 +75,6 @@ class CudaGraphTrainingRunner:
         self.inner = inner
         self.num_warmup_iters = num_warmup_iters
         self._graphed_cache: dict[_ExecutionKey, _GraphedCallable] = {}
-        self._unsupported_keys: set[_ExecutionKey] = set()
 
         transformer = getattr(inner, "transformer", None)
         enable_capture = getattr(transformer, "enable_cuda_graph_capture", None)
@@ -86,7 +82,11 @@ class CudaGraphTrainingRunner:
             enable_capture()
 
     def __call__(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None) -> dict[str, Any]:
-        """Use a captured graph when available, otherwise capture or run eagerly."""
+        """Capture or replay training inputs; leave evaluation inputs eager.
+
+        Raises:
+            RuntimeError: If CUDA capture fails; restart the process before retrying.
+        """
         tensors, mask = samples.decompose()
         if not self.inner.training or mask is None:
             return cast(dict[str, Any], self.inner(samples, targets))
@@ -103,18 +103,12 @@ class CudaGraphTrainingRunner:
             autocast_enabled,
             _cuda_autocast_dtype() if autocast_enabled else None,
         )
-        if key in self._unsupported_keys:
-            return cast(dict[str, Any], self.inner(samples, targets))
-
         graphed = self._graphed_cache.get(key)
         if graphed is None:
             graphed = self._try_capture(tensors, mask, key)
-            if graphed is None:
-                self._unsupported_keys.add(key)
-                return cast(dict[str, Any], self.inner(samples, targets))
         return graphed(tensors, mask)
 
-    def _try_capture(self, tensors: Tensor, mask: Tensor, key: _ExecutionKey) -> _GraphedCallable | None:
+    def _try_capture(self, tensors: Tensor, mask: Tensor, key: _ExecutionKey) -> _GraphedCallable:
         """Capture one signature without modifying live accumulated gradients."""
         graphable = _GraphableForward(self.inner)
         autocast_cache_enabled = torch.is_autocast_cache_enabled()
@@ -133,13 +127,12 @@ class CudaGraphTrainingRunner:
                     allow_unused_input=True,
                 ),
             )
-        except Exception:
-            logger.warning(
-                "CUDA graph capture failed for execution signature %s; falling back to eager for this signature.",
-                key,
-                exc_info=True,
-            )
-            return None
+        except Exception as exc:
+            raise RuntimeError(
+                f"CUDA graph capture failed for execution signature {key}. "
+                "Training cannot safely continue after failed capture. Restart the process "
+                "and set cuda_graphs=False to run eagerly."
+            ) from exc
         finally:
             if disable_autocast_cache:
                 torch.set_autocast_cache_enabled(autocast_cache_enabled)

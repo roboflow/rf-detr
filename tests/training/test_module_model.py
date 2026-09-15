@@ -443,6 +443,16 @@ class TestInit:
         mock_compile.assert_called_once()
         assert mock_compile.call_args.kwargs["dynamic"] is True
 
+    def test_compile_does_not_enable_global_error_suppression(self, tmp_path: Path) -> None:
+        """RF-DETR must not hide compiler failures or change unrelated models' fallback policy."""
+        with (
+            torch._dynamo.config.patch(suppress_errors=False),
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda model, **_: model),
+        ):
+            _build_module(model_config=_base_model_config(compile=True), tmp_path=tmp_path)
+            assert torch._dynamo.config.suppress_errors is False
+
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="compiled multi-scale regression requires CUDA")
     def test_compiled_multi_scale_forward_backward_across_resolutions(self, tmp_path):

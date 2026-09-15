@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import copy
+import multiprocessing
 from unittest.mock import patch
 
 import pytest
@@ -14,7 +16,8 @@ import torch
 from pydantic import ValidationError
 from torch import Tensor, nn
 
-from rfdetr.config import RFDETRNanoConfig
+from rfdetr.config import RFDETRNanoConfig, TrainConfig
+from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -104,43 +107,52 @@ def test_capture_restores_autocast_cache_setting() -> None:
     assert cache_settings == [False, True]
 
 
-def test_failed_capture_falls_back_once_per_execution_signature() -> None:
-    """A failed signature stays eager while another batch shape gets its own capture attempt."""
+def test_failed_capture_raises_without_eager_retry() -> None:
+    """A capture error must stop training, not execute against potentially damaged CUDA state."""
     model = _TinyGraphableModel()
-    capture_attempts = 0
-
-    def _fail_capture(*_args: object, **_kwargs: object) -> None:
-        nonlocal capture_attempts
-        capture_attempts += 1
-        raise RuntimeError("unsupported")
-
     runner = CudaGraphTrainingRunner(model)
-    with patch("torch.cuda.make_graphed_callables", side_effect=_fail_capture):
-        runner(_samples())
-        runner(_samples(2.0))
-        runner(_samples(batch_size=1))
+    with patch("torch.cuda.make_graphed_callables", side_effect=RuntimeError("unsupported")) as capture:
+        with pytest.raises(RuntimeError, match="CUDA graph capture failed") as exc:
+            runner(_samples())
 
-    assert capture_attempts == 2
+    capture.assert_called_once()
+    assert str(exc.value.__cause__) == "unsupported"
+
+
+def _assert_real_capture_failure() -> None:
+    """Check capture failure in a disposable process because CUDA RNG state may be invalidated.
+
+    Examples:
+        >>> _assert_real_capture_failure()  # doctest: +SKIP
+        # Requires CUDA and deliberately invalidates capture state.
+    """
+    torch.manual_seed(0)
+    model = _CaptureUnsupportedModel("cuda")
+    runner = CudaGraphTrainingRunner(model)
+    with pytest.raises(RuntimeError, match="Restart the process"):
+        runner(_samples(device="cuda"))
 
 
 @pytest.mark.gpu
-def test_real_capture_failure_leaves_cuda_ready_for_eager_fallback() -> None:
-    """A mid-capture CUDA error is cleaned up before the immediate eager retry."""
-    model = _CaptureUnsupportedModel("cuda")
-    runner = CudaGraphTrainingRunner(model)
-
-    first = runner(_samples(device="cuda"))["pred"]
-    second = runner(_samples(2.0, device="cuda"))["pred"]
-
-    assert torch.isfinite(first).all()
-    assert torch.isfinite(second).all()
-    assert len(runner._graphed_cache) == 0
-    assert len(runner._unsupported_keys) == 1
+def test_real_capture_failure_isolated_from_test_worker() -> None:
+    """An intentionally invalid CUDA capture cannot poison later tests in this worker."""
+    process = multiprocessing.get_context("spawn").Process(target=_assert_real_capture_failure)
+    process.start()
+    try:
+        process.join(timeout=120)
+        assert process.exitcode == 0
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join()
+    torch.manual_seed(0)
+    assert torch.isfinite(torch.rand(4, device="cuda")).all()
 
 
 @pytest.mark.gpu
 def test_cuda_graph_replay_matches_eager_outputs_and_accumulated_gradients() -> None:
     """Real capture must preserve outputs and accumulation across changing input values."""
+    torch.manual_seed(0)
     eager = _TinyGraphableModel("cuda")
     graphed = _TinyGraphableModel("cuda")
     graphed.load_state_dict(eager.state_dict())
@@ -173,4 +185,59 @@ def test_cuda_graph_replay_matches_eager_outputs_and_accumulated_gradients() -> 
         expected = eager(_samples(2.5, device="cuda"))["pred"]
     torch.testing.assert_close(replayed.float(), expected.float(), rtol=5e-3, atol=5e-3)
     assert len(runner._graphed_cache) == 1
-    assert len(runner._unsupported_keys) == 0
+
+
+@pytest.mark.gpu
+def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step() -> None:
+    """Real Nano capture must compose with its eager criterion, accumulation, and parameter updates."""
+    torch.manual_seed(0)
+    model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda")
+    train_config = TrainConfig(dataset_dir="unused", drop_path=0.0)
+    eager = build_model_from_config(model_config, train_config).cuda().train()
+    graphed = copy.deepcopy(eager)
+    criterion, _ = build_criterion_from_config(model_config, train_config)
+    criterion = criterion.cuda()
+    runner = CudaGraphTrainingRunner(graphed)
+    eager_optimizer = torch.optim.SGD(eager.parameters(), lr=1e-3)
+    graph_optimizer = torch.optim.SGD(graphed.parameters(), lr=1e-3)
+    eager_parameters = dict(eager.named_parameters())
+    targets = [
+        {"labels": torch.tensor([1], device="cuda"), "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.3]], device="cuda")}
+    ]
+
+    # A repeated signature exercises replay; the last capture must preserve accumulated gradients.
+    for resolution in (384, 384, 416):
+        samples = NestedTensor(
+            torch.randn(1, 3, resolution, resolution, device="cuda"),
+            torch.zeros(1, resolution, resolution, dtype=torch.bool, device="cuda"),
+        )
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            expected = eager(samples, targets)
+            actual = runner(samples, targets)
+            eager_losses = criterion(expected, targets)
+            graph_losses = criterion(actual, targets)
+            eager_loss = sum(
+                eager_losses[key] * weight for key, weight in criterion.weight_dict.items() if key in eager_losses
+            )
+            graph_loss = sum(
+                graph_losses[key] * weight for key, weight in criterion.weight_dict.items() if key in graph_losses
+            )
+        torch.testing.assert_close(actual["pred_logits"], expected["pred_logits"], rtol=1e-4, atol=1e-6)
+        torch.testing.assert_close(actual["pred_boxes"], expected["pred_boxes"], rtol=1e-4, atol=1e-6)
+        torch.testing.assert_close(graph_loss, eager_loss, rtol=1e-4, atol=1e-6)
+        assert torch.isfinite(graph_loss)
+        eager_loss.backward()
+        graph_loss.backward()
+        for name, parameter in graphed.named_parameters():
+            reference = eager_parameters[name]
+            assert (parameter.grad is None) == (reference.grad is None), name
+            if parameter.grad is not None:
+                torch.testing.assert_close(parameter.grad, reference.grad, rtol=1e-4, atol=1e-6, msg=name)
+
+    assert len(runner._graphed_cache) == 2
+    before = graphed.class_embed.weight.detach().clone()
+    eager_optimizer.step()
+    graph_optimizer.step()
+    assert not torch.equal(graphed.class_embed.weight, before)
+    for actual, expected in zip(graphed.parameters(), eager.parameters()):
+        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)

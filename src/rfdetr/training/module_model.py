@@ -438,15 +438,14 @@ class RFDETRModelModule(LightningModule):
             )
         if compile_enabled:
             # dynamic=True: one compiled graph handles all multi-scale input sizes instead
-            # of recompiling per (H, W) pair. suppress_errors=True: if inductor can't
-            # compile a subgraph (e.g. bicubic backward with symbolic shapes), it falls
-            # back to eager mode for that subgraph rather than crashing.
+            # of recompiling per (H, W) pair. Positional interpolation has its own eager
+            # boundary for unsupported symbolic bicubic backward. Do not suppress other
+            # compiler errors: nested retries can flood logs and conceal lost acceleration.
             # capture_scalar_outputs=True: include Tensor.item() calls
             # (gen_encoder_output_proposals / ms_deform_attn use spatial-shape .item()
             # as Python slice indices). Safe with dynamic=True because item() results
             # are backed symbols derived from input shapes — not unbacked symbols that
             # would cause PendingUnbackedSymbolNotFound (which only occurs without dynamic).
-            torch._dynamo.config.suppress_errors = True
             torch._dynamo.config.capture_scalar_outputs = True
             # Inductor's coalesce tiling analysis is unsupported on the dynamic-shape path
             # (torch/_inductor/config.py: "coalesce_tiling_analysis does not yet apply to
