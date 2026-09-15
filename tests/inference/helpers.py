@@ -109,7 +109,8 @@ class _DummyModel:
                 caller already asserts on.
             include_embeddings: When ``True``, ``postprocess`` also emits an ``embeddings`` tensor.
             embedding_dim: When ``include_embeddings`` is set, ``postprocess`` also emits a tensor of
-                shape ``(N, embedding_dim)`` filled with a constant value (``0.5`` by default). This is useful for testing that the embeddings are correctly returned and handled.
+                shape ``(N, embedding_dim)`` filled with a constant value (``0.5`` by default). 
+                This is useful for testing that the embeddings are correctly returned and handled.
         """
         self.device = torch.device(device)
         self.resolution = 28
