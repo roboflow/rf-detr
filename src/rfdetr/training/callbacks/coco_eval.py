@@ -377,6 +377,7 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, dict) or "results" not in outputs or "targets" not in outputs:
             return
 
+        self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         # preds omitted: training pred_masks is a sparse dict lacking "masks", so passing it here is inert.
         targets = self._convert_targets(outputs["targets"])
@@ -474,6 +475,7 @@ class COCOEvalCallback(Callback):
         """
         if not isinstance(outputs, Mapping):
             return
+        self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
         # ema_cb._average_model availability is rank-invariant (EMA updates fire on the same
@@ -510,6 +512,7 @@ class COCOEvalCallback(Callback):
                 ema_underlying.eval()  # AveragedModel deepcopy is not managed by PTL
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
+            self._sync_xla_metric_inputs(pl_module)
             ema_preds = self._convert_preds(ema_results)
             # Outside segmentation the conversion has no prediction-dependent input, so redoing it here would
             # recompute the same boxes and repeat the same orig_size host transfer for every validation batch.
@@ -570,6 +573,7 @@ class COCOEvalCallback(Callback):
         """
         if not isinstance(outputs, Mapping):
             return
+        self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
 
@@ -594,6 +598,24 @@ class COCOEvalCallback(Callback):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sync_xla_metric_inputs(pl_module: Any) -> None:
+        """Materialize all live XLA outputs before metric code starts reading individual tensors on the host.
+
+        COCO accumulation keeps CPU-owned state, and target conversion, mAP, F1, and keypoint paths each read
+        different leaves from the same lazy evaluation graph. Without one shared boundary, the first ``.tolist()``
+        or ``.cpu()`` compiles only the requested leaf; later reads then compile overlapping graph fragments. A
+        single XLA step boundary makes those reads transfers from one materialized result instead.
+
+        Args:
+            pl_module: Lightning module supplying the active device.
+        """
+        if getattr(getattr(pl_module, "device", None), "type", None) != "xla":
+            return
+        import torch_xla  # type: ignore[import-not-found]
+
+        torch_xla.sync(wait=True)
 
     def _compute_and_log_ema_metrics(
         self, trainer: Any, pl_module: Any, split: str, pfx: str, mar_key: str
