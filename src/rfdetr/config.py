@@ -1122,7 +1122,7 @@ class TrainConfig(BaseConfig):
             "'fp16' forces fp16. "
             "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "
             "an explicit 'fp8' is honored even if the deprecated ModelConfig.amp=False. "
-            "Any explicit value here always wins over the deprecated ModelConfig.amp. "
+            "Any non-default value here always wins over the deprecated ModelConfig.amp. "
             "Has no effect when training on CPU."
         ),
     )

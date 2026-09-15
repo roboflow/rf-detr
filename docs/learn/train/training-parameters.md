@@ -126,7 +126,7 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 `amp_dtype` accepts `None`, `"auto"`, `"bf16"`, `"fp16"`, or `"fp8"`, and is the single setting controlling mixed precision. Pass `amp_dtype=None` to train in full FP32. FP8 selects Lightning's Transformer Engine precision plugin, which replaces eligible linear and layer-normalization layers while retaining BF16 weights. FP8 requires a Transformer Engine-supported NVIDIA GPU; it is rejected for CPU, MPS, TPU/XLA, FSDP, and DeepSpeed. Use DDP for multi-GPU FP8 training. Hardware support and speedups vary, so benchmark the exact model and GPU before adopting it.
 
-The constructor-only `amp` boolean is deprecated: it is consulted only when `amp_dtype` is left at its default `"auto"`, and any explicit `amp_dtype` overrides it. Replace `amp=False` with `amp_dtype=None`.
+The constructor-only `amp` boolean is deprecated: it is consulted only when `amp_dtype` has its default value `"auto"`, and any non-default `amp_dtype` overrides it. Replace `amp=False` with `amp_dtype=None`.
 
 FP8 requires an explicit integer `batch_size`. Automatic batch sizing probes an unconverted model and is rejected with `amp_dtype="fp8"`; BF16/FP16 retain automatic sizing.
 
@@ -299,7 +299,7 @@ The parameters below are available for fine-grained control over training behavi
 | ---------------------- | ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `accelerator`          | `str`            | `"auto"` | PyTorch Lightning accelerator selection. `"auto"` picks GPU if available, then MPS, then CPU.                                                                            |
 | `seed`                 | `int`            | `None`   | Global random seed for reproducibility. `None` means no fixed seed is set.                                                                                               |
-| `fp16_eval`            | `bool`           | `False`  | **Deprecated, no effect.** Evaluation precision follows `amp_dtype`; set `amp_dtype="fp16"` instead. Removed in the next major release.                                  |
+| `fp16_eval`            | `bool`           | `False`  | **Deprecated, no effect.** Evaluation precision follows `amp_dtype`; set `amp_dtype="fp16"` instead. Removed in v1.14.                                                |
 | `compute_val_loss`     | `bool \| "auto"` | `"auto"` | Compute and log validation loss only when a configured consumer monitors `val/loss`. Set `True` to always compute it or `False` to disable it.                           |
 | `compute_test_loss`    | `bool`           | `True`   | Compute and log the detection loss during the final test run.                                                                                                            |
 | `num_sanity_val_steps` | `int`            | `0`      | PyTorch Lightning sanity-check validation batches run before training starts. `0` disables it (the default); increase to catch val-path errors before a full epoch runs. |

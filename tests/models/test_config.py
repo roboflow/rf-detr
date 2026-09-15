@@ -685,7 +685,14 @@ class TestTrainConfigT42PromotedFields:
 class TestResolveAmpDtype:
     """``amp_dtype`` is the live AMP authority; ``ModelConfig.amp`` is a deprecated fallback."""
 
-    def _tc(self, tmp_path, **kwargs):
+    def _tc(self, tmp_path: Path, **kwargs: object) -> TrainConfig:
+        """Build a minimal training configuration.
+
+        Examples:
+            >>> config = TestResolveAmpDtype()._tc(Path("/tmp"), amp_dtype=None)
+            >>> config.amp_dtype is None
+            True
+        """
         defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
         defaults.update(kwargs)
         return TrainConfig(**defaults)
