@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,7 +13,7 @@ import torch
 
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.detr import RFDETR
-from rfdetr.training import auto_batch
+from rfdetr.training import auto_batch, build_trainer
 from rfdetr.training.auto_batch import AutoBatchResult
 
 
@@ -739,6 +740,43 @@ def test_resolve_auto_batch_config_does_not_warn_for_builtin_adamw():
         auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
 
     mock_warning.assert_not_called()
+
+
+def test_auto_batch_probe_and_trainer_emit_one_legacy_amp_warning(tmp_path):
+    """Automatic batch probing must defer the legacy AMP warning to trainer construction.
+
+    Both stages resolve AMP from the same configs. The probe needs the resolved dtype for memory sizing, while the
+    trainer is the user-facing construction point that owns the deprecation warning.
+    """
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=5, amp=False)
+    train_config = TrainConfig(
+        dataset_dir=str(tmp_path / "dataset"),
+        output_dir=str(tmp_path / "output"),
+        batch_size="auto",
+        num_workers=0,
+        tensorboard=False,
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+        warnings.catch_warnings(record=True) as caught_warnings,
+    ):
+        warnings.simplefilter("always", FutureWarning)
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+        build_trainer(train_config, model_config, accelerator="cpu")
+
+    legacy_warnings = [
+        warning
+        for warning in caught_warnings
+        if issubclass(warning.category, FutureWarning) and "ModelConfig.amp is deprecated" in str(warning.message)
+    ]
+    assert len(legacy_warnings) == 1
 
 
 def test_resolve_auto_batch_config_forwards_optimizer_kwargs_for_builtin_adamw():

@@ -630,7 +630,7 @@ def resolve_auto_batch_config(
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
-    amp_dtype_str = _resolve_amp_dtype(model_config, train_config)
+    amp_dtype_str = _resolve_amp_dtype(model_config, train_config, warn_legacy=False)
     amp_enabled = amp_dtype_str is not None
     if amp_enabled:
         if amp_dtype_str == "fp16":

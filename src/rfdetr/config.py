@@ -1748,7 +1748,12 @@ class KeypointTrainConfig(TrainConfig):
     skip_best_epochs: int = Field(default=10, ge=0)
 
 
-def _resolve_amp_dtype(model_config: ModelConfig, train_config: TrainConfig) -> AmpDtype:
+def _resolve_amp_dtype(
+    model_config: ModelConfig,
+    train_config: TrainConfig,
+    *,
+    warn_legacy: bool = True,
+) -> AmpDtype:
     """Resolve the effective mixed-precision mode from the training and (deprecated) model settings.
 
     ``TrainConfig.amp_dtype`` is the live authority. The deprecated ``ModelConfig.amp`` toggle is consulted only as a
@@ -1762,6 +1767,7 @@ def _resolve_amp_dtype(model_config: ModelConfig, train_config: TrainConfig) -> 
     Args:
         model_config: Architecture configuration, read only for the deprecated ``amp`` toggle.
         train_config: Training configuration holding the authoritative ``amp_dtype``.
+        warn_legacy: Emit the deprecation warning when the legacy toggle supplies the result.
 
     Returns:
         The effective ``amp_dtype``; ``None`` means run in full fp32.
@@ -1781,10 +1787,11 @@ def _resolve_amp_dtype(model_config: ModelConfig, train_config: TrainConfig) -> 
     if train_config.amp_dtype != _AMP_DTYPE_DEFAULT:
         return train_config.amp_dtype
     if not model_config.amp:
-        warnings.warn(
-            "ModelConfig.amp is deprecated; pass amp_dtype=None to the training config instead.",
-            FutureWarning,
-            stacklevel=2,
-        )
+        if warn_legacy:
+            warnings.warn(
+                "ModelConfig.amp is deprecated; pass amp_dtype=None to the training config instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
         return None
     return train_config.amp_dtype
