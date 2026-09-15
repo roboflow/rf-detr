@@ -161,13 +161,13 @@ The test suite imports the training and augmentation dependencies, so installing
 
 ```bash
 # Run CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch and not e2e_roboflow and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
+uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=420 --durations=50
 
 # Run GPU tests (requires GPU; mirrors CI)
 uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/legacy/test_checkpoint_compat.py -n 3 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 ```
 
-The marker expressions exclude suites that need assets or hardware a local checkout does not have: `coco17` needs the COCO dataset, `e2e_roboflow` needs a Roboflow API key, and `xla` / `tpu` / `e2e_tensorrt` need accelerators. Dropping them from the expression is what produces most local-only failures.
+The marker expressions exclude suites that need assets, optional integrations, or unavailable hardware: `coco17` needs the COCO dataset, `integration` covers tests owned by dedicated integration jobs, and `xla` / `tpu` need accelerators. Dropping them from the expression is what produces most local-only failures.
 
 **Development vs. PR Requirements:**
 
@@ -284,6 +284,10 @@ def test_model_training():
 ```
 
 Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run separately on GPU infrastructure.
+
+**Use dedicated markers for integration-only CI jobs:**
+
+Mark tests that require an optional integration dependency with both the shared `@pytest.mark.integration` marker and a registered `e2e_<integration>` marker in `pyproject.toml`. The dedicated workflow must select the specific marker (for example, `pytest -m e2e_onnxruntime`) rather than a test-file path; generic CPU collection excludes only `integration`, keeping its marker expression short while dedicated jobs retain their precise contracts.
 
 ### CI Testing
 

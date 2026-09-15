@@ -1215,6 +1215,7 @@ class TestBenchmarkBuildEngine:
 
 @tensorrt_only
 @pytest.mark.gpu
+@pytest.mark.integration
 @pytest.mark.e2e_tensorrt
 class TestTensorRTEndToEnd:
     """Real ONNX -> TensorRT engine build + runtime parity on GPU (requires ``rfdetr[tensorrt]`` and CUDA)."""
