@@ -23,8 +23,14 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
 PathLikeStr: TypeAlias = str | Path
+#: Mixed-precision autocast dtype; ``None`` disables autocast (full fp32).
+AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
+#: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
+#: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
+_AMP_DTYPE_DEFAULT: AmpDtype = "auto"
 
 __all__ = [
+    "AmpDtype",
     "AugmentationBackend",
     "ModelConfig",
     "RFDETRBaseConfig",
@@ -463,7 +469,10 @@ class ModelConfig(BaseConfig):
             convergence acceleration. ``num_queries * group_detr`` predictions are produced in
             training mode; ``num_queries`` in eval mode. ``num_queries`` must be divisible by
             ``group_detr``. Defaults to ``13``.
-        amp: Enable automatic mixed precision (bfloat16/float16). Defaults to ``True``.
+        amp: Deprecated, removal in v1.14: use ``TrainConfig.amp_dtype=None`` instead. Enable
+            automatic mixed precision (bfloat16/float16). Defaults to ``True``. An explicit
+            ``TrainConfig.amp_dtype`` always overrides this field; it is only consulted when
+            ``amp_dtype`` is left at its default and this field is set to ``False``.
         compile: Compile the model with ``torch.compile`` for faster throughput. Defaults to
             ``False``.
         pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
@@ -490,6 +499,7 @@ class ModelConfig(BaseConfig):
     bbox_reparam: bool = True
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
+    # Deprecated: use TrainConfig.amp_dtype=None instead (see _resolve_amp_dtype). Removal in v1.14.
     amp: bool = True
     num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
@@ -1101,16 +1111,20 @@ class TrainConfig(BaseConfig):
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
-    amp_dtype: Literal["auto", "bf16", "fp16", "fp8"] = Field(
-        default="auto",
+    amp_dtype: AmpDtype = Field(
+        default=_AMP_DTYPE_DEFAULT,
         description=(
-            "Mixed-precision autocast dtype. "
-            "On TPU/XLA, 'auto' and 'bf16' both select XLA's bf16-true precision. "
+            "Mixed-precision training precision. Sole live authority for AMP enable+dtype; see "
+            "_resolve_amp_dtype for the deprecated ModelConfig.amp fold-in. "
+            "None disables autocast (full fp32). "
+            "On XLA, 'auto' and 'bf16' select XLA's bf16-true precision. "
             "Elsewhere, 'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported on CUDA/MPS). "
-            "'fp16' forces fp16. "
-            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU. "
-            "Non-FP8 choices have no effect when model_config.amp=False or when training on CPU."
+            "'bf16' selects bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' selects fp16 on supported CUDA/MPS backends. "
+            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "
+            "an explicit 'fp8' is honored even if the deprecated ModelConfig.amp=False. "
+            "Any non-default value here always wins over the deprecated ModelConfig.amp. "
+            "The direct CPU accelerator always uses full fp32."
         ),
     )
     best_model_metric: Literal["map", "mar"] = Field(
@@ -1232,10 +1246,11 @@ class TrainConfig(BaseConfig):
         Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
         dtype rather than failing the whole training run.
         """
-        if value not in ("auto", "bf16", "fp16", "fp8"):
+        if value not in (None, "auto", "bf16", "fp16", "fp8"):
             # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
             warnings.warn(
-                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16', 'fp8'. Falling back to 'auto'.",
+                f"Unknown amp_dtype={value!r}; expected None or one of 'auto', 'bf16', 'fp16', 'fp8'. "
+                "Falling back to 'auto'.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -1255,6 +1270,8 @@ class TrainConfig(BaseConfig):
     # num_nodes maps to PTL Trainer(num_nodes=...) for multi-machine training.
     # Single-machine DDP users should leave this at 1 (the default).
     num_nodes: int = 1
+    # Deprecated: no runtime consumer since the PTL migration — eval precision follows amp_dtype
+    # (see _warn_deprecated_fp16_eval). Removal in v1.14.
     fp16_eval: bool = False
     lr_scheduler: str | Callable[..., SchedulerType] = "step"
     lr_scheduler_kwargs: dict[str, Any] = Field(default_factory=dict)
@@ -1454,6 +1471,26 @@ class TrainConfig(BaseConfig):
                 "eval_ema_only is deprecated. New configurations evaluate only the selected model "
                 "(EMA when use_ema=True) by default; legacy configurations are migrated from this flag. "
                 "Set eval_base_model=True to also evaluate the base model.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_deprecated_fp16_eval(cls, data: Any) -> Any:
+        """Warn that ``fp16_eval`` is inert and superseded by ``amp_dtype``.
+
+        The flag has had no runtime consumer since the PTL migration, so it is warned about rather than migrated: a
+        config carrying it already trains and evaluates at the precision ``amp_dtype`` resolves to. A default ``False``
+        is skipped silently so reloading a dumped config (which always carries the field) never warns.
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("fp16_eval"):
+            warnings.warn(
+                "fp16_eval is deprecated and has no effect; evaluation precision follows amp_dtype. "
+                "Set amp_dtype='fp16' to evaluate in fp16.",
                 FutureWarning,
                 stacklevel=2,
             )
@@ -1710,3 +1747,52 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_nll_loss_coef: float = 1.0
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
+
+
+def _resolve_amp_dtype(
+    model_config: ModelConfig,
+    train_config: TrainConfig,
+    *,
+    warn_legacy: bool = True,
+) -> AmpDtype:
+    """Resolve the effective mixed-precision mode from the training and (deprecated) model settings.
+
+    ``TrainConfig.amp_dtype`` is the live authority. The deprecated ``ModelConfig.amp`` toggle is consulted only as a
+    fallback, so a caller that sets ``amp_dtype`` never has it silently overridden by a stale ``amp=False`` carried in
+    a model config.
+
+    "Set" means holding a non-default value, not ``model_fields_set`` membership: a config reloaded from
+    ``training_config.json`` carries every field explicitly, which would otherwise make the legacy toggle inert after a
+    single save/load round-trip.
+
+    Args:
+        model_config: Architecture configuration, read only for the deprecated ``amp`` toggle.
+        train_config: Training configuration holding the authoritative ``amp_dtype``.
+        warn_legacy: Emit the deprecation warning when the legacy toggle supplies the result.
+
+    Returns:
+        The effective ``amp_dtype``; ``None`` means run in full fp32.
+
+    Examples:
+        >>> from rfdetr.config import RFDETRNanoConfig, TrainConfig, _resolve_amp_dtype
+        >>> _resolve_amp_dtype(RFDETRNanoConfig(), TrainConfig(dataset_dir="data"))
+        'auto'
+        >>> _resolve_amp_dtype(RFDETRNanoConfig(), TrainConfig(dataset_dir="data", amp_dtype="bf16"))
+        'bf16'
+        >>> import warnings
+        >>> with warnings.catch_warnings():
+        ...     warnings.simplefilter("ignore", FutureWarning)
+        ...     _resolve_amp_dtype(RFDETRNanoConfig(amp=False), TrainConfig(dataset_dir="data")) is None
+        True
+    """
+    if train_config.amp_dtype != _AMP_DTYPE_DEFAULT:
+        return train_config.amp_dtype
+    if not model_config.amp:
+        if warn_legacy:
+            warnings.warn(
+                "ModelConfig.amp is deprecated; pass amp_dtype=None to the training config instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return None
+    return train_config.amp_dtype
