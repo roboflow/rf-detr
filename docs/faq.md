@@ -91,7 +91,7 @@ See [Advanced FP8 setup](learn/train/advanced.md#fp8-training-on-nvidia-cuda) fo
 
 ## What export formats are supported?
 
-ONNX, TFLite (FP32/FP16/INT8), ExecuTorch (XNNPACK, CoreML, QNN), and native CoreML (`.mlpackage`). TensorRT runs via the exported ONNX model. Install the matching extra — `rfdetr[onnx]`, `rfdetr[tflite]`, `rfdetr[executorch]`, or `rfdetr[coreml]` — then call `model.export()`. Native CoreML (`format="coreml"`) is distinct from the ExecuTorch CoreML backend (`format="executorch", backend="coreml"`) — the former produces a `.mlpackage` directly, the latter a `.pte`. See [Export Model](learn/export.md).
+ONNX, TFLite (FP32/FP16/INT8), TensorRT (`.trt`), ExecuTorch (XNNPACK, CoreML, QNN), native CoreML (`.mlpackage`), and OpenVINO IR. Install the matching extra — `rfdetr[onnx]`, `rfdetr[tflite]`, `rfdetr[tensorrt]`, `rfdetr[executorch]`, `rfdetr[coreml]`, or `rfdetr[openvino]` — then call `model.export(format=...)`. `format="tensorrt"` (alias `"trt"`) exports ONNX and builds the engine in-process, so it is one call rather than a separate conversion step. Native CoreML (`format="coreml"`) is distinct from the ExecuTorch CoreML backend (`format="executorch", backend="coreml"`) — the former produces a `.mlpackage` directly, the latter a `.pte`. See [Export Model](learn/export.md).
 
 ## How do I evaluate a trained model and get mAP?
 

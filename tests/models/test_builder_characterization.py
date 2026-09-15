@@ -16,10 +16,10 @@ import torch
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import (
-    RFDETRBaseConfig,
     RFDETRKeypointPreviewConfig,
     RFDETRNanoConfig,
     RFDETRSegNanoConfig,
+    RFDETRSmallConfig,
     SegmentationTrainConfig,
     TrainConfig,
 )
@@ -40,7 +40,7 @@ def _make_ns(mc=None, tc=None):
         >>> ns.num_classes
         80
     """
-    mc = mc or RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+    mc = mc or RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
     tc = tc or TrainConfig(dataset_dir="/tmp")
     return _namespace_from_configs(mc, tc)
 
@@ -60,13 +60,13 @@ class TestBuildModelCharacterization:
 
     def test_num_classes_plus_one(self) -> None:
         """build_model applies the +1 background class convention."""
-        mc = RFDETRBaseConfig(num_classes=5, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         model = build_model(ns)
         assert model.class_embed.out_features == 6
 
     def test_num_queries_forwarded(self) -> None:
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         model = build_model(ns)
         assert model.num_queries == mc.num_queries
@@ -74,7 +74,7 @@ class TestBuildModelCharacterization:
     @pytest.mark.parametrize(
         "config_class, expected_queries",
         [
-            pytest.param(RFDETRBaseConfig, 300, id="base"),
+            pytest.param(RFDETRSmallConfig, 300, id="small"),
             pytest.param(RFDETRNanoConfig, 300, id="nano"),
             pytest.param(RFDETRSegNanoConfig, 100, id="seg_nano"),
         ],
@@ -102,14 +102,14 @@ class TestBuildModelCharacterization:
         assert model.aux_loss is True
 
     def test_group_detr_forwarded(self) -> None:
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         model = build_model(ns)
         assert model.group_detr == mc.group_detr
 
     def test_num_feature_levels_set_on_args(self) -> None:
         """build_model mutates args.num_feature_levels = len(projector_scale)."""
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         build_model(ns)
         assert ns.num_feature_levels == len(mc.projector_scale)
@@ -117,7 +117,7 @@ class TestBuildModelCharacterization:
     @pytest.mark.parametrize(
         "config_class, expected_param_count_range",
         [
-            pytest.param(RFDETRBaseConfig, (25_000_000, 40_000_000), id="base"),
+            pytest.param(RFDETRSmallConfig, (25_000_000, 40_000_000), id="small"),
             pytest.param(RFDETRNanoConfig, (25_000_000, 40_000_000), id="nano"),
         ],
     )
@@ -132,7 +132,7 @@ class TestBuildModelCharacterization:
 
     def test_encoder_only_returns_triple(self) -> None:
         """When encoder_only=True, build_model returns (encoder, None, None)."""
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         ns.encoder_only = True
         result = build_model(ns)
@@ -145,7 +145,7 @@ class TestBuildModelCharacterization:
 
     def test_backbone_only_returns_triple(self) -> None:
         """When backbone_only=True, build_model returns (backbone, None, None)."""
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         ns.backbone_only = True
         result = build_model(ns)
@@ -218,8 +218,12 @@ class TestBuildCriterionCharacterization:
         assert "loss_mask_dice" in criterion.weight_dict
 
     def test_aux_loss_expands_weight_dict(self) -> None:
-        """With aux_loss=True and 3 dec_layers, weight_dict has aux entries _0 and _1."""
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        """With aux_loss=True and 3 dec_layers, weight_dict has aux entries _0 and _1.
+
+        Uses ``RFDETRSmallConfig`` rather than the nano default because the assertion counts aux entries, which is
+        ``dec_layers - 1``; nano's ``dec_layers=2`` would yield only ``_0``.
+        """
+        mc = RFDETRSmallConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         assert ns.aux_loss is True
         criterion, _ = build_criterion_and_postprocessors(ns)
@@ -229,7 +233,7 @@ class TestBuildCriterionCharacterization:
 
     def test_two_stage_adds_enc_losses(self) -> None:
         """With two_stage=True, weight_dict has '_enc' suffix entries."""
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         assert ns.two_stage is True
         criterion, _ = build_criterion_and_postprocessors(ns)
@@ -238,7 +242,7 @@ class TestBuildCriterionCharacterization:
         assert "loss_giou_enc" in criterion.weight_dict
 
     def test_criterion_num_classes_plus_one(self) -> None:
-        mc = RFDETRBaseConfig(num_classes=5, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         criterion, _ = build_criterion_and_postprocessors(ns)
         assert criterion.num_classes == 6
@@ -249,7 +253,7 @@ class TestBuildCriterionCharacterization:
         assert criterion.focal_alpha == pytest.approx(0.25)
 
     def test_group_detr_forwarded_to_criterion(self) -> None:
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         criterion, _ = build_criterion_and_postprocessors(ns)
         assert criterion.group_detr == mc.group_detr
@@ -262,7 +266,7 @@ class TestBuildCriterionCharacterization:
         assert criterion.mask_point_sample_ratio == 16
 
     def test_ia_bce_loss_forwarded(self) -> None:
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ns = _make_ns(mc=mc)
         criterion, _ = build_criterion_and_postprocessors(ns)
         assert criterion.ia_bce_loss == mc.ia_bce_loss
@@ -282,49 +286,49 @@ class TestBuildModelContextCharacterization:
     def test_returns_model_context(self) -> None:
         from rfdetr.detr import ModelContext, _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert isinstance(ctx, ModelContext)
 
     def test_model_is_lwdetr(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert isinstance(ctx.model, LWDETR)
 
     def test_postprocess_is_postprocess(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert isinstance(ctx.postprocess, PostProcess)
 
     def test_resolution_from_config(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert ctx.resolution == mc.resolution
 
     def test_device_from_config(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert ctx.device == torch.device("cpu")
 
     def test_torch_device_cpu_from_config(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device=torch.device("cpu"))
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device=torch.device("cpu"))
         ctx = _build_model_context(mc)
         assert ctx.device == torch.device("cpu")
 
     def test_class_names_none_without_pretrain(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert ctx.class_names is None
 
@@ -345,7 +349,7 @@ class TestBuildModelContextCharacterization:
     def test_args_namespace_attached(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert hasattr(ctx.args, "num_classes")
         assert hasattr(ctx.args, "num_select")
@@ -353,7 +357,7 @@ class TestBuildModelContextCharacterization:
     def test_inference_model_initially_none(self) -> None:
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert ctx.inference_model is None
 
@@ -361,7 +365,7 @@ class TestBuildModelContextCharacterization:
         """The serialized namespace must not embed the caller's realpathed CWD as dataset_dir."""
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert ctx.args.dataset_dir is None
 
@@ -369,7 +373,7 @@ class TestBuildModelContextCharacterization:
         """The serialized namespace must keep a relative output_dir, not the caller's realpathed CWD."""
         from rfdetr.detr import _build_model_context
 
-        mc = RFDETRBaseConfig(num_classes=80, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu")
         ctx = _build_model_context(mc)
         assert ctx.args.output_dir == "output"
 
@@ -402,7 +406,7 @@ class TestRFDETRModelModuleInitCharacterization:
     def _make_module(self, mc=None, tc=None):
         from rfdetr.training.module_model import RFDETRModelModule
 
-        mc = mc or RFDETRBaseConfig(num_classes=5, pretrain_weights=None, device="cpu")
+        mc = mc or RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
         tc = tc or TrainConfig(dataset_dir="/tmp")
         return RFDETRModelModule(mc, tc)
 
@@ -426,7 +430,7 @@ class TestRFDETRModelModuleInitCharacterization:
         assert module.strict_loading is False
 
     def test_configs_stored(self) -> None:
-        mc = RFDETRBaseConfig(num_classes=5, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
         tc = TrainConfig(dataset_dir="/tmp")
         module = self._make_module(mc=mc, tc=tc)
         assert module.model_config is mc
@@ -434,7 +438,7 @@ class TestRFDETRModelModuleInitCharacterization:
 
     def test_criterion_num_classes_matches_model(self) -> None:
         """Criterion and model must agree on num_classes (both use +1 convention)."""
-        mc = RFDETRBaseConfig(num_classes=5, pretrain_weights=None, device="cpu")
+        mc = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, device="cpu")
         module = self._make_module(mc=mc)
         underlying = getattr(module.model, "_orig_mod", module.model)
         assert module.criterion.num_classes == underlying.class_embed.out_features

@@ -324,6 +324,12 @@ If you find our work helpful for your research, please consider citing the follo
 
 We welcome and appreciate all contributions! If you notice any issues or bugs, have questions, or would like to suggest new features, please [open an issue](https://github.com/roboflow/rf-detr/issues/new) or pull request. By sharing your ideas and improvements, you help make RF-DETR better for everyone.
 
+## Project Activity
+
+<img src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" role="img" width="100%" />
+
+PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirrors. New stars are calculated from consecutive scheduled GitHub snapshots.
+
 <p align="center">
     <a href="https://youtube.com/roboflow"><img src="https://media.roboflow.com/notebooks/template/icons/purple/youtube.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949634652" width="3%"/></a>
     <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%"/>

@@ -65,9 +65,11 @@ jobs:
           uv pip install -e ".[$EXTRAS]" --group tests
 
       - name: 🧪 Run the Test
+        # `scripts/` holds no test modules; it is listed so pytest-doctestplus collects the doctests in
+        # repository maintenance scripts, which `pyproject.toml` alone cannot reach because paths are explicit here.
         run: |
-          uv run --no-sync pytest src/ tests/ \
-            -n 2 -m "not gpu and not coco17 and not e2e_coreml and not e2e_executorch and not e2e_openvino and not e2e_roboflow and not xla and not tpu" \
+          uv run --no-sync pytest src/ tests/ scripts/ \
+            -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" \
             --ignore=tests/run_smoke_all_models.py \
             --ignore=tests/legacy/test_checkpoint_compat.py \
             --cov=rfdetr --cov-report=xml \

@@ -227,6 +227,7 @@ docs/cookbooks/*.py
 docs/cookbooks/export_executorch/
 docs/cookbooks/export_tensorrt/
 docs/cookbooks/export_tflite/
+/export_coreml/
 
 # MacOS files
 .DS_Store
