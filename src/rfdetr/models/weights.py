@@ -688,4 +688,4 @@ def apply_lora(nn_model: LWDETR) -> None:
     # peft.get_peft_model() type-hints its first argument as PreTrainedModel, but only actually
     # needs an nn.Module whose named submodules match target_modules; DinoV2 (a plain nn.Module
     # wrapper, not itself a PreTrainedModel) satisfies that at runtime.
-    backbone.encoder = get_peft_model(backbone.encoder, lora_config)  # type: ignore[arg-type,assignment]
+    backbone.encoder = get_peft_model(backbone.encoder, lora_config)  # type: ignore[assignment]
