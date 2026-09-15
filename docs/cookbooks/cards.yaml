@@ -1,10 +1,10 @@
 cards:
-  - href: train-coco2017/
-    name: "Train RF-DETR Nano on COCO2017"
-    labels: [TRAINING, COCO2017, PYTORCH LIGHTNING]
+  - href: embedding-extraction/
+    name: "Query Embeddings for Dataset Quality Auditing"
+    labels: [INFERENCE, EMBEDDINGS]
     version: v1.10.0
-    author: Borda
-    description: "Download the full public COCO2017 dataset and train RF-DETR Nano from scratch for 40 epochs end to end on a single CUDA GPU with torch.compile and automatic mixed precision (bf16 when supported, otherwise fp16), with optional FP8 via Transformer Engine."
+    author: unaxEtxeberriaBieleDigital
+    description: "Extract per-detection query embeddings with predict(return_embeddings=True) and use them to rank mislabelled annotations, surface unannotated objects, and retrieve similar instances — measured on a public COCO subset."
   - href: export-coreml/
     name: "Export to Native CoreML & Run Inference"
     labels: [EXPORT, INFERENCE, DEPLOY]

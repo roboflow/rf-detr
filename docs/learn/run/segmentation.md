@@ -64,6 +64,8 @@ For memory-constrained inference-only deployments with the `rfdetr` package, opt
 model.inference(compile=False, inplace=True, dtype="float16")
 ```
 
+Pass `return_embeddings=True` to `predict()` to also get a per-detection embedding vector attached as `detections.data["embeddings"]`. See [Extract Embeddings](detection.md#extract-embeddings) for details, including the constraints that apply to optimized models.
+
 ## Run on video, webcam, or RTSP stream
 
 These examples use OpenCV for decoding and display. Replace `<SOURCE_VIDEO_PATH>`, `<WEBCAM_INDEX>`, and `<RTSP_STREAM_URL>` with your inputs. `<WEBCAM_INDEX>` is usually `0` for the default camera.

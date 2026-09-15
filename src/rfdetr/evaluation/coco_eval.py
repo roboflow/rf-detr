@@ -175,7 +175,9 @@ def _resolve_keypoint_oks_sigmas(coco_gt: COCO, keypoint_oks_sigmas: list[float]
         return None
 
     _warn_custom_keypoint_oks_sigma_once(keypoint_count)
-    return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+    return [
+        float(sigma) for sigma in np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+    ]
 
 
 def _resolve_group_keypoint_oks_sigmas(
@@ -187,7 +189,10 @@ def _resolve_group_keypoint_oks_sigmas(
         if keypoint_count == len(_COCO_PERSON_KEYPOINT_SIGMAS):
             return None
         _warn_custom_keypoint_oks_sigma_once(keypoint_count)
-        return np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+        return [
+            float(sigma)
+            for sigma in np.full(keypoint_count, _DEFAULT_CUSTOM_KEYPOINT_OKS_SIGMA, dtype=np.float32).tolist()
+        ]
 
     sigmas = np.asarray(keypoint_oks_sigmas, dtype=np.float32)
     if sigmas.ndim != 1 or sigmas.size == 0:

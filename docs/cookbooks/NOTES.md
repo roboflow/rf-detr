@@ -36,7 +36,7 @@ If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`
     description: One sentence describing what the notebook demonstrates.
 ```
 
-Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
+Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`, `EMBEDDINGS`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
 
 For newly added or updated notebooks, write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
 
@@ -51,6 +51,7 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 | ----------------------------------- | ----------------------------------------------- | ------- |
 | `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
 | `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler               | v1.9.0  |
+| `embedding-extraction.ipynb`        | Query Embeddings for Dataset Quality Auditing   | v1.10.0 |
 | `export-coreml.ipynb`               | Export to Native CoreML & Run Inference         | v1.9.0  |
 | `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.9.0  |
 | `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.9.0  |
