@@ -1105,8 +1105,9 @@ class TrainConfig(BaseConfig):
         default="auto",
         description=(
             "Mixed-precision autocast dtype. "
-            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "On TPU/XLA, 'auto' and 'bf16' both select XLA's bf16-true precision. "
+            "Elsewhere, 'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported on CUDA/MPS). "
             "'fp16' forces fp16. "
             "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU. "
             "Non-FP8 choices have no effect when model_config.amp=False or when training on CPU."

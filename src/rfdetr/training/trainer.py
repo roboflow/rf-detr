@@ -569,6 +569,15 @@ def build_trainer(
         # Honor explicit accelerators and Lightning's XLA-first auto selection before probing global CUDA.
         if tc.amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
             raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
+        if xla_accelerator and tc.amp_dtype in {"bf16", "auto"}:
+            # Real TPU hardware (the case this fix targets and is verified against, issue #1058)
+            # supports bf16 natively, so "auto" resolves to it the same way an explicit "bf16"
+            # request does, instead of falling through to the CUDA/MPS probes below and landing
+            # on the CPU-only "32-true" default. Unlike the CUDA branch's is_bf16_supported()
+            # guard, this does not probe torch_xla.runtime.is_bf16_supported() per backend --
+            # the `xla` extra also runs hardware-free on CPU/GPU PJRT (see pyproject.toml), so an
+            # XLA:CPU/XLA:GPU host is routed the same way as TPU without an independent check.
+            return "bf16-true"
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":

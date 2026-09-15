@@ -7,6 +7,7 @@
 
 import warnings
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -602,6 +603,41 @@ class TestBuildTrainerPrecision:
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
+
+        assert "precision" not in captured
+        mock_xla_precision_cls.assert_called_once_with("bf16-true")
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
+    @pytest.mark.parametrize("amp_dtype", ["bf16", "auto"])
+    def test_bf16_or_auto_on_xla_uses_bf16_true(self, tmp_path: Path, accelerator: str, amp_dtype: str) -> None:
+        """Explicit BF16, and the default 'auto' mode, both select the XLA BF16 precision plugin.
+
+        'auto' matters here as much as the explicit case: it is the amp_dtype every caller gets by
+        just passing ``amp=True`` -- the exact recipe issue #1058 itself documents for TPU training
+        -- and without CUDA/MPS on the host it used to fall through to the CPU-only "32-true"
+        default, silently training in FP32 on TPU by default.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=False),
+            mock.patch("torch.backends.mps.is_available", return_value=False),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, amp_dtype=amp_dtype),
+                _mc(amp=True),
+                accelerator=accelerator,
+            )
 
         assert "precision" not in captured
         mock_xla_precision_cls.assert_called_once_with("bf16-true")
