@@ -6,6 +6,7 @@
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,7 +25,7 @@ from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyS
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.callbacks.drop_schedule import DropPathCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
-from rfdetr.training.trainer import _ForceLastEpochValidationCallback
+from rfdetr.training.trainer import _accelerator_resolves_to_xla, _ForceLastEpochValidationCallback
 
 
 def _mc(**kwargs):
@@ -671,6 +672,17 @@ class TestBuildTrainerPrecision:
         which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there.
         """
         pytest.importorskip("torch_xla")
+        from pytorch_lightning.accelerators import XLAAccelerator
+
+        if XLAAccelerator.is_available():
+            pytest.skip(
+                "the refusal this pins holds only while ``XLAAccelerator.is_available()`` is False, so the skip is "
+                "gated on that same predicate rather than on the configured backend: ``xr.device_type()`` reports "
+                "``PJRT_DEVICE`` and would also skip on a host that sets ``PJRT_DEVICE=TPU`` without chips, where "
+                "``auto_device_count()`` is 0, the Trainer still raises, and the assertion is still meaningful. "
+                "Gating on availability keeps NEURON in the refusal path for the same reason."
+            )
+
         from pytorch_lightning.utilities.exceptions import MisconfigurationException
 
         with pytest.raises(MisconfigurationException, match="XLAAccelerator"):
@@ -797,6 +809,7 @@ class TestBuildTrainerAmpDtype:
             pytest.param(True, True, False, "auto", "bf16-mixed", id="auto-cuda-bf16"),
             pytest.param(True, True, False, "fp16", "16-mixed", id="fp16-cuda-bf16"),
             pytest.param(True, True, False, "bf16", "bf16-mixed", id="bf16-cuda-bf16"),
+            pytest.param(True, True, False, "fp8", "transformer-engine", id="fp8-cuda"),
             pytest.param(True, False, False, "auto", "16-mixed", id="auto-cuda-no-bf16"),
             pytest.param(False, False, True, "fp16", "16-mixed", id="fp16-mps"),
         ],
@@ -837,6 +850,93 @@ class TestBuildTrainerAmpDtype:
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=True), accelerator="cpu")
         assert captured["precision"] == "32-true"
 
+    def test_fp8_rejects_non_cuda_accelerator(self, tmp_path):
+        """FP8 must fail clearly instead of silently falling back on a non-CUDA accelerator."""
+        with pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator="cpu")
+
+    @pytest.mark.parametrize("accelerator", ["cpu", "mps", "xla", "tpu"])
+    def test_fp8_rejects_non_cuda_with_cuda_visible(self, tmp_path: Path, accelerator: str) -> None:
+        """Visible CUDA must not override an explicitly selected non-CUDA accelerator."""
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator=accelerator)
+
+    def test_fp8_rejects_auto_resolving_to_xla(self, tmp_path: Path) -> None:
+        """Lightning selects XLA before CUDA for auto; FP8 must honor that choice."""
+        with (
+            patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True),
+            patch("torch.cuda.is_available", return_value=True),
+            pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator="auto")
+
+    def test_fp8_requires_amp_enabled(self, tmp_path):
+        """An explicit FP8 request must not be silently disabled by the model AMP flag."""
+        with pytest.raises(ValueError, match="amp_dtype='fp8' requires model_config.amp=True"):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=False))
+
+    def test_fp8_rejects_deepspeed_strategy(self, tmp_path):
+        """Lightning cannot combine its Transformer Engine precision plugin with DeepSpeed precision."""
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            pytest.raises(ValueError, match="amp_dtype='fp8'.*DeepSpeed"),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, amp_dtype="fp8", strategy="deepspeed_stage_2"),
+                _mc(amp=True),
+            )
+
+    def test_fp8_rejects_unsupported_compute_capability(self, tmp_path):
+        """FP8 must fail clearly on a CUDA-visible but pre-Ada device instead of reaching TE's plugin/kernel init.
+
+        ``torch.cuda.is_available()`` alone does not establish FP8/Transformer Engine hardware support: an A100 or T4 is
+        CUDA-visible but below the compute capability (8.9, Ada) Transformer Engine requires.
+        """
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.device_count", return_value=1),
+            patch("torch.cuda.get_device_capability", return_value=(8, 0)),  # A100
+            patch("torch.cuda.get_device_name", return_value="NVIDIA A100"),
+            pytest.raises(ValueError, match="compute capability >= 8.9.*cuda:0 \\(NVIDIA A100\\)"),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
+
+    def test_fp8_rejects_if_any_visible_device_unsupported(self, tmp_path):
+        """Multi-GPU FP8 must validate every visible device, not just the first."""
+        capabilities = {0: (9, 0), 1: (7, 5)}  # Hopper + T4
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.device_count", return_value=2),
+            patch("torch.cuda.get_device_capability", side_effect=lambda index: capabilities[index]),
+            patch("torch.cuda.get_device_name", return_value="NVIDIA T4"),
+            pytest.raises(ValueError, match="cuda:1 \\(NVIDIA T4\\)"),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
+
+    def test_fp8_accepts_supported_compute_capability(self, tmp_path):
+        """An Ada-or-newer device must resolve to the Transformer Engine precision string, not raise.
+
+        The real ``pytorch_lightning.Trainer`` is mocked (as in ``_resolved_precision`` above) so this only exercises
+        the capability gate itself, not Transformer Engine's actual plugin construction, which needs real hardware.
+        """
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.device_count", return_value=1),
+            patch("torch.cuda.get_device_capability", return_value=(8, 9)),  # Ada (minimum supported)
+            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
+        assert captured["precision"] == "transformer-engine"
+
     @pytest.mark.parametrize(
         "bad_value",
         [
@@ -851,6 +951,96 @@ class TestBuildTrainerAmpDtype:
         with pytest.warns(UserWarning, match="amp_dtype"):
             tc = _tc(tmp_path, amp_dtype=bad_value)
         assert tc.amp_dtype == "auto"
+
+
+def _cuda_supports_fp8() -> bool:
+    """Return whether device 0 meets Transformer Engine's FP8 minimum compute capability.
+
+    Examples:
+        >>> isinstance(_cuda_supports_fp8(), bool)
+        True
+    """
+    return torch.cuda.is_available() and torch.cuda.get_device_capability(0) >= (8, 9)
+
+
+class TestBuildTrainerFP8Smoke:
+    """Real CUDA + Transformer Engine integration smoke test for FP8 training.
+
+    ``TestBuildTrainerAmpDtype.test_resolved_precision[fp8-cuda]`` only mocks ``torch.cuda.is_available`` and
+    ``torch.cuda.is_bf16_supported`` and captures the precision string passed to the (also mocked) ``Trainer`` — it
+    never imports or instantiates Transformer Engine's PyTorch extension. A missing/mismatched ``cuda`` extra or a
+    plugin setup failure would therefore pass every other test in this module and only surface on the first real
+    CUDA run. This test builds a real trainer and Lightning module with an actual ``nn.Linear`` layer and executes
+    one training step under FP8, skipped everywhere the hardware or the ``transformer-engine`` package is absent.
+    """
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(
+        not _cuda_supports_fp8(),
+        reason="FP8 requires a Transformer Engine-supported GPU (Ada, Hopper, or newer; compute capability >= 8.9)",
+    )
+    def test_fp8_smoke_builds_and_steps(self, base_model_config, base_train_config):
+        """A real CUDA + Transformer Engine environment must build the plugin and run one FP8 training step.
+
+        Guards against the gap the mocked ``fp8-cuda`` precision-resolution test cannot close: the actual
+        ``transformer_engine.pytorch`` extension being unimportable, unbuilt, or incompatible with the installed
+        CUDA/PyTorch stack only fails here, on real hardware, never in the CPU-only unit tests above.
+        """
+        pytest.importorskip("transformer_engine.pytorch", reason="requires the 'cuda' extra (transformer-engine)")
+
+        from rfdetr.training.module_data import RFDETRDataModule
+        from rfdetr.training.module_model import RFDETRModelModule
+
+        from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts
+
+        class _LinearModel(torch.nn.Module):
+            """Minimal real model with an ``nn.Linear`` layer for Transformer Engine to convert."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.linear = torch.nn.Linear(3 * 32 * 32, 64)
+
+            def forward(self, samples, targets=None):
+                images = samples.tensors if hasattr(samples, "tensors") else samples
+                return {"dummy": self.linear(images.flatten(1)).sum()}
+
+            def update_drop_path(self, *args, **kwargs) -> None:
+                pass
+
+            def update_dropout(self, *args, **kwargs) -> None:
+                pass
+
+            def reinitialize_detection_head(self, *args, **kwargs) -> None:
+                pass
+
+        mc = base_model_config(device="cuda", amp=True)
+        tc = base_train_config(use_ema=False, run_test=False, amp_dtype="fp8", batch_size=2)
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_LinearModel()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+            ),
+            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=4)),
+            patch(
+                "rfdetr.training.module_model.get_param_dict",
+                side_effect=lambda args, model: _make_param_dicts(model),
+            ),
+        ):
+            module = RFDETRModelModule(mc, tc)
+            datamodule = RFDETRDataModule(mc, tc)
+            trainer = build_trainer(
+                tc,
+                mc,
+                accelerator="cuda",
+                fast_dev_run=1,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                logger=False,
+            )
+            assert trainer.precision == "transformer-engine"
+            trainer.fit(module, datamodule=datamodule)
 
 
 class TestBuildTrainerEMAShardingGuard:
@@ -1717,9 +1907,8 @@ class TestEvalIntervalValidationGating:
     def test_force_last_epoch_callback_noops_when_max_epochs_not_a_positive_int(self, max_epochs):
         """max_epochs=None/-1 (PTL's not-yet-known / unlimited sentinels) must not force validation.
 
-        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was
-        previously tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to
-        force.
+        The guard is isinstance(max_epochs, int) and max_epochs > 0 — only the finite max_epochs=10 case was previously
+        tested; -1 (unlimited) and None are both PTL-permitted values with no well-defined "final epoch" to force.
         """
         cb = _ForceLastEpochValidationCallback()
         trainer = MagicMock()
@@ -1806,3 +1995,211 @@ class TestFloat32MatmulPrecision:
         build_trainer(_tc(tmp_path), _mc(), accelerator="cpu")
 
         assert torch.get_float32_matmul_precision() == "high"
+
+
+class TestAcceleratorResolvesToXLA:
+    """``_accelerator_resolves_to_xla`` must agree with Lightning's own ``accelerator="auto"`` resolution.
+
+    Unlike ``TestMultiDeviceXLAStrategy`` below, this does not need real ``torch_xla`` or a chip: it mocks
+    ``XLAAccelerator.is_available`` directly and asserts on the pure helper, not on a constructed ``Trainer``.
+    """
+
+    @pytest.mark.parametrize(
+        ("accelerator", "xla_available", "expected"),
+        [
+            pytest.param("tpu", False, True, id="explicit-tpu-string-is-always-xla"),
+            pytest.param("xla", False, True, id="explicit-xla-string-is-always-xla"),
+            pytest.param("TPU", False, True, id="explicit-tpu-string-is-case-insensitive"),
+            pytest.param("auto", True, True, id="auto-resolves-to-xla-when-available"),
+            pytest.param("auto", False, False, id="auto-does-not-resolve-to-xla-when-unavailable"),
+            pytest.param("cpu", True, False, id="explicit-cpu-is-never-xla-even-if-available"),
+            pytest.param("gpu", True, False, id="explicit-gpu-is-never-xla-even-if-available"),
+        ],
+    )
+    def test_matches_lightnings_own_auto_resolution(self, accelerator, xla_available, expected) -> None:
+        """A caller who leaves ``accelerator="auto"`` -- TrainConfig's own default -- must be treated the same way
+        Lightning's ``Trainer(accelerator="auto")`` would resolve it, since build_trainer decides the strategy/precision
+        arguments before Trainer performs that resolution itself."""
+        with patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=xla_available):
+            assert _accelerator_resolves_to_xla(accelerator) is expected
+
+
+class TestMultiDeviceXLAStrategy:
+    """`XLAAccelerator` pairs only with `SingleDeviceXLAStrategy` or `XLAStrategy`.
+
+    The first four tests are marked ``xla`` and guarded with ``importorskip`` because they exercise ``build_trainer``'s
+    real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is touched, so the CPU-
+    PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the ``accelerator="auto"`` case,
+    ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so they run on every lane without
+    needing real ``torch_xla``.
+
+    RF-DETR's generic ``strategy="auto"`` distributed branch creates ``DDPStrategy`` before Lightning can resolve an XLA
+    accelerator. The guard therefore selects ``"xla"`` only when multiple local XLA devices are requested; one-device-
+    per-host XLA is not claimed supported. Single-device XLA is unaffected because Lightning resolves ``"auto"`` to
+    `SingleDeviceXLAStrategy`. The guard applies to explicit ``accelerator="tpu"``/``"xla"`` and to
+    ``accelerator="auto"`` once it resolves to XLA (``TestAcceleratorResolvesToXLA`` above), for both segmentation and
+    plain detection configs; only ``has_keypoints`` is excluded.
+    """
+
+    @pytest.mark.xla
+    def test_multiple_xla_devices_select_the_xla_strategy(self, tmp_path) -> None:
+        """Without this, asking for more than one chip fails with `found DDPStrategy`."""
+        pytest.importorskip("torch_xla")
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4)
+
+        assert captured["strategy"] == "xla"
+
+    @pytest.mark.xla
+    def test_single_xla_device_keeps_auto(self, tmp_path) -> None:
+        """One chip already resolves to SingleDeviceXLAStrategy, so nothing should be overridden."""
+        pytest.importorskip("torch_xla")
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1)
+
+        assert captured["strategy"] == "auto"
+
+    @pytest.mark.xla
+    def test_an_explicit_strategy_is_never_overridden(self, tmp_path) -> None:
+        """A caller who names a strategy owns that choice, even on multi-device XLA.
+
+        The new guard only rewrites ``"auto"``, so an explicit ``"ddp"`` string still reaches the pre-existing,
+        unrelated ``strategy_name == "ddp"`` branch further down in ``build_trainer`` (see ``TestBuildTrainerDDPFields``
+        above), which always turns it into a ``DDPStrategy`` object -- on XLA and off it alike. Asserting the literal
+        string ``"ddp"`` here would be wrong regardless of this PR.
+        """
+        pytest.importorskip("torch_xla")
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4, strategy="ddp")
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+
+    @pytest.mark.xla
+    def test_multi_device_xla_strategy_is_not_selected_for_keypoint_models(self, tmp_path) -> None:
+        """Keypoint models keep resolving to DDPStrategy on multi-device XLA instead of being promoted to `"xla"`.
+
+        Keypoint training uses manual optimization and the DDP-specific ``find_unused_parameters=True`` handling a few
+        lines below this guard (see the keypoint block above) has no validated XLA equivalent, so this combination is
+        deliberately excluded from the fix and keeps hitting the pre-existing `DDPStrategy`/`XLAAccelerator` mismatch
+        rather than running unverified.
+        """
+        pytest.importorskip("torch_xla")
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(
+                _kp_tc(tmp_path, use_ema=False), _mc(use_grouppose_keypoints=True), accelerator="tpu", devices=4
+            )
+
+        assert isinstance(captured["strategy"], DDPStrategy)
+
+    def test_accelerator_auto_resolves_to_xla_strategy_when_xla_is_available(self, tmp_path) -> None:
+        """``accelerator="auto"`` -- TrainConfig's own default -- must be covered too, not just an explicit string.
+
+        A caller who leaves ``accelerator`` unset passes literal ``"auto"`` here. Without
+        ``_accelerator_resolves_to_xla``, RF-DETR's generic distributed branch would create ``DDPStrategy`` before
+        Lightning resolves that value to XLA, causing the `XLAAccelerator`/`DDPStrategy` mismatch. Not marked
+        ``xla``/``importorskip``:
+        follows ``TestBuildTrainerPrecision.test_xla_accelerator_uses_xla_precision_plugin_not_precision_string``'s
+        pattern of patching ``XLAPrecision`` and (here) ``XLAAccelerator.is_available`` directly, so this runs on
+        every CI lane rather than only the CPU-PJRT one.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+        mocked_xla_precision = mock.MagicMock(name="XLAPrecision")
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mocked_xla_precision),
+            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="auto", devices=4)
+
+        assert captured["strategy"] == "xla"
+        assert "precision" not in captured
+        assert captured["plugins"] == [mocked_xla_precision.return_value]
+
+    def test_multi_node_single_device_keeps_the_existing_ddp_strategy(self, tmp_path) -> None:
+        """One device per host must not be promoted to unsupported ``XLAStrategy``.
+
+        The generic distributed branch still creates ``DDPStrategy`` for ``devices=1, num_nodes=2``. That topology needs
+        real multi-host XLA validation before it can select ``XLAStrategy``; this test only prevents the local strategy
+        promotion from claiming it is supported. ``accelerator="tpu"`` is explicit here, so only ``XLAPrecision`` needs
+        patching.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock.MagicMock(name="XLAPrecision")),
+            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1, num_nodes=2)
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        assert isinstance(captured["strategy"], DDPStrategy)
+
+    def test_multi_device_xla_strategy_is_selected_for_segmentation_models(self, tmp_path) -> None:
+        """A segmentation config reaches the same guard as plain detection, since only ``has_keypoints`` is excluded.
+
+        ``segmentation_head.sparse_forward()`` is one of the documented reasons the pre-existing DDP branch a few lines
+        below needs ``find_unused_parameters=True`` (unused parameters on some forward steps); this guard does not
+        special-case segmentation, so it must still promote it to ``"xla"`` on multi-device auto XLA rather than
+        silently falling through to some other strategy.
+        """
+        import unittest.mock as mock
+
+        captured: dict = {}
+
+        def _fake_trainer(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock.MagicMock(name="XLAPrecision")),
+            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False), _mc(amp=False, segmentation_head=True), accelerator="tpu", devices=4
+            )
+
+        assert captured["strategy"] == "xla"

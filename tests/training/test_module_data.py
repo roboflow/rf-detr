@@ -17,7 +17,7 @@ import torch.utils.data
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.config import KeypointTrainConfig, RFDETRBaseConfig, TrainConfig
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.tensors import NestedTensor, PackedTargets, pack_targets
@@ -712,6 +712,41 @@ class TestKeypointAugmentationWarning:
         assert not [w for w in caught if "Keypoint mode is enabled" in str(w.message)]
 
 
+class TestPadTargetsToKorniaGuard:
+    """The Kornia GPU pipeline's collate_boxes/unpack_boxes don't know about pad_targets_to's.
+
+    ``valid`` key -- they rebuild their own real/filler mask from the padded box count, then strip the fillers back out,
+    undoing the fixed row count the option exists for. `setup('fit')` rejects the combination instead of silently losing
+    shape stability.
+    """
+
+    def _build_dm(self, tmp_path, *, pad_targets_to, augmentation_backend):
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path, pad_targets_to=pad_targets_to, augmentation_backend=augmentation_backend)
+        return RFDETRDataModule(mc, tc)
+
+    def test_pad_targets_to_with_gpu_augmentation_raises(self, tmp_path):
+        """Setup('fit') should raise ValueError when pad_targets_to is combined with GPU augmentation."""
+        dm = self._build_dm(tmp_path, pad_targets_to=12, augmentation_backend="gpu")
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)),
+            patch("rfdetr.training.module_data._has_cuda_device", return_value=True),
+            patch.object(dm, "_setup_kornia_pipeline"),
+            pytest.raises(ValueError, match="does not support pad_targets_to"),
+        ):
+            dm.setup("fit")
+
+    def test_pad_targets_to_with_cpu_augmentation_no_raise(self, tmp_path):
+        """Setup('fit') should not raise when pad_targets_to is combined with CPU augmentation."""
+        dm = self._build_dm(tmp_path, pad_targets_to=12, augmentation_backend="cpu")
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)):
+            dm.setup("fit")
+
+        assert dm.train_config.pad_targets_to == 12
+
+
 class TestTrainDataloader:
     """train_dataloader() returns the correct DataLoader for large and small datasets."""
 
@@ -828,12 +863,64 @@ class TestTrainDataloader:
             batch_size=2,
             grad_accum_steps=4,
         )
-        dm.trainer = MagicMock(world_size=3)
+        dm.trainer = MagicMock(world_size=3, accumulate_grad_batches=4)
 
         loader = dm.train_dataloader()
 
         assert len(loader.dataset) % (2 * 4 * 3) == 0
         assert len(loader.dataset) == 120
+
+    @pytest.mark.parametrize(
+        ("dataset_length", "grad_accum_steps", "trainer_grad_accum_steps", "expected_samples"),
+        [
+            pytest.param(3, 1, 1, 20, id="far_below_threshold"),
+            pytest.param(12, 1, 1, 20, id="between_single_and_ddp_thresholds"),
+            pytest.param(19, 1, 1, 20, id="threshold_minus_one"),
+            pytest.param(20, 1, 1, 20, id="exact_threshold"),
+            pytest.param(21, 1, 1, 24, id="threshold_plus_one"),
+            pytest.param(3, 3, 3, 60, id="configured_gradient_accumulation"),
+            pytest.param(3, 1, 2, 40, id="trainer_gradient_accumulation_override"),
+        ],
+    )
+    def test_ddp_preserves_minimum_effective_batches_per_rank(
+        self,
+        tmp_path: Path,
+        dataset_length: int,
+        grad_accum_steps: int,
+        trainer_grad_accum_steps: int,
+        expected_samples: int,
+    ) -> None:
+        """DDP keeps five complete optimizer steps per rank across the small-dataset threshold."""
+        batch_size = 2
+        world_size = 2
+        dm = self._setup_dm_with_train(
+            tmp_path,
+            dataset_length=dataset_length,
+            batch_size=batch_size,
+            grad_accum_steps=grad_accum_steps,
+        )
+        dm.trainer = MagicMock(
+            world_size=world_size,
+            accumulate_grad_batches=trainer_grad_accum_steps,
+        )
+
+        loader = dm.train_dataloader()
+
+        assert len(loader.dataset) == expected_samples
+
+    def test_ddp_keypoint_uses_manually_owned_gradient_accumulation(self, tmp_path: Path) -> None:
+        """Keypoint padding follows TrainConfig rather than Lightning's forced accumulation value of one."""
+        model_config = _base_model_config(use_grouppose_keypoints=True)
+        train_config = KeypointTrainConfig(
+            **_base_train_config(tmp_path, batch_size=2, grad_accum_steps=3).model_dump()
+        )
+        dm = RFDETRDataModule(model_config, train_config)
+        dm._dataset_train = _fake_dataset(3)
+        dm.trainer = MagicMock(world_size=2, accumulate_grad_batches=1)
+
+        loader = dm.train_dataloader()
+
+        assert len(loader.dataset) == 60
 
     @staticmethod
     def _raw_sample(h: int = 16, w: int = 16) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -885,6 +972,133 @@ class TestTrainDataloader:
         assert not isinstance(targets, PackedTargets)
         assert all(isinstance(t, dict) for t in targets)
 
+    def test_pad_targets_to_composes_with_pack_for_the_train_loader(self, tmp_path):
+        """pad_targets_to runs before pack in the collate seam (see make_collate_fn): once every sample shares one row
+        count, a batch that previously packed still packs, at the padded shape."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=True, pad_targets_to=4))
+        dm._dataset_train = _fake_dataset(200)
+        image, one_box = self._raw_sample()
+        three_boxes = {**one_box, "boxes": torch.rand(3, 4), "labels": torch.arange(3)}
+
+        loader = dm.train_dataloader()
+        _, targets = loader.collate_fn([(image, one_box), (image, three_boxes)])
+
+        assert isinstance(targets, PackedTargets)
+        rebuilt = list(targets)
+        assert [t["boxes"].shape[0] for t in rebuilt] == [4, 4]
+        assert rebuilt[0]["valid"].tolist() == [True, False, False, False]
+        assert rebuilt[1]["valid"].tolist() == [True, True, True, False]
+
+    def test_pad_targets_to_only_reaches_the_train_loader(self, tmp_path):
+        """Padding the eval loaders would feed filler rows to COCO matching as real ground truth, so only
+        train_dataloader() may pad; val/test/predict keep the real, variable-length targets."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=False, pad_targets_to=4))
+        dm._dataset_train = _fake_dataset(200)
+        dm._dataset_val = _fake_dataset(200)
+
+        _, train_targets = dm.train_dataloader().collate_fn([self._raw_sample()])
+        _, val_targets = dm.val_dataloader().collate_fn([self._raw_sample()])
+
+        assert train_targets[0]["boxes"].shape[0] == 4
+        assert "valid" in train_targets[0]
+        assert val_targets[0]["boxes"].shape[0] == 1
+        assert "valid" not in val_targets[0]
+
+    def test_webdataset_loader_pads_only_the_fixed_epoch_train_call(self, tmp_path):
+        """_webdataset_loader is shared by train (fixed_epoch=True) and eval; only the train call may collate through
+        the padded/packed self._collate_fn_train."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=True, pad_targets_to=4))
+        captured = {}
+
+        def _fake_build_webdataset_loader(dataset, *, collate_fn, **kwargs):
+            captured["collate_fn"] = collate_fn
+            return MagicMock()
+
+        with patch("rfdetr.training.module_data.build_webdataset_loader", _fake_build_webdataset_loader):
+            dm._webdataset_loader(MagicMock(), batch_size=2, fixed_epoch=True)
+            assert captured["collate_fn"] is dm._collate_fn_train
+
+            dm._webdataset_loader(MagicMock(), batch_size=2, fixed_epoch=False)
+            assert captured["collate_fn"] is dm._collate_fn
+
+    @staticmethod
+    def _raw_segmentation_sample(
+        h: int = 16, w: int = 16, num_instances: int = 1
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Build one (image, target) pair shaped exactly as the COCO reader produces for a
+        segmentation model: ``masks`` is ``torch.bool`` of shape ``(num_instances, H, W)``,
+        alongside the ``area``/``iscrowd``/``size`` fields ``rfdetr.datasets.coco.py`` always
+        attaches next to it. ``image_id`` is rank-1 (``torch.as_tensor([image_id])``,
+        ``coco.py:653``), not the rank-0 scalar ``ConvertCoco``'s own docstring calls it
+        (``coco.py:615``) -- matched to the actual runtime shape here.
+
+        Args:
+            h: Image and mask height. Pass distinct values across samples in the same
+                batch to exercise ``pack_targets``'s per-sample shape bookkeeping --
+                ``RandomResize`` preserves each source image's own aspect ratio, so a real
+                collated batch routinely mixes segmentation masks of different spatial shape.
+            w: Image and mask width, independent of ``h`` for the same reason.
+            num_instances: Number of instances in the sample; ``0`` produces an
+                empty-but-shaped ``masks`` tensor.
+
+        Returns:
+            The synthetic image tensor and its matching target dict.
+
+        Examples:
+            >>> image, target = TestTrainDataloader._raw_segmentation_sample(num_instances=2)
+            >>> target["masks"].shape, target["masks"].dtype
+            (torch.Size([2, 16, 16]), torch.bool)
+        """
+        image = torch.randn(3, h, w)
+        target = {
+            "boxes": torch.rand(num_instances, 4),
+            "labels": torch.arange(num_instances, dtype=torch.int64),
+            "image_id": torch.as_tensor([0]),
+            "area": torch.rand(num_instances),
+            "iscrowd": torch.zeros(num_instances, dtype=torch.int64),
+            "orig_size": torch.tensor([h, w]),
+            "size": torch.tensor([h, w]),
+            "masks": torch.rand(num_instances, h, w) > 0.5,
+        }
+        return image, target
+
+    def test_pack_targets_round_trips_segmentation_masks_bit_identically(self, tmp_path):
+        """#1399's own body flagged this as unmeasured: the packer handles any same-keyed field, including ``masks``,
+        but no parity run existed for it.
+
+        This pins correctness through the real DataModule collate seam, using ``to_list()`` -- the exact method
+        ``transfer_batch_to_device`` calls on the real training path -- rather than a related but different
+        iteration method. The middle, zero-instance sample mirrors
+        ``TestPackedTargets.test_a_sample_with_no_instances_survives_the_round_trip`` in
+        ``tests/utilities/test_tensors.py`` -- that test pins the same "must not collapse into a neighbour's rows"
+        invariant for ``boxes``/``labels``, but never through a real segmentation batch's ``masks`` field.
+        """
+        model_config = _base_model_config(segmentation_head=True)
+        dm = RFDETRDataModule(model_config, _base_train_config(tmp_path, pack_targets=True))
+        dm._dataset_train = _fake_dataset(200)
+
+        loader = dm.train_dataloader()
+        # Distinct, non-transposed H/W per sample: RandomResize preserves each source image's own
+        # aspect ratio, so a real collated batch routinely mixes masks of different spatial shape.
+        # Same-shape samples would still round-trip bit-identically even if pack_targets silently
+        # reused one sample's spatial shape for another -- these dimensions discriminate that.
+        sample_a = self._raw_segmentation_sample(h=14, w=22, num_instances=1)
+        sample_zero = self._raw_segmentation_sample(h=20, w=10, num_instances=0)
+        sample_b = self._raw_segmentation_sample(h=18, w=16, num_instances=3)
+        _, packed = loader.collate_fn([sample_a, sample_zero, sample_b])
+
+        assert isinstance(packed, PackedTargets), "a real segmentation batch must still pack"
+        rebuilt = packed.to_list(torch.device("cpu"))
+        for (_, expected), actual in zip([sample_a, sample_zero, sample_b], rebuilt, strict=True):
+            assert actual["masks"].dtype == torch.bool
+            assert actual["masks"].shape == expected["masks"].shape
+            assert torch.equal(actual["masks"], expected["masks"]), "masks must round-trip bit-identically"
+            assert torch.equal(actual["boxes"], expected["boxes"])
+            assert torch.equal(actual["labels"], expected["labels"])
+            assert torch.equal(actual["area"], expected["area"])
+            assert torch.equal(actual["iscrowd"], expected["iscrowd"])
+        assert rebuilt[1]["masks"].shape == (0, 20, 10), "the zero-instance sample must not collapse into a neighbour"
+
 
 class TestGradAccumAlignedDataset:
     """Unit tests for the GradAccumAlignedDataset wrapper."""
@@ -916,6 +1130,14 @@ class TestGradAccumAlignedDataset:
         ds = self._make_dataset(50)  # 50 % 16 = 2 → pad 14
         wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
         assert len(wrapped) == 64
+
+    def test_minimum_length_repeats_to_requested_aligned_size(self) -> None:
+        """A minimum length extends short datasets while preserving the alignment unit."""
+        from rfdetr.training.module_data import GradAccumAlignedDataset
+
+        ds = self._make_dataset(3)
+        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=2, world_size=2, minimum_length=20)
+        assert len(wrapped) == 20
 
     def test_getitem_forwards_to_original_dataset(self):
         """Items in the original range map directly to the underlying dataset."""
@@ -1232,6 +1454,22 @@ class TestClassNames:
         dm._dataset_train = dataset
 
         assert dm.class_names == ["", "person"]
+
+    def test_dataset_with_class_names_attribute_but_not_webdataset_is_ignored(self, tmp_path):
+        """A dataset merely exposing a `class_names` attribute, without being a WebDatasetDetection, is not used.
+
+        Regression test: this property used to duck-type on `getattr(dataset, "class_names", None)`, so any
+        dataset happening to carry an attribute of that name would satisfy it without the guarantee a real
+        `WebDatasetDetection` gives -- label-indexed names read from its packed shard index. `_FakeDataset` has
+        no `class_names` of its own, so setting one directly on the instance stands in for that broader surface.
+        """
+        mc = _base_model_config()
+        tc = _base_train_config(tmp_path)
+        dm = RFDETRDataModule(mc, tc)
+        dataset = _fake_dataset(50, with_coco=False)
+        dataset.class_names = ["decoy"]
+        dm._dataset_train = dataset
+        assert dm.class_names is None
 
 
 class TestSegmentationSupport:

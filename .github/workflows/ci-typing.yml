@@ -42,7 +42,7 @@ jobs:
         run: uv pip install -e ".[train,cli,visual]" --group typing
 
       - name: 🔍 Run mypy
-        run: uv run --no-sync mypy src/rfdetr/ --no-error-summary
+        run: uv run --no-sync mypy src/rfdetr/ scripts/ --no-error-summary
 
       - name: Minimize uv cache
         continue-on-error: true

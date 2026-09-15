@@ -599,6 +599,12 @@ def resolve_auto_batch_config(
         probe_resolution = model_config.resolution
 
     max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
+    pad_targets_to = getattr(train_config, "pad_targets_to", None)
+    if pad_targets_to is not None:
+        # With fixed-size target padding the count is not a worst-case guess any more, it is exactly
+        # what every image will carry -- so probe that instead of the generic ceiling, which is both
+        # too pessimistic for a small pad size and too optimistic for one above the default.
+        max_targets_per_image = pad_targets_to
 
     optimizer_cfg = getattr(train_config, "optimizer", "adamw")
     # Whether the real optimizer's *state* is AdamW-shaped -- a broader question than which optimizer

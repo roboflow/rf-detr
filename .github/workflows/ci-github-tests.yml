@@ -1,0 +1,52 @@
+# Test the helper scripts under .github/scripts and the workflow-facing behavior they back.
+#
+# These scripts are not part of the rfdetr package, so the CPU/GPU suites never see them:
+# `ci-tests-cpu.yml` runs `pytest src/ tests/`. Their tests live next to them in
+# .github/_tests instead, and this job runs both those tests and the doctests in the
+# scripts themselves (`--doctest-plus` from pyproject.toml collects them).
+#
+# Only the pytest stack is installed - the scripts import nothing beyond the standard
+# library, so pulling in torch for them would cost minutes and prove nothing.
+
+name: Test GitHub Scripts
+
+on:
+  push:
+    branches: ["main", "release/*", "develop"]
+  pull_request:
+    branches: ["main", "release/*", "develop"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: github-tests-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-scripts:
+    name: Test GitHub Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.10"
+          activate-environment: true
+
+      - name: 🚀 Install Packages
+        timeout-minutes: 5
+        run: uv pip install --group tests
+
+      - name: 🧪 Run script tests and doctests
+        run: uv run --no-sync pytest .github/_tests .github/scripts -n 1 --timeout=120

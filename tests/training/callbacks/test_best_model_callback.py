@@ -973,6 +973,11 @@ class TestBestModelCallback:
         pl_module = _ModuleWithTestStep()
         pl_module.model = MagicMock()
         pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+        # Regular-weight reload uses strict=False plus a manual incompatible-keys check (matching
+        # the EMA branch) so it can tolerate an FP8 model's missing Transformer Engine `_extra_state`
+        # after that entry is filtered from the loaded dict — a MagicMock's auto-mocked return value
+        # would otherwise be truthy and spuriously fail that check.
+        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys([], [])
         pl_module.train_config = {"lr": 0.001}
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
@@ -1033,6 +1038,11 @@ class TestBestModelCallback:
         pl_module = _ModuleWithTestStep()
         pl_module.model = MagicMock()
         pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+        # strict=False plus a manual incompatible-keys check (mirroring the EMA branch) tolerates an
+        # FP8 model's missing Transformer Engine `_extra_state` once that entry is filtered from the
+        # loaded dict; supply a real IncompatibleKeys so that check doesn't see a MagicMock's
+        # auto-mocked (always-truthy) unexpected_keys and spuriously raise.
+        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys([], [])
         pl_module.train_config = {"lr": 0.001}
 
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
@@ -1041,10 +1051,46 @@ class TestBestModelCallback:
         cb.on_validation_end(trainer, pl_module)
         cb.on_fit_end(trainer, pl_module)
 
-        # Model weights must be loaded from checkpoint_best_total.pth with strict=True
+        # Model weights must be loaded from checkpoint_best_total.pth with strict=False, plus a manual
+        # missing/unexpected-key check that tolerates only a filtered-out `_extra_state` entry.
         pl_module.model.load_state_dict.assert_called_once()
-        call_kwargs = pl_module.model.load_state_dict.call_args.kwargs
-        assert call_kwargs.get("strict") is True, "load_state_dict must be called with strict=True"
+        call_args, call_kwargs = pl_module.model.load_state_dict.call_args
+        assert call_kwargs.get("strict") is False, "load_state_dict must be called with strict=False"
+        assert call_args[0] == {"w": torch.zeros(1)}, "no _extra_state keys to filter — dict passes through unchanged"
+
+    def test_run_test_strips_extra_state_from_regular_weights_before_load(self, tmp_path: Path) -> None:
+        """A live-model checkpoint's Transformer Engine `_extra_state` entries must not reach load_state_dict.
+
+        Under FP8, ``_get_live_model_state_dict`` writes the regular checkpoint straight from the live module's
+        ``state_dict()``, which — unlike the EMA export — still carries ``_extra_state`` keys. Transformer Engine
+        rejects their pickle round-trip via ``set_extra_state()``, so they must be excluded from the dict handed to
+        ``load_state_dict`` rather than merely tolerated afterward via ``strict=False``.
+        """
+        from pytorch_lightning import LightningModule
+
+        class _ModuleWithTestStep(LightningModule):
+            def test_step(self, batch: object, batch_idx: int) -> None: ...
+
+        pl_module = _ModuleWithTestStep()
+        pl_module.model = MagicMock()
+        pl_module.model.state_dict.return_value = {
+            "w": torch.zeros(1),
+            "layer._extra_state": b"fp8-scaling-history",
+        }
+        # The model itself is missing the "w" tensor after reload — a genuine mismatch that must still raise.
+        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys(["w"], [])
+        pl_module.train_config = {"lr": 0.001}
+
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+
+        cb.on_validation_end(trainer, pl_module)
+        with pytest.raises(RuntimeError, match=r"Error loading best regular weights.*'w'"):
+            cb.on_fit_end(trainer, pl_module)
+
+        loaded_dict = pl_module.model.load_state_dict.call_args[0][0]
+        assert "layer._extra_state" not in loaded_dict, "_extra_state must be filtered out before load_state_dict"
+        assert loaded_dict == {"w": torch.zeros(1)}
 
     def test_run_test_false_skips_trainer_test(self, tmp_path: Path) -> None:
         """run_test=False means trainer.test() is never called."""
@@ -2952,3 +2998,74 @@ class TestOnFitEndEMASwapSuppression:
             cb.on_fit_end(trainer, pl_module)
 
         assert ema_cb.suppress_test_swap is False
+
+
+class _GuardedExtraStateLinear(torch.nn.Linear):
+    """Represent a converted layer whose extra-state loader forbids deserialization."""
+
+    def get_extra_state(self) -> torch.Tensor:
+        """Return a serializable stand-in for FP8 scaling history.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).get_extra_state()
+            tensor([1], dtype=torch.uint8)
+        """
+        return torch.ones(1, dtype=torch.uint8)
+
+    def set_extra_state(self, state: object) -> None:
+        """Reject loading history, as Transformer Engine does without pickle opt-in.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).set_extra_state(None)
+            Traceback (most recent call last):
+            ...
+            RuntimeError: extra-state deserialization forbidden
+        """
+        raise RuntimeError("extra-state deserialization forbidden")
+
+
+class TestFP8BestEMAWeightReload:
+    """Exercise real checkpoint export and reload with converted-layer extra state."""
+
+    @pytest.mark.parametrize(
+        "damage, error",
+        [
+            pytest.param(None, None, id="intact-ema"),
+            pytest.param("missing", "Missing.*weight", id="missing-weight"),
+            pytest.param("unexpected", "Unexpected.*spurious", id="unexpected-key"),
+            pytest.param("shape", "size mismatch", id="wrong-shape"),
+        ],
+    )
+    def test_final_ema_reload(self, tmp_path: Path, damage: str | None, error: str | None) -> None:
+        """Only absent extra state is tolerated; all tensor/key corruption remains fatal."""
+        torch.manual_seed(0)
+        module = _TestStepLinearModule()
+        module.model = torch.nn.Sequential(_GuardedExtraStateLinear(1, 1, bias=False))
+        with torch.no_grad():
+            module.model[0].weight.fill_(3.0)
+        ema = RFDETREMACallback()
+        callback = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=True)
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.8}, callbacks=[ema, callback])
+        ema.on_fit_start(trainer, module)
+        callback.on_validation_end(trainer, module)
+        path = tmp_path / "checkpoint_best_ema.pth"
+        checkpoint = torch.load(path, weights_only=True)
+        assert set(checkpoint["model"]) == {"0.weight"}
+        if damage == "missing":
+            del checkpoint["model"]["0.weight"]
+        elif damage == "unexpected":
+            checkpoint["model"]["spurious"] = torch.ones(1)
+        elif damage == "shape":
+            checkpoint["model"]["0.weight"] = torch.ones(2, 1)
+        torch.save(checkpoint, path)
+        with torch.no_grad():
+            module.model[0].weight.fill_(7.0)
+
+        if error is not None:
+            with pytest.raises(RuntimeError, match=error):
+                callback.on_fit_end(trainer, module)
+            trainer.test.assert_not_called()
+        else:
+            callback.on_fit_end(trainer, module)
+            trainer.test.assert_called_once_with(module, datamodule=trainer.datamodule, verbose=False)
+            torch.testing.assert_close(module.model[0].weight, torch.full((1, 1), 3.0), rtol=1e-4, atol=1e-6)

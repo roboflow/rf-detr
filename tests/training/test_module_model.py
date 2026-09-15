@@ -5,14 +5,17 @@
 # ------------------------------------------------------------------------
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
+import logging
 import random
 import warnings
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 import torch
 from pytorch_lightning import Callback, Trainer
+from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
@@ -313,6 +316,26 @@ class _ScalarLossModel(nn.Module):
         return {"loss_scale": self.value}
 
 
+class _DynamicShapeModel(nn.Module):
+    """Tiny model whose loss path depends on the multi-scale batch tensor."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(()))
+
+    def forward(self, samples, targets=None):
+        return {"dummy": samples.tensors.mean() * self.weight}
+
+    def update_drop_path(self, *args, **kwargs) -> None:
+        pass
+
+    def update_dropout(self, *args, **kwargs) -> None:
+        pass
+
+    def reinitialize_detection_head(self, *args, **kwargs) -> None:
+        pass
+
+
 class _BoxNormalizedCriterion:
     """Criterion with controllable per-target loss numerators and box counts."""
 
@@ -402,16 +425,96 @@ class TestInit:
         assert module.model_config is mc
         assert module.train_config is tc
 
-    def test_compile_disabled_when_multi_scale_enabled(self, tmp_path):
-        """torch.compile is skipped when multi_scale=True (dynamic shapes)."""
+    def test_compile_runs_when_multi_scale_enabled(self, tmp_path):
+        """torch.compile still runs with multi_scale=True, which is the shipped default.
+
+        ``dynamic=True`` is passed precisely so one graph covers every (H, W) the multi-scale pipeline produces, so
+        multi-scale is not a reason to skip compilation on CUDA.
+        """
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=True)
         with (
-            patch("torch.cuda.is_available", return_value=True),
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_called_once()
+        assert mock_compile.call_args.kwargs["dynamic"] is True
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="compiled multi-scale regression requires CUDA")
+    def test_compiled_multi_scale_forward_backward_across_resolutions(self, tmp_path):
+        """The real compiled CUDA module must backpropagate finite losses at two resized multi-scale resolutions."""
+        torch.manual_seed(0)
+        model_config = _base_model_config(compile=True, resolution=128)
+        train_config = _base_train_config(tmp_path, multi_scale=True)
+        model = _DynamicShapeModel().cuda()
+        criterion = _FakeCriterion()
+
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+        ):
+            module = RFDETRModelModule(model_config, train_config)
+
+        resized_shapes = set()
+        for global_step in (0, 1):
+            module.trainer = SimpleNamespace(global_step=global_step)
+            samples, targets = _make_batch(h=128, w=128)
+            samples.tensors = samples.tensors.cuda()
+            samples.mask = samples.mask.cuda()
+
+            module.on_train_batch_start((samples, targets), batch_idx=global_step)
+            resized_shapes.add(tuple(samples.tensors.shape[-2:]))
+            loss = criterion(module.model(samples, targets), targets)["loss_ce"]
+            loss.backward()
+
+            assert torch.isfinite(loss)
+            assert model.weight.grad is not None
+            assert torch.isfinite(model.weight.grad)
+            model.zero_grad(set_to_none=True)
+
+        assert len(resized_shapes) == 2
+
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
+    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, accelerator, tmp_path):
+        """XLA/TPU never compiles, and that no longer depends on multi_scale being set.
+
+        This is the invariant the removed ``not multi_scale`` clause was documented as protecting; the accelerator check
+        is what actually enforces it.
+        """
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False, accelerator=accelerator)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
             patch("rfdetr.training.module_model.torch.compile") as mock_compile,
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
+
+    def test_compile_disabled_when_device_is_not_cuda(self, tmp_path, caplog, monkeypatch):
+        """A non-CUDA accelerator disables compilation regardless of multi_scale, with an explanatory notice.
+
+        A caller who sets ``compile=True`` on CPU/XLA/TPU must still learn why nothing was compiled, the same way the
+        old multi_scale-only notice used to inform CUDA callers.
+        """
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=True)
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with (
+            patch("rfdetr.config.DEVICE", "cpu"),
+            patch("rfdetr.training.module_model.torch.compile") as mock_compile,
+            caplog.at_level(logging.INFO, logger="rf-detr"),
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_not_called()
+        assert any("Disabling torch.compile" in record.getMessage() for record in caplog.records)
 
     def test_compile_runs_when_enabled_and_static_shapes(self, tmp_path):
         """torch.compile runs when compile=True and multi_scale=False on CUDA."""
@@ -423,6 +526,41 @@ class TestInit:
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
+
+    @pytest.mark.parametrize("knob_supported", [True, False])
+    def test_coalesce_tiling_knob_passed_only_when_torch_exposes_it(self, knob_supported, tmp_path):
+        """The Inductor workaround reaches torch.compile only on a torch whose config exposes the knob.
+
+        Older torch versions have no ``triton.coalesce_tiling_analysis``; passing it there raises
+        ``RuntimeError("Unexpected optimization option ...")`` from ``_TorchCompileInductorWrapper.apply_options``.
+        Compilation must still proceed in both cases.
+        """
+        triton_config = SimpleNamespace(coalesce_tiling_analysis=True) if knob_supported else SimpleNamespace()
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        expected = {"triton.coalesce_tiling_analysis": False} if knob_supported else None
+        assert mock_compile.call_args.kwargs["options"] == expected
+
+    def test_coalesce_tiling_knob_leaves_process_global_config_untouched(self, tmp_path):
+        """The workaround must not disable coalesce tiling for unrelated compilations in the same process."""
+        triton_config = SimpleNamespace(coalesce_tiling_analysis=True)
+        mc = _base_model_config(compile=True)
+        tc = _base_train_config(tmp_path, multi_scale=False)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m),
+        ):
+            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        assert triton_config.coalesce_tiling_analysis is True
 
     @patch("rfdetr.training.module_model.torch.compile")
     @patch("rfdetr.config.DEVICE", "cuda")
@@ -921,6 +1059,32 @@ class TestTrainingStep:
         assert loss.item() == pytest.approx(1.0)
         backward_loss = module.manual_backward.call_args.args[0]
         assert backward_loss.item() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize(
+        "grad_accum_steps,num_training_batches,batch_idx,sync_grad",
+        [(2, 2, 0, False), (2, 4, 1, True), (4, 2, 1, True)],
+    )
+    def test_keypoint_accumulation_syncs_only_when_optimizer_steps(
+        self, tmp_path, grad_accum_steps, num_training_batches, batch_idx, sync_grad
+    ):
+        """Keypoint DDP must skip gradient synchronization until an accumulation window closes."""
+        keypoint_config = _base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        module, samples, targets, _, _ = self._run_step(
+            tmp_path,
+            accumulate_grad_batches=grad_accum_steps,
+            model_config=keypoint_config,
+        )
+        optimizer = MagicMock(spec=LightningOptimizer)
+        optimizer.param_groups = [{"lr": 1e-3}]
+        optimizer.toggle_model.return_value = nullcontext()
+        optimizer.zero_grad = MagicMock()
+        module.optimizers.return_value = optimizer
+        module._trainer.num_training_batches = num_training_batches
+
+        module.training_step((samples, targets), batch_idx=batch_idx)
+
+        optimizer.toggle_model.assert_called_once_with(sync_grad=sync_grad)
+        module.manual_backward.assert_called_once()
 
     def test_detection_loss_uses_lightning_grad_accum_scaling(self, tmp_path):
         """Detection (automatic optimization) divides loss by ``trainer.accumulate_grad_batches`` so the returned loss
@@ -2787,6 +2951,25 @@ class TestConfigureOptimizers:
 
         assert optimizer.defaults.get("fused") is True
 
+    @patch("rfdetr.training.module_model.get_param_dict")
+    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
+    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
+    def test_fused_optimizer_enabled_with_transformer_engine(
+        self,
+        mock_cuda_available,
+        mock_bf16_supported,
+        mock_get_param_dict,
+        tmp_path,
+    ):
+        """Default FP8 uses BF16 weights, so the built-in fused AdamW path must remain active."""
+        module, param_dicts = self._setup_module(tmp_path)
+        mock_get_param_dict.return_value = param_dicts
+        module._trainer.precision = "transformer-engine"
+
+        optimizer = module.configure_optimizers()["optimizer"]
+
+        assert optimizer.defaults.get("fused") is True
+
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
     def test_fused_optimizer_disabled_when_cuda_unavailable(self, mock_cuda_available, tmp_path):
         """_use_fused_optimizer must return False when CUDA is not available, regardless of precision."""
@@ -3192,6 +3375,42 @@ class TestOnLoadCheckpoint:
 
     def test_no_pe_keys_in_state_dict_is_noop(self, build_module):
         """on_load_checkpoint must not raise when state_dict contains no PE keys."""
+        checkpoint = {
+            "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
+            "epoch": 1,
+        }
+        original_keys = set(checkpoint["state_dict"].keys())
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert set(checkpoint["state_dict"].keys()) == original_keys
+
+    def test_extra_state_keys_stripped_from_state_dict(self, build_module):
+        """on_load_checkpoint must remove `_extra_state` entries before PTL applies the state dict.
+
+        Under FP8, the live module's checkpointed state_dict carries Transformer Engine `_extra_state` entries recording
+        FP8 scaling history. `strict_loading=False` only tolerates their presence/absence after the fact — it does not
+        stop `load_state_dict()` from calling `set_extra_state()` for a key present in both the checkpoint and the
+        module, which Transformer Engine rejects on a pickle round-trip. The entries must therefore be excluded from
+        `checkpoint["state_dict"]` here, before PTL ever applies it.
+        """
+        checkpoint = {
+            "state_dict": {
+                "model.some_layer.weight": torch.randn(4, 4),
+                "model.some_layer._extra_state": b"fp8-scaling-history",
+            },
+            "epoch": 1,
+        }
+
+        module, _, _, _ = build_module(model_config=_base_model_config(positional_encoding_size=36))
+        module.on_load_checkpoint(checkpoint)
+
+        assert "model.some_layer._extra_state" not in checkpoint["state_dict"]
+        assert "model.some_layer.weight" in checkpoint["state_dict"]
+
+    def test_no_extra_state_keys_in_state_dict_is_noop(self, build_module):
+        """on_load_checkpoint must not raise or alter keys when state_dict contains no `_extra_state` entries."""
         checkpoint = {
             "state_dict": {"model.some_layer.weight": torch.randn(4, 4)},
             "epoch": 1,

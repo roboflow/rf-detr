@@ -6,7 +6,7 @@
 """Tests for native CoreML (``.mlpackage``) export.
 
 Covers:
-* ``export_coreml()`` — argument/dependency behaviour (``coremltools`` mocked where needed)
+* ``CoreMLExporter`` — argument/dependency behaviour (``coremltools`` mocked where needed)
 * ``format="coreml"`` wiring through ``RFDETR.export()``
 * End-to-end convert + numerical parity (``@pytest.mark.e2e_coreml``, opt-in)
 
@@ -30,8 +30,10 @@ import torch
 from PIL import Image
 from supervision.assets import ImageAssets, download_assets
 
+from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
-from rfdetr.export._coreml.converter import _check_coremltools_available, export_coreml
+from rfdetr.export._coreml.exporter import CoreMLConfig, CoreMLExporter, _check_coremltools_available
+from rfdetr.export.prepare import ExportGraph
 from tests.export.conftest import (
     _parity_input_from_image,
     _structured_parity_input,
@@ -151,8 +153,34 @@ def validate_segmentation_coreml_vs_pytorch(
 
 
 # ---------------------------------------------------------------------------
-# export_coreml() — unit / dependency behaviour
+# CoreMLExporter — unit / dependency behaviour
 # ---------------------------------------------------------------------------
+
+
+def _make_export_graph(model: torch.nn.Module, *, backbone_only: bool = False) -> ExportGraph:
+    """Build a minimal prepared graph a :class:`CoreMLExporter` can be handed without a real detector.
+
+    Args:
+        model: Stand-in module the exporter traces; a plain ``nn.Module`` exposes no ``export`` method
+            for the export-mode switch to call, so nothing about the real detector is needed here.
+        backbone_only: Whether the graph stands in for a backbone-only export.
+
+    Returns:
+        An :class:`ExportGraph` wrapping *model* with a ``1x3x32x32`` example input.
+
+    Examples:
+        >>> _make_export_graph(torch.nn.Identity(), backbone_only=True).backbone_only
+        True
+    """
+    return ExportGraph(
+        model=model,
+        input_tensors=torch.zeros(1, 3, 32, 32),
+        input_names=("input",),
+        output_names=("dets", "labels"),
+        dynamic_axes=None,
+        shape=(32, 32),
+        backbone_only=backbone_only,
+    )
 
 
 class TestCheckCoremltoolsAvailable:
@@ -164,7 +192,7 @@ class TestCheckCoremltoolsAvailable:
         # (computed once, at rfdetr.export._coreml import time) rather than importing
         # coremltools live, so the flag itself — as bound into converter's namespace by its
         # `from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE` — is what must be patched.
-        monkeypatch.setattr("rfdetr.export._coreml.converter._IS_COREMLTOOLS_AVAILABLE", False)
+        monkeypatch.setattr("rfdetr.export._coreml.exporter._IS_COREMLTOOLS_AVAILABLE", False)
         assert _check_coremltools_available(raise_error=False) is False
 
     @coreml_only
@@ -174,26 +202,25 @@ class TestCheckCoremltoolsAvailable:
 
 
 class TestExportCoremlValidation:
-    """Argument and dependency behaviour of ``export_coreml()`` (no real convert)."""
+    """Argument and dependency behaviour of ``CoreMLExporter`` (no real convert)."""
 
     def test_missing_coremltools_raises_import_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``export_coreml`` must surface the install hint when coremltools is absent."""
+        """``CoreMLExporter`` must surface the install hint when coremltools is absent."""
         monkeypatch.setattr(
-            "rfdetr.export._coreml.converter._check_coremltools_available",
+            "rfdetr.export._coreml.exporter._check_coremltools_available",
             mock.Mock(side_effect=ImportError("pip install rfdetr[coreml]")),
         )
-        model = torch.nn.Linear(1, 1)
-        example = torch.zeros(1, 3, 32, 32)
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
         with pytest.raises(ImportError, match="rfdetr\\[coreml\\]"):
-            export_coreml(model, example, tmp_path)
+            exporter(_make_export_graph(torch.nn.Linear(1, 1)))
 
 
 class TestExportCoremlBareDefaultNaming:
     """``variant_name=None`` + ``output_name=None`` combined with a non-default ``compute_precision`` (fp16).
 
-    Real ``coremltools.convert``/``torch.export.export`` are mocked out so this stays a fast unit test — only the naming
-    path (``resolve_export_stem`` -> precision-suffix branch) is under test, not conversion correctness (that is covered
-    by ``TestCoreMLEndToEnd``, gated on a real ``coremltools`` install).
+    Real ``coremltools.convert``/``torch.export.export`` are mocked out so this stays a fast unit test — only the
+    naming path (``resolve_export_stem`` -> precision-suffix branch) is under test, not conversion correctness (that is
+    covered by ``TestCoreMLEndToEnd``, gated on a real ``coremltools`` install).
     """
 
     @coreml_only
@@ -206,30 +233,70 @@ class TestExportCoremlBareDefaultNaming:
 
         with (
             mock.patch("torch.export.export", return_value=mock_exported_program),
-            mock.patch("rfdetr.export._coreml.converter.unsupported_coreml_ops", return_value={}),
+            mock.patch("rfdetr.export._coreml.exporter.unsupported_coreml_ops", return_value={}),
             mock.patch("coremltools.convert", return_value=mock_mlmodel),
         ):
-            output_file = export_coreml(
-                torch.nn.Identity(),
-                torch.zeros(1, 3, 32, 32),
-                tmp_path,
-                variant_name=None,
-                output_name=None,
-                compute_precision="float16",
-                verbose=False,
+            exporter = CoreMLExporter(
+                CoreMLConfig(
+                    output_dir=tmp_path,
+                    variant_name=None,
+                    output_name=None,
+                    compute_precision="float16",
+                    verbose=False,
+                )
             )
+            output_file = exporter(_make_export_graph(torch.nn.Identity()))
 
         assert output_file.name == "inference_model_fp16.mlpackage"
         mock_mlmodel.save.assert_called_once_with(str(output_file))
 
+    @pytest.mark.parametrize(
+        "variant_name, output_name, full_name, backbone_name",
+        [
+            ("rfdetr-nano", None, "rfdetr-nano_fp32.mlpackage", "rfdetr-nano_fp32-backbone.mlpackage"),
+            ("rfdetr-nano", "custom", "custom.mlpackage", "custom-backbone.mlpackage"),
+            (None, None, "inference_model_fp32.mlpackage", "backbone_model_fp32.mlpackage"),
+        ],
+    )
+    def test_backbone_only_does_not_collide_with_full_detector_export(
+        self,
+        tmp_path: Path,
+        variant_name: str | None,
+        output_name: str | None,
+        full_name: str,
+        backbone_name: str,
+    ) -> None:
+        """Backbone and detector paths stay distinct with variant, custom, and default names."""
+        coremltools = mock.MagicMock()
+        full_model, backbone_model = mock.MagicMock(), mock.MagicMock()
+        coremltools.convert.side_effect = [full_model, backbone_model]
+        exported_program = mock.MagicMock()
+        exported_program.run_decompositions.return_value = exported_program
+        with (
+            mock.patch.dict("sys.modules", {"coremltools": coremltools}),
+            mock.patch("rfdetr.export._coreml.exporter._IS_COREMLTOOLS_AVAILABLE", True),
+            mock.patch("torch.export.export", return_value=exported_program),
+            mock.patch("rfdetr.export._coreml.exporter.unsupported_coreml_ops", return_value={}),
+        ):
+            config = CoreMLConfig(
+                output_dir=tmp_path, variant_name=variant_name, output_name=output_name, verbose=False
+            )
+            full_out = CoreMLExporter(config)(_make_export_graph(torch.nn.Identity()))
+            backbone_out = CoreMLExporter(config)(_make_export_graph(torch.nn.Identity(), backbone_only=True))
+        assert full_out != backbone_out
+        assert full_out.name == full_name
+        assert backbone_out.name == backbone_name
+        full_model.save.assert_called_once_with(str(full_out))
+        backbone_model.save.assert_called_once_with(str(backbone_out))
+
 
 class TestVariantNamePathSafety:
-    """Regression coverage for the path-traversal mitigation ``export_coreml`` applies to ``variant_name``
-    (``converter.py``: ``os.path.splitext(os.path.basename(variant_name))[0]``).
+    """Regression coverage for the path-traversal mitigation ``CoreMLExporter`` applies to ``variant_name`` (via
+    ``resolve_export_stem``: ``os.path.splitext(os.path.basename(variant_name))[0]``).
 
-    Exercises the sanitization expression directly rather than through ``export_coreml()`` end-to-end: ``export_coreml``
-    imports the real ``coremltools`` package immediately after the (mockable) availability check, so a full call still
-    requires coremltools installed — this test covers the contract without that dependency.
+    Exercises the sanitization expression directly rather than through a full export: ``CoreMLExporter`` imports the
+    real ``coremltools`` package immediately after the (mockable) availability check, so a full call still requires
+    coremltools installed — this test covers the contract without that dependency.
     """
 
     @pytest.mark.parametrize(
@@ -269,17 +336,20 @@ class TestExportFormatParameter:
 
         self._mock_stack = contextlib.ExitStack()
         self._mock_export_onnx = self._mock_stack.enter_context(
-            mock.patch("rfdetr.export.main.export_onnx", return_value=str(tmp_path / "inference_model.onnx"))
+            mock.patch(
+                "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+                return_value=str(tmp_path / "inference_model.onnx"),
+            )
         )
         self._mock_stack.enter_context(
             mock.patch(
-                "rfdetr.export.main.make_infer_image",
+                "rfdetr.export.prepare.make_infer_image",
                 return_value=torch.zeros(1, 3, 560, 560),
             )
         )
-        self._mock_export_coreml = self._mock_stack.enter_context(
+        self._mock_coreml_convert = self._mock_stack.enter_context(
             mock.patch(
-                "rfdetr.export._coreml.converter.export_coreml",
+                "rfdetr.export._coreml.exporter.CoreMLExporter._convert",
                 return_value=mlpackage,
             )
         )
@@ -312,34 +382,34 @@ class TestExportFormatParameter:
         "segmentation_head",
         [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")],
     )
-    def test_coreml_format_dispatches_to_export_coreml_not_onnx(self, segmentation_head: bool) -> None:
-        """``format="coreml"`` must dispatch to ``export_coreml`` (not ``export_onnx``) and warn (experimental), for
-        both detection and segmentation models."""
+    def test_coreml_format_dispatches_to_coreml_exporter_not_onnx(self, segmentation_head: bool) -> None:
+        """``format="coreml"`` must dispatch to ``CoreMLExporter`` (not the ONNX one) and warn (experimental), for both
+        detection and segmentation models."""
         obj = self._make_rfdetr(segmentation_head=segmentation_head)
         with pytest.warns(UserWarning, match="experimental"):
             obj.export(format="coreml", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_coreml.assert_called_once()
+        self._mock_coreml_convert.assert_called_once()
         self._mock_export_onnx.assert_not_called()
 
-    def test_onnx_format_does_not_call_export_coreml(self) -> None:
+    def test_onnx_format_does_not_call_coreml_exporter(self) -> None:
         """``format="onnx"`` must not import/call the CoreML converter."""
         obj = self._make_rfdetr()
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
-        self._mock_export_coreml.assert_not_called()
+        self._mock_coreml_convert.assert_not_called()
 
     def test_notes_warns_and_is_ignored(self) -> None:
         """``notes`` must warn for CoreML (no ONNX-style metadata slot) but still export."""
         obj = self._make_rfdetr()
         with pytest.warns(UserWarning, match=r"`notes` is not forwarded to format='coreml'"):
             obj.export(format="coreml", output_dir=str(self._tmp_path / "out"), notes="hello")
-        self._mock_export_coreml.assert_called_once()
+        self._mock_coreml_convert.assert_called_once()
 
     def test_dynamic_batch_raises_before_converter(self) -> None:
         """``dynamic_batch=True`` is refused by ``RFDETR.export()`` before the converter is invoked."""
         obj = self._make_rfdetr()
         with pytest.raises(NotImplementedError, match="dynamic_batch"):
             obj.export(format="coreml", output_dir=str(self._tmp_path / "out"), dynamic_batch=True)
-        self._mock_export_coreml.assert_not_called()
+        self._mock_coreml_convert.assert_not_called()
 
     def test_invalid_format_raises_value_error(self) -> None:
         """Unknown ``format`` must raise ``ValueError`` listing supported formats."""
@@ -366,7 +436,7 @@ _COREML_E2E_VARIANTS = [
 # value_inference) and, on some untrained-weight draws, that fold overflows ("divide by zero
 # encountered in matmul" / "invalid value encountered in matmul"), embedding a bad constant in
 # the exported .mlpackage. This is a coremltools bug, not something RF-DETR's export code
-# controls (see src/rfdetr/export/_coreml/converter.py and the torch<2.12 pin in pyproject.toml,
+# controls (see src/rfdetr/export/_coreml/exporter.py and the torch<2.12 pin in pyproject.toml,
 # which reduces but does not eliminate the underlying instability).
 #
 # tests/conftest.py's autouse `reset_random_seeds` fixture already calls `seed_all(seed=7)`
@@ -424,7 +494,29 @@ def coreml_export(
     return model, example, Path(mlpackage_path), validate_fn
 
 
+@pytest.fixture(scope="module")
+def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
+    """Export RFDETRNano's backbone and return its eager feature-map reference module.
+
+    Uses the public ``backbone_only=True`` route so the CoreML runtime executes the same list-valued ``_BackboneExport``
+    graph that users receive, rather than a mocked converter dispatch.
+    """
+    import rfdetr
+    from rfdetr.utilities.reproducibility import seed_all
+
+    out_dir = tmp_path_factory.mktemp("coreml_backbone")
+    seed_all(_COREML_EXPORT_SEED)
+    detector = rfdetr.RFDETRNano(pretrain_weights=None)
+    mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", backbone_only=True, verbose=False)
+    backbone = detector.model.model.backbone[0].to("cpu").eval()
+    reference_model = _BackboneExport(backbone)
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
+    return reference_model, example, Path(mlpackage_path)
+
+
 @coreml_only
+@pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
@@ -433,7 +525,7 @@ class TestCoreMLEndToEnd:
         """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision."""
         _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
-        # Default compute_precision resolves to FLOAT32 (see export_coreml docstring); the filename must
+        # Default compute_precision resolves to FLOAT32 (see the exporter module docstring); the filename must
         # always encode it, since precision materially changes the artifact.
         assert mlpackage_path.stem.endswith("_fp32")
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
@@ -452,6 +544,17 @@ class TestCoreMLEndToEnd:
         model, structured, mlpackage_path, validate_fn = coreml_export
         example = _parity_input_from_image(people_walking_image_path, int(structured.shape[-1]))
         validate_fn(mlpackage_path, model, example)
+
+    def test_backbone_outputs_match_pytorch_structured(
+        self, coreml_backbone_export: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """CoreML must run every backbone feature-map output from the public backbone-only export."""
+        model, example, mlpackage_path = coreml_backbone_export
+        assert "-backbone" in mlpackage_path.stem
+        diffs = _coreml_parity_diffs(mlpackage_path, model, example)
+        assert max(diffs) < _COREML_MAX_ABS_DIFF, (
+            f"CoreML backbone outputs diverge from PyTorch: max abs diff {max(diffs)} (bound={_COREML_MAX_ABS_DIFF})"
+        )
 
 
 class TestCoreMLParityInputHelpers:

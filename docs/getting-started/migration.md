@@ -7,10 +7,84 @@ description: Per-version migration guide for RF-DETR. Covers breaking changes an
 Read each section between your current version and your target — every section covers only the delta between two adjacent releases.
 
 ```
-1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10
+1.4.x  →  1.5 →  1.6  →  1.7  →  1.8  →  1.9  →  1.10  →  1.11
 ```
 
 You can apply all changes in one go; working through sections one release at a time and verifying between each step is optional but makes failures easier to isolate. Deprecated APIs emit a `DeprecationWarning`, while deprecated configuration fields emit a `FutureWarning`, until the version marked for removal. See the [Changelog](../changelog.md) for the full list of changes in each release.
+
+---
+
+## Upgrade 1.10 → 1.11
+
+### Breaking changes
+
+!!! warning "Breaking: the export internals are now exporter classes"
+
+    Each export format is written by a `<Format>Exporter` class built from that format's configuration, and `RFDETR.export()` is a facade over them. Its own signature and return value are unchanged — only the internal modules moved. Public exports are unaffected; this matters only if you imported the converter functions directly.
+
+    | Removed                                                                        | Replacement                                                                               |
+    | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+    | `rfdetr.export.main` (whole module, including `main()` and `make_infer_image`) | `rfdetr.export.prepare.make_infer_image`; the `main()` CLI had no entry point and is gone |
+    | `rfdetr.export.protocols.ExporterProtocol`                                     | `rfdetr.export.base.Exporter`                                                             |
+    | `rfdetr.export._onnx.exporter.export_onnx`                                     | `rfdetr.export._onnx.exporter.OnnxExporter`                                               |
+    | `rfdetr.export._openvino.exporter.export_openvino`                             | `rfdetr.export._openvino.exporter.OpenVINOExporter`                                       |
+    | `rfdetr.export._coreml.converter.export_coreml`                                | `rfdetr.export._coreml.exporter.CoreMLExporter`                                           |
+    | `rfdetr.export._executorch.converter.export_executorch`                        | `rfdetr.export._executorch.exporter.ExecuTorchExporter`                                   |
+    | `rfdetr.export._tflite.converter.export_tflite`                                | `rfdetr.export._tflite.exporter.TFLiteExporter`                                           |
+    | `rfdetr.export._tensorrt.build_engine`                                         | `rfdetr.export._tensorrt.exporter.TensorRTExporter`                                       |
+    | `rfdetr.export.benchmark.TRTInference`                                         | `rfdetr.export._tensorrt.inference.TRTInference`                                          |
+
+    Every path with a leading underscore was already internal and carried no stability guarantee; they are listed so the move is discoverable rather than a silent break. Prefer `RFDETR.export(format=...)`. The contract each exporter implements is documented in the [Exporter Blueprint](../learn/export-blueprint.md).
+
+!!! warning "Breaking: `format=\"tensorrt\"` with `backbone_only=True` and `output_name` now marks the engine"
+
+    The engine is named `{output_name}-backbone.trt` instead of `{output_name}.trt`, matching what `RFDETR.export()`'s documentation already described and what every other format does. Without the marker a backbone engine silently overwrites a full-detector engine exported under the same name. Scripts that rebuilt the path from `output_name` need the suffix added.
+
+### Removed
+
+!!! warning "Removed: `rfdetr.datasets.synthetic`"
+
+    The synthetic shape-dataset generator has been removed. It existed to build RF-DETR's own test fixtures, and that job now belongs to the [`fuse-augmentations`](https://github.com/Borda/fuse-augmentations) package, whose `fuse_augmentations.data` module generates the same datasets in COCO or YOLO layout for detection, segmentation, and OBB tasks.
+
+    Removed names: `generate_coco_dataset`, `generate_synthetic_sample`, `draw_synthetic_shape`, `calculate_boundary_overlap`, `DatasetSplitRatios`, `DEFAULT_SPLIT_RATIOS`, `SYNTHETIC_SHAPES`, `SYNTHETIC_COLORS`.
+
+    ```bash
+    pip install fuse-augmentations
+    ```
+
+    ```python
+    # Before
+    from rfdetr.datasets.synthetic import DatasetSplitRatios, generate_coco_dataset
+
+    generate_coco_dataset(
+        output_dir="dataset",
+        num_images=100,
+        img_size=224,
+        class_mode="shape",
+        min_objects=3,
+        max_objects=7,
+        split_ratios=DatasetSplitRatios(train=0.8, val=0.2, test=0.0),
+        with_segmentation=True,
+    )
+
+    # After
+    from fuse_augmentations.data import SplitRatios, generate_dataset
+
+    generate_dataset(
+        output_dir="dataset",
+        num_images=100,
+        fmt="coco",
+        task="segmentation",  # "detection" for boxes only
+        class_mode="shape",
+        split_ratios=SplitRatios(train=0.8, val=0.2, test=0.0),
+        seed=42,
+        img_size=224,
+        min_objects=3,
+        max_objects=7,
+    )
+    ```
+
+    Two differences to plan for: the replacement writes **dense** COCO category ids (`1, 2, 3, …`) where the removed generator wrote sparse ones (`1, 3, 5, …`), and its shape set adds `rectangle`, so a fixed class count of 3 becomes 4. Derive the class count from the annotation file rather than hard-coding it. Generation also draws from fresh entropy unless you pass `seed`.
 
 ---
 
@@ -44,6 +118,39 @@ You can apply all changes in one go; working through sections one release at a t
 
     ```python
     train_config = TrainConfig(eval_base_model=True)
+    ```
+
+!!! warning "Breaking: `grad_accum_steps` now defaults to `1`"
+
+    `TrainConfig.grad_accum_steps` defaults to `1` (was `4`), which changes the default effective batch size from 16 to 4 at the default `batch_size=4`. This is a training-semantics change, not just a throughput change — the optimization trajectory (and possibly convergence/final mAP) can differ from a run using the old default. `batch_size="auto"` runs are unaffected, since the auto-batch probe overwrites `grad_accum_steps` with its own recommendation. Restore the previous default:
+
+    ```python
+    train_config = TrainConfig(grad_accum_steps=4)
+    ```
+
+!!! warning "Breaking: optimizer parameter groups are now merged by hyperparameter"
+
+    `get_param_dict` now builds one parameter group per distinct learning-rate/weight-decay combination instead of one group per parameter (`rfdetr-nano` goes from 465 groups to 28). Layer-wise LR decay and per-parameter weight decay are preserved, and the resulting AdamW steps are bit-identical; checkpoints saved with the old per-parameter layout resume automatically. If you pass an explicit `lr_scheduler` whose `lr_scheduler_kwargs` include a list sized to a specific parameter-group count (e.g. `LambdaLR`'s per-group `lr_lambda`), resize that list to match the new (smaller) group count.
+
+!!! warning "Breaking: dataset builders require a complete pipeline-option namespace"
+
+    `build_roboflow_from_coco`, `build_roboflow_from_yolo`, and `build_o365_raw` now raise instead of silently substituting a default when the config namespace passed to them is missing `square_resize_div_64`, `segmentation_head`, `multi_scale`, `expanded_scales`, `do_random_resize_via_padding`, `patch_size`, or `num_windows` (`build_o365_raw` doesn't take `segmentation_head` — detection-only). Calling these with a complete `TrainConfig`/`ModelConfig` (the normal `.train()`/`RFDETRDataModule` path) is unaffected — this only affects callers who assemble a partial config namespace by hand and pass it to these builders directly. Supply every field on that namespace to fix it:
+
+    ```python
+    # Before — missing fields silently fell back to (sometimes wrong) defaults
+    build_roboflow_from_coco(args=partial_namespace)
+
+    # After — supply every pipeline option the builder needs, matching your
+    # model variant's ModelConfig (patch_size varies by variant — 12, 14, or
+    # 16 — read it from your ModelConfig rather than hardcoding it)
+    partial_namespace.square_resize_div_64 = True
+    partial_namespace.segmentation_head = False
+    partial_namespace.multi_scale = True
+    partial_namespace.expanded_scales = True
+    partial_namespace.do_random_resize_via_padding = False
+    partial_namespace.patch_size = model_config.patch_size
+    partial_namespace.num_windows = model_config.num_windows
+    build_roboflow_from_coco(args=partial_namespace)
     ```
 
 ### Deprecated in v1.10 → Remove in v1.13
@@ -117,7 +224,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     # These imports now raise ImportError; update to the canonical paths
     from rfdetr.util.coco_classes import COCO_CLASSES  # → rfdetr.assets.coco_classes
     from rfdetr.util.misc import get_rank  # → rfdetr.utilities
-    from rfdetr.deploy import export_onnx  # → rfdetr.export.main
+    from rfdetr.deploy import export_onnx  # → RFDETR.export(format="onnx")
     ```
 
 !!! warning "Removed: `build_namespace(model_config, train_config)`"
@@ -170,7 +277,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 
-    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=...)`** — renamed to `inference()` with the same signature.
+    **`optimize_for_inference(compile=..., batch_size=..., dtype=..., inplace=..., compile_backend=...)`** — renamed to `inference()` with the same signature.
 
     ```python
     # Before (deprecated)
@@ -491,7 +598,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     from rfdetr.training.param_groups import get_param_dict
     from rfdetr.training.drop_schedule import drop_scheduler
     from rfdetr.visualize.data import save_gt_predictions_visualization
-    from rfdetr.export.main import export_onnx
+    from rfdetr.export._onnx.exporter import OnnxExporter  # export_onnx in v1.9; see Upgrade 1.10 → 1.11
     from rfdetr.models.heads.segmentation import SegmentationHead
     ```
 

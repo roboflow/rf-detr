@@ -5,9 +5,9 @@
 # ------------------------------------------------------------------------
 """ExecuTorch export: PyTorch -> ``.pte`` conversion via ``torch.export``."""
 
-from rfdetr.export._executorch.converter import (
+from rfdetr.export._executorch.exporter import (
+    ExecuTorchExporter,
     _check_executorch_available,
-    export_executorch,
 )
 
 try:
@@ -16,4 +16,4 @@ try:
 except ImportError:
     _IS_EXECUTORCH_AVAILABLE = False
 
-__all__ = ["export_executorch"]
+__all__ = ["ExecuTorchExporter"]

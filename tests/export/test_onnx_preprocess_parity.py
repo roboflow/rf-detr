@@ -5,10 +5,10 @@
 # ------------------------------------------------------------------------
 """Preprocessing parity tests for the ONNX Runtime inference helper.
 
-``_preprocess_pil_to_nchw`` must produce the same input tensor as ``RFDETR.predict()`` for the same source image — the
-ONNX sibling of ``tests/export/test_tflite_inference_parity.py``. History: this path resized with PIL BILINEAR, which
-applies an adaptive antialias filter when downscaling; after predict() switched to ``antialias=False`` (#1206) the ONNX
-inputs diverged on 91%+ of float bits.
+``preprocess_to_nchw`` must produce the same input tensor as ``RFDETR.predict()`` for the same source image — the ONNX
+sibling of ``tests/export/test_tflite_inference_parity.py``. History: this path resized with PIL BILINEAR, which applies
+an adaptive antialias filter when downscaling; after predict() switched to ``antialias=False`` (#1206) the ONNX inputs
+diverged on 91%+ of float bits.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pytest
 import torchvision.transforms.functional as F  # noqa: N812
 from PIL import Image as PILImage
 
-from rfdetr.export._onnx.inference import _preprocess_pil_to_nchw
+from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -67,7 +67,7 @@ def _make_synthetic_rgb(seed: int, size: tuple[int, int]) -> PILImage.Image:
 
 
 class TestOnnxPreprocessingParity:
-    """``_preprocess_pil_to_nchw`` must match predict()'s preprocessing bit-for-bit with torchvision."""
+    """``preprocess_to_nchw`` must match predict()'s preprocessing bit-for-bit with torchvision."""
 
     @pytest.mark.parametrize(
         ("src_hw", "tgt", "seed"),
@@ -84,7 +84,7 @@ class TestOnnxPreprocessingParity:
         pil = _make_synthetic_rgb(seed=seed, size=src_hw)
 
         pt = _pytorch_preprocess(pil, tgt)
-        onnx = _preprocess_pil_to_nchw(pil, tgt[0], tgt[1], channels=3)
+        onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
 
         assert pt.shape == onnx.shape, f"shape mismatch: PT {pt.shape} vs ONNX {onnx.shape}"
         pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
@@ -108,7 +108,7 @@ class TestOnnxPreprocessingParity:
         tgt = (384, 384)
 
         pt = _pytorch_preprocess(pil, tgt)
-        onnx = _preprocess_pil_to_nchw(pil, tgt[0], tgt[1], channels=3)
+        onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
 
         img = F.to_tensor(pil.convert("RGB"))
         img = F.resize(img, list(tgt), antialias=True)
@@ -134,7 +134,7 @@ class TestOnnxPreprocessingParity:
         pt = _pytorch_preprocess(pil, tgt)
 
         with mock.patch.dict(sys.modules, {"torch": None}):
-            onnx = _preprocess_pil_to_nchw(pil, tgt[0], tgt[1], channels=3)
+            onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
 
         max_diff = float(np.abs(pt - onnx).max())
         assert max_diff < FALLBACK_MAX_ABS_DIFF_BOUND, (
@@ -146,6 +146,6 @@ class TestOnnxPreprocessingParity:
         """Grayscale (channels=1) path must produce shape (1, 1, H, W) float32."""
         rng = np.random.default_rng(7)
         pil = PILImage.fromarray(rng.integers(0, 256, size=(256, 256), dtype=np.uint8), mode="L")
-        onnx = _preprocess_pil_to_nchw(pil, 128, 128, channels=1)
+        onnx = preprocess_to_nchw(pil, 128, 128, channels=1)
         assert onnx.shape == (1, 1, 128, 128), f"unexpected shape: {onnx.shape}"
         assert onnx.dtype == np.float32

@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING, Any, cast
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
 from torch import Tensor
+from torch.optim import Optimizer
 from torch.optim.swa_utils import AveragedModel
+from torch.utils.hooks import RemovableHandle
 
 if TYPE_CHECKING:
     from rfdetr.training.module_model import RFDETRModelModule
@@ -60,8 +62,9 @@ class RFDETREMACallback(Callback):
 
         self._average_model: AveragedModel | None = None
         self._latest_update_step = 0
-        self._swapped_state_dict: dict[str, Tensor] | None = None
+        self._swapped_state_dict: dict[str, Any] | None = None
         self._pending_average_state_dict: dict[str, Any] | None = None
+        self._xla_optimizer_hook: RemovableHandle | None = None
 
     # Retained as the per-tensor fallback for non-floating-point groups (see
     # _multi_avg_fn) — no longer the registered AveragedModel avg_fn.
@@ -113,21 +116,22 @@ class RFDETREMACallback(Callback):
         """Update a (device, dtype) group of EMA tensors in-place via foreach kernels.
 
         ``AveragedModel.update_parameters`` routes to this grouped path when ``multi_avg_fn`` is set, replacing the
-        per-tensor ``avg_fn`` loop that performed one ``num_averaged.item()`` GPU→CPU sync *per tensor* per step with a
-        single sync per group. The float path applies ``ema * decay + model * (1 - decay)``, numerically equivalent
-        within floating-point tolerance to ``_avg_fn`` (``torch._foreach_add_(..., alpha=)`` may lower to an FMA
-        instruction, so the result can differ from separate mul-then-add by ~1 ULP); non-floating-point groups (e.g.
-        integer buffers when averaging buffers) fall back to the per-tensor formula to preserve its cast semantics.
+        per-tensor ``avg_fn`` loop that performed one ``num_averaged.item()`` device→CPU sync *per tensor* per step with
+        a single sync per eager-device group and a host counter on XLA. The float path applies
+        ``ema * decay + model * (1 - decay)``, numerically equivalent within floating-point tolerance to ``_avg_fn``
+        (``torch._foreach_add_(..., alpha=)`` may lower to an FMA instruction, so the result can differ from separate
+        mul-then-add by ~1 ULP); non-floating-point groups (e.g. integer buffers when averaging buffers) fall back to
+        the per-tensor formula to preserve its cast semantics.
 
         Args:
             averaged_params: EMA tensors of one device/dtype group, updated in-place.
             model_params: Matching live model tensors.
             num_averaged: Number of models averaged so far (0-indexed); passed by ``AveragedModel`` as a 0-dim tensor.
         """
-        num_averaged_value = int(num_averaged.item()) if isinstance(num_averaged, Tensor) else int(num_averaged)
-        effective_decay = self._effective_decay(num_averaged_value)
         if not averaged_params:
             return
+        num_averaged_value = self._num_averaged_value(num_averaged, averaged_params[0].device.type)
+        effective_decay = self._effective_decay(num_averaged_value)
         if not averaged_params[0].is_floating_point():
             for averaged_param, model_param in zip(averaged_params, model_params):
                 averaged_param.copy_(self._avg_fn(averaged_param, model_param, num_averaged_value))
@@ -138,24 +142,144 @@ class RFDETREMACallback(Callback):
         torch._foreach_mul_(averaged_params, effective_decay)
         torch._foreach_add_(averaged_params, model_params, alpha=1.0 - effective_decay)
 
-    def setup(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
-        """Initialise the averaged model at fit start.
+    def _num_averaged_value(self, num_averaged: Tensor | int, device_type: str) -> int:
+        """Read the EMA counter without materializing a lazy XLA scalar.
+
+        Args:
+            num_averaged: Per-device counter supplied by ``AveragedModel``.
+            device_type: Device type of the parameter group being averaged.
+
+        Returns:
+            Number of completed EMA updates.
+
+        Raises:
+            RuntimeError: If XLA averaging starts before the averaged model exists.
+        """
+        if device_type == "xla":
+            if self._average_model is None:
+                raise RuntimeError("XLA EMA averaging started before the averaged model was initialized.")
+            return int(self._average_model.n_averaged.item())
+        return int(num_averaged.item()) if isinstance(num_averaged, Tensor) else int(num_averaged)
+
+    def _restore_pending_average_state(self, pl_module: LightningModule) -> None:
+        """Restore a callback or legacy EMA state after constructing the averaged model.
+
+        Current callback state takes precedence over the legacy model-only state
+        when a checkpoint supplies both formats.
+
+        Args:
+            pl_module: The live module that may hold a stashed legacy EMA state.
+        """
+        if self._average_model is None:
+            return
+        if self._pending_average_state_dict is not None:
+            self._load_ema_weights(self._average_model, self._pending_average_state_dict)
+            self._pending_average_state_dict = None
+            return
+        if not hasattr(pl_module, "_pending_legacy_ema_state"):
+            return
+
+        legacy_ema_state = pl_module._pending_legacy_ema_state
+        if isinstance(legacy_ema_state, dict):
+            average_module = cast("RFDETRModelModule", self._average_model.module)
+            incompatible = average_module.model.load_state_dict(
+                self._without_extra_state(legacy_ema_state), strict=False
+            )
+            missing_keys = [key for key in incompatible.missing_keys if not self._is_extra_state_key(key)]
+            unexpected_keys = [key for key in incompatible.unexpected_keys if not self._is_extra_state_key(key)]
+            if missing_keys or unexpected_keys:
+                warnings.warn(
+                    "Legacy EMA checkpoint loaded with non-exact key match; "
+                    f"missing={len(missing_keys)} "
+                    f"unexpected={len(unexpected_keys)}.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+        delattr(pl_module, "_pending_legacy_ema_state")
+
+    @staticmethod
+    def _is_extra_state_key(key: str) -> bool:
+        """Return whether *key* identifies a module extra-state payload.
+
+        Args:
+            key: Fully qualified state-dict key.
+
+        Returns:
+            ``True`` only when the final key component is ``"_extra_state"``.
+        """
+        return key.rsplit(".", maxsplit=1)[-1] == "_extra_state"
+
+    def _without_extra_state(self, state_dict: dict[str, Any]) -> dict[str, Any]:
+        """Return *state_dict* without module extra-state entries or metadata loss.
+
+        Args:
+            state_dict: Source module state dictionary.
+
+        Returns:
+            The original state dictionary when no extra state exists, otherwise a
+            metadata-preserving shallow copy without ``_extra_state`` entries.
+        """
+        extra_state_keys = [key for key in state_dict if self._is_extra_state_key(key)]
+        if not extra_state_keys:
+            return state_dict
+
+        filtered_state_dict = state_dict.copy()
+        for key in extra_state_keys:
+            del filtered_state_dict[key]
+        metadata = getattr(state_dict, "_metadata", None)
+        if metadata is not None:
+            setattr(filtered_state_dict, "_metadata", metadata)
+        return filtered_state_dict
+
+    def _load_ema_weights(self, module: torch.nn.Module, state_dict: dict[str, Any]) -> None:
+        """Copy EMA weights without deserializing module extra-state payloads.
+
+        Transformer Engine records FP8 scaling history in ``_extra_state`` entries
+        and intentionally rejects their pickle deserialization by default. The
+        EMA copy is in-process and needs only parameters and buffers, so it omits
+        exactly those entries while retaining strict errors for all other keys.
+
+        Args:
+            module: Module receiving the EMA or restored live weights.
+            state_dict: Source module state dictionary.
+
+        Raises:
+            RuntimeError: If any non-extra-state key is missing or unexpected.
+        """
+        incompatible = module.load_state_dict(self._without_extra_state(state_dict), strict=False)
+        missing_keys = [key for key in incompatible.missing_keys if not self._is_extra_state_key(key)]
+        unexpected_keys = [key for key in incompatible.unexpected_keys if not self._is_extra_state_key(key)]
+        if not missing_keys and not unexpected_keys:
+            return
+
+        error_messages = []
+        if missing_keys:
+            error_messages.append(f"Missing key(s) in state_dict: {', '.join(repr(key) for key in missing_keys)}.")
+        if unexpected_keys:
+            error_messages.append(
+                f"Unexpected key(s) in state_dict: {', '.join(repr(key) for key in unexpected_keys)}."
+            )
+        raise RuntimeError(
+            f"Error(s) in loading state_dict for {module.__class__.__name__}:\n\t" + "\n\t".join(error_messages)
+        )
+
+    def on_fit_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Initialise EMA after Lightning applies precision conversion and device placement.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
-            stage: Current trainer stage (``"fit"``, ``"validate"``, ...).
         """
-        if stage != "fit":
-            return
-
         device = pl_module.device
         if not isinstance(device, torch.device):
             raise TypeError(f"Expected a torch.device from the Lightning module, got {type(device).__name__}.")
 
+        # AveragedModel evaluates n_averaged in Python. Keep that control-flow
+        # counter eager while its copied parameters remain on the XLA device.
+        averaged_model_device = None if device.type == "xla" else device
         self._average_model = AveragedModel(
             model=pl_module,
-            device=device,
+            device=averaged_model_device,
             use_buffers=self._use_buffers,
             multi_avg_fn=self._multi_avg_fn,
         )
@@ -164,39 +288,16 @@ class RFDETREMACallback(Callback):
         # dropout layers stay in training mode and produce ~random outputs.
         self._average_model.eval()
 
-        if self._pending_average_state_dict is not None:
-            self._average_model.load_state_dict(self._pending_average_state_dict)
-            self._pending_average_state_dict = None
-        elif hasattr(pl_module, "_pending_legacy_ema_state"):
-            legacy_ema_state = pl_module._pending_legacy_ema_state
-            if isinstance(legacy_ema_state, dict):
-                average_module = cast("RFDETRModelModule", self._average_model.module)
-                incompatible = average_module.model.load_state_dict(legacy_ema_state, strict=False)
-                if incompatible.missing_keys or incompatible.unexpected_keys:
-                    warnings.warn(
-                        "Legacy EMA checkpoint loaded with non-exact key match; "
-                        f"missing={len(incompatible.missing_keys)} "
-                        f"unexpected={len(incompatible.unexpected_keys)}.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-            delattr(pl_module, "_pending_legacy_ema_state")
+        self._restore_pending_average_state(pl_module)
 
     def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Apply a resumed ``average_model_state_dict`` that arrived after ``setup()``.
+        """Apply resumed EMA state that arrived after ``on_fit_start()``.
 
-        For every strategy RF-DETR ships (``strategy.restore_checkpoint_after_setup`` is ``False``
-        except for FSDP/DeepSpeed/model-parallel), PTL's ``Trainer._run`` calls
-        ``call._call_setup_hook`` (which invokes this callback's ``setup()``) *before*
-        ``_checkpoint_connector._restore_modules_and_callbacks`` (which invokes
-        ``load_state_dict()``). So on a resumed run, ``load_state_dict()`` stashes the checkpoint's
-        ``average_model_state_dict`` into ``_pending_average_state_dict`` only after ``setup()``
-        already built ``_average_model`` from the not-yet-restored live weights — the ``elif``
-        branch in ``setup()`` that applies a pending *plain* state dict never fires for this
-        ordering, silently leaving the averaged model un-resumed. ``on_train_start`` runs from
-        inside ``_run_stage()``, strictly after all checkpoint restoration completes, so it is the
-        first safe point to apply it. A no-op when ``setup()`` already consumed the pending state
-        (the reverse ordering used by FSDP/DeepSpeed/model-parallel).
+        Standard strategies restore callback and module checkpoint state before
+        ``on_fit_start()``, so that hook restores the EMA state immediately after
+        constructing its precision-matched averaged model. Strategies that restore
+        after their setup may deliver callback or legacy EMA state later; this hook
+        is the first point after restoration where the same state can be applied.
 
         Args:
             trainer: The Lightning Trainer instance.
@@ -206,9 +307,59 @@ class RFDETREMACallback(Callback):
         # zero. An absolute saved guard would otherwise skip that many new batches.
         if trainer.global_step < self._latest_update_step:
             self._latest_update_step = trainer.global_step
-        if self._pending_average_state_dict is not None and self._average_model is not None:
-            self._average_model.load_state_dict(self._pending_average_state_dict)
-            self._pending_average_state_dict = None
+        self._restore_pending_average_state(pl_module)
+        if pl_module.device.type == "xla":
+            self._register_xla_optimizer_hook(trainer, pl_module)
+
+    def _register_xla_optimizer_hook(self, trainer: Trainer, pl_module: LightningModule) -> None:
+        """Queue EMA inside the optimizer step, before Lightning's XLA step marker.
+
+        Registers on ``trainer.optimizers[0]``, the raw ``torch.optim.Optimizer`` that both the automatic-
+        optimization path and ``LightningOptimizer.step()`` (the manual-optimization keypoint path) ultimately
+        call ``.step()`` on, so the hook fires for either lifecycle.
+
+        Args:
+            trainer: The Lightning Trainer instance; supplies the raw optimizer and the current step count.
+            pl_module: The ``RFDETRModelModule`` being trained.
+        """
+        if self._xla_optimizer_hook is not None:
+            self._xla_optimizer_hook.remove()
+
+        optimizer = trainer.optimizers[0]
+
+        def update_ema(
+            optimizer: Optimizer,
+            args: tuple[Any, ...],
+            kwargs: dict[str, Any],
+        ) -> None:
+            """Optimizer step-post-hook callback: update EMA for the step that just completed.
+
+            Args:
+                optimizer: The optimizer instance the hook fired on (unused; closed over instead).
+                args: Positional arguments passed to the wrapped ``step`` call (unused).
+                kwargs: Keyword arguments passed to the wrapped ``step`` call (unused).
+            """
+            del optimizer, args, kwargs
+            self._update_ema_for_step(pl_module, trainer.global_step + 1)
+
+        self._xla_optimizer_hook = optimizer.register_step_post_hook(update_ema)
+
+    def _update_ema_for_step(self, pl_module: LightningModule, global_step: int) -> None:
+        """Update EMA once for an eligible optimizer step.
+
+        Args:
+            pl_module: The ``RFDETRModelModule`` being trained.
+            global_step: Optimizer step count to evaluate for eligibility, already resolved to its post-step value
+                by the caller (eager accelerators pass ``trainer.global_step`` directly; the XLA hook passes
+                ``trainer.global_step + 1`` since it runs before Lightning's own counter advances).
+        """
+        if self._average_model is None or global_step <= self._latest_update_step:
+            return
+
+        self._latest_update_step = global_step
+        should_update_step = global_step % self._update_interval_steps == 0
+        if should_update_step and self.should_update(step_idx=global_step - 1):
+            self._average_model.update_parameters(pl_module)
 
     def should_update(
         self,
@@ -218,7 +369,7 @@ class RFDETREMACallback(Callback):
         """Return whether either trigger index is present.
 
         ``epoch_idx`` remains part of the callback interface for backwards compatibility and still counts as a
-        trigger when supplied. The callback now invokes this method only from ``on_train_batch_end`` with ``step_idx``;
+        trigger when supplied. The callback invokes this method from its optimizer-step lifecycle with ``step_idx``;
         it no longer dispatches an epoch-end EMA update, which previously double-counted the last step of each epoch
         and bypassed ``update_interval_steps``.
 
@@ -236,10 +387,10 @@ class RFDETREMACallback(Callback):
         if self._average_model is None:
             return
         if self._swapped_state_dict is None:
-            self._swapped_state_dict = deepcopy(pl_module.state_dict())
-            pl_module.load_state_dict(self._average_model.module.state_dict(), strict=True)
+            self._swapped_state_dict = deepcopy(self._without_extra_state(pl_module.state_dict()))
+            self._load_ema_weights(pl_module, self._average_model.module.state_dict())
             return
-        pl_module.load_state_dict(self._swapped_state_dict, strict=True)
+        self._load_ema_weights(pl_module, self._swapped_state_dict)
         self._swapped_state_dict = None
 
     def on_train_batch_end(
@@ -250,17 +401,10 @@ class RFDETREMACallback(Callback):
         batch: Any,
         batch_idx: int,
     ) -> None:
-        """Update EMA after optimizer steps."""
-        if self._average_model is None:
+        """Update EMA after optimizer steps on eager accelerators."""
+        if pl_module.device.type == "xla":
             return
-        step_idx = trainer.global_step - 1
-        if trainer.global_step <= self._latest_update_step:
-            return
-
-        self._latest_update_step = trainer.global_step
-        should_update_step = trainer.global_step % self._update_interval_steps == 0
-        if should_update_step and self.should_update(step_idx=step_idx):
-            self._average_model.update_parameters(pl_module)
+        self._update_ema_for_step(pl_module, trainer.global_step)
 
     def on_test_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Evaluate tests using averaged EMA weights unless the swap is suppressed."""
@@ -277,8 +421,21 @@ class RFDETREMACallback(Callback):
     def on_train_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Leave the module in EMA state after training finishes."""
         if self._average_model is not None:
-            pl_module.load_state_dict(self._average_model.module.state_dict(), strict=True)
+            self._load_ema_weights(pl_module, self._average_model.module.state_dict())
         self._swapped_state_dict = None
+
+    def teardown(self, trainer: Trainer, pl_module: LightningModule, stage: str) -> None:
+        """Remove the XLA optimizer hook when the fit lifecycle ends.
+
+        Args:
+            trainer: The Lightning Trainer instance (unused; the hook handle already closes over what it needs).
+            pl_module: The ``RFDETRModelModule`` being trained (unused).
+            stage: The lifecycle stage being torn down, e.g. ``"fit"`` (unused).
+        """
+        del trainer, pl_module, stage
+        if self._xla_optimizer_hook is not None:
+            self._xla_optimizer_hook.remove()
+            self._xla_optimizer_hook = None
 
     def state_dict(self) -> dict[str, Any]:
         """Return callback state for checkpointing."""
@@ -286,7 +443,7 @@ class RFDETREMACallback(Callback):
             "latest_update_step": self._latest_update_step,
         }
         if self._average_model is not None:
-            state["average_model_state_dict"] = self._average_model.state_dict()
+            state["average_model_state_dict"] = self._without_extra_state(self._average_model.state_dict())
         return state
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
@@ -299,4 +456,11 @@ class RFDETREMACallback(Callback):
         if self._average_model is None or not hasattr(self._average_model.module, "model"):
             return None
         average_module = cast("RFDETRModelModule", self._average_model.module)
-        return {k: v.detach().clone() for k, v in average_module.model.state_dict().items()}
+        state_dict = self._without_extra_state(average_module.model.state_dict())
+        cloned_state_dict = state_dict.copy()
+        for key, value in cloned_state_dict.items():
+            cloned_state_dict[key] = value.detach().clone()
+        metadata = getattr(state_dict, "_metadata", None)
+        if metadata is not None:
+            setattr(cloned_state_dict, "_metadata", metadata)
+        return cloned_state_dict

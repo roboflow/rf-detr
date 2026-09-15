@@ -71,7 +71,7 @@ uv sync --all-groups
 See `pyproject.toml` for complete dependency specifications:
 
 - **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
-- **Optional:** `[train]` (minimal training loop dependencies), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
+- **Optional:** `[data]` (WebDataset streaming reader), `[train]` (minimal training loop dependencies, including both COCO evaluation backends selectable via `TrainConfig.eval_backend`)), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
@@ -91,7 +91,7 @@ See `pyproject.toml` for complete dependency specifications:
 
 ```bash
 # CPU tests (default for local development; mirrors CI)
-uv run --no-sync pytest src/ tests/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
+uv run --no-sync pytest src/ tests/ scripts/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
 # GPU tests (requires GPU; mirrors CI)
 uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy/test_checkpoint_compat.py -n 2 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
@@ -220,7 +220,7 @@ uv run twine check --strict dist/*
 
 **Augmentations:**
 
-- **Training** uses torchvision-native transforms **unless Albumentations is installed** — `augmentation_backend="cpu"` (the default) then auto-selects Albumentations and injects the default `AUG_CONFIG`, even when `aug_config=None`. Identical training code therefore resolves differently across environments; pass `augmentation_backend="torchvision"` to pin the torchvision pipeline regardless of what is installed. This backend selection only reaches the dataset builders: `_route_transforms` chooses Albumentations only for `image_set == "train"`, so validation always stays on torchvision, and prediction (`src/rfdetr/detr.py`) and export (`src/rfdetr/export/main.py`) call torchvision preprocessing directly — do not change inference/export behavior based on the training backend.
+- **Training** uses torchvision-native transforms **unless Albumentations is installed** — `augmentation_backend="cpu"` (the default) then auto-selects Albumentations and injects the default `AUG_CONFIG`, even when `aug_config=None`. Identical training code therefore resolves differently across environments; pass `augmentation_backend="torchvision"` to pin the torchvision pipeline regardless of what is installed. This backend selection only reaches the dataset builders: `_route_transforms` chooses Albumentations only for `image_set == "train"`, so validation always stays on torchvision, and prediction (`src/rfdetr/detr.py`) and export (`src/rfdetr/export/prepare.py`) call torchvision preprocessing directly — do not change inference/export behavior based on the training backend.
 - Custom non-empty `aug_config` values on the CPU path use Albumentations and require `rfdetr[augment]`.
 - `augmentation_backend="auto"` resolves to Kornia when CUDA and Kornia are available, falling back to CPU otherwise; `augmentation_backend="gpu"` pins Kornia and requires `rfdetr[augment]`.
 
@@ -230,10 +230,19 @@ uv run twine check --strict dist/*
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 
-**Model Selection (examples, docs, tests, defaults):**
+**Model Export:**
 
-- **Default to `RFDETRSmall` / `"rfdetr-small"`.** Use it wherever an example needs a concrete detection model.
-- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, or tests — treat as deprecated; substitute `small`.
+- Each format is an `Exporter` subclass in `src/rfdetr/export/_<format>/exporter.py`, built from its own frozen config dataclass defined in the same module. `RFDETR.export()` is a facade — signature and return value are the public surface; everything below it is internal.
+- `src/rfdetr/export/base.py` names no format. It holds `ExportConfig` and `Exporter` only; per-format configs and their `RFDETR.export()` keyword mapping (`setting_names`) live with the exporter that reads them.
+- `src/rfdetr/export/registry.py` is data: format name → exporter dotted path, plus the facts needed *before* the heavy optional dependency is imported (`label`, `pip_extra`, `supports_dynamic_batch`, `dynamic_batch_reason`). Those mirror the exporter's class attributes; `tests/export/test_registry.py` is the only thing enforcing that.
+- `src/rfdetr/export/prepare.py` does the format-independent graph work once and returns an `ExportGraph`. Never duplicate it into a format.
+- Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/learn/export-blueprint.md](docs/learn/export-blueprint.md).
+
+**Model Selection (examples, docs, CI, tests, defaults):**
+
+- **Default to `RFDETRSmall` / `"rfdetr-small"` in docs and examples.** Use it wherever an example needs a concrete detection model.
+- **Default to `RFDETRNano` / `"rfdetr-nano"` in CI and tests.**
+- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, CI, or tests — treat as deprecated; substitute `small` in docs/examples and `nano` in CI/tests.
 - **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
 - **Released segmentation sizes** — `RFDETRSegNano`/`Small`/`Medium`/`Large` / `"rfdetr-seg-{nano,small,medium,large}"` (plus `xlarge`/`2xlarge`). Use a sized seg model for segmentation; `RFDETRSegPreview` / `"rfdetr-seg-preview"` is now superseded — do not use it in new examples, docs, or tests.
 - **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
@@ -312,7 +321,7 @@ result = subprocess.run(
 4. **Testing:**
     - Bug fixes: Write test first, then fix
     - Features: Test all major use cases
-    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50`
+    - Run: `uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50`
 5. **Quality checks:** `pre-commit run --all-files`
 6. **Build (if needed):** `uv build`
 7. **Commit:** Pre-commit hooks run automatically
@@ -338,6 +347,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 - **ci-tests-cpu.yml:** CPU tests across OS/Python versions
 - **ci-tests-gpu.yml:** GPU-dependent tests
+- **ci-github-tests.yml:** Tests and doctests for the helper scripts under `.github/scripts/`, which the CPU/GPU suites never collect; their tests live in `.github/_tests/`
 - **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
 - **ci-deps-resolution.yml:** Dependency resolution (`uv lock`) plus an install-plan check (`uv sync --dry-run`) for every extra on every Python interpreter allowed by requires-python (3.10-3.14). Resolution alone does not prove a pinned version ships a wheel for the interpreter in use. The `list-extras` job derives the checked set from every `[project.optional-dependencies]` extra, so a new extra is covered automatically
 - **build-package.yml:** Build and validate distributions

@@ -190,6 +190,29 @@ def _accelerator_has_multiple_auto_devices(accelerator: str | None) -> bool:
     return False
 
 
+def _accelerator_resolves_to_xla(accelerator: str | None) -> bool:
+    """Return whether *accelerator* names, or will resolve to, the XLA/TPU backend.
+
+    ``build_trainer`` decides the strategy and precision plugin before ``Trainer`` performs its
+    own accelerator resolution, so an explicit ``"xla"``/``"tpu"`` string is not the only case that
+    matters: ``TrainConfig.accelerator`` defaults to ``"auto"``, and leaving it there is this
+    repo's own documented default (see ``TrainConfig.accelerator``'s docstring). When left as
+    ``"auto"``, this mirrors ``lightning_fabric.utilities.device_parser._select_auto_accelerator``'s
+    resolution order, which checks XLA availability first -- otherwise a caller who never names an
+    accelerator would still build a ``DDPStrategy`` here, then hit the exact
+    ``XLAAccelerator``/``DDPStrategy`` mismatch this module works around, once Lightning's own
+    ``Trainer(accelerator="auto")`` resolves to XLA a few lines later.
+    """
+    accelerator_name = str(accelerator).lower()
+    if accelerator_name in ("xla", "tpu"):
+        return True
+    if accelerator_name != "auto":
+        return False
+    from pytorch_lightning.accelerators import XLAAccelerator
+
+    return XLAAccelerator.is_available()
+
+
 def _requests_multiple_devices(devices: int | str, accelerator: str | None = None) -> bool:
     """Return whether the configured devices value explicitly requests multiple devices."""
     if isinstance(devices, int):
@@ -517,8 +540,11 @@ def build_trainer(
     # XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin
     # (Literal["32-true", "16-true", "bf16-true"]); passing precision="bf16-mixed" raises
     # TypeError. Detected here so trainer_config assembly can translate the resolved precision
-    # into the required XLA plugin after applying caller-provided Trainer arguments.
-    xla_accelerator = str(accelerator).lower() in ("xla", "tpu")
+    # into the required XLA plugin after applying caller-provided Trainer arguments. Uses
+    # _accelerator_resolves_to_xla (not a literal string check) so a caller who leaves
+    # accelerator="auto" -- this repo's own default -- is covered too; see that helper's
+    # docstring for why the strategy guard below needs this same resolution.
+    xla_accelerator = _accelerator_resolves_to_xla(accelerator)
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -531,6 +557,8 @@ def build_trainer(
     # --- Precision resolution ---
     def _resolve_precision() -> str:
         if not model_config.amp:
+            if tc.amp_dtype == "fp8":
+                raise ValueError("amp_dtype='fp8' requires model_config.amp=True.")
             if tc.amp_dtype != "auto":
                 warnings.warn(
                     f"amp_dtype={tc.amp_dtype!r} has no effect when model_config.amp=False.",
@@ -538,6 +566,9 @@ def build_trainer(
                     stacklevel=2,
                 )
             return "32-true"
+        # Honor explicit accelerators and Lightning's XLA-first auto selection before probing global CUDA.
+        if tc.amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
+            raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":
@@ -545,7 +576,8 @@ def build_trainer(
         # ``train_config.amp_dtype`` (a train() kwarg) lets callers pin the autocast dtype (see issue #1132):
         #   "auto" — bf16 on bf16-capable CUDA, fp16 otherwise (historical default);
         #   "fp16" — force "16-mixed" (e.g. deployment targets without bf16 support);
-        #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported.
+        #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported;
+        #   "fp8" — use Lightning's Transformer Engine precision plugin.
         # Unrecognised values are coerced to "auto" (with a warning) by TrainConfig validation.
         amp_dtype = tc.amp_dtype
         # Ampere+ GPUs support bf16-mixed which is scaler-free —
@@ -563,6 +595,27 @@ def build_trainer(
         # parent has initialised. If a fork-based path is ever added, this
         # precision check must be moved into the child process.
         if torch.cuda.is_available():
+            if amp_dtype == "fp8":
+                # Transformer Engine's FP8 tensor-core path requires Ada (compute capability 8.9),
+                # Hopper (9.0), or newer (e.g. Blackwell) — older CUDA GPUs such as A100/T4 are
+                # CUDA-visible but not FP8-capable and would otherwise reach TE's plugin/kernel
+                # initialization and fail there instead of at this clear rejection.
+                _min_fp8_capability = (8, 9)
+                unsupported_devices = [
+                    index
+                    for index in range(torch.cuda.device_count())
+                    if torch.cuda.get_device_capability(index) < _min_fp8_capability
+                ]
+                if unsupported_devices:
+                    names = ", ".join(
+                        f"cuda:{index} ({torch.cuda.get_device_name(index)})" for index in unsupported_devices
+                    )
+                    raise ValueError(
+                        "amp_dtype='fp8' requires a Transformer Engine-supported NVIDIA GPU "
+                        "(Ada, Hopper, or newer; compute capability >= 8.9). "
+                        f"Unsupported visible device(s): {names}."
+                    )
+                return "transformer-engine"
             if amp_dtype == "fp16":
                 return "16-mixed"
             if amp_dtype == "bf16":
@@ -582,6 +635,8 @@ def build_trainer(
             # amp_dtype == "auto"
             return "bf16-mixed" if torch.cuda.is_bf16_supported() else "16-mixed"
         if torch.backends.mps.is_available():
+            if amp_dtype == "fp8":
+                raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
             if amp_dtype == "bf16":
                 _logger.warning(
                     "amp_dtype='bf16' is not applied on MPS; RF-DETR uses fp16 ('16-mixed') for MPS autocast."
@@ -592,14 +647,34 @@ def build_trainer(
                     stacklevel=2,
                 )
             return "16-mixed"
+        if amp_dtype == "fp8":
+            raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
         return "32-true"
 
     # --- Strategy + EMA sharding guard ---
     strategy = trainer_kwargs.get("strategy", tc.strategy)
     devices = trainer_kwargs.get("devices", tc.devices)
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
-    strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     has_keypoints = bool(model_config.use_grouppose_keypoints)
+    if tc.amp_dtype == "fp8" and _is_sharded_strategy(strategy):
+        raise ValueError(
+            "amp_dtype='fp8' is not compatible with FSDP or DeepSpeed strategies because Lightning's "
+            "Transformer Engine precision plugin cannot replace their strategy-owned precision plugin. "
+            "Use strategy='ddp' or 'auto', or select bf16/fp16 for sharded training."
+        )
+    if (
+        xla_accelerator
+        and not has_keypoints
+        and isinstance(strategy, str)
+        and strategy.strip().lower() == "auto"
+        and _requests_multiple_devices(devices, accelerator)
+    ):
+        # RF-DETR's generic auto/distributed branch below creates DDPStrategy before Lightning can apply
+        # its XLA-first auto selection. Promote only multiple local devices: one-device-per-host XLA
+        # needs separate runtime validation. Keypoint models remain excluded because their manual-
+        # optimization find_unused_parameters handling has no validated XLA equivalent.
+        strategy = "xla"
+    strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
     if isinstance(tc, KeypointTrainConfig) != has_keypoints:
         raise ValueError(
             f"Config/model mismatch: isinstance(tc, KeypointTrainConfig)={isinstance(tc, KeypointTrainConfig)} "
@@ -642,9 +717,7 @@ def build_trainer(
                 )
         _logger.info(
             "Keypoint model + distributed execution (strategy=%r, devices=%r, num_nodes=%r) → "
-            "DDP with manual optimization. For best throughput on multi-GPU keep grad_accum_steps=1: "
-            "the manual-optimization path synchronizes gradients on every microbatch, so "
-            "grad_accum_steps>1 is correct but performs redundant all-reduces.",
+            "DDP with manual optimization. Accumulated gradients synchronize only when the optimizer steps.",
             strategy,
             devices,
             num_nodes,
@@ -723,6 +796,7 @@ def build_trainer(
             segmentation=model_config.segmentation_head,
             eval_interval=tc.eval_interval,
             log_per_class_metrics=tc.log_per_class_metrics,
+            eval_backend=tc.eval_backend,
             keypoint_oks_sigmas=tc.keypoint_oks_sigmas,
             eval_base_model=tc.eval_base_model,
         )
