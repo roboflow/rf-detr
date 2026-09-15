@@ -34,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- XLA validation, test, and the optional train-split (`compute_train_metrics=True`) evaluation callbacks now materialize each model forward once before COCO metric code reads individual tensors on the host, avoiding repeated compilation of overlapping lazy-graph fragments. On a Cloud TPU v5e-1 (`RFDETRNano`, resolution 384, batch size 2, five training batches with train-split metrics disabled and two validation batches), median end-to-end fit time across five fresh-process pairs fell from 310.2 s to 232.0 s (-25.3%); validation time fell from 105.8 s to 28.1 s (-73.4%), while metrics, model tensors, and checkpoint tensors remained identical. The train-split callback shares the same barrier but was not separately benchmarked. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
+
 - Multi-GPU keypoint training with `grad_accum_steps > 1` now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.
 
 - The ONNX Runtime CPU inference session built by `RFDETR.export(format="onnx")`'s inference helper no longer lets its intra-op thread pool busy-spin between calls. Spinning previously contended for CPU with any other work sharing the process — including this same helper's own torchvision-based preprocessing step — for as long as the session was alive.
