@@ -429,9 +429,11 @@ markers = [
     # `flaky` is provided by pytest-rerunfailures; registered here too for clarity and to stay
     # safe under --strict-markers (used by tests/benchmarks/test_training_*.py).
     "flaky: tests that may fail due to nondeterminism and are retried via pytest-rerunfailures",
+    "integration: tests that require optional dependencies or dedicated integration CI (opt-in)",
     "e2e_executorch: ExecuTorch end-to-end export + numerical parity (opt-in)",
     "e2e_coreml: CoreML end-to-end convert + numerical parity (structured and photo inputs; opt-in)",
     "e2e_openvino: OpenVINO end-to-end IR export + numerical parity (opt-in)",
+    "e2e_onnxruntime: ONNX Runtime session construction + inference (opt-in; also marked integration)",
     "e2e_tensorrt: TensorRT end-to-end ONNX->engine build + parity (GPU, opt-in)",
     "e2e_roboflow: live deploy_to_roboflow() upload + train-status validation (issue #1116); requires ROBOFLOW_API_KEY (opt-in)",
 ]

@@ -978,6 +978,7 @@ def _portable_kernel_call_names(pte_path: Path) -> list[str]:
 
 
 @executorch_only
+@pytest.mark.integration
 @pytest.mark.e2e_executorch
 class TestExecutorchEndToEnd:
     """End-to-end export of a real RF-DETR model (detection + segmentation), gated on the executorch package."""
