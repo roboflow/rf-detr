@@ -9,6 +9,7 @@ import logging
 import random
 import warnings
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -18,10 +19,11 @@ from pytorch_lightning import Callback, Trainer
 from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
-from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig, TrainConfig
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.training.callbacks.best_model import RFDETREarlyStopping
+from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
@@ -440,6 +442,16 @@ class TestInit:
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
         assert mock_compile.call_args.kwargs["dynamic"] is True
+
+    def test_compile_does_not_enable_global_error_suppression(self, tmp_path: Path) -> None:
+        """RF-DETR must not hide compiler failures or change unrelated models' fallback policy."""
+        with (
+            torch._dynamo.config.patch(suppress_errors=False),
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda model, **_: model),
+        ):
+            _build_module(model_config=_base_model_config(compile=True), tmp_path=tmp_path)
+            assert torch._dynamo.config.suppress_errors is False
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="compiled multi-scale regression requires CUDA")
@@ -1038,6 +1050,63 @@ class TestTrainingStep:
         loss = module.training_step((samples, targets), batch_idx=0)
 
         assert loss.item() == pytest.approx(1.0 + 10.0 + 6.0)
+
+    def test_routes_forward_through_cuda_graph_runner(self, tmp_path: Path) -> None:
+        """Once configured, training_step uses the graph runner while leaving self.model registered."""
+        module, samples, targets, fake_model, fake_criterion = self._run_step(tmp_path)
+        runner = MagicMock(return_value={})
+        module._cuda_graph_runner = runner
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+
+        module.training_step((samples, targets), batch_idx=0)
+
+        runner.assert_called_once_with(samples, targets)
+        fake_model.assert_not_called()
+
+    def test_real_model_composes_through_cuda_graph_runner_on_training_step(self, tmp_path: Path) -> None:
+        """A real detector, criterion, backward, and optimizer must compose through the graph-runner- wrapped
+        ``training_step()``, not only the synthetic model ``CudaGraphTrainingRunner`` is unit- tested against in
+        isolation, nor a fully-mocked runner class as in the test above.
+
+        ``torch.cuda.make_graphed_callables`` is the one CUDA-only primitive mocked here (as in
+        ``test_capture_preserves_accumulated_gradients``); everything else — model, transformer capture toggle,
+        criterion, Lightning's training_step, and the optimizer step — runs for real on CPU.
+        """
+        mc = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cpu")
+        tc = _base_train_config(tmp_path)
+        real_model = build_model_from_config(mc, tc)
+        real_criterion, real_postprocess = build_criterion_from_config(mc, tc)
+        real_model.train()
+
+        with (
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=real_model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(real_criterion, real_postprocess),
+            ),
+        ):
+            module = RFDETRModelModule(mc, tc)
+
+        module._cuda_graph_runner = CudaGraphTrainingRunner(module.model)
+        samples, targets = _make_batch(batch_size=1, h=mc.resolution, w=mc.resolution)
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        real_optimizer = torch.optim.SGD(module.model.parameters(), lr=1e-3)
+        module.optimizers = MagicMock(return_value=real_optimizer)
+        trainer = MagicMock()
+        trainer.accumulate_grad_batches = 1
+        trainer.num_training_batches = 1
+        module._trainer = trainer
+        type(module).trainer = property(lambda self: self._trainer)
+
+        with patch("torch.cuda.make_graphed_callables", side_effect=lambda inner, _args, **_kwargs: inner):
+            loss = module.training_step((samples, targets), batch_idx=0)
+
+        assert torch.isfinite(loss)
+        assert all(p.grad is None for p in module.model.parameters())
+        loss.backward()
+        assert any(p.grad is not None for p in module.model.parameters())
+        assert len(module._cuda_graph_runner._graphed_cache) == 1
 
     def test_loss_backward_uses_box_normalizer_contract(self, tmp_path):
         """Backward loss for keypoint models is scaled by the criterion box normalizer (manual optimization owns
@@ -3019,6 +3088,115 @@ class TestConfigureOptimizers:
         # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
         lr_at_decay_end = lr_lambda(expected_total_steps)
         assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
+
+
+class TestCudaGraphLifecycle:
+    """Tests for enabling the graph runner after Lightning resolves runtime ownership."""
+
+    def test_on_train_start_enables_single_cuda_detection(self, tmp_path: Path) -> None:
+        """A supported CUDA fit builds one runner around the registered detector."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, model, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1, precision="bf16-mixed")
+        runner = MagicMock()
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner", return_value=runner) as runner_type,
+        ):
+            module.on_train_start()
+
+        runner_type.assert_called_once_with(model)
+        assert module._cuda_graph_runner is runner
+
+    def test_on_train_start_keeps_cpu_training_eager(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit graph request on CPU degrades visibly to eager training."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cpu")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+            caplog.at_level(logging.WARNING, logger="rf-detr"),
+        ):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+        assert any("model is on 'cpu'" in record.getMessage() for record in caplog.records)
+
+    def test_on_train_start_keeps_distributed_training_eager(self, tmp_path: Path) -> None:
+        """DDP remains on its established eager path."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=2)
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+        ):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+    @pytest.mark.parametrize(
+        "config_overrides",
+        [
+            pytest.param({"segmentation_head": True}, id="segmentation"),
+            pytest.param(
+                {"use_grouppose_keypoints": True, "num_keypoints_per_class": [1]},
+                id="keypoints",
+            ),
+            pytest.param({"gradient_checkpointing": True}, id="gradient-checkpointing"),
+        ],
+    )
+    def test_on_train_start_keeps_unsupported_model_modes_eager(
+        self, config_overrides: dict[str, object], tmp_path: Path
+    ) -> None:
+        """Known-unsupported model modes never enter capture."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False, **config_overrides)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1)
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+        ):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+    @pytest.mark.parametrize(
+        "precision",
+        ["16-mixed", "32-true", "transformer-engine"],
+        ids=["fp16", "fp32", "fp8"],
+    )
+    def test_on_train_start_keeps_non_bf16_precision_eager(self, precision: str, tmp_path: Path) -> None:
+        """Only the BF16 precision validated by real-CUDA capture/replay tests enters capture; FP16 and FP8 (Transformer
+        Engine) reach the config but stay eager until they get their own coverage."""
+        mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        trainer = SimpleNamespace(world_size=1, precision=precision)
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+        ):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
 
 
 class TestFusedOptimizerResumeStateNormalization:

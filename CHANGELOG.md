@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added `ModelConfig.cuda_graphs`, an opt-in CUDA graph replay path for single-GPU detection training with BF16 precision. The registered detector stays unchanged for optimizer, EMA, and checkpoint ownership; the variable-length criterion remains eager, while each static input signature captures the model forward and its backward once and replays it on later batches. Unsupported devices, distributed runs, segmentation, keypoints, non-BF16 precision (FP16, FP32, FP8), and gradient checkpointing stay eager with a warning, and a failed capture stops training with a process-restart instruction. `cuda_graphs=True` is mutually exclusive with `compile=True`. On an NVIDIA L4 with RF-DETR Nano, BF16, batch 4, deterministic synthetic detection batches, and a fixed 8-resolution multi-scale set (`expanded_scales=False`; the default `expanded_scales=True` resolves to 11 resolutions for this model and was not benchmarked), the median public Lightning training batch fell from 149.8 ms eager to 101.7 ms graphed, a 32.4% median of the five paired per-run reductions (range 31.4-33.5%); all eight signatures captured on every run and none fell back. The speed costs memory: peak allocated CUDA memory rose from 2,395 MiB to 3,466 MiB and peak reserved memory from 2,754 MiB to 14,550 MiB for those 8 graph pools, because each resolution retains a private graph pool. Final-parameter and loss differences stayed inside an eager-vs-eager control, but real-dataset throughput, full-dataset accuracy, and larger variants were not measured. ([#1410](https://github.com/roboflow/rf-detr/issues/1410))
+
 - Added `TrainConfig.eval_backend`, selecting the COCO evaluator used for validation and test mAP. Both options now ship with `rfdetr[train]`; `"faster_coco_eval"` restores the previous evaluator. Keypoint OKS evaluation is unaffected, and the ONNX/TensorRT benchmark evaluator in `rfdetr.evaluation.coco_eval` continues to use `faster-coco-eval` directly.
 
 - Added `python -m rfdetr.cli.webdataset` as the dedicated packing entry point.
@@ -43,6 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Deprecated
 
 ### Fixed
+
+- Compiled training keeps positional-embedding interpolation eager as a compatibility mitigation for PyTorch's symbolic antialiased-bicubic backward assertion, preserving interpolation outputs and gradients. RF-DETR no longer globally suppresses compiler errors. Failed CUDA graph capture now stops with the original exception and a process-restart instruction instead of retrying against potentially invalid CUDA state.
 
 - TPU/XLA training with EMA now keeps its control-flow counter on the host and queues parameter averaging inside the optimizer step, before Lightning's existing XLA step marker. This prevents the deleted-buffer failure seen after a few optimizer steps without adding another per-step synchronization; CPU and CUDA EMA updates are unchanged. ([#1058](https://github.com/roboflow/rf-detr/issues/1058))
 

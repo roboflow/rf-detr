@@ -353,10 +353,16 @@ class WindowedDinov2WithRegistersEmbeddings(nn.Module):
         self.patch_size = config.patch_size
         self.config = config
 
+    @torch.compiler.disable  # type: ignore[untyped-decorator]
     def interpolate_pos_encoding(self, embeddings: Tensor, height: int, width: int) -> Tensor:
         """This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
         resolution images. This implementation supports torch.jit tracing while maintaining backwards compatibility with
         the original implementation.
+
+        Keep this operation eager: PyTorch's antialiased bicubic backward rejects symbolic
+        sizes during AOT tracing. This boundary preserves interpolation and its gradients
+        while allowing the surrounding model to compile. Remove it once dynamic forward/
+        backward parity passes on the supported PyTorch versions without this boundary.
 
         Adapted from:
         - https://github.com/facebookresearch/dino/blob/main/vision_transformer.py
