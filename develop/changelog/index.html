@@ -2483,6 +2483,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
 </ul>
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><code>ModelConfig.amp</code> is deprecated, <strong>removal in v1.14</strong>, superseded by <code>TrainConfig.amp_dtype</code>, which now accepts <code>None</code> to disable autocast. The two settings previously split one decision across both configs: the boolean gated AMP on the model config while the dtype was chosen on the train config, and <code>amp=False</code> silently voided any <code>amp_dtype</code>. <code>amp_dtype</code> is now the single authority — an explicitly set value always wins, including <code>"fp8"</code>, which reaches the Transformer Engine hardware checks instead of being turned off. The legacy toggle still applies while <code>amp_dtype</code> is left at its default <code>"auto"</code>, emitting a <code>FutureWarning</code>; "left at its default" is evaluated by value rather than by which fields were passed, so a config reloaded from <code>training_config.json</code> keeps honoring it. Replace <code>amp=False</code> with <code>amp_dtype=None</code>. One behavior change is not covered by that fallback: <code>amp=False</code> combined with an explicit <code>amp_dtype="fp8"</code> previously raised <code>amp_dtype='fp8' requires model_config.amp=True</code> and now runs FP8.</p>
+</li>
+<li>
+<p><code>TrainConfig.fp16_eval</code> is deprecated, <strong>removal in v1.14</strong>. It has had no runtime consumer since the PyTorch Lightning migration — evaluation precision follows <code>amp_dtype</code> — so it is warned about rather than migrated. Setting it to <code>True</code> emits a <code>FutureWarning</code>; the default stays silent, including on a dumped-config reload. Use <code>amp_dtype="fp16"</code> to evaluate in FP16.</p>
+</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
