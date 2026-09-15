@@ -611,7 +611,7 @@ def test_probe_max_micro_batch_restores_train_mode_when_shadow_optimizer_build_f
 def test_resolve_auto_batch_config_requires_cuda():
     model_context = SimpleNamespace(device=torch.device("cpu"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=False)
-    train_config = SimpleNamespace(batch_size="auto", auto_batch_target_effective=16)
+    train_config = SimpleNamespace(amp_dtype=None, batch_size="auto", auto_batch_target_effective=16)
 
     with (
         patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=False),
@@ -623,7 +623,9 @@ def test_resolve_auto_batch_config_requires_cuda():
 def test_resolve_auto_batch_config_returns_expected_values():
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
-    train_config = SimpleNamespace(batch_size="auto", auto_batch_target_effective=16, lr=1e-4, weight_decay=1e-4)
+    train_config = SimpleNamespace(
+        amp_dtype=None, batch_size="auto", auto_batch_target_effective=16, lr=1e-4, weight_decay=1e-4
+    )
     criterion = MagicMock()
     criterion.to.return_value = criterion
 
@@ -666,6 +668,7 @@ def test_resolve_auto_batch_config_scales_global_target_across_devices(
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
     train_config = SimpleNamespace(
+        amp_dtype=None,
         batch_size="auto",
         auto_batch_target_effective=target,
         devices=devices,
@@ -697,7 +700,7 @@ def test_resolve_auto_batch_config_warns_when_optimizer_is_not_builtin_adamw():
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
     train_config = SimpleNamespace(
-        batch_size="auto", auto_batch_target_effective=16, lr=1e-4, weight_decay=1e-4, optimizer="sgd"
+        amp_dtype=None, batch_size="auto", auto_batch_target_effective=16, lr=1e-4, weight_decay=1e-4, optimizer="sgd"
     )
     criterion = MagicMock()
     criterion.to.return_value = criterion
@@ -721,7 +724,7 @@ def test_resolve_auto_batch_config_does_not_warn_for_builtin_adamw():
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
     train_config = SimpleNamespace(
-        batch_size="auto", auto_batch_target_effective=16, lr=1e-4, weight_decay=1e-4, optimizer="adamw"
+        amp_dtype=None, batch_size="auto", auto_batch_target_effective=16, lr=1e-4, weight_decay=1e-4, optimizer="adamw"
     )
     criterion = MagicMock()
     criterion.to.return_value = criterion
@@ -745,6 +748,7 @@ def test_resolve_auto_batch_config_forwards_optimizer_kwargs_for_builtin_adamw()
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
     train_config = SimpleNamespace(
+        amp_dtype=None,
         batch_size="auto",
         auto_batch_target_effective=16,
         lr=1e-4,
@@ -773,6 +777,7 @@ def test_resolve_auto_batch_config_forwards_optimizer_kwargs_for_dotted_path_ada
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
     train_config = SimpleNamespace(
+        amp_dtype=None,
         batch_size="auto",
         auto_batch_target_effective=16,
         lr=1e-4,
@@ -801,6 +806,7 @@ def test_resolve_auto_batch_config_does_not_forward_optimizer_kwargs_for_non_ada
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=True)
     train_config = SimpleNamespace(
+        amp_dtype=None,
         batch_size="auto",
         auto_batch_target_effective=16,
         lr=1e-4,
@@ -1027,6 +1033,7 @@ def test_resolve_auto_batch_config_probes_the_padded_target_count(pad_targets_to
     model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
     model_config = SimpleNamespace(resolution=64, num_classes=5, amp=False, segmentation_head=False)
     train_config = SimpleNamespace(
+        amp_dtype=None,
         batch_size="auto",
         auto_batch_target_effective=16,
         lr=1e-4,

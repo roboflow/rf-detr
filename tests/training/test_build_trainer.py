@@ -831,9 +831,20 @@ class TestBuildTrainerAmpDtype:
             precision = self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype)
         assert precision == "16-mixed"
 
-    def test_amp_false_overrides_amp_dtype(self, tmp_path):
-        """Amp=False wins over any amp_dtype: precision is '32-true'."""
+    def test_explicit_amp_dtype_overrides_deprecated_amp_false(self, tmp_path):
+        """An explicit amp_dtype wins over the deprecated amp flag: the stale amp=False is ignored."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=False))
+        assert trainer.precision == "16-mixed"
+
+    def test_deprecated_amp_false_applies_when_amp_dtype_is_default(self, tmp_path):
+        """Amp=False still disables AMP while amp_dtype is left at its default, and warns."""
+        with pytest.warns(FutureWarning, match="ModelConfig.amp is deprecated"):
+            trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False))
+        assert trainer.precision == "32-true"
+
+    def test_amp_dtype_none_disables_amp(self, tmp_path):
+        """amp_dtype=None is the replacement for the deprecated amp=False and needs no model flag."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=None), _mc(amp=True))
         assert trainer.precision == "32-true"
 
     def test_cpu_accelerator_ignores_amp_dtype(self, tmp_path):
@@ -873,10 +884,14 @@ class TestBuildTrainerAmpDtype:
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator="auto")
 
-    def test_fp8_requires_amp_enabled(self, tmp_path):
-        """An explicit FP8 request must not be silently disabled by the model AMP flag."""
-        with pytest.raises(ValueError, match="amp_dtype='fp8' requires model_config.amp=True"):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=False))
+    def test_fp8_is_not_disabled_by_deprecated_amp_flag(self, tmp_path):
+        """An explicit FP8 request must not be silently disabled by the deprecated model AMP flag.
+
+        The request reaches the hardware capability checks instead of being turned off; on a machine without a
+        Transformer Engine GPU that surfaces as the capability error, never as '32-true'.
+        """
+        with pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=False), accelerator="cpu")
 
     def test_fp8_rejects_deepspeed_strategy(self, tmp_path):
         """Lightning cannot combine its Transformer Engine precision plugin with DeepSpeed precision."""
@@ -941,7 +956,6 @@ class TestBuildTrainerAmpDtype:
         "bad_value",
         [
             pytest.param("float8", id="string-float8"),
-            pytest.param(None, id="none"),
             pytest.param(42, id="int"),
             pytest.param(True, id="bool"),
         ],
