@@ -546,6 +546,10 @@ def build_trainer(
     # accelerator="auto" -- this repo's own default -- is covered too; see that helper's
     # docstring for why the strategy guard below needs this same resolution.
     xla_accelerator = _accelerator_resolves_to_xla(accelerator)
+    accelerator_name = str(accelerator).lower()
+    # Lightning reports XLA availability for its TPU accelerator, so auto retains the documented
+    # TPU behavior. Explicit ``xla`` can target CPU/GPU PJRT without equivalent BF16 evidence.
+    tpu_accelerator = accelerator_name == "tpu" or (accelerator_name == "auto" and xla_accelerator)
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -567,6 +571,13 @@ def build_trainer(
         # Honor explicit accelerators and Lightning's XLA-first auto selection before probing global CUDA.
         if amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
             raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
+        if tpu_accelerator and amp_dtype in {"bf16", "auto"}:
+            # Real TPU hardware (the case this fix targets and is verified against, issue #1058)
+            # supports bf16 natively, so "auto" resolves to it the same way an explicit "bf16"
+            # request does, instead of falling through to the CUDA/MPS probes below and landing
+            # on the CPU-only "32-true" default. Explicit ``xla`` stays on the conservative
+            # path because CPU/GPU PJRT has no equivalent execution evidence.
+            return "bf16-true"
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":
@@ -859,7 +870,13 @@ def build_trainer(
         elif not isinstance(plugins, (list, tuple)):
             plugins = [plugins]
         trainer_config.pop("precision", None)
-        xla_precision = _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
+        # CPU/GPU PJRT is an XLA strategy but lacks the TPU BF16 execution evidence required
+        # to translate generic mixed precision into a true-precision XLA plugin.
+        xla_precision = (
+            "32-true"
+            if not tpu_accelerator
+            else _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
+        )
         trainer_config["plugins"] = [*plugins, XLAPrecision(xla_precision)]
     trainer_config["strategy"] = strategy
     if manual_optimization:
