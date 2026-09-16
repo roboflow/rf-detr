@@ -10,6 +10,7 @@ import sys
 from unittest.mock import patch
 
 import pytest
+import torch
 
 from rfdetr.models import criterion
 from rfdetr.utilities import box_ops
@@ -201,11 +202,14 @@ class TestImportPaths:
         )
 
     def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
-        """Top-level import must not invoke deprecated TorchScript compilation.
+        """Python 3.14+ imports must not invoke unsupported TorchScript compilation.
 
-        ``torch.jit.script`` warns on every interpreter -- ``DeprecationWarning`` on torch 2.13, ``FutureWarning`` on
-        torch 2.14 -- and is unsupported on Python 3.14+, so the filter escalates the message regardless of category.
+        TorchScript remains the compatibility contract on supported earlier Python versions, where its warning does not
+        represent the reported regression.
         """
+        if sys.version_info < (3, 14):
+            pytest.skip("TorchScript remains supported before Python 3.14")
+
         result = subprocess.run(
             [
                 sys.executable,
@@ -236,13 +240,17 @@ class TestImportPaths:
             pytest.param(box_ops.batch_sigmoid_ce_loss_jit, box_ops.batch_sigmoid_ce_loss, id="batch-sigmoid-ce"),
         ],
     )
-    def test_jit_loss_aliases_bind_the_eager_functions(self, alias: object, eager: object) -> None:
-        """Every ``*_jit`` loss name is the eager function itself, on every interpreter.
+    def test_jit_loss_aliases_select_versioned_implementation(self, alias: object, eager: object) -> None:
+        """Loss aliases select the documented implementation for this Python version.
 
-        The aliases used to be ``torch.jit.script`` products; they are kept as plain names for backward compatibility,
-        so a reintroduced scripting call (or a version fork) would fail this identity check before it fails a user.
+        Python 3.14+ must not compile TorchScript during import; earlier supported versions preserve their historical
+        scripted aliases.
         """
-        assert alias is eager
+        if sys.version_info >= (3, 14):
+            assert alias is eager
+        else:
+            assert isinstance(alias, torch.jit.ScriptFunction)
+            assert alias is not eager
 
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.

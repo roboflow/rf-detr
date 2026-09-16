@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from typing import Any, NamedTuple, Union
 
@@ -338,24 +339,33 @@ def dice_loss(
                 (0 for the negative class and 1 for the positive class).
         num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
                  caller never has to sync it to the host (a host read cuts XLA's lazy
-                 graph every step). Python and NumPy scalars keep ordinary numeric
-                 behavior.
+                 graph every step). This eager function retains Python numeric behavior,
+                 including NumPy scalars. The scripted ``dice_loss_jit`` wrapper accepts
+                 only Tensor, float, or int; convert another numeric type with
+                 ``float(...)`` before calling that wrapper.
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
     numerator = 2 * (inputs * targets).sum(-1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
-    # Divide by the denominator as given instead of normalizing it to a Tensor up front: wrapping a
+    # Branch on the denominator's type instead of normalizing it to a Tensor up front: wrapping a
     # Python float in a Tensor first would quantize it to `inputs`' dtype before dividing, which is
     # not what plain ``tensor / python_float`` does (that keeps the historical re-exported functions'
     # exact numerics -- see TestMaskLossDenominatorStaysOnDevice's backward-compatibility tests).
-    return loss.sum() / num_masks
+    # TorchScript requires this refinement to resolve division over the three-way Union.
+    if isinstance(num_masks, float):
+        result: Tensor = loss.sum() / num_masks
+    elif isinstance(num_masks, int):
+        result = loss.sum() / num_masks
+    else:
+        result = loss.sum() / num_masks
+    return result
 
 
-#: Backward-compatible alias. ``torch.jit.script`` is deprecated by PyTorch and unsupported on
-#: Python 3.14+, so the name now binds the eager function on every interpreter.
-dice_loss_jit = dice_loss
+#: Preserve the historical scripted alias until Python 3.14 makes TorchScript
+#: unsupported during import, where the eager function is the safe fallback.
+dice_loss_jit = dice_loss if sys.version_info >= (3, 14) else torch.jit.script(dice_loss)
 
 
 def sigmoid_ce_loss(
@@ -372,21 +382,29 @@ def sigmoid_ce_loss(
                 (0 for the negative class and 1 for the positive class).
         num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
                  caller never has to sync it to the host (a host read cuts XLA's lazy
-                 graph every step). Python and NumPy scalars keep ordinary numeric
-                 behavior.
+                 graph every step). This eager function retains Python numeric behavior,
+                 including NumPy scalars. The scripted ``sigmoid_ce_loss_jit`` wrapper
+                 accepts only Tensor, float, or int; convert another numeric type with
+                 ``float(...)`` before calling that wrapper.
 
     Returns:
         Loss tensor
     """
     loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
 
-    # See dice_loss's comment: dividing by the value as given preserves the historical
-    # re-exported functions' exact numerics for a Python-float/int caller.
-    return loss.mean(1).sum() / num_masks
+    # See dice_loss's comment: this preserves exact eager numerics and lets
+    # TorchScript resolve division over the three-way Union.
+    if isinstance(num_masks, float):
+        result: Tensor = loss.mean(1).sum() / num_masks
+    elif isinstance(num_masks, int):
+        result = loss.mean(1).sum() / num_masks
+    else:
+        result = loss.mean(1).sum() / num_masks
+    return result
 
 
 #: Backward-compatible alias; see ``dice_loss_jit``.
-sigmoid_ce_loss_jit = sigmoid_ce_loss
+sigmoid_ce_loss_jit = sigmoid_ce_loss if sys.version_info >= (3, 14) else torch.jit.script(sigmoid_ce_loss)
 
 
 class SetCriterion(nn.Module):
