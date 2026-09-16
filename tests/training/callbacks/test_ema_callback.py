@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -289,6 +290,74 @@ class TestXLARealDeviceExecution:
         assert value == 7
         assert met.counter_value("aten::_local_scalar_dense") is None
 
+    @pytest.mark.xla
+    def test_xla_optimization_barrier_runs_under_the_real_xla_runtime(self) -> None:
+        """Exercise the barrier with real XLA-backed parameters and buffers.
+
+        The unit tests substitute ``torch_xla.core.xla_model``, so they cannot catch an API-signature or dtype mismatch
+        in the real ``optimization_barrier_`` call.
+        """
+        pytest.importorskip("torch_xla")
+        import torch_xla
+
+        device = torch_xla.device()
+        module = nn.Sequential(nn.Linear(2, 2), nn.BatchNorm1d(2)).to(device)
+        torch_xla.sync()
+        weight_before = module[0].weight.clone()
+
+        RFDETREMACallback._xla_optimization_barrier(module)
+        torch_xla.sync()
+
+        assert module[0].weight.device.type == "xla"
+        assert torch.equal(module[0].weight.cpu(), weight_before.cpu())
+
+    @pytest.mark.xla
+    def test_xla_ema_update_runs_the_full_optimizer_barrier_average_sequence_unmocked(self) -> None:
+        """Two real optimizer steps drive the unmocked optimizer -> barrier -> ``AveragedModel`` sequence.
+
+        The barrier test above calls ``_xla_optimization_barrier`` directly, and ``TestUpdateInterval``'s ordering tests
+        substitute both the barrier and ``_average_model`` with mocks. Neither proves that a real registered optimizer
+        hook, a real ``xm.optimization_barrier_()`` call and a real ``AveragedModel.update_parameters()`` together
+        produce the correct EMA weight under the real XLA runtime. A second step is required because ``AveragedModel``
+        copies rather than blends on its first update (``self.n_averaged == 0``), so only the second call exercises the
+        decay formula this callback registers as ``multi_avg_fn``.
+        """
+        pytest.importorskip("torch_xla")
+        import torch_xla
+
+        device = torch_xla.device()
+        module = nn.Linear(1, 1, bias=False).to(device)
+        torch_xla.sync()
+        initial_weight = module.weight.detach().cpu().clone()
+
+        optimizer = torch.optim.SGD(module.parameters(), lr=0.1)
+        trainer = MagicMock(global_step=0, optimizers=[optimizer])
+        pl_module = SimpleNamespace(device=device, parameters=module.parameters, buffers=module.buffers)
+        cb = RFDETREMACallback(decay=0.5, tau=0)
+        cb._average_model = AveragedModel(model=module, device=None, use_buffers=True, multi_avg_fn=cb._multi_avg_fn)
+
+        cb._register_xla_optimizer_hook(trainer, pl_module)
+
+        module.weight.grad = torch.ones_like(module.weight)
+        optimizer.step()
+        torch_xla.sync()
+
+        assert cb._average_model.n_averaged.item() == 1
+        expected_weight_after_step1 = initial_weight - 0.1
+        assert torch.allclose(module.weight.cpu(), expected_weight_after_step1)
+        assert torch.allclose(cb._average_model.module.weight.cpu(), expected_weight_after_step1)
+
+        trainer.global_step = 1
+        module.weight.grad = torch.ones_like(module.weight)
+        optimizer.step()
+        torch_xla.sync()
+
+        assert cb._average_model.n_averaged.item() == 2
+        expected_weight_after_step2 = initial_weight - 0.2
+        assert torch.allclose(module.weight.cpu(), expected_weight_after_step2)
+        expected_ema_weight = expected_weight_after_step1 * 0.5 + expected_weight_after_step2 * 0.5
+        assert torch.allclose(cb._average_model.module.weight.cpu(), expected_ema_weight)
+
 
 class TestExtraStateTransfers:
     """EMA state transfers must not deserialize Transformer Engine extra state."""
@@ -415,7 +484,8 @@ class TestUpdateInterval:
         cb._average_model = MagicMock()
 
         cb._register_xla_optimizer_hook(trainer, pl_module)
-        optimizer.step()
+        with patch.object(cb, "_xla_optimization_barrier"):
+            optimizer.step()
         cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=0)
 
         cb._average_model.update_parameters.assert_called_once_with(pl_module)
@@ -425,6 +495,85 @@ class TestUpdateInterval:
         trainer.global_step = 1
         optimizer.step()
         cb._average_model.update_parameters.assert_called_once_with(pl_module)
+
+    def test_xla_ema_places_an_optimization_barrier_after_the_optimizer(self) -> None:
+        """The optimizer writes its parameter before the barrier runs, and EMA reads it only after the barrier."""
+        parameter = nn.Parameter(torch.ones(()))
+        parameter.grad = torch.ones_like(parameter)
+        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        trainer = MagicMock(global_step=0, optimizers=[optimizer])
+        pl_module = MagicMock(device=torch.device("xla"))
+        pl_module.parameters.return_value = [parameter]
+        pl_module.buffers.return_value = []
+        cb = RFDETREMACallback()
+        cb._average_model = MagicMock()
+        lifecycle_events: list[str] = []
+        parameter_seen_at_barrier: list[float] = []
+        xla_model = MagicMock()
+
+        def record_barrier(tensors: list[Tensor]) -> None:
+            parameter_seen_at_barrier.append(tensors[0].item())
+            lifecycle_events.append("barrier")
+
+        xla_model.optimization_barrier_.side_effect = record_barrier
+        cb._average_model.update_parameters.side_effect = lambda module: lifecycle_events.append("ema")
+
+        with patch("rfdetr.training.callbacks.ema.import_module", return_value=xla_model):
+            cb._register_xla_optimizer_hook(trainer, pl_module)
+            optimizer.step()
+
+        xla_model.optimization_barrier_.assert_called_once_with([parameter])
+        cb._average_model.update_parameters.assert_called_once_with(pl_module)
+        assert parameter_seen_at_barrier == [pytest.approx(0.9)]
+        assert lifecycle_events == ["barrier", "ema"]
+
+    def test_xla_optimization_barrier_covers_parameters_and_buffers(self) -> None:
+        """The compiler barrier receives every tensor that the subsequent EMA update can consume."""
+        pl_module = nn.Sequential(nn.Linear(2, 2), nn.BatchNorm1d(2))
+        xla_model = MagicMock()
+
+        with patch("rfdetr.training.callbacks.ema.import_module", return_value=xla_model) as import_module:
+            RFDETREMACallback._xla_optimization_barrier(pl_module)
+
+        import_module.assert_called_once_with("torch_xla.core.xla_model")
+        barrier_tensors = xla_model.optimization_barrier_.call_args.args[0]
+        expected_tensors = [*pl_module.parameters(), *pl_module.buffers()]
+        assert [id(tensor) for tensor in barrier_tensors] == [id(tensor) for tensor in expected_tensors]
+
+    def test_xla_ema_places_an_optimization_barrier_through_lightning_optimizer(self) -> None:
+        """Exercise the compiler barrier through ``LightningOptimizer`` used by manual keypoint optimization."""
+        parameter = nn.Parameter(torch.ones(()))
+        parameter.grad = torch.ones_like(parameter)
+        raw_optimizer = torch.optim.SGD([parameter], lr=0.1)
+        lightning_optimizer = LightningOptimizer(raw_optimizer)
+        lightning_optimizer._on_before_step = lambda: None
+        lightning_optimizer._on_after_step = lambda: None
+        strategy = MagicMock()
+        strategy.optimizer_step.side_effect = lambda optimizer, closure, **kwargs: optimizer.step(closure=closure)
+        lightning_optimizer._strategy = strategy
+
+        trainer = MagicMock(global_step=0, optimizers=[raw_optimizer])
+        pl_module = MagicMock(device=torch.device("xla"))
+        pl_module.parameters.return_value = [parameter]
+        pl_module.buffers.return_value = []
+        cb = RFDETREMACallback()
+        cb._average_model = MagicMock()
+        lifecycle_events: list[str] = []
+        xla_model = MagicMock()
+
+        def record_barrier(tensors: list[Tensor]) -> None:
+            lifecycle_events.append("barrier")
+
+        xla_model.optimization_barrier_.side_effect = record_barrier
+        cb._average_model.update_parameters.side_effect = lambda module: lifecycle_events.append("ema")
+
+        with patch("rfdetr.training.callbacks.ema.import_module", return_value=xla_model):
+            cb._register_xla_optimizer_hook(trainer, pl_module)
+            lightning_optimizer.step()
+
+        xla_model.optimization_barrier_.assert_called_once_with([parameter])
+        cb._average_model.update_parameters.assert_called_once_with(pl_module)
+        assert lifecycle_events == ["barrier", "ema"]
 
     def test_xla_ema_update_computes_the_correct_step_through_lightning_optimizer(self) -> None:
         """The ``global_step + 1`` assumption must hold through ``LightningOptimizer``, not just a raw optimizer.
@@ -462,7 +611,8 @@ class TestUpdateInterval:
 
         cb._register_xla_optimizer_hook(trainer, pl_module)
         parameter.grad = torch.zeros_like(parameter)
-        lightning_optimizer.step()
+        with patch.object(cb, "_xla_optimization_barrier"):
+            lightning_optimizer.step()
 
         cb._average_model.update_parameters.assert_called_once_with(pl_module)
         assert cb._latest_update_step == 1
