@@ -18,8 +18,6 @@
 
 from __future__ import annotations
 
-import sys
-
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
@@ -209,7 +207,9 @@ def batch_dice_loss(inputs: Tensor, targets: Tensor) -> Tensor:
     return loss
 
 
-batch_dice_loss_jit = batch_dice_loss if sys.version_info >= (3, 14) else torch.jit.script(batch_dice_loss)
+#: Backward-compatible alias. ``torch.jit.script`` is deprecated by PyTorch and unsupported on
+#: Python 3.14+, so the name now binds the eager function on every interpreter.
+batch_dice_loss_jit = batch_dice_loss
 
 
 def batch_sigmoid_ce_loss(inputs: Tensor, targets: Tensor) -> Tensor:
@@ -233,6 +233,5 @@ def batch_sigmoid_ce_loss(inputs: Tensor, targets: Tensor) -> Tensor:
     return loss / hw
 
 
-batch_sigmoid_ce_loss_jit = (
-    batch_sigmoid_ce_loss if sys.version_info >= (3, 14) else torch.jit.script(batch_sigmoid_ce_loss)
-)
+#: Backward-compatible alias; see ``batch_dice_loss_jit``.
+batch_sigmoid_ce_loss_jit = batch_sigmoid_ce_loss
