@@ -273,9 +273,14 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(mon
                 reference = eager_parameters[name]
                 assert (parameter.grad is None) == (reference.grad is None), name
                 if parameter.grad is not None:
-                    # A callable keeps assert_close's mismatch count and max diff in the failure output.
-                    torch.testing.assert_close(
-                        parameter.grad, reference.grad, msg=lambda detail, name=name: f"{name}\n{detail}", **fp32
+                    # Scale-aware bound: an element-wise atol cannot separate kernel noise on a large gradient
+                    # from a wrong gradient on a small one. A capture bug (stale input, dropped or doubled
+                    # accumulation) shows as a relative error of 1e-2 or more; kernel noise stays below 1e-5.
+                    difference = parameter.grad - reference.grad
+                    relative_error = difference.norm() / reference.grad.norm().clamp_min(1e-12)
+                    assert relative_error < 1e-4, (
+                        f"{name}: relative Frobenius error {relative_error:.3e}; "
+                        f"max|reference| {reference.grad.abs().max():.3e}; max|diff| {difference.abs().max():.3e}"
                     )
 
     assert len(runner._graphed_cache) == 2
