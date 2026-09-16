@@ -495,16 +495,21 @@ def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> in
 
 
 def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
-    """Decode an image file to RGB, optionally letting the JPEG decoder downscale in the DCT domain.
+    """Decode an image file to RGB, optionally downscaling during the JPEG discrete cosine transform (DCT) decode.
 
-    JPEG files go through ``simplejpeg`` (libjpeg-turbo straight into a NumPy buffer) when it is installed, which
-    measured about 1.6x faster than Pillow per image, and its output is pixel-identical because Pillow's wheels link the
-    same libjpeg-turbo.  Everything else falls back to Pillow and copies its image into an array: non-JPEG files, a
-    missing ``simplejpeg``, and any JPEG it rejects, so error behavior does not depend on the optional package either.
-    Returning an array rather than a PIL image lets the YOLO loader, which wants an array, skip a round trip; the COCO
-    loader wraps it with ``Image.fromarray``.  When ``draft_size`` is set, both
-    decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to keep the image at least
-    ``draft_size`` on both axes; it is a no-op for non-JPEG files.
+    JPEG files go through ``simplejpeg`` (libjpeg-turbo straight into a NumPy buffer) when it is installed, and its
+    output is pixel-identical because Pillow's wheels link the same libjpeg-turbo.  Everything else falls back to
+    Pillow and copies its image into an array: non-JPEG files, a missing ``simplejpeg``, and any JPEG it rejects, so
+    error behavior does not depend on the optional package either.
+
+    Returning an array rather than a PIL image lets a caller that wants an array skip a round trip, which is where the
+    speedup lands: 1.3-1.8x over Pillow for the YOLO loader, varying with image size and with how much high-frequency
+    detail the JPEG carries.  Callers needing a PIL image wrap the result with ``Image.fromarray`` (``CocoDetection``,
+    the WebDataset reader); that wrap costs about what the faster decode saves, so those paths take the shared decoder
+    policy rather than a speedup.
+
+    When ``draft_size`` is set, both decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to
+    keep the image at least ``draft_size`` on both axes; it is a no-op for non-JPEG files.
 
     Args:
         path: Image file to decode.
