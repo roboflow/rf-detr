@@ -7682,14 +7682,15 @@ forward pass, so both models are evaluated from independent predictions.</p>
 <h2 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_backend)" class="doc doc-heading doc-heading-parameter">                  <code>eval_backend</code>
 <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(eval_backend)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
             <td>
-                  <code><span title="typing.Literal">Literal</span>[&#39;hotcoco&#39;, &#39;faster_coco_eval&#39;]</code>
+                  <code><span title="typing.Literal">Literal</span>[&#39;hotcoco&#39;, &#39;faster_coco_eval&#39;, &#39;ufcoco&#39;]</code>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>COCO evaluation backend, mirroring :attr:<code>~rfdetr.config.TrainConfig.eval_backend</code>. Both
-backends return identical metrics; <code>"hotcoco"</code> is the faster default and <code>"faster_coco_eval"</code> is
-the previous evaluator. Appended after the existing parameters rather than grouped with the other
-evaluation knobs, so that positional callers keep binding the arguments they always did.</p>
+                <p>COCO evaluation backend, mirroring :attr:<code>~rfdetr.config.TrainConfig.eval_backend</code>.
+<code>"hotcoco"</code> is the faster default, <code>"faster_coco_eval"</code> is the previous evaluator and <code>"ufcoco"</code>
+selects ultrafast-pycocotools; all three ship with <code>rfdetr[train]</code> and return identical metrics.
+Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
+positional callers keep binding the arguments they always did.</p>
               </div>
             </td>
             <td>
