@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
+from rfdetr.models import criterion
+from rfdetr.utilities import box_ops
 from rfdetr.utilities.package import get_sha
 
 
@@ -199,18 +201,18 @@ class TestImportPaths:
         )
 
     def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
-        """Top-level import must not invoke unsupported TorchScript compilation."""
+        """Top-level import must not invoke deprecated TorchScript compilation.
+
+        ``torch.jit.script`` warns on every interpreter -- ``DeprecationWarning`` on torch 2.13, ``FutureWarning`` on
+        torch 2.14 -- and is unsupported on Python 3.14+, so the filter escalates the message regardless of category.
+        """
         result = subprocess.run(
             [
                 sys.executable,
                 "-c",
                 (
                     "import warnings\n"
-                    "warnings.filterwarnings(\n"
-                    "    'error',\n"
-                    "    message=r'.*torch\\.jit\\.script.*',\n"
-                    "    category=DeprecationWarning,\n"
-                    ")\n"
+                    "warnings.filterwarnings('error', message=r'.*torch\\.jit\\.script.*')\n"
                     "import rfdetr\n"
                 ),
             ],
@@ -224,6 +226,23 @@ class TestImportPaths:
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
+
+    @pytest.mark.parametrize(
+        ("alias", "eager"),
+        [
+            pytest.param(criterion.dice_loss_jit, criterion.dice_loss, id="dice"),
+            pytest.param(criterion.sigmoid_ce_loss_jit, criterion.sigmoid_ce_loss, id="sigmoid-ce"),
+            pytest.param(box_ops.batch_dice_loss_jit, box_ops.batch_dice_loss, id="batch-dice"),
+            pytest.param(box_ops.batch_sigmoid_ce_loss_jit, box_ops.batch_sigmoid_ce_loss, id="batch-sigmoid-ce"),
+        ],
+    )
+    def test_jit_loss_aliases_bind_the_eager_functions(self, alias: object, eager: object) -> None:
+        """Every ``*_jit`` loss name is the eager function itself, on every interpreter.
+
+        The aliases used to be ``torch.jit.script`` products; they are kept as plain names for backward compatibility,
+        so a reintroduced scripting call (or a version fork) would fail this identity check before it fails a user.
+        """
+        assert alias is eager
 
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.
