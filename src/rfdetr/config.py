@@ -25,6 +25,9 @@ EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base"
 PathLikeStr: TypeAlias = str | Path
 #: Mixed-precision autocast dtype; ``None`` disables autocast (full fp32).
 AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
+#: COCO evaluation backend selectable via ``TrainConfig.eval_backend``. The runtime registry that resolves each
+#: name lives in ``rfdetr.training.coco_map``; this alias is the single typed source of the accepted names.
+CocoEvalBackend: TypeAlias = Literal["hotcoco", "faster_coco_eval", "ufcoco"]
 #: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
 #: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
 _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
@@ -32,6 +35,7 @@ _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
 __all__ = [
     "AmpDtype",
     "AugmentationBackend",
+    "CocoEvalBackend",
     "ModelConfig",
     "RFDETRBaseConfig",
     "RFDETRLargeDeprecatedConfig",
@@ -1154,7 +1158,7 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
-    eval_backend: Literal["hotcoco", "faster_coco_eval", "ufcoco"] = Field(
+    eval_backend: CocoEvalBackend = Field(
         default="hotcoco",
         description=(
             "COCO evaluation backend used for validation and test mAP. All three ship with 'rfdetr[train]' and "

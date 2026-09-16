@@ -15,8 +15,8 @@ Scope:
     compact one-pass computation. Lightning lifecycle, EMA voting, logging, checkpoint metrics, F1, keypoint
     evaluation, and terminal rendering remain callback concerns.
 Usage:
-    Import :class:`OnePassCocoMeanAveragePrecision` only from RF-DETR training code. Construct it with the
-    ``faster_coco_eval`` backend, the default ``hotcoco`` backend, or the ``ufcoco`` backend, and
+    Import :class:`OnePassCocoMeanAveragePrecision` only from RF-DETR training code. Construct it with one of the
+    backends registered in ``_BACKENDS`` (``hotcoco`` by default, ``faster_coco_eval`` or ``ufcoco``) and
     ``sync_on_compute=False``; call ``update`` for each batch, explicitly call ``merge_distributed_state`` at
     rank-symmetric callback sites, then call ``compute``.
 Outputs:
@@ -51,15 +51,13 @@ from torch import Tensor
 from torchmetrics.detection import MeanAveragePrecision
 from torchmetrics.detection.helpers import CocoBackend
 
+from rfdetr.config import CocoEvalBackend
 from rfdetr.utilities.distributed import all_gather, get_world_size, is_dist_avail_and_initialized
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
 _METRIC_INPUT_FIELDS = frozenset({"boxes", "scores", "labels", "masks", "iscrowd", "area"})
-# COCO evaluation backends this adapter supports. `pycocotools` is excluded deliberately: it is an order of
-# magnitude slower and RF-DETR never installs it. All three ship with `rfdetr[train]`.
-_SUPPORTED_BACKENDS = ("faster_coco_eval", "hotcoco", "ufcoco")
 _MAP_STATE_ATTRS = (
     "detection_box",
     "detection_scores",
@@ -176,13 +174,15 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
         yield
 
 
-class _HotCocoBackend(CocoBackend):
-    """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``.
+class _PackageCocoBackend(CocoBackend):
+    """TorchMetrics COCO backend whose surfaces come from an optional package outside TorchMetrics' backend enum.
 
     TorchMetrics resolves its COCO, evaluator and mask modules from a closed backend-name enum, so the parent is
-    constructed with the supported ``faster_coco_eval`` name and each of the three resolved surfaces is overridden here.
-    Only the surfaces are swapped: every private helper the adapter calls on the backend (COCO-format construction,
-    statistics conversion) is TorchMetrics' own and stays shared with the default backend.
+    constructed with the supported ``faster_coco_eval`` name and each of the three resolved surfaces is overridden here
+    to read from :meth:`_package` instead. Only the surfaces are swapped: every private helper the adapter calls on the
+    backend (COCO-format construction, statistics conversion) is TorchMetrics' own and stays shared with the default
+    backend. The package is resolved on every access rather than stored on the instance, so the backend pickles with the
+    metric under Lightning's DDP spawn and checkpoint plumbing.
     """
 
     def __init__(self) -> None:
@@ -190,22 +190,38 @@ class _HotCocoBackend(CocoBackend):
         # Import eagerly so a missing optional dependency reports itself. The contract check that runs next
         # resolves `cocoeval` inside an `except ImportError`, which would otherwise swallow the actionable install
         # hint and report a torchmetrics incompatibility instead.
-        _hotcoco()
+        self._package()
+
+    def _package(self) -> Any:
+        """Import and return the package that supplies ``COCO``, ``COCOeval`` and ``mask``.
+
+        Raises:
+            ImportError: If the optional dependency is not installed.
+        """
+        raise NotImplementedError
 
     @property
     def coco(self) -> object:
-        """Return hotcoco's COCO dataset type."""
-        return _hotcoco().COCO
+        """Return the package's COCO dataset type."""
+        return self._package().COCO
 
     @property
     def cocoeval(self) -> object:
-        """Return hotcoco's COCO evaluator type."""
-        return _hotcoco().COCOeval
+        """Return the package's COCO evaluator type."""
+        return self._package().COCOeval
 
     @property
     def mask_utils(self) -> object:
-        """Return hotcoco's RLE mask utilities."""
-        return _hotcoco().mask
+        """Return the package's RLE mask utilities."""
+        return self._package().mask
+
+
+class _HotCocoBackend(_PackageCocoBackend):
+    """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``."""
+
+    def _package(self) -> Any:
+        """Import and return ``hotcoco``."""
+        return _hotcoco()
 
 
 def _ufcoco() -> Any:
@@ -271,27 +287,18 @@ class _UfcocoMaskTools:
 _UFCOCO_MASK_TOOLS = _UfcocoMaskTools()
 
 
-class _UfcocoBackend(CocoBackend):
+class _UfcocoBackend(_PackageCocoBackend):
     """TorchMetrics COCO backend that resolves to ``ultrafast-pycocotools`` instead of ``faster-coco-eval``.
 
-    Built the way :class:`_HotCocoBackend` is: the parent is constructed with the supported ``faster_coco_eval`` name
-    and the three resolved surfaces are overridden, while every private helper the adapter calls on the backend stays
-    TorchMetrics' own. Unlike hotcoco, ufcoco keeps pycocotools' Python-side ``COCO`` object -- ``dataset`` assignment
-    followed by ``createIndex()``, annotations read back as the same dictionaries -- so the adapter routes it through
-    the paths it takes for faster-coco-eval; the only adaptations are the two places where ufcoco follows pycocotools
-    more literally than the other backends do, :func:`_ufcoco_evaluator_type` and :class:`_UfcocoMaskTools`.
+    Unlike hotcoco, ufcoco keeps pycocotools' Python-side ``COCO`` object -- ``dataset`` assignment followed by
+    ``createIndex()``, annotations read back as the same dictionaries -- so the adapter routes it through the paths it
+    takes for faster-coco-eval; the only adaptations are the two places where ufcoco follows pycocotools more literally
+    than the other backends do, :func:`_ufcoco_evaluator_type` and :class:`_UfcocoMaskTools`.
     """
 
-    def __init__(self) -> None:
-        super().__init__("faster_coco_eval")
-        # Same reason as the hotcoco backend: a missing optional dependency has to report itself here, before the
-        # contract check resolves `cocoeval` inside an `except ImportError` and reports a torchmetrics incompatibility.
-        _ufcoco()
-
-    @property
-    def coco(self) -> object:
-        """Return ufcoco's COCO dataset type."""
-        return _ufcoco().COCO
+    def _package(self) -> Any:
+        """Import and return ``ultrafast_pycocotools``."""
+        return _ufcoco()
 
     @property
     def cocoeval(self) -> object:
@@ -302,6 +309,28 @@ class _UfcocoBackend(CocoBackend):
     def mask_utils(self) -> object:
         """Return ufcoco's RLE mask utilities, accepting boolean masks."""
         return _UFCOCO_MASK_TOOLS
+
+
+class _FasterCocoEvalBackend(CocoBackend):
+    """TorchMetrics' own ``faster_coco_eval`` backend, the one :class:`MeanAveragePrecision` builds itself.
+
+    Nothing is overridden: the class exists so the registry holds one backend class per name and the metric builds
+    every backend the same way.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("faster_coco_eval")
+
+
+# Registry of every COCO evaluation backend the adapter accepts: `TrainConfig.eval_backend` value -> class of the
+# backend object the metric evaluates with. Adding a backend is one entry here plus its `CocoEvalBackend` member in
+# `rfdetr.config`; the constructor never branches on the name. `pycocotools` is excluded deliberately: it is an order
+# of magnitude slower and RF-DETR never installs it. All three ship with `rfdetr[train]`.
+_BACKENDS: dict[CocoEvalBackend, Callable[[], CocoBackend]] = {
+    "faster_coco_eval": _FasterCocoEvalBackend,
+    "hotcoco": _HotCocoBackend,
+    "ufcoco": _UfcocoBackend,
+}
 
 
 class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
@@ -342,13 +371,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         class_metrics: bool = False,
         extended_summary: bool = False,
         average: Literal["macro", "micro"] = "macro",
-        backend: Literal["faster_coco_eval", "hotcoco", "ufcoco"] = "hotcoco",
+        backend: CocoEvalBackend = "hotcoco",
         **kwargs: Any,
     ) -> None:
         if extended_summary:
             raise ValueError("OnePassCocoMeanAveragePrecision does not support extended_summary=True")
-        if backend not in _SUPPORTED_BACKENDS:
-            raise ValueError(f"OnePassCocoMeanAveragePrecision requires backend in {_SUPPORTED_BACKENDS}")
+        if backend not in _BACKENDS:
+            raise ValueError(f"OnePassCocoMeanAveragePrecision requires backend in {tuple(_BACKENDS)}")
         if average != "macro":
             raise ValueError("OnePassCocoMeanAveragePrecision requires average='macro'")
         sync_on_compute = kwargs.pop("sync_on_compute", False)
@@ -364,15 +393,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             extended_summary=False,
             average=average,
             # TorchMetrics resolves its COCO modules from a closed backend-name enum that has no hotcoco or ufcoco
-            # member, so the supported name is what upstream sees and the resolved surfaces are replaced afterwards.
+            # member, so the supported name is what upstream sees and the backend object is replaced from the
+            # registry afterwards.
             backend="faster_coco_eval",
             sync_on_compute=False,
             **kwargs,
         )
-        if backend == "hotcoco":
-            self._coco_backend = _HotCocoBackend()
-        elif backend == "ufcoco":
-            self._coco_backend = _UfcocoBackend()
+        self._coco_backend = _BACKENDS[backend]()
         self._validate_private_contract()
 
     @property

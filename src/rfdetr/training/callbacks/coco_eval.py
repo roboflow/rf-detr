@@ -13,7 +13,7 @@ import io
 import logging
 import warnings
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -22,6 +22,7 @@ import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
 from torch import Tensor
 
+from rfdetr.config import CocoEvalBackend
 from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.evaluation.f1_sweep import sweep_confidence_thresholds
 from rfdetr.evaluation.keypoint_oks import (
@@ -162,7 +163,7 @@ class COCOEvalCallback(Callback):
         in_notebook: bool | None = None,
         eval_ema_only: bool | None = None,
         eval_base_model: bool | None = None,
-        eval_backend: Literal["hotcoco", "faster_coco_eval", "ufcoco"] = "hotcoco",
+        eval_backend: CocoEvalBackend = "hotcoco",
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
