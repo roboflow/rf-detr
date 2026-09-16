@@ -7,6 +7,7 @@
 
 import warnings
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -585,7 +586,7 @@ class TestBuildTrainerPrecision:
 
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
     def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
-        """Accelerator='xla'/'tpu' sets an XLAPrecision('bf16-true') plugin, never precision=.
+        """An XLA accelerator uses XLAPrecision instead of a precision string.
 
         XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin and raises TypeError for standard
         precision strings like 'bf16-mixed'. ``XLAPrecision.__init__`` itself raises ``ModuleNotFoundError`` unless
@@ -611,13 +612,92 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
 
         assert "precision" not in captured
+        expected_precision = "bf16-true" if accelerator == "tpu" else "32-true"
+        mock_xla_precision_cls.assert_called_once_with(expected_precision)
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    @pytest.mark.parametrize("accelerator", ["tpu"])
+    @pytest.mark.parametrize("amp_dtype", ["bf16", "auto"])
+    def test_bf16_or_auto_on_tpu_uses_bf16_true(self, tmp_path: Path, accelerator: str, amp_dtype: str) -> None:
+        """Explicit BF16 and the default auto mode select TPU BF16 true precision.
+
+        'auto' matters here as much as the explicit case: it is the amp_dtype every caller gets by
+        just passing ``amp=True`` -- the exact recipe issue #1058 itself documents for TPU training
+        -- and without CUDA/MPS on the host it used to fall through to the CPU-only "32-true"
+        default, silently training in FP32 on TPU by default.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=False),
+            mock.patch("torch.backends.mps.is_available", return_value=False),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, amp_dtype=amp_dtype),
+                _mc(amp=True),
+                accelerator=accelerator,
+            )
+
+        assert "precision" not in captured
         mock_xla_precision_cls.assert_called_once_with("bf16-true")
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    def test_auto_on_available_tpu_uses_bf16_true(self, tmp_path: Path) -> None:
+        """Automatic accelerator selection retains TPU BF16 true precision."""
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True),
+            mock.patch("torch.cuda.is_available", return_value=False),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator="auto")
+
+        mock_xla_precision_cls.assert_called_once_with("bf16-true")
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    def test_explicit_xla_bf16_stays_fp32_without_backend_evidence(self, tmp_path: Path) -> None:
+        """Explicit XLA never assumes GPU PJRT can execute BF16 true precision."""
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="bf16"), _mc(amp=True), accelerator="xla")
+
+        mock_xla_precision_cls.assert_called_once_with("32-true")
         assert captured["plugins"] == [mock_xla_precision_cls.return_value]
 
     @pytest.mark.parametrize(
         ("amp", "expected_precision"),
         [
-            pytest.param(True, "bf16-true", id="amp_enabled"),
+            pytest.param(True, "32-true", id="amp_enabled"),
             pytest.param(False, "32-true", id="amp_disabled"),
         ],
     )
@@ -900,12 +980,14 @@ class TestBuildTrainerAmpDtype:
 
     @pytest.mark.parametrize("accelerator", ["cpu", "mps", "xla", "tpu"])
     def test_fp8_rejects_non_cuda_with_cuda_visible(self, tmp_path: Path, accelerator: str) -> None:
-        """Visible CUDA must not override an explicitly selected non-CUDA accelerator."""
+        """Reject FP8 before an explicitly selected XLA backend loads its precision plugin."""
         with (
             patch("torch.cuda.is_available", return_value=True),
+            patch("pytorch_lightning.plugins.XLAPrecision") as xla_precision,
             pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"),
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator=accelerator)
+        xla_precision.assert_not_called()
 
     def test_fp8_rejects_auto_resolving_to_xla(self, tmp_path: Path) -> None:
         """Lightning selects XLA before CUDA for auto; FP8 must honor that choice."""

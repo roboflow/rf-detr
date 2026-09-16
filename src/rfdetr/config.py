@@ -1114,16 +1114,18 @@ class TrainConfig(BaseConfig):
     amp_dtype: AmpDtype = Field(
         default=_AMP_DTYPE_DEFAULT,
         description=(
-            "Mixed-precision autocast dtype. Sole live authority for AMP enable+dtype; see "
+            "Mixed-precision training precision. Sole live authority for AMP enable+dtype; see "
             "_resolve_amp_dtype for the deprecated ModelConfig.amp fold-in. "
             "None disables autocast (full fp32). "
-            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
-            "'fp16' forces fp16. "
+            "On TPU, 'auto' and 'bf16' select XLA's bf16-true precision. "
+            "Elsewhere, 'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' selects bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' selects fp16 on supported CUDA/MPS backends. "
+            "Explicit XLA uses full fp32 until CPU/GPU PJRT BF16 execution is verified. "
             "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "
             "an explicit 'fp8' is honored even if the deprecated ModelConfig.amp=False. "
             "Any non-default value here always wins over the deprecated ModelConfig.amp. "
-            "Has no effect when training on CPU."
+            "The direct CPU accelerator always uses full fp32."
         ),
     )
     best_model_metric: Literal["map", "mar"] = Field(
