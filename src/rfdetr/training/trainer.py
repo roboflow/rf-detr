@@ -564,13 +564,14 @@ def build_trainer(
     # was left at its default (see _resolve_amp_dtype). Resolved once here rather than inside
     # _resolve_precision, which is called more than once — the deprecation warning must fire once.
     amp_dtype = _resolve_amp_dtype(model_config, tc)
+    if amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
+        # Reject before XLA plugin construction: CPU-only CI has no torch_xla, and the
+        # plugin's dependency error would otherwise mask this unsupported FP8 request.
+        raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
 
     def _resolve_precision() -> str:
         if amp_dtype is None:
             return "32-true"
-        # Honor explicit accelerators and Lightning's XLA-first auto selection before probing global CUDA.
-        if amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
-            raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
         if tpu_accelerator and amp_dtype in {"bf16", "auto"}:
             # Real TPU hardware (the case this fix targets and is verified against, issue #1058)
             # supports bf16 natively, so "auto" resolves to it the same way an explicit "bf16"

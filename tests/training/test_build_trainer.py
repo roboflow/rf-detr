@@ -973,12 +973,14 @@ class TestBuildTrainerAmpDtype:
 
     @pytest.mark.parametrize("accelerator", ["cpu", "mps", "xla", "tpu"])
     def test_fp8_rejects_non_cuda_with_cuda_visible(self, tmp_path: Path, accelerator: str) -> None:
-        """Visible CUDA must not override an explicitly selected non-CUDA accelerator."""
+        """Reject FP8 before an explicitly selected XLA backend loads its precision plugin."""
         with (
             patch("torch.cuda.is_available", return_value=True),
+            patch("pytorch_lightning.plugins.XLAPrecision") as xla_precision,
             pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"),
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator=accelerator)
+        xla_precision.assert_not_called()
 
     def test_fp8_rejects_auto_resolving_to_xla(self, tmp_path: Path) -> None:
         """Lightning selects XLA before CUDA for auto; FP8 must honor that choice."""
