@@ -1163,12 +1163,13 @@ def build_transformer(args: BuilderArgs) -> Transformer:
     )
 
 
+#: Functional activation per name accepted by the transformer layers.
+_ACTIVATION_FNS: dict[str, Callable[[Tensor], Tensor]] = {"relu": F.relu, "gelu": F.gelu, "glu": F.glu}
+
+
 def _get_activation_fn(activation: str) -> Callable[[Tensor], Tensor]:
     """Return an activation function given a string."""
-    if activation == "relu":
-        return F.relu
-    if activation == "gelu":
-        return F.gelu
-    if activation == "glu":
-        return F.glu
-    raise RuntimeError(f"activation should be relu/gelu, not {activation}.")
+    try:
+        return _ACTIVATION_FNS[activation]
+    except KeyError:
+        raise RuntimeError(f"activation should be one of {tuple(_ACTIVATION_FNS)}, not {activation}.") from None
