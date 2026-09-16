@@ -5,11 +5,14 @@
 # ------------------------------------------------------------------------
 """Contract tests for RF-DETR's one-pass TorchMetrics COCO adapter."""
 
+import copy
+import pickle
 import sys
 import warnings
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
@@ -17,7 +20,23 @@ import torch.multiprocessing as mp
 from torchmetrics.detection import MeanAveragePrecision
 from torchmetrics.detection.helpers import CocoBackend
 
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
+from rfdetr.config import CocoEvalBackend
+from rfdetr.training.coco_map import _BACKENDS, OnePassCocoMeanAveragePrecision, _ufcoco, _UfcocoBackend
+
+# Every backend the adapter accepts, with the package `pytest.importorskip` has to find for each.
+_BACKEND_PACKAGES = {"faster_coco_eval": "faster_coco_eval", "hotcoco": "hotcoco", "ufcoco": "ultrafast_pycocotools"}
+_ALL_BACKENDS = list(_BACKEND_PACKAGES)
+# The two backends that replace the resolved surfaces of a `faster_coco_eval`-named TorchMetrics backend.
+_ALTERNATIVE_BACKENDS = ["hotcoco", "ufcoco"]
+
+
+def _require_backend(backend: str) -> None:
+    """Skip the calling test when the package behind *backend* is not installed.
+
+    Examples:
+        >>> _require_backend("faster_coco_eval")
+    """
+    pytest.importorskip(_BACKEND_PACKAGES[backend])
 
 
 def test_one_pass_metric_matches_noncontiguous_per_class_results() -> None:
@@ -430,14 +449,14 @@ def test_prediction_only_class_preserves_negative_sentinel() -> None:
     assert torch.equal(result["mar_100_per_class"].reshape(-1), torch.tensor([-1.0]))
 
 
-@pytest.mark.parametrize("backend", ["faster_coco_eval", "hotcoco"])
+@pytest.mark.parametrize("backend", _ALL_BACKENDS)
 def test_empty_predictions_and_targets_return_compact_empty_class_result(backend: str) -> None:
     """An updated image with no predictions or ground truth must finish with aggregate sentinels and no class IDs.
 
-    Both backends are covered because this is the one path that hands the COCO constructor a dataset with no annotations
+    Every backend is covered because this is the one path that hands the COCO constructor a dataset with no annotations
     at all, and hotcoco builds its index there rather than in a later ``createIndex()`` call.
     """
-    pytest.importorskip(backend)
+    _require_backend(backend)
     metric = OnePassCocoMeanAveragePrecision(backend=backend, class_metrics=True)
     metric.update(
         [{"boxes": torch.empty((0, 4)), "scores": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)}],
@@ -450,6 +469,16 @@ def test_empty_predictions_and_targets_return_compact_empty_class_result(backend
     assert result["map_per_class"].numel() == 0
     assert result["mar_100_per_class"].numel() == 0
     assert float(result["map"]) == -1.0
+
+
+def test_backend_registry_matches_the_typed_eval_backend_names() -> None:
+    """The runtime backend registry must accept exactly the names ``TrainConfig.eval_backend`` is typed with.
+
+    The accepted names live in two places by necessity -- a ``Literal`` for type checkers and pydantic, a registry dict
+    for construction -- so a backend added to one but not the other would validate in ``TrainConfig`` and then fail at
+    metric construction, or construct fine yet be rejected by the config.
+    """
+    assert set(_BACKENDS) == set(get_args(CocoEvalBackend))
 
 
 def test_adapter_rejects_unsupported_result_and_backend_modes() -> None:
@@ -686,21 +715,22 @@ def test_distributed_merge_is_noop_for_world_size_one(_initialized: MagicMock, _
     gather.assert_not_called()
 
 
-def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str) -> None:
+def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str, backend: str) -> None:
     """Verify one populated and one empty rank converge on identical global COCO metrics.
 
     Args:
         rank: Process rank launched by ``torch.multiprocessing``.
         world_size: Total process count.
         init_file: File-store path used to initialize the local Gloo process group.
+        backend: COCO evaluation backend every rank constructs its metric with.
 
     Examples:
         This worker requires a multi-process Gloo rendezvous and is exercised by the test below.  # doctest: +SKIP
-        >>> _distributed_empty_rank_worker(0, 2, "/tmp/rfdetr-coco-map-rendezvous")  # doctest: +SKIP
+        >>> _distributed_empty_rank_worker(0, 2, "/tmp/rfdetr-coco-map-rendezvous", "hotcoco")  # doctest: +SKIP
     """
     dist.init_process_group("gloo", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
     try:
-        metric = OnePassCocoMeanAveragePrecision(class_metrics=True)
+        metric = OnePassCocoMeanAveragePrecision(class_metrics=True, backend=backend)
         if rank == 0:
             metric.update(
                 [
@@ -724,11 +754,17 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str) -
 # Windows CI currently cannot run this spawn test because gloo DDP spawn fails with
 # makeDeviceForHostname unsupported-device errors (see tests/training/test_trainer_smoke.py).
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
-def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path) -> None:
-    """Two real Gloo ranks must finish without deadlock when only rank zero receives a metric update."""
+@pytest.mark.parametrize("backend", _ALL_BACKENDS)
+def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path, backend: str) -> None:
+    """Two real Gloo ranks must finish without deadlock when only rank zero receives a metric update.
+
+    Every backend is spawned because the merge hands each rank's list states through the repo's object gather and the
+    empty rank then evaluates a dataset with no annotations on whichever evaluator was selected.
+    """
+    _require_backend(backend)
     init_file = tmp_path / "coco-map-gloo-init"
 
-    mp.spawn(_distributed_empty_rank_worker, args=(2, str(init_file)), nprocs=2, join=True)
+    mp.spawn(_distributed_empty_rank_worker, args=(2, str(init_file), backend), nprocs=2, join=True)
 
 
 def multiclass_detection_state() -> tuple[list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
@@ -774,13 +810,19 @@ def multiclass_detection_state() -> tuple[list[dict[str, torch.Tensor]], list[di
     return predictions, targets
 
 
-def test_hotcoco_backend_matches_faster_coco_eval() -> None:
-    """The optional hotcoco backend must return the same metrics as the default faster-coco-eval backend."""
-    pytest.importorskip("hotcoco")
+@pytest.mark.parametrize("backend", _ALTERNATIVE_BACKENDS)
+def test_alternative_backend_matches_faster_coco_eval(backend: str) -> None:
+    """Hotcoco and ufcoco must return the same metrics as the faster-coco-eval backend they replace.
+
+    Exact equality is required of both. ufcoco reproduces pycocotools' float64 summary to the byte, which differs from
+    faster-coco-eval's in the last float64 digit on some entries (pycocotools adds ``np.spacing(1)`` to the precision
+    denominator); the float32 tensors TorchMetrics reports absorb that here, so the same assertion holds.
+    """
+    _require_backend(backend)
     predictions, targets = multiclass_detection_state()
     kwargs: dict[str, Any] = {"class_metrics": True, "sync_on_compute": False}
     expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
-    actual_metric = OnePassCocoMeanAveragePrecision(backend="hotcoco", **kwargs)
+    actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs)
     expected_metric.update(predictions, targets)
     actual_metric.update(predictions, targets)
 
@@ -798,14 +840,17 @@ def test_hotcoco_backend_matches_faster_coco_eval() -> None:
             torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
 
 
-def test_hotcoco_backend_matches_faster_coco_eval_for_segmentation() -> None:
+@pytest.mark.parametrize("backend", _ALTERNATIVE_BACKENDS)
+def test_alternative_backend_matches_faster_coco_eval_for_segmentation(backend: str) -> None:
     """Mask metrics must match across backends, including the per-IoU-type area swap.
 
-    Segmentation is where the two backends diverge structurally: hotcoco returns a copy from its ``dataset``
-    getter, so the ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs cannot reach its evaluator
-    unless the prediction dataset is rebuilt. (hotcoco 1.0.1 fixed the earlier bytes-RLE constructor mismatch.)
+    Segmentation is where the backends diverge structurally. hotcoco returns a copy from its ``dataset`` getter, so the
+    ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs cannot reach its evaluator unless the prediction
+    dataset is rebuilt (hotcoco 1.0.1 fixed the earlier bytes-RLE constructor mismatch). ufcoco's RLE encoder rejects
+    the boolean masks TorchMetrics hands over, so the adapter converts them; a mask AP that silently collapses to 0.0 is
+    what either mistake would look like.
     """
-    pytest.importorskip("hotcoco")
+    _require_backend(backend)
     mask = torch.zeros(2, 16, 16, dtype=torch.bool)
     mask[0, 2:10, 2:10] = True
     mask[1, 11:15, 11:15] = True
@@ -828,7 +873,7 @@ def test_hotcoco_backend_matches_faster_coco_eval_for_segmentation() -> None:
     ]
     kwargs: dict[str, Any] = {"iou_type": ("bbox", "segm"), "class_metrics": True, "sync_on_compute": False}
     expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
-    actual_metric = OnePassCocoMeanAveragePrecision(backend="hotcoco", **kwargs)
+    actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs)
     expected_metric.update(predictions, targets)
     actual_metric.update(predictions, targets)
 
@@ -846,7 +891,7 @@ def test_hotcoco_backend_matches_faster_coco_eval_for_segmentation() -> None:
             torch.testing.assert_close(actual[key].reshape(-1), expected[key].reshape(-1), rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("backend", ["faster_coco_eval", "hotcoco"])
+@pytest.mark.parametrize("backend", _ALL_BACKENDS)
 def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
     """A configured maximum-detection threshold must change the metric it is supposed to change.
 
@@ -855,7 +900,7 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
     adapter could keep evaluating at COCO's default 100 detections while RF-DETR asked for ``eval_max_dets``, and every
     metric would still look plausible.
     """
-    pytest.importorskip(backend)
+    _require_backend(backend)
     boxes = torch.tensor([[float(index), 0.0, float(index) + 8.0, 8.0] for index in range(0, 60, 6)])
     predictions = [
         {
@@ -922,6 +967,230 @@ def test_hotcoco_evaluation_raises_no_warnings() -> None:
     assert [str(warning.message) for warning in raised] == []
 
 
+def test_ufcoco_reports_aggregate_ap_at_the_configured_detection_limit() -> None:
+    """``map`` must be a real number, equal to faster-coco-eval's, when ``eval_max_dets`` is not 100.
+
+    pycocotools summarizes ``stats[0]`` at ``maxDets=100`` regardless of the configured thresholds and returns ``-1``
+    when 100 is not among them; ufcoco reproduces that, and faster-coco-eval and hotcoco read the largest configured
+    threshold instead. RF-DETR evaluates at 500 by default, so without the adapter's evaluator override every
+    ``val/mAP`` on this backend would read ``-1`` while the rest of the metrics looked plausible.
+    """
+    _require_backend("ufcoco")
+    predictions, targets = multiclass_detection_state()
+
+    def aggregate_ap(backend: str) -> float:
+        metric = OnePassCocoMeanAveragePrecision(
+            backend=backend, max_detection_thresholds=[1, 10, 500], sync_on_compute=False
+        )
+        metric.update(predictions, targets)
+        return float(metric.compute()["map"])
+
+    expected = aggregate_ap("faster_coco_eval")
+    assert expected > 0.0, "fixture produced no aggregate AP; strengthen it before trusting this check"
+    assert aggregate_ap("ufcoco") == expected
+
+
+def test_ufcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
+    """Selecting ufcoco must not add backend chatter to a training run's console output.
+
+    ufcoco prints pycocotools' evaluation progress lines and twelve-row summary table on ``sys.stdout``, once per IoU
+    type per ``compute()``; the adapter's evaluation window has to swallow them the way it does for the other backends.
+    """
+    _require_backend("ufcoco")
+    predictions, targets = multiclass_detection_state()
+    metric = OnePassCocoMeanAveragePrecision(
+        backend="ufcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
+    )
+    metric.update(predictions, targets)
+    capfd.readouterr()
+
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        metric.compute()
+
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    assert [str(warning.message) for warning in raised] == []
+
+
+def test_missing_ufcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Selecting ufcoco without it installed must say how to install it.
+
+    Same trap as for hotcoco: the private-contract check resolves the evaluator inside an ``except ImportError``, so an
+    import deferred until then would be reported as a torchmetrics incompatibility instead of a missing extra.
+    """
+
+    def missing_dependency() -> Any:
+        raise ImportError(
+            "backend='ufcoco' requires the ultrafast-pycocotools package; install it with: pip install 'rfdetr[train]'"
+        )
+
+    monkeypatch.setattr("rfdetr.training.coco_map._ufcoco", missing_dependency)
+
+    with pytest.raises(ImportError, match=r"rfdetr\[train\]"):
+        OnePassCocoMeanAveragePrecision(backend="ufcoco")
+
+
+def test_ufcoco_missing_package_names_the_extra() -> None:
+    """A missing ufcoco package must retain the actionable installation guidance."""
+    missing_package = ModuleNotFoundError("No module named 'ultrafast_pycocotools'", name="ultrafast_pycocotools")
+
+    with (
+        patch("builtins.__import__", side_effect=missing_package),
+        pytest.raises(ImportError, match=r"rfdetr\[train\]"),
+    ):
+        _ufcoco()
+
+
+def test_ufcoco_propagates_nested_import_error() -> None:
+    """A failure inside ufcoco must retain the missing nested dependency name."""
+    nested_error = ModuleNotFoundError("No module named 'nested_dependency'", name="nested_dependency")
+
+    with patch("builtins.__import__", side_effect=nested_error), pytest.raises(ModuleNotFoundError) as raised:
+        _ufcoco()
+
+    assert raised.value is nested_error
+
+
+def test_ufcoco_backend_picks_up_the_optional_package_and_survives_pickling() -> None:
+    """The ufcoco backend must resolve its surfaces from ``ultrafast_pycocotools`` and pickle with the metric.
+
+    Lightning's DDP spawn and the callback's checkpoint plumbing pickle metric objects; a backend that stored the
+    imported module on itself would break there, which is why the surfaces are resolved on every access.
+    """
+    _require_backend("ufcoco")
+    metric = OnePassCocoMeanAveragePrecision(backend="ufcoco", sync_on_compute=False)
+    backend = metric._coco_backend
+
+    assert isinstance(backend, _UfcocoBackend)
+    assert backend.backend == "faster_coco_eval", "torchmetrics must still see the supported enum member"
+    assert backend.coco.__module__.startswith("ultrafast_pycocotools")
+    assert backend.cocoeval.__mro__[1].__module__.startswith("ultrafast_pycocotools")
+    assert backend.mask_utils.area.__module__.startswith("ultrafast_pycocotools")
+
+    restored = pickle.loads(pickle.dumps(metric))
+
+    assert isinstance(restored._coco_backend, _UfcocoBackend)
+    assert restored._coco_backend.cocoeval is backend.cocoeval
+
+
+class TestUfcocoArraysMatchPycocotools:
+    """The evaluator arrays the per-class reduction reads must be byte-identical to pycocotools' on the same datasets.
+
+    The parity tests above compare the float32 tensors RF-DETR reports; this one goes one level down, through the
+    adapter's own datasets, and checks the float64 precision, recall and score arrays the per-class AP/AR reduction is
+    computed from. pycocotools is the reference ufcoco reproduces, and ``rfdetr[train]`` installs it.
+    """
+
+    @staticmethod
+    def _metric_inputs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Return tied predictions, a crowd target, and images missing predictions or targets.
+
+        Examples:
+            >>> predictions, targets = TestUfcocoArraysMatchPycocotools._metric_inputs()
+            >>> len(predictions), len(targets)
+            (3, 3)
+        """
+        boxes = torch.tensor([[1.0, 2.0, 11.0, 12.0], [1.0, 2.0, 11.0, 12.0], [20.0, 20.0, 25.0, 25.0]])
+        masks = torch.zeros((3, 32, 32), dtype=torch.bool)
+        masks[:2, 2:12, 1:11] = True
+        masks[2, 20:25, 20:25] = True
+        predictions = [
+            {
+                "boxes": boxes,
+                "masks": masks,
+                "labels": torch.tensor([3, 3, 17]),
+                "scores": torch.tensor([0.8, 0.8, 0.4]),
+            },
+            {
+                "boxes": boxes[:0],
+                "masks": masks[:0],
+                "labels": torch.empty(0, dtype=torch.long),
+                "scores": torch.empty(0),
+            },
+            {"boxes": boxes[:1], "masks": masks[:1], "labels": torch.tensor([29]), "scores": torch.tensor([0.5])},
+        ]
+        targets = [
+            {
+                "boxes": boxes[[0, 2]],
+                "masks": masks[[0, 2]],
+                "labels": torch.tensor([3, 17]),
+                "iscrowd": torch.tensor([0, 1]),
+                "area": torch.tensor([100.0, 25.0]),
+            },
+            {
+                "boxes": boxes[:1],
+                "masks": masks[:1],
+                "labels": torch.tensor([3]),
+                "iscrowd": torch.tensor([0]),
+                "area": torch.tensor([100.0]),
+            },
+            {
+                "boxes": boxes[:0],
+                "masks": masks[:0],
+                "labels": torch.empty(0, dtype=torch.long),
+                "iscrowd": torch.empty(0, dtype=torch.long),
+                "area": torch.empty(0),
+            },
+        ]
+        return predictions, targets
+
+    @pytest.mark.parametrize("iou_type", ["bbox", "segm", pytest.param(("bbox", "segm"), id="both")])
+    @pytest.mark.parametrize("max_dets", [100, 500])
+    def test_evaluator_arrays_are_byte_identical(self, iou_type: Any, max_dets: int) -> None:
+        """Precision, recall and score arrays must match pycocotools byte for byte across incremental updates and
+        reuse."""
+        _require_backend("ufcoco")
+        pycocotools_coco = pytest.importorskip("pycocotools.coco").COCO
+        pycocotools_cocoeval = pytest.importorskip("pycocotools.cocoeval").COCOeval
+        predictions, targets = self._metric_inputs()
+        thresholds = [1, 10, max_dets]
+        reference = OnePassCocoMeanAveragePrecision(
+            backend="faster_coco_eval", iou_type=iou_type, class_metrics=True, max_detection_thresholds=thresholds
+        )
+        actual = OnePassCocoMeanAveragePrecision(
+            backend="ufcoco", iou_type=iou_type, class_metrics=True, max_detection_thresholds=thresholds
+        )
+        for _ in range(2):  # the second pass runs on a reset metric
+            for metric in (reference, actual):
+                for index in range(len(predictions)):
+                    metric.update(
+                        copy.deepcopy(predictions[index : index + 1]), copy.deepcopy(targets[index : index + 1])
+                    )
+                metric.merge_distributed_state()
+            expected, observed = reference.compute(), actual.compute()
+            assert observed.keys() == expected.keys()
+            for key in expected:
+                torch.testing.assert_close(observed[key], expected[key], rtol=0, atol=0, equal_nan=True)
+
+            coco_preds, coco_target, prediction_dataset = actual._coco_datasets(actual._observed_classes())
+            assert prediction_dataset is not None
+            oracle_gt, oracle_dt = pycocotools_coco(), pycocotools_coco()
+            oracle_gt.dataset = copy.deepcopy(coco_target.dataset)
+            oracle_dt.dataset = copy.deepcopy(prediction_dataset)
+            oracle_gt.createIndex()
+            oracle_dt.createIndex()
+            for kind in actual.iou_type:
+                if len(actual.iou_type) > 1:
+                    for dataset in (prediction_dataset, oracle_dt.dataset):
+                        for annotation in dataset["annotations"]:
+                            annotation["area"] = annotation[f"area_{kind}"]
+                evaluator = actual._coco_backend.cocoeval(coco_target, coco_preds, iouType=kind)
+                oracle = pycocotools_cocoeval(oracle_gt, oracle_dt, iouType=kind)
+                for instance in (evaluator, oracle):
+                    instance.params.maxDets = thresholds
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        instance.evaluate()
+                        instance.accumulate()
+                for key in ("precision", "recall", "scores"):
+                    assert np.asarray(evaluator.eval[key]).shape == np.asarray(oracle.eval[key]).shape
+                    assert np.asarray(evaluator.eval[key]).tobytes() == np.asarray(oracle.eval[key]).tobytes()
+            reference.reset()
+            actual.reset()
+
+
 def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """Selecting hotcoco without it installed must say how to install it.
 
@@ -939,7 +1208,7 @@ def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPa
         OnePassCocoMeanAveragePrecision(backend="hotcoco")
 
 
-@pytest.mark.parametrize("backend", ["faster_coco_eval", "hotcoco"])
+@pytest.mark.parametrize("backend", _ALL_BACKENDS)
 def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
     """Each IoU type of a joint evaluation must bucket detections by that type's own area.
 
@@ -950,6 +1219,7 @@ def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
     moves a reported number. Without the switch the segmentation area leaks into the box pass and ``bbox_map_small``
     doubles.
     """
+    _require_backend(backend)
     masks = torch.zeros(2, 128, 128, dtype=torch.bool)
     masks[0, 0:20, 0:20] = True
     masks[1, 40:100, 40:100] = True
