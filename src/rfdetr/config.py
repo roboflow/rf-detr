@@ -22,6 +22,9 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+#: Dataset layout selectable via ``TrainConfig.dataset_file``. The builder registry that resolves each name lives
+#: in ``rfdetr.datasets``; this alias is the single typed source of the accepted names.
+DatasetFile: TypeAlias = Literal["coco", "o365", "roboflow", "yolo", "webdataset"]
 PathLikeStr: TypeAlias = str | Path
 #: Mixed-precision autocast dtype; ``None`` disables autocast (full fp32).
 AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
@@ -32,6 +35,7 @@ _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
 __all__ = [
     "AmpDtype",
     "AugmentationBackend",
+    "DatasetFile",
     "ModelConfig",
     "RFDETRBaseConfig",
     "RFDETRLargeDeprecatedConfig",
@@ -1075,7 +1079,7 @@ class TrainConfig(BaseConfig):
     keypoint_oks_sigmas: list[float] | None = None
     # "webdataset" streams pre-packed tar shards instead of loose image files; see
     # rfdetr.datasets.webdataset for the packer and the sizing contract it imposes on the loaders.
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "webdataset"] = "roboflow"
+    dataset_file: DatasetFile = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
