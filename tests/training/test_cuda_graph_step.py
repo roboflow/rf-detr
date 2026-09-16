@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import multiprocessing
 from unittest.mock import patch
 
@@ -105,6 +106,28 @@ def test_capture_restores_autocast_cache_setting() -> None:
         CudaGraphTrainingRunner(model)(_samples())
 
     assert cache_settings == [False, True]
+
+
+def test_capture_logs_signature_once(caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A successful capture announces its signature once; replays stay silent.
+
+    Without this line an active graph run is indistinguishable from eager in the console: the only
+    other messages on this path are fallback warnings and capture errors.
+    """
+    model = _TinyGraphableModel()
+    runner = CudaGraphTrainingRunner(model)
+    monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+    with (
+        patch("torch.cuda.make_graphed_callables", side_effect=lambda module, _args, **_kwargs: module),
+        caplog.at_level(logging.INFO, logger="rf-detr"),
+    ):
+        runner(_samples())
+        runner(_samples())
+
+    captured = [record for record in caplog.records if "Captured CUDA graph" in record.getMessage()]
+    assert len(captured) == 1
+    assert "(2, 4, 3, 3)" in captured[0].getMessage()
 
 
 def test_failed_capture_raises_without_eager_retry() -> None:

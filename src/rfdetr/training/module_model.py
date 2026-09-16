@@ -557,6 +557,12 @@ class RFDETRModelModule(LightningModule):
             logger.warning("Disabling CUDA graphs because %s; training will run eagerly.", unsupported_reason)
             return
         self._cuda_graph_runner = CudaGraphTrainingRunner(self.model)
+        logger.info(
+            "CUDA graph replay enabled for the training forward on %s (%s); the first batch of each input "
+            "shape runs eager warm-up and capture.",
+            self.device,
+            self.trainer.precision,
+        )
 
     def on_train_batch_start(self, batch: tuple[Any, Any], batch_idx: int) -> None:
         """Apply optional multi-scale resize to the incoming batch.

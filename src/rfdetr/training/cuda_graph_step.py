@@ -12,7 +12,10 @@ from typing import Any, Callable, cast
 import torch
 from torch import Tensor, nn
 
+from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
+
+logger = get_logger()
 
 _GraphedCallable = Callable[[Tensor, Tensor], dict[str, Any]]
 _ExecutionKey = tuple[
@@ -138,4 +141,13 @@ class CudaGraphTrainingRunner:
                 torch.set_autocast_cache_enabled(autocast_cache_enabled)
 
         self._graphed_cache[key] = graphed
+        tensor_shape, mask_shape, *_rest, autocast_enabled, autocast_dtype = key
+        logger.info(
+            "Captured CUDA graph %d for input shape %s (mask %s, autocast %s); "
+            "later batches with this signature replay it.",
+            len(self._graphed_cache),
+            tensor_shape,
+            mask_shape,
+            autocast_dtype if autocast_enabled else "off",
+        )
         return graphed

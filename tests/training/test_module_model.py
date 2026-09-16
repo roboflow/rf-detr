@@ -3093,22 +3093,31 @@ class TestConfigureOptimizers:
 class TestCudaGraphLifecycle:
     """Tests for enabling the graph runner after Lightning resolves runtime ownership."""
 
-    def test_on_train_start_enables_single_cuda_detection(self, tmp_path: Path) -> None:
-        """A supported CUDA fit builds one runner around the registered detector."""
+    def test_on_train_start_enables_single_cuda_detection(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A supported CUDA fit builds one runner around the registered detector and says so.
+
+        The enable path must be as visible as the fallback warnings: without a log line a graph run
+        and an eager run print identical consoles.
+        """
         mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
         module, model, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
         trainer = SimpleNamespace(world_size=1, precision="bf16-mixed")
         runner = MagicMock()
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
 
         with (
             patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
             patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
             patch("rfdetr.training.module_model.CudaGraphTrainingRunner", return_value=runner) as runner_type,
+            caplog.at_level(logging.INFO, logger="rf-detr"),
         ):
             module.on_train_start()
 
         runner_type.assert_called_once_with(model)
         assert module._cuda_graph_runner is runner
+        assert any("CUDA graph replay enabled" in record.getMessage() for record in caplog.records)
 
     def test_on_train_start_keeps_cpu_training_eager(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
