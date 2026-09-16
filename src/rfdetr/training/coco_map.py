@@ -103,6 +103,38 @@ _EVALUATOR_ZERO_ARG_METHODS = ("evaluate", "accumulate", "summarize")
 _VAR_PARAM_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
 
 
+def _import_optional_backend(module_name: str, backend_value: str, pip_name: str | None = None) -> Any:
+    """Import one of the optional COCO evaluation backend packages.
+
+    Both ``hotcoco`` and ``ultrafast_pycocotools`` are required members of the ``train`` extra (see pyproject.toml),
+    so a missing import here always means the extra itself was never installed, not that one specific backend was
+    left out. Shared by :func:`_hotcoco` and :func:`_ufcoco` so the two backends report a missing extra identically.
+    Uses the ``__import__`` builtin rather than :func:`importlib.import_module`: the latter bypasses a
+    ``patch("builtins.__import__", ...)`` mock, which the missing-dependency regression tests rely on.
+
+    Args:
+        module_name: The package's import name (e.g. ``"hotcoco"``).
+        backend_value: The ``TrainConfig.eval_backend`` value that selects this package, used in the install hint.
+        pip_name: The package's PyPI distribution name, if it differs from ``module_name`` (e.g. a hyphen where the
+            import name has an underscore). Defaults to ``module_name``.
+
+    Returns:
+        The imported module.
+
+    Raises:
+        ImportError: If the optional dependency is not installed.
+    """
+    try:
+        return __import__(module_name)
+    except ModuleNotFoundError as error:
+        if error.name != module_name:
+            raise
+        raise ImportError(
+            f"backend={backend_value!r} requires the {pip_name or module_name} package; "
+            "install it with: pip install 'rfdetr[train]'"
+        ) from error
+
+
 def _hotcoco() -> Any:
     """Import the optional ``hotcoco`` backend package.
 
@@ -112,13 +144,7 @@ def _hotcoco() -> Any:
     Raises:
         ImportError: If the optional dependency is not installed.
     """
-    try:
-        import hotcoco
-    except ImportError as error:
-        raise ImportError(
-            "backend='hotcoco' requires the hotcoco package; install it with: pip install 'rfdetr[train]'"
-        ) from error
-    return hotcoco
+    return _import_optional_backend("hotcoco", "hotcoco")
 
 
 @contextlib.contextmanager
@@ -191,15 +217,7 @@ def _ufcoco() -> Any:
     Raises:
         ImportError: If the optional dependency is not installed.
     """
-    try:
-        import ultrafast_pycocotools
-    except ModuleNotFoundError as error:
-        if error.name != "ultrafast_pycocotools":
-            raise
-        raise ImportError(
-            "backend='ufcoco' requires the ultrafast-pycocotools package; install it with: pip install 'rfdetr[train]'"
-        ) from error
-    return ultrafast_pycocotools
+    return _import_optional_backend("ultrafast_pycocotools", "ufcoco", pip_name="ultrafast-pycocotools")
 
 
 @functools.lru_cache(maxsize=None)
