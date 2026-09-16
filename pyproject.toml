@@ -235,8 +235,13 @@ ci-gpu-pin = [
 #   ships a release compatible with newer torch. Does not affect users installing rfdetr from PyPI —
 #   see rfdetr.export._executorch.exporter._check_executorch_available(require_runtime=True) for the
 #   equivalent runtime guidance surfaced to end users who hit this.
+#   executorch>=1.4 needs torch>=2.13 and says so, so it never resolved under this pin; 1.5.0
+#   (2026-09-16) dropped its torch requirement entirely, resolves against torch 2.12.1, and its
+#   runtime then fails every `Method.execute` with "tensor does not have a device". Cap executorch
+#   alongside torch until both pins move together.
 ci-executorch-pin = [
     "torch<2.13",
+    "executorch<1.4",
 ]
 
 build = [
@@ -358,6 +363,28 @@ conflicts = [
     [
         { group = "typing" },
         { extra = "xla" },
+    ],
+    # ci-executorch-pin now carries an executorch cap, so it inherits every fork the
+    # executorch extra needs (same torch floor) plus the typing group's torch==2.14.0 pin.
+    [
+        { group = "ci-executorch-pin" },
+        { group = "ci-gpu-pin" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "coreml" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "tflite" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "xla" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { group = "typing" },
     ],
     # litert-torch 0.9.x pins torch<2.14 in its own metadata; the typing group pins torch==2.14.0.
     [
