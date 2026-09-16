@@ -81,8 +81,8 @@ jobs:
         timeout-minutes: 8
         # The end-to-end parity test builds and exports the full RFDETRNano stack, so
         # pull the same extras as the CPU test job plus the [executorch] backend.
-        # --group ci-executorch-pin locks torch to a version whose C10 ABI matches
-        # executorch 1.3.1's prebuilt wheel (see pyproject.toml for the empirically
+        # --group ci-executorch-pin locks torch and executorch to a pair whose C10 ABI
+        # matches (torch 2.12.x + executorch 1.3.1; see pyproject.toml for the empirically
         # validated range and removal condition).
         run: uv pip install -e ".[executorch,train,augment,cli,visual]" --group tests --group ci-executorch-pin
 
