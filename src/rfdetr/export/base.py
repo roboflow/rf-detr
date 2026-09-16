@@ -9,7 +9,7 @@ An exporter is constructed from its format's configuration and then called with 
 :class:`~rfdetr.export.prepare.ExportGraph`, so the two halves of an export — *what the user asked for* and *what the
 model looks like* — stay separate and independently testable.
 
-The base class owns everything that is the same for all six formats: rejecting a capability the format does not have,
+The base class owns everything that is the same for all seven formats: rejecting a capability the format does not have,
 switching the model into its export-friendly forward exactly once, normalizing the returned path, and logging the
 result. A format subclass implements :meth:`Exporter._convert` and declares its capabilities as class attributes; it
 never repeats a guard.
@@ -242,7 +242,7 @@ class Exporter(ABC, Generic[_ConfigT]):
             )
         # stacklevel=4, not 3: the warning is raised two frames below the public entry point
         # (_check_capabilities -> __init__ -> RFDETR.export -> the user's call), and pointing at RFDETR.export
-        # would break `warnings.filterwarnings(..., module=...)` filters and collapse all six formats onto one
+        # would break `warnings.filterwarnings(..., module=...)` filters and collapse all seven formats onto one
         # reported location.
         if self.config.notes is not None and not self.supports_notes:
             warnings.warn(

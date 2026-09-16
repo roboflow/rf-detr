@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for the format-independent export preparation shared by every exporter.
 
-``prepare_export_graph`` is the single producer of the graph all six formats consume, so a mistake here reaches every
+``prepare_export_graph`` is the single producer of the graph all seven formats consume, so a mistake here reaches every
 format at once — which is exactly why the work was pulled out of ``RFDETR.export()`` in the first place.
 """
 
