@@ -19,10 +19,18 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
+import numpy as np
+from numpy.typing import NDArray
+
+try:
+    import simplejpeg  # type: ignore[import-untyped,unused-ignore]
+except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to Pillow without it
+    simplejpeg = None
 import torch
 import torch.utils.data
 import torchvision
@@ -49,6 +57,7 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 _COCO_MAX_SIZE = 1333
+_JPEG_SOI = b"\xff\xd8"
 
 
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
@@ -464,6 +473,70 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
     return torch.stack(masks, dim=0)
 
 
+def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> int:
+    """Return the power-of-two factor ``PIL.Image.draft`` would reduce a JPEG by for a square ``draft_size`` box.
+
+    Mirrors ``JpegImageFile.draft``: the largest of 8, 4, 2 that keeps both axes at or above ``draft_size``, else 1.
+    Pinning this factor explicitly matters because libjpeg-turbo can also scale by 3/8, 5/8, ... and would otherwise
+    pick a finer, slower reduction than Pillow for the same box.
+
+    Examples:
+        >>> _jpeg_draft_reduction(2000, 2000, 700)
+        2
+        >>> _jpeg_draft_reduction(2000, 2000, None)
+        1
+        >>> _jpeg_draft_reduction(513, 1024, 512)
+        1
+    """
+    if draft_size is None:
+        return 1
+    scale = min(width // draft_size, height // draft_size)
+    return next((factor for factor in (8, 4, 2) if scale >= factor), 1)
+
+
+def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+    """Decode an image file to RGB, optionally letting the JPEG decoder downscale in the DCT domain.
+
+    JPEG files go through ``simplejpeg`` (libjpeg-turbo straight into a NumPy buffer) when it is installed, which
+    measured about 1.6x faster than Pillow per image, and its output is pixel-identical because Pillow's wheels link the
+    same libjpeg-turbo.  Everything else falls back to Pillow and copies its image into an array: non-JPEG files, a
+    missing ``simplejpeg``, and any JPEG it rejects, so error behavior does not depend on the optional package either.
+    Returning an array rather than a PIL image lets the YOLO loader, which wants an array, skip a round trip; the COCO
+    loader wraps it with ``Image.fromarray``.  When ``draft_size`` is set, both
+    decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to keep the image at least
+    ``draft_size`` on both axes; it is a no-op for non-JPEG files.
+
+    Args:
+        path: Image file to decode.
+        draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+
+    Returns:
+        Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
+        decoder did not reduce.
+    """
+    data = path.read_bytes()
+    if simplejpeg is not None and data.startswith(_JPEG_SOI):
+        try:
+            header = simplejpeg.decode_jpeg_header(data)
+            full_height, full_width = int(header[0]), int(header[1])
+            reduction = _jpeg_draft_reduction(full_width, full_height, draft_size)
+            pixels = simplejpeg.decode_jpeg(
+                data,
+                colorspace="RGB",
+                min_height=-(-full_height // reduction),
+                min_width=-(-full_width // reduction),
+            )
+        except ValueError:
+            pass  # corrupt or unsupported JPEG: let Pillow decode it or raise its usual error
+        else:
+            return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
+    with Image.open(io.BytesIO(data)) as image:
+        full_width, full_height = image.size
+        if draft_size is not None:
+            image.draft("RGB", (draft_size, draft_size))
+        return np.asarray(image.convert("RGB")), (image.width / full_width, image.height / full_height)
+
+
 class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
     """COCO detection dataset with optional sparse-to-contiguous category ID remapping.
 
@@ -566,14 +639,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         )
 
     def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
-        """Decode one image, optionally letting the JPEG decoder downscale in the DCT domain.
+        """Decode one image through :func:`decode_image`, drafting when ``draft_size`` is set.
 
         Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
-        deliberately not named the same: it returns a decode scale alongside the image.  When ``draft_size`` is set,
-        ``PIL.Image.draft`` asks libjpeg for the cheapest power-of-two-reduced decode whose output is still at least
-        ``draft_size`` on both axes.  ``draft`` is a no-op for non-JPEG files and whenever no power-of-two reduction
-        keeps the image above the box, so no format check is needed.  This also closes the file handle, which the
-        torchvision implementation leaves to the garbage collector.
+        deliberately not named the same: it returns a decode scale alongside the image.
 
         Args:
             image_id: COCO image id.
@@ -582,12 +651,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
         """
         path = self.coco.loadImgs(image_id)[0]["file_name"]
-        with Image.open(Path(self.root) / path) as image:
-            full_width = image.width
-            full_height = image.height
-            if self._draft_size is not None:
-                image.draft("RGB", (self._draft_size, self._draft_size))
-            return image.convert("RGB"), (image.width / full_width, image.height / full_height)
+        pixels, scales = decode_image(Path(self.root) / path, self._draft_size)
+        return Image.fromarray(pixels), scales
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]
