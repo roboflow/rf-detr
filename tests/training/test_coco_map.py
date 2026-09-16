@@ -9,7 +9,7 @@ import copy
 import pickle
 import sys
 import warnings
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
@@ -20,7 +20,8 @@ import torch.multiprocessing as mp
 from torchmetrics.detection import MeanAveragePrecision
 from torchmetrics.detection.helpers import CocoBackend
 
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _ufcoco, _UfcocoBackend
+from rfdetr.config import CocoEvalBackend
+from rfdetr.training.coco_map import _BACKENDS, OnePassCocoMeanAveragePrecision, _ufcoco, _UfcocoBackend
 
 # Every backend the adapter accepts, with the package `pytest.importorskip` has to find for each.
 _BACKEND_PACKAGES = {"faster_coco_eval": "faster_coco_eval", "hotcoco": "hotcoco", "ufcoco": "ultrafast_pycocotools"}
@@ -468,6 +469,16 @@ def test_empty_predictions_and_targets_return_compact_empty_class_result(backend
     assert result["map_per_class"].numel() == 0
     assert result["mar_100_per_class"].numel() == 0
     assert float(result["map"]) == -1.0
+
+
+def test_backend_registry_matches_the_typed_eval_backend_names() -> None:
+    """The runtime backend registry must accept exactly the names ``TrainConfig.eval_backend`` is typed with.
+
+    The accepted names live in two places by necessity -- a ``Literal`` for type checkers and pydantic, a registry dict
+    for construction -- so a backend added to one but not the other would validate in ``TrainConfig`` and then fail at
+    metric construction, or construct fine yet be rejected by the config.
+    """
+    assert set(_BACKENDS) == set(get_args(CocoEvalBackend))
 
 
 def test_adapter_rejects_unsupported_result_and_backend_modes() -> None:
