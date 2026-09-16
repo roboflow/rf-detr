@@ -20,7 +20,7 @@ import torch.multiprocessing as mp
 from torchmetrics.detection import MeanAveragePrecision
 from torchmetrics.detection.helpers import CocoBackend
 
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _UfcocoBackend
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _ufcoco, _UfcocoBackend
 
 # Every backend the adapter accepts, with the package `pytest.importorskip` has to find for each.
 _BACKEND_PACKAGES = {"faster_coco_eval": "faster_coco_eval", "hotcoco": "hotcoco", "ufcoco": "ultrafast_pycocotools"}
@@ -1019,6 +1019,27 @@ def test_missing_ufcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(ImportError, match=r"rfdetr\[train\]"):
         OnePassCocoMeanAveragePrecision(backend="ufcoco")
+
+
+def test_ufcoco_missing_package_names_the_extra() -> None:
+    """A missing ufcoco package must retain the actionable installation guidance."""
+    missing_package = ModuleNotFoundError("No module named 'ultrafast_pycocotools'", name="ultrafast_pycocotools")
+
+    with (
+        patch("builtins.__import__", side_effect=missing_package),
+        pytest.raises(ImportError, match=r"rfdetr\[train\]"),
+    ):
+        _ufcoco()
+
+
+def test_ufcoco_propagates_nested_import_error() -> None:
+    """A failure inside ufcoco must retain the missing nested dependency name."""
+    nested_error = ModuleNotFoundError("No module named 'nested_dependency'", name="nested_dependency")
+
+    with patch("builtins.__import__", side_effect=nested_error), pytest.raises(ModuleNotFoundError) as raised:
+        _ufcoco()
+
+    assert raised.value is nested_error
 
 
 def test_ufcoco_backend_picks_up_the_optional_package_and_survives_pickling() -> None:

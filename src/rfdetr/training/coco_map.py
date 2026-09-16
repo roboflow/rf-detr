@@ -193,7 +193,9 @@ def _ufcoco() -> Any:
     """
     try:
         import ultrafast_pycocotools
-    except ImportError as error:
+    except ModuleNotFoundError as error:
+        if error.name != "ultrafast_pycocotools":
+            raise
         raise ImportError(
             "backend='ufcoco' requires the ultrafast-pycocotools package; install it with: pip install 'rfdetr[train]'"
         ) from error
