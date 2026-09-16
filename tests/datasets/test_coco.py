@@ -15,10 +15,12 @@ import types
 from pathlib import Path
 from typing import Dict, List
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
 
+from rfdetr.datasets import coco as coco_module
 from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema
 from rfdetr.datasets.coco import (
     CocoDetection,
@@ -26,6 +28,7 @@ from rfdetr.datasets.coco import (
     annotated_category_ids,
     build_coco,
     build_roboflow_from_coco,
+    decode_image,
     draft_size_for_transforms,
     filter_parent_categories,
     scale_coco_annotation,
@@ -1403,6 +1406,129 @@ class TestCocoDetectionZeroAnnotations:
         _, target = dataset[0]
         assert target["boxes"].shape == torch.Size([0, 4])
         assert target["labels"].shape == torch.Size([0])
+
+
+def write_test_jpeg(path: Path, width: int, height: int, mode: str = "RGB") -> None:
+    """Write a deterministic noisy JPEG so decoder comparisons exercise real DCT content.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     jpeg_path = Path(tmp) / "img.jpg"
+        ...     write_test_jpeg(jpeg_path, 8, 6)
+        ...     Image.open(jpeg_path).size
+        (8, 6)
+    """
+    pixels = np.random.default_rng(0).integers(0, 256, size=(height, width, 3), dtype=np.uint8)
+    Image.fromarray(pixels).convert(mode).save(path, format="JPEG", quality=90)
+
+
+def pillow_decode(path: Path, draft_size: int | None = None) -> tuple[np.ndarray, tuple[float, float]]:
+    """Reference decode through Pillow alone, mirroring what ``decode_image`` did before ``simplejpeg`` support.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     jpeg_path = Path(tmp) / "img.jpg"
+        ...     write_test_jpeg(jpeg_path, 64, 32)
+        ...     pixels, scales = pillow_decode(jpeg_path, draft_size=16)
+        ...     pixels.shape, scales
+        ((16, 32, 3), (0.5, 0.5))
+    """
+    with Image.open(path) as image:
+        full_width, full_height = image.size
+        if draft_size is not None:
+            image.draft("RGB", (draft_size, draft_size))
+        pixels = np.asarray(image.convert("RGB"))
+    return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
+
+
+requires_simplejpeg = pytest.mark.skipif(coco_module.simplejpeg is None, reason="simplejpeg is not installed")
+
+
+class TestDecodeImage:
+    """``decode_image`` yields Pillow-identical pixel arrays whichever decoder handles the file."""
+
+    @requires_simplejpeg
+    def test_jpeg_pixels_match_pillow(self, tmp_path: Path) -> None:
+        """Full-resolution simplejpeg output is bit-identical to Pillow's."""
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_jpeg(jpeg_path, 457, 301)
+        expected, _ = pillow_decode(jpeg_path)
+
+        pixels, scales = decode_image(jpeg_path)
+
+        assert pixels.dtype == np.uint8
+        assert scales == (1.0, 1.0)
+        np.testing.assert_array_equal(pixels, expected)
+
+    @requires_simplejpeg
+    @pytest.mark.parametrize(
+        ("width", "height", "draft_size"),
+        [
+            (1000, 1000, 350),
+            (961, 541, 256),
+            (640, 480, 560),
+            (513, 1024, 512),
+            (1000, 1000, 100),
+        ],
+    )
+    def test_draft_reduction_matches_pillow(self, tmp_path: Path, width: int, height: int, draft_size: int) -> None:
+        """Reduced decodes pick Pillow's power-of-two factor, not libjpeg-turbo's finer N/8 steps."""
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_jpeg(jpeg_path, width, height)
+        expected, expected_scales = pillow_decode(jpeg_path, draft_size)
+
+        pixels, scales = decode_image(jpeg_path, draft_size)
+
+        assert pixels.shape == expected.shape
+        assert scales == expected_scales
+        np.testing.assert_array_equal(pixels, expected)
+
+    @requires_simplejpeg
+    def test_grayscale_jpeg_decodes_to_rgb(self, tmp_path: Path) -> None:
+        """Single-channel JPEG sources come back as three-channel RGB like Pillow's ``convert``."""
+        jpeg_path = tmp_path / "gray.jpg"
+        write_test_jpeg(jpeg_path, 40, 30, mode="L")
+        expected, _ = pillow_decode(jpeg_path)
+
+        pixels, _ = decode_image(jpeg_path)
+
+        assert pixels.shape == (30, 40, 3)
+        np.testing.assert_array_equal(pixels, expected)
+
+    @requires_simplejpeg
+    def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path) -> None:
+        """A JPEG simplejpeg rejects falls through to Pillow, so callers see the same ``OSError`` as before."""
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_jpeg(jpeg_path, 457, 301)
+        jpeg_path.write_bytes(jpeg_path.read_bytes()[:3000])
+
+        with pytest.raises(OSError, match="truncated"):
+            decode_image(jpeg_path)
+
+    def test_png_uses_pillow_and_ignores_draft(self, tmp_path: Path) -> None:
+        """Non-JPEG files decode through Pillow at full resolution regardless of ``draft_size``."""
+        png_path = tmp_path / "img.png"
+        expected = np.random.default_rng(0).integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+        Image.fromarray(expected).save(png_path)
+
+        pixels, scales = decode_image(png_path, draft_size=8)
+
+        assert scales == (1.0, 1.0)
+        np.testing.assert_array_equal(pixels, expected)
+
+    def test_without_simplejpeg_falls_back_to_pillow(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With ``simplejpeg`` unavailable, JPEG decoding still drafts through Pillow."""
+        monkeypatch.setattr(coco_module, "simplejpeg", None)
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_jpeg(jpeg_path, 961, 541)
+        expected, expected_scales = pillow_decode(jpeg_path, 256)
+
+        pixels, scales = decode_image(jpeg_path, 256)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(pixels, expected)
 
 
 class TestCocoDetectionDraftDecode:

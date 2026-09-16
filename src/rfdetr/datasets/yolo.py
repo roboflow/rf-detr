@@ -30,6 +30,7 @@ from rfdetr.datasets._keypoint_schema import (
 )
 from rfdetr.datasets._torchvision import Compose
 from rfdetr.datasets.coco import (
+    decode_image,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
@@ -166,8 +167,7 @@ class _LazyYoloDetectionDataset:
     def __getitem__(self, idx: int) -> tuple[str, NDArray[np.uint8], Detections]:
         sample = self._samples[idx]
         try:
-            with Image.open(sample.image_path) as image:
-                rgb_image = np.array(image.convert("RGB"))
+            rgb_image, _ = decode_image(Path(sample.image_path))
         except (FileNotFoundError, OSError, UnidentifiedImageError) as exc:
             raise ValueError(f"Could not read image from path: {sample.image_path}") from exc
         return sample.image_path, rgb_image, sample.to_detections()
