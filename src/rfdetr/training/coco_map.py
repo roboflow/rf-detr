@@ -322,10 +322,10 @@ class _FasterCocoEvalBackend(CocoBackend):
         super().__init__("faster_coco_eval")
 
 
-# Registry of every COCO evaluation backend the adapter accepts: `TrainConfig.eval_backend` value -> class of the
-# backend object the metric evaluates with. Adding a backend is one entry here plus its `CocoEvalBackend` member in
-# `rfdetr.config`; the constructor never branches on the name. `pycocotools` is excluded deliberately: it is an order
-# of magnitude slower and RF-DETR never installs it. All three ship with `rfdetr[train]`.
+#: Registry of every COCO evaluation backend the adapter accepts: `TrainConfig.eval_backend` value -> class of the
+#: backend object the metric evaluates with. Adding a backend is one entry here plus its `CocoEvalBackend` member in
+#: `rfdetr.config`; the constructor never branches on the name. `pycocotools` is excluded deliberately: it is an order
+#: of magnitude slower and RF-DETR never installs it. All three ship with `rfdetr[train]`.
 _BACKENDS: dict[CocoEvalBackend, Callable[[], CocoBackend]] = {
     "faster_coco_eval": _FasterCocoEvalBackend,
     "hotcoco": _HotCocoBackend,
