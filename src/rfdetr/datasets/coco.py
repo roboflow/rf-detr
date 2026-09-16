@@ -514,7 +514,23 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
         decoder did not reduce.
     """
-    data = path.read_bytes()
+    return decode_image_bytes(path.read_bytes(), draft_size)
+
+
+def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+    """Decode encoded image bytes to RGB, optionally letting the JPEG decoder downscale in the DCT domain.
+
+    Holds the decoder policy :func:`decode_image` applies; readers that already have the encoded bytes in memory, such
+    as the WebDataset loader reading a shard member, call this directly instead of writing the file out first.
+
+    Args:
+        data: Encoded image bytes.
+        draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+
+    Returns:
+        Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
+        decoder did not reduce.
+    """
     if simplejpeg is not None and data.startswith(_JPEG_SOI):
         try:
             header = simplejpeg.decode_jpeg_header(data)

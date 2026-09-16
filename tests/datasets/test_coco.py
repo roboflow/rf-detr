@@ -29,6 +29,7 @@ from rfdetr.datasets.coco import (
     build_coco,
     build_roboflow_from_coco,
     decode_image,
+    decode_image_bytes,
     draft_size_for_transforms,
     filter_parent_categories,
     scale_coco_annotation,
@@ -1553,6 +1554,18 @@ class TestDecodeImage:
         pixels, scales = decode_image(png_path, draft_size=8)
 
         assert scales == (1.0, 1.0)
+        np.testing.assert_array_equal(pixels, expected)
+
+    @pytest.mark.parametrize("draft_size", [None, 256])
+    def test_bytes_entry_point_matches_path_entry_point(self, tmp_path: Path, draft_size: int | None) -> None:
+        """``decode_image_bytes`` is the policy ``decode_image`` applies, so in-memory readers get the same result."""
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_jpeg(jpeg_path, 961, 541)
+        expected, expected_scales = decode_image(jpeg_path, draft_size)
+
+        pixels, scales = decode_image_bytes(jpeg_path.read_bytes(), draft_size)
+
+        assert scales == expected_scales
         np.testing.assert_array_equal(pixels, expected)
 
     def test_without_simplejpeg_falls_back_to_pillow(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
