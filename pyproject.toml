@@ -68,6 +68,15 @@ train = [
     # in src/rfdetr/training/coco_map.py (_prediction_dataset_for_iou_type) and reconsider widening this to a range.
     "hotcoco==1.0.1",
     "faster-coco-eval>=1.7.2",
+    # Third COCO evaluation backend, selected with TrainConfig.eval_backend="ufcoco" (BSD-2-Clause, numpy-only runtime
+    # dependency, wheels for CPython 3.8+ on manylinux/musllinux x86_64/aarch64, macOS x86_64/arm64 and win_amd64).
+    # Reproduces pycocotools' evaluator arrays byte for byte; the adapter summarizes its aggregate AP at the configured
+    # eval_max_dets and hands its encoder uint8 masks, see _UfcocoBackend in src/rfdetr/training/coco_map.py. The floor
+    # is the release that fixed joint bbox/mask evaluation over images with no annotations
+    # (developer0hye/ultrafast-pycocotools#7); the ceiling keeps the parity-tested 0.1 line until the next series is
+    # verified against the adapter. The adapter's aggregate-AP override also calls CocoEval's private _summarize()
+    # method directly, so the ceiling additionally guards against that private surface changing shape upstream.
+    "ultrafast-pycocotools>=0.1.10,<0.2",
     "pycocotools",
     "scipy",
     # Batched Hungarian solver for the matcher (Apache-2.0). Speeds up the CUDA path only — its
@@ -502,6 +511,7 @@ overrides = [
     "einops", "einops.*",
     "deprecate", "deprecate.*",
     "faster_coco_eval", "faster_coco_eval.*",
+    "ultrafast_pycocotools", "ultrafast_pycocotools.*",
     "matplotlib", "matplotlib.*",
     "pandas", "pandas.*",
     "requests", "requests.*",
