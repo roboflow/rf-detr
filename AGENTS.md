@@ -336,7 +336,7 @@ result = subprocess.run(
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- **ci-tests-cpu.yml:** CPU tests on Linux across Python 3.10-3.14, plus Windows and macOS boundary versions
+- **ci-tests-cpu.yml:** CPU tests on Linux across Python 3.10-3.14, plus Windows and macOS on Python 3.10 and 3.13
 - **ci-tests-gpu.yml:** GPU-dependent tests
 - **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
 - **ci-deps-resolution.yml:** Dependency resolution (`uv lock`) plus an install-plan check (`uv sync --dry-run`) for every extra on every Python interpreter allowed by requires-python (3.10-3.14). Resolution alone does not prove a pinned version ships a wheel for the interpreter in use. The `list-extras` job derives the checked set from every `[project.optional-dependencies]` extra, so a new extra is covered automatically
