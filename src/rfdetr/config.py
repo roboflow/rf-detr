@@ -480,7 +480,8 @@ class ModelConfig(BaseConfig):
         compile: Compile the model with ``torch.compile`` for faster throughput. Defaults to
             ``False``.
         cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
-            graphs. Defaults to ``False``.
+            graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
+            sizes it matches eager and ``compile`` is the better lever. Defaults to ``False``.
         pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
         device: Target device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if not set.
         gradient_checkpointing: Trade compute for memory by checkpointing activations. Defaults
