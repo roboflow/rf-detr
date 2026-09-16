@@ -228,6 +228,11 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step() -
         {"labels": torch.tensor([1], device="cuda"), "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.3]], device="cuda")}
     ]
 
+    # bf16 autocast rounds every matmul output to 8 mantissa bits (eps 2**-8 ~ 3.9e-3), and capture
+    # changes kernel selection and reduction order against eager (cuBLAS workspace, SDPA backward),
+    # so the parity bound is bf16 precision, not fp32; the tiny-model test above uses the same 5e-3.
+    # One SGD step scales the gradient gap by lr=1e-3, hence the tighter parameter bound.
+    bf16 = {"rtol": 5e-3, "atol": 5e-3}
     # A repeated signature exercises replay; the last capture must preserve accumulated gradients.
     for resolution in (384, 384, 416):
         samples = NestedTensor(
@@ -245,9 +250,9 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step() -
             graph_loss = sum(
                 graph_losses[key] * weight for key, weight in criterion.weight_dict.items() if key in graph_losses
             )
-        torch.testing.assert_close(actual["pred_logits"], expected["pred_logits"], rtol=1e-4, atol=1e-6)
-        torch.testing.assert_close(actual["pred_boxes"], expected["pred_boxes"], rtol=1e-4, atol=1e-6)
-        torch.testing.assert_close(graph_loss, eager_loss, rtol=1e-4, atol=1e-6)
+        torch.testing.assert_close(actual["pred_logits"], expected["pred_logits"], **bf16)
+        torch.testing.assert_close(actual["pred_boxes"], expected["pred_boxes"], **bf16)
+        torch.testing.assert_close(graph_loss, eager_loss, **bf16)
         assert torch.isfinite(graph_loss)
         eager_loss.backward()
         graph_loss.backward()
@@ -255,7 +260,7 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step() -
             reference = eager_parameters[name]
             assert (parameter.grad is None) == (reference.grad is None), name
             if parameter.grad is not None:
-                torch.testing.assert_close(parameter.grad, reference.grad, rtol=1e-4, atol=1e-6, msg=name)
+                torch.testing.assert_close(parameter.grad, reference.grad, msg=name, **bf16)
 
     assert len(runner._graphed_cache) == 2
     before = graphed.class_embed.weight.detach().clone()
@@ -263,4 +268,4 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step() -
     graph_optimizer.step()
     assert not torch.equal(graphed.class_embed.weight, before)
     for actual, expected in zip(graphed.parameters(), eager.parameters()):
-        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
