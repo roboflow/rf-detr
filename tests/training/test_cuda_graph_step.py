@@ -21,6 +21,11 @@ from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_c
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor
 
+try:
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+except ImportError:  # torch < 2.3 has no public SDPA backend selector.
+    sdpa_kernel = None  # type: ignore[assignment]
+
 
 class _TinyGraphableModel(nn.Module):
     """Small NestedTensor model whose outputs and gradients depend on each input."""
@@ -211,6 +216,7 @@ def test_cuda_graph_replay_matches_eager_outputs_and_accumulated_gradients() -> 
 
 
 @pytest.mark.gpu
+@pytest.mark.skipif(sdpa_kernel is None, reason="torch.nn.attention.sdpa_kernel needs torch>=2.3")
 def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(monkeypatch: pytest.MonkeyPatch) -> None:
     """Real Nano capture must compose with its eager criterion, accumulation, and parameter updates.
 
@@ -238,36 +244,39 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(mon
     ]
 
     fp32 = {"rtol": 1e-4, "atol": 1e-5}
-    # A repeated signature exercises replay; the last capture must preserve accumulated gradients.
-    for resolution in (384, 384, 416):
-        samples = NestedTensor(
-            torch.randn(1, 3, resolution, resolution, device="cuda"),
-            torch.zeros(1, resolution, resolution, dtype=torch.bool, device="cuda"),
-        )
-        expected = eager(samples, targets)
-        actual = runner(samples, targets)
-        eager_losses = criterion(expected, targets)
-        graph_losses = criterion(actual, targets)
-        eager_loss = sum(
-            eager_losses[key] * weight for key, weight in criterion.weight_dict.items() if key in eager_losses
-        )
-        graph_loss = sum(
-            graph_losses[key] * weight for key, weight in criterion.weight_dict.items() if key in graph_losses
-        )
-        torch.testing.assert_close(actual["pred_logits"], expected["pred_logits"], **fp32)
-        torch.testing.assert_close(actual["pred_boxes"], expected["pred_boxes"], **fp32)
-        torch.testing.assert_close(graph_loss, eager_loss, **fp32)
-        assert torch.isfinite(graph_loss)
-        eager_loss.backward()
-        graph_loss.backward()
-        for name, parameter in graphed.named_parameters():
-            reference = eager_parameters[name]
-            assert (parameter.grad is None) == (reference.grad is None), name
-            if parameter.grad is not None:
-                # A callable keeps assert_close's mismatch count and max diff in the failure output.
-                torch.testing.assert_close(
-                    parameter.grad, reference.grad, msg=lambda detail, name=name: f"{name}\n{detail}", **fp32
-                )
+    # Pin one attention kernel for eager and capture alike: capture may otherwise select a different SDPA
+    # backend whose fp32 backward differs at ~1e-4, which is indistinguishable from a capture bug here.
+    with sdpa_kernel(SDPBackend.MATH):
+        # A repeated signature exercises replay; the last capture must preserve accumulated gradients.
+        for resolution in (384, 384, 416):
+            samples = NestedTensor(
+                torch.randn(1, 3, resolution, resolution, device="cuda"),
+                torch.zeros(1, resolution, resolution, dtype=torch.bool, device="cuda"),
+            )
+            expected = eager(samples, targets)
+            actual = runner(samples, targets)
+            eager_losses = criterion(expected, targets)
+            graph_losses = criterion(actual, targets)
+            eager_loss = sum(
+                eager_losses[key] * weight for key, weight in criterion.weight_dict.items() if key in eager_losses
+            )
+            graph_loss = sum(
+                graph_losses[key] * weight for key, weight in criterion.weight_dict.items() if key in graph_losses
+            )
+            torch.testing.assert_close(actual["pred_logits"], expected["pred_logits"], **fp32)
+            torch.testing.assert_close(actual["pred_boxes"], expected["pred_boxes"], **fp32)
+            torch.testing.assert_close(graph_loss, eager_loss, **fp32)
+            assert torch.isfinite(graph_loss)
+            eager_loss.backward()
+            graph_loss.backward()
+            for name, parameter in graphed.named_parameters():
+                reference = eager_parameters[name]
+                assert (parameter.grad is None) == (reference.grad is None), name
+                if parameter.grad is not None:
+                    # A callable keeps assert_close's mismatch count and max diff in the failure output.
+                    torch.testing.assert_close(
+                        parameter.grad, reference.grad, msg=lambda detail, name=name: f"{name}\n{detail}", **fp32
+                    )
 
     assert len(runner._graphed_cache) == 2
     before = graphed.class_embed.weight.detach().clone()
