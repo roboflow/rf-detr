@@ -8,6 +8,7 @@
 Covers:
 - ``_bilinear_grid_sample`` parity (manual gather path vs ``F.grid_sample``).
 - ``nested_tensor_from_tensor_list`` with ``block_size`` (backbone-aware batch rounding).
+- ``NestedTensor.no_padding`` propagation and the unpadded-batch fast path.
 - ``make_collate_fn`` factory.
 - ``pack_targets``/``PackedTargets`` round-trip fidelity.
 """
@@ -23,8 +24,10 @@ import torch.testing
 from torch.utils.data import DataLoader
 
 from rfdetr.utilities.tensors import (
+    NestedTensor,
     PackedTargets,
     _bilinear_grid_sample,
+    _nearest_grid_sample,
     make_collate_fn,
     nested_tensor_from_tensor_list,
     pack_targets,
@@ -87,6 +90,69 @@ def _call_manual_path(
         return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
 
 
+def _call_manual_nearest(
+    input: torch.Tensor,
+    grid: torch.Tensor,
+    padding_mode: str = "zeros",
+    align_corners: bool = False,
+    device_type: str = "xla",
+) -> torch.Tensor:
+    """Force ``_nearest_grid_sample``'s manual gather path by mocking ``input.device.type``.
+
+    Same mechanism as :func:`_call_manual_path`, for the nearest-mode helper.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.full((1, 1, 1, 2), -1.0)
+        >>> _call_manual_nearest(input, grid, align_corners=True)
+        tensor([[[[0.]]]])
+    """
+
+    class _FakeDevice:
+        type = device_type
+
+        def __eq__(self, other: object) -> bool:
+            return False
+
+        def __repr__(self) -> str:
+            return f"device(type='{device_type}')"
+
+    with patch.object(torch.Tensor, "device", new_callable=lambda: property(lambda self: _FakeDevice())):
+        return _nearest_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
+
+
+def _nearest_reference(
+    input: torch.Tensor,
+    grid: torch.Tensor,
+    padding_mode: str = "zeros",
+    align_corners: bool = False,
+) -> torch.Tensor:
+    """``F.grid_sample`` in nearest mode, the behaviour the gather path must reproduce exactly.
+
+    Examples:
+        >>> input = torch.arange(4, dtype=torch.float32).reshape(1, 1, 2, 2)
+        >>> grid = torch.full((1, 1, 1, 2), -1.0)
+        >>> _nearest_reference(input, grid, align_corners=True)
+        tensor([[[[0.]]]])
+    """
+    return torch.nn.functional.grid_sample(
+        input, grid, mode="nearest", padding_mode=padding_mode, align_corners=align_corners
+    )
+
+
+def _tie_grid(size: int, align_corners: bool) -> torch.Tensor:
+    """Build a grid whose source indices land exactly on ``.5``, where rounding conventions diverge.
+
+    Examples:
+        >>> _tie_grid(4, False).shape
+        torch.Size([1, 5, 5, 2])
+    """
+    halves = torch.tensor([-1.5, -0.5, 0.5, 1.5, 2.5])
+    coords = (2 * halves) / (size - 1) - 1 if align_corners else (2 * (halves + 0.5)) / size - 1
+    grid_y, grid_x = torch.meshgrid(coords, coords, indexing="ij")
+    return torch.stack([grid_x, grid_y], dim=-1).unsqueeze(0)
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -114,6 +180,18 @@ _PADDING_ALIGN_COMBOS = [
     pytest.param("zeros", False, id="zeros-no_align"),
     pytest.param("border", False, id="border-no_align"),
     pytest.param("zeros", True, id="zeros-align_corners"),
+]
+
+_NEAREST_TIE_COMBOS = [
+    pytest.param("zeros", False, id="zeros-no_align"),
+    pytest.param("border", False, id="border-no_align"),
+    pytest.param("zeros", True, id="zeros-align_corners"),
+    pytest.param("border", True, id="border-align_corners"),
+]
+
+_RANDOMIZED_PARITY_DTYPES = [
+    pytest.param(torch.float32, id="float32"),
+    pytest.param(torch.float64, id="float64"),
 ]
 
 _LOW_PRECISION_DTYPES = [
@@ -577,6 +655,131 @@ class TestNestedTensorBlockSize:
         assert (h, w) == expected
 
 
+class TestNestedTensorNoPadding:
+    """``no_padding`` records, from Python-side shapes only, that the mask is all-False.
+
+    Consumers use it to skip mask-derived work without reading device memory, so it must be True exactly when every
+    image already fills the padded extent, and the tensors/mask it returns must match the padding path element for
+    element.
+    """
+
+    @staticmethod
+    def _image(c: int, h: int, w: int, fill: float = 1.0) -> torch.Tensor:
+        """Return a ``(C, H, W)`` float32 tensor filled with the given value.
+
+        Examples:
+            >>> TestNestedTensorNoPadding._image(3, 2, 2).shape
+            torch.Size([3, 2, 2])
+        """
+        return torch.full((c, h, w), fill, dtype=torch.float32)
+
+    def test_defaults_to_false(self) -> None:
+        """A directly constructed NestedTensor makes no claim about its mask."""
+        nested = NestedTensor(torch.zeros(1, 3, 4, 4), torch.zeros(1, 4, 4, dtype=torch.bool))
+        assert nested.no_padding is False
+
+    def test_uniform_list_batch_is_flagged(self) -> None:
+        """Same-sized images need no padding, so the mask is all-False."""
+        images = [self._image(3, 32, 32, 1.0), self._image(3, 32, 32, 2.0)]
+        nested = nested_tensor_from_tensor_list(images)
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+        torch.testing.assert_close(nested.tensors, torch.stack(images), rtol=0, atol=0)
+
+    def test_ragged_list_batch_is_not_flagged(self) -> None:
+        """A smaller image forces real padding, so the flag must stay False."""
+        images = [self._image(3, 32, 32), self._image(3, 16, 32)]
+        nested = nested_tensor_from_tensor_list(images)
+        assert nested.no_padding is False
+        assert nested.mask[1, 16:, :].all().item() is True
+
+    def test_block_size_round_up_is_not_flagged(self) -> None:
+        """Divisor rounding adds padding even when every image is the same size."""
+        images = [self._image(3, 100, 100)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        assert nested.no_padding is False
+        assert nested.mask[0, 100:, :].all().item() is True
+
+    def test_block_size_already_aligned_is_flagged(self) -> None:
+        """Rounding that changes nothing leaves the batch unpadded."""
+        images = [self._image(3, 128, 256)]
+        nested = nested_tensor_from_tensor_list(images, block_size=32)
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+
+    def test_batched_tensor_input_is_not_copied(self) -> None:
+        """A 4-D batch already *is* the padded batch; the copy is skipped, values unchanged."""
+        batch = torch.rand(2, 3, 24, 24)
+        nested = nested_tensor_from_tensor_list(batch)
+        assert nested.no_padding is True
+        assert nested.tensors is batch
+        assert nested.mask.shape == (2, 24, 24)
+        assert nested.mask.any().item() is False
+
+    def test_batched_tensor_matches_padding_path_values(self) -> None:
+        """The fast path returns exactly what the allocate-and-copy path produced."""
+        batch = torch.rand(2, 3, 24, 24)
+        fast = nested_tensor_from_tensor_list(batch)
+        slow = nested_tensor_from_tensor_list([batch[0], batch[1].clone(), self._image(3, 24, 32)])
+        torch.testing.assert_close(fast.tensors, slow.tensors[:2, :, :24, :24], rtol=0, atol=0)
+        assert slow.no_padding is False
+
+    def test_noncontiguous_batched_tensor_input_is_copied(self) -> None:
+        """A non-contiguous 4-D batch cannot alias the caller's storage without also inheriting its layout.
+
+        The contiguous fast path (``test_batched_tensor_input_is_not_copied``) is safe to alias because its layout
+        matches what the allocate-and-copy path would have produced. A non-contiguous batch would instead leak the
+        caller's stride and let a later in-place write on the caller's tensor silently corrupt the NestedTensor, so it
+        must fall through to an independent, contiguous copy like every other input shape.
+        """
+        batch = torch.rand(2, 24, 24, 3).permute(0, 3, 1, 2)
+        assert not batch.is_contiguous()
+        nested = nested_tensor_from_tensor_list(batch)
+        assert nested.no_padding is True
+        assert nested.tensors is not batch
+        assert nested.tensors.is_contiguous()
+        torch.testing.assert_close(nested.tensors, batch, rtol=0, atol=0)
+
+        batch.fill_(1000.0)
+        assert nested.tensors.eq(1000.0).any().item() is False
+
+    def test_to_preserves_flag(self) -> None:
+        """``to`` moves the batch without losing the structural claim."""
+        nested = nested_tensor_from_tensor_list(torch.rand(1, 3, 8, 8))
+        assert nested.to(torch.device("cpu")).no_padding is True
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_pin_memory_preserves_flag(self) -> None:
+        """``pin_memory`` likewise keeps the flag attached to the batch."""
+        nested = nested_tensor_from_tensor_list(torch.rand(1, 3, 8, 8))
+        assert nested.pin_memory().no_padding is True
+
+    def test_flag_survives_inplace_batch_uniform_resize(self) -> None:
+        """The default training config reaches ``no_padding=True`` and mutates the batch in place afterwards.
+
+        With the defaults (``square_resize_div_64=True``, ``multi_scale=True``, ``do_random_resize_via_padding=False``),
+        every sample is resized to one fixed square scale before collate, so ``nested_tensor_from_tensor_list`` flags
+        the batch. ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly to a randomly
+        chosen scale via the same two in-place ``F.interpolate`` calls reproduced below, without touching
+        ``no_padding``. Nearest-neighbour resampling of an all-False mask stays all-False at any output size, so the
+        flag must still describe the mutated mask truthfully afterwards.
+        """
+        images = [torch.rand(3, 512, 512) for _ in range(4)]
+        nested = nested_tensor_from_tensor_list(images, block_size=64)
+        assert nested.no_padding is True
+
+        with torch.no_grad():
+            nested.tensors = F.interpolate(nested.tensors, size=(640, 640), mode="bilinear", align_corners=False)
+            nested.mask = (
+                F.interpolate(nested.mask.unsqueeze(1).float(), size=(640, 640), mode="nearest").squeeze(1).bool()
+            )
+
+        assert nested.no_padding is True
+        assert nested.mask.any().item() is False
+        assert nested.mask.shape == (4, 640, 640)
+
+
 class TestMakeCollateFn:
     """``make_collate_fn`` returns a picklable collate callable with block_size rounding baked in."""
 
@@ -868,6 +1071,121 @@ class TestPackedTargets:
         assert packed.fields["boxes"][0].item() == 1.0
         assert torch.equal(packed.as_list()[0]["labels"], torch.tensor([3, 7]))
 
+    def test_to_list_matches_the_unpacked_batch_for_every_sample(self) -> None:
+        """Direct materialisation preserves every sample's complete tensor contract.
+
+        This catches a reconstruction that drops the empty sample, skips a field, reshapes scalar metadata, or silently
+        changes a dtype while still passing the ownership-only regression below.
+        """
+        batch = self._batch()
+        packed = pack_targets(batch)
+        assert isinstance(packed, PackedTargets)
+
+        materialised = packed.to_list(torch.device("cpu"))
+
+        assert len(materialised) == len(batch)
+        for original, rebuilt in zip(batch, materialised, strict=True):
+            assert rebuilt.keys() == original.keys()
+            for key, value in original.items():
+                assert rebuilt[key].device.type == "cpu"
+                assert rebuilt[key].dtype == value.dtype
+                assert rebuilt[key].shape == value.shape
+                assert torch.equal(rebuilt[key], value)
+
+    def test_to_list_same_device_does_not_alias_packed_storage(self) -> None:
+        """Direct materialisation must preserve the unpacked path's independent tensor ownership on CPU."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        materialised = packed.to_list(torch.device("cpu"))
+        materialised[0]["labels"][0] = 999
+        materialised[0]["boxes"][0, 0] = 999.0
+
+        assert torch.equal(packed.fields["labels"], torch.tensor([3, 7, 5]))
+        assert packed.fields["boxes"][0].item() == 1.0
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_list_transfers_pinned_views_directly_to_cuda(self) -> None:
+        """Direct materialisation must preserve values and ownership across a non-blocking CUDA transfer."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+        pinned = packed.pin_memory()
+
+        materialised = pinned.to_list(torch.device("cuda"), non_blocking=True)
+        torch.cuda.synchronize()
+
+        assert materialised[0]["labels"].device.type == "cuda"
+        assert torch.equal(materialised[0]["labels"].cpu(), torch.tensor([3, 7]))
+        materialised[0]["labels"][0] = 999
+        assert torch.equal(pinned.fields["labels"], torch.tensor([3, 7, 5]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_list_bounds_the_transient_cuda_peak_for_a_mask_field(self) -> None:
+        """``to_list``'s docstring claims the avoided duplicate "can be large for segmentation masks" -- pin that claim
+        on the actual CUDA peak with a mask field, not just on values or ownership."""
+        pinned = pack_targets(
+            [
+                {"labels": torch.tensor([3, 7]), "masks": torch.ones((2, 256, 256), dtype=torch.bool)},
+                {"labels": torch.tensor([5]), "masks": torch.ones((1, 256, 256), dtype=torch.bool)},
+            ]
+        ).pin_memory()
+        mask_bytes = pinned.fields["masks"].numel()
+
+        def peak_extra(
+            materialise: collections.abc.Callable[[], list[dict[str, torch.Tensor]]],
+        ) -> int:
+            """Return transient CUDA bytes beyond memory retained by the result.
+
+            Examples:
+                This helper requires CUDA and state from the enclosing test.
+
+                >>> peak_extra(lambda: pinned.to_list("cuda"))  # doctest: +SKIP
+                0
+            """
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            out = materialise()
+            torch.cuda.synchronize()
+            extra = torch.cuda.max_memory_allocated() - torch.cuda.memory_allocated()
+            del out
+            return extra
+
+        old_extra = peak_extra(lambda: pinned.to(torch.device("cuda"), non_blocking=True).as_list())
+        new_extra = peak_extra(lambda: pinned.to_list(torch.device("cuda"), non_blocking=True))
+
+        assert old_extra >= mask_bytes
+        assert new_extra < mask_bytes // 2
+
+    def test_to_returns_self_when_already_on_the_target_device(self) -> None:
+        """``to()`` keeps the batch packed instead of materialising it, unlike ``to_list()``.
+
+        Losing its only caller in ``transfer_batch_to_device`` (replaced by ``to_list()``) must not leave it untested: a
+        no-op device request has to return the same instance, matching every no-op ``Tensor.to()`` call underneath it.
+        """
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        same_device = packed.to(torch.device("cpu"))
+
+        assert same_device is packed
+        assert torch.equal(same_device.fields["labels"], torch.tensor([3, 7, 5]))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_to_moves_every_field_and_keeps_the_batch_packed_on_cuda(self) -> None:
+        """A genuine device change must move every field and return a new packed batch, not a materialised list."""
+        packed = pack_targets(self._batch())
+        assert isinstance(packed, PackedTargets)
+
+        moved = packed.to(torch.device("cuda"))
+
+        assert isinstance(moved, PackedTargets)
+        assert moved is not packed
+        assert all(tensor.device.type == "cuda" for tensor in moved.fields.values())
+        assert torch.equal(moved.fields["labels"].cpu(), torch.tensor([3, 7, 5]))
+
     def test_collate_packs_only_when_asked(self) -> None:
         """The collate contract only changes for callers that opt in."""
         images = [torch.zeros(3, 8, 8), torch.zeros(3, 8, 8)]
@@ -918,3 +1236,222 @@ class TestPackedTargets:
         assert isinstance(fallback, tuple)
         assert not isinstance(fallback, PackedTargets)
         assert all(target["boxes"].requires_grad for target in fallback)
+
+
+class TestNearestGridSampleParity:
+    """The nearest gather path must reproduce ``F.grid_sample(mode='nearest')`` exactly."""
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_interior_grid_coordinates(self, seed: int, padding_mode: str, align_corners: bool) -> None:
+        """Grid values well inside [-1, 1] -- no boundary or padding effects."""
+        input = torch.randn(1, 3, 8, 8)
+        grid = torch.rand(1, 4, 4, 2) * 1.6 - 0.8
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_partially_outside_grid_coordinates(self, seed: int, padding_mode: str, align_corners: bool) -> None:
+        """Grid values spanning [-1.5, 1.5] -- exercises zeros masking and border clamping."""
+        input = torch.randn(1, 3, 8, 8)
+        grid = torch.rand(1, 6, 6, 2) * 3.0 - 1.5
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    def test_zeros_padding_masks_nonfinite_clamped_value(self) -> None:
+        """Out-of-bounds zeros padding must not turn a gathered infinity into ``NaN``."""
+        input = torch.tensor([[[[float("inf"), 2.0]]]])
+        grid = torch.tensor([[[[-2.0, 0.0]]]])
+
+        expected = _nearest_reference(input, grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, grid, padding_mode="zeros", align_corners=False)
+
+        assert torch.equal(actual, expected)
+
+    def test_grid_only_gradient_matches_reference(self) -> None:
+        """A differentiable grid must receive the nearest kernel's all-zero gradient."""
+        input = torch.ones(1, 1, 2, 2)
+        reference_grid = torch.zeros(1, 1, 1, 2, requires_grad=True)
+        manual_grid = reference_grid.detach().clone().requires_grad_()
+
+        expected = _nearest_reference(input, reference_grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, manual_grid, padding_mode="zeros", align_corners=False)
+
+        expected.sum().backward()
+        actual.sum().backward()
+
+        assert actual.requires_grad
+        assert manual_grid.grad is not None
+        assert torch.equal(manual_grid.grad, reference_grid.grad)
+
+    def test_grid_only_gradient_preserves_negative_zero(self) -> None:
+        """The zero-gradient edge must not change the sampled output's signed-zero bit."""
+        input = torch.tensor([[[[-0.0]]]])
+        reference_grid = torch.zeros(1, 1, 1, 2, requires_grad=True)
+        manual_grid = reference_grid.detach().clone().requires_grad_()
+
+        expected = _nearest_reference(input, reference_grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, manual_grid, padding_mode="zeros", align_corners=False)
+
+        assert torch.equal(actual, expected)
+        assert torch.equal(torch.signbit(actual), torch.signbit(expected))
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _NEAREST_TIE_COMBOS)
+    def test_exact_half_way_coordinates_round_half_to_even(
+        self, seed: int, padding_mode: str, align_corners: bool
+    ) -> None:
+        """At this width (8), ties follow ATen's round-half-to-even in all 4 padding/align combos.
+
+        ``floor(x + 0.5)`` is not a safe substitute -- it disagrees with round-half-to-even at half
+        of all exact ties, not every one (see ``_nearest_grid_sample``'s docstring). This is a
+        narrower, width-8-specific case: :func:`test_known_kernel_tie_divergence_at_width_673` below
+        documents a real width where ``F.grid_sample``'s own kernel breaks its own round-half-to-even
+        convention.
+        """
+        input = torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8)
+        grid = _tie_grid(8, align_corners)
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("dtype", _RANDOMIZED_PARITY_DTYPES)
+    @pytest.mark.parametrize("padding_mode, align_corners", _NEAREST_TIE_COMBOS)
+    def test_randomized_grid_matches_reference(
+        self, seed: int, dtype: torch.dtype, padding_mode: str, align_corners: bool
+    ) -> None:
+        """Bit-identical to F.grid_sample across 480 randomized cases: 4 combos x 2 dtypes x 60 points each."""
+        input = torch.randn(1, 3, 11, 13, dtype=dtype)
+        grid = torch.rand(1, 6, 10, 2, dtype=dtype) * 3.0 - 1.5  # 60 points, some outside [-1, 1]
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    def test_tie_rounding_is_deterministic_where_the_kernel_is_not(self) -> None:
+        """This path always applies round-half-to-even; ``F.grid_sample``'s kernel does not, per platform.
+
+        Width=673 is the case documented in ``SetCriterion._sample_target_masks_at_points``
+        (``src/rfdetr/models/criterion.py``): the exact tie x=0.5. The compiled kernel's answer there is
+        build-dependent -- it rounds up to index 1 on the Linux x86 wheels and down to index 0 on the macOS and Windows
+        wheels -- so the kernel's value is deliberately NOT asserted here. What is asserted is that this gather path
+        gives the same well-defined answer everywhere, which is what makes XLA/MPS results reproducible across hosts.
+        """
+        width = 673
+        input = torch.arange(width, dtype=torch.float32).view(1, 1, 1, width)
+        grid_x = (0.5 + 0.5) * 2 / width - 1
+        grid = torch.tensor([[[[grid_x, 0.0]]]])
+
+        actual = _call_manual_nearest(input, grid, "zeros", False)
+
+        # round-half-to-even sends the exact tie 0.5 to index 0, on every platform.
+        assert actual.item() == 0.0
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_batch_and_multichannel(self, seed: int, padding_mode: str, align_corners: bool) -> None:
+        """Batch size > 1, multiple channels, and non-square H/W and Hg/Wg.
+
+        Every real caller (``SetCriterion``'s tie correction and fallback sampling, and ``HungarianMatcher``'s mask
+        cost) passes a batch dimension equal to the number of matched instances in the whole training batch, which is
+        routinely greater than one -- unlike the other parity cases above, which all use ``input.shape[0] == 1``. Non-
+        square dimensions also guard the ``iy_nearest * width + ix_nearest`` index arithmetic against a height/width
+        swap.
+        """
+        input = torch.randn(3, 5, 10, 12)
+        grid = torch.rand(3, 7, 9, 2) * 2.0 - 1.0
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.parametrize("padding_mode, align_corners", _PADDING_ALIGN_COMBOS)
+    def test_single_pixel_input(self, padding_mode: str, align_corners: bool) -> None:
+        """1x1 spatial input -- extreme edge case for the clamp/index arithmetic."""
+        input = torch.tensor([[[[3.14]]]])
+        grid = torch.tensor([[[[0.0, 0.0]]]])
+
+        expected = _nearest_reference(input, grid, padding_mode, align_corners)
+        actual = _call_manual_nearest(input, grid, padding_mode, align_corners)
+
+        assert torch.equal(actual, expected)
+
+    def test_unsupported_padding_mode_raises(self, seed: int) -> None:
+        """``reflection`` is not implemented by the gather path and must fail loudly, not silently."""
+        input = torch.randn(1, 1, 4, 4)
+        grid = torch.zeros(1, 2, 2, 2)
+
+        with pytest.raises(ValueError, match="Unsupported padding_mode"):
+            _call_manual_nearest(input, grid, padding_mode="reflection")
+
+
+class TestNearestGridSampleDelegation:
+    """CPU and CUDA keep ``F.grid_sample``'s fused kernel."""
+
+    @pytest.mark.parametrize("padding_mode", ["zeros", "border"])
+    def test_cpu_delegates_to_grid_sample(self, seed: int, padding_mode: str) -> None:
+        """On CPU the helper returns exactly what ``F.grid_sample`` returns."""
+        input = torch.randn(1, 2, 6, 6)
+        grid = torch.rand(1, 3, 3, 2) * 2.4 - 1.2
+
+        actual = _nearest_grid_sample(input, grid, padding_mode=padding_mode, align_corners=False)
+
+        assert torch.equal(actual, _nearest_reference(input, grid, padding_mode, False))
+
+
+class TestNearestGridSampleLowPrecision:
+    """Low-precision parity stays aligned with F.grid_sample.
+
+    ``HungarianMatcher`` casts target masks to ``pred_masks_logits.dtype`` before sampling them
+    with ``mode="nearest"`` (``matcher.py``), so under autocast this path receives a float16/bfloat16
+    ``input`` in real training, not just float32. Unlike the bilinear helper, no explicit dtype cast
+    is needed here: gather selects a value verbatim rather than combining several in floating point,
+    so there is no intermediate weighted sum that could silently upcast.
+    """
+
+    @pytest.mark.parametrize("dtype", _LOW_PRECISION_DTYPES)
+    def test_low_precision_parity(self, seed: int, dtype: torch.dtype) -> None:
+        """Manual path output matches F.grid_sample, in the same dtype, for low-precision inputs."""
+        _require_grid_sample_dtype_support(dtype)
+
+        input = torch.randn(2, 3, 6, 6, dtype=dtype)
+        grid = torch.rand(2, 4, 4, 2, dtype=dtype) * 3.0 - 1.5
+
+        expected = _nearest_reference(input, grid, padding_mode="zeros", align_corners=False)
+        actual = _call_manual_nearest(input, grid, padding_mode="zeros", align_corners=False)
+
+        assert torch.equal(actual, expected)
+        assert actual.dtype == dtype
+
+
+class TestNearestGridSampleXLAExecution:
+    """Real torch_xla PJRT execution -- proves the nearest gather path takes no aten:: CPU fallback."""
+
+    @pytest.mark.xla
+    def test_nearest_gather_path_no_cpu_fallback_on_real_xla_device(self, seed: int) -> None:
+        """``point_sample(mode="nearest")`` used to lower to aten::grid_sampler_2d on XLA."""
+        pytest.importorskip("torch_xla")
+        import torch_xla.core.xla_model as xm
+        import torch_xla.debug.metrics as met
+
+        device = xm.xla_device()
+        input = torch.randn(1, 3, 8, 8, device=device)
+        grid = torch.rand(1, 4, 4, 2, device=device) * 1.6 - 0.8
+
+        met.clear_all()
+        actual = _nearest_grid_sample(input, grid, padding_mode="zeros", align_corners=False)
+        xm.mark_step()
+
+        report = met.metrics_report()
+        aten_lines = [line for line in report.splitlines() if "aten::" in line.lower()]
+        assert not aten_lines, "CPU fallback ops detected:\n" + "\n".join(aten_lines)
+
+        expected = _nearest_reference(input.cpu(), grid.cpu(), "zeros", False)
+        assert torch.equal(actual.cpu(), expected)

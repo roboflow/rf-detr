@@ -139,7 +139,7 @@ class TestSweepConfidenceThresholdsMatchesReference:
     """sweep_confidence_thresholds must return numerically identical results to the O(T*N) reference it replaced, across
     random data, empty classes, all-ignored classes, and threshold/score ties."""
 
-    @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4], ids=lambda s: f"seed={s}")
+    @pytest.mark.parametrize("seed", [0, 1, 2, 3, 4])
     def test_matches_reference_on_random_data(self, seed: int) -> None:
         per_class_data = _random_per_class_data(seed=seed, num_classes=5, max_detections=40)
         classes_with_gt = [k for k, d in enumerate(per_class_data) if d["total_gt"] > 0]

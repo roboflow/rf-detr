@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Union
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -53,8 +53,9 @@ def _sample_target_masks_at_points(
 
     Large contiguous masks on CPU are indexed directly, avoiding the
     full matched-mask copies created by advanced indexing and concatenation.
-    CUDA and other inputs outside that narrow contract retain the existing
-    nearest-neighbor ``point_sample`` path.
+    Eligible multi-image CUDA boolean masks are sampled per image with the native
+    nearest-neighbor ``point_sample`` path, avoiding a full batch of matched float masks.
+    Other inputs retain the existing concatenation and sampling path.
 
     Args:
         targets: Per-image target dictionaries containing ``masks`` tensors.
@@ -197,6 +198,39 @@ def _sample_target_masks_at_points(
 
         return torch.cat(sampled_masks, dim=0)
 
+    if (
+        point_coords.is_cuda
+        and point_coords.ndim == 3
+        and len(targets) == len(indices) > 1
+        and all(
+            target["masks"].ndim == 3
+            and target["masks"].dtype == torch.bool
+            and target["masks"].device == point_coords.device
+            and target["masks"].shape[1:] == targets[0]["masks"].shape[1:]
+            and target_indices.ndim == 1
+            and target_indices.dtype == torch.int64
+            for target, (_, target_indices) in zip(targets, indices)
+        )
+        and sum(target_indices.numel() for _, target_indices in indices) == point_coords.shape[0] > 0
+    ):
+        # Keep the native sampler's rounding. In loss_masks' no_grad context, each
+        # image's full float masks can be released before sampling the next image.
+        sampled_masks = []
+        offset = 0
+        for target, (_, target_indices) in zip(targets, indices):
+            count = target_indices.numel()
+            if count:
+                sampled_masks.append(
+                    point_sample(
+                        target["masks"][target_indices].unsqueeze(1).float(),
+                        point_coords[offset : offset + count],
+                        align_corners=False,
+                        mode="nearest",
+                    ).squeeze(1)
+                )
+            offset += count
+        return torch.cat(sampled_masks, dim=0)
+
     target_masks = torch.cat([target["masks"][target_indices] for target, (_, target_indices) in zip(targets, indices)])
     return point_sample(
         target_masks.unsqueeze(1).float(),
@@ -293,7 +327,7 @@ def position_supervised_loss(
 def dice_loss(
     inputs: Tensor,
     targets: Tensor,
-    num_masks: float,
+    num_masks: Union[Tensor, float, int],
 ) -> Tensor:
     """Compute the DICE loss, similar to generalized IOU for masks.
 
@@ -303,13 +337,30 @@ def dice_loss(
         targets: A float tensor with the same shape as inputs. Stores the binary
                  classification label for each element in inputs
                 (0 for the negative class and 1 for the positive class).
+        num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
+                 caller never has to sync it to the host (a host read cuts XLA's lazy
+                 graph every step). This eager function retains Python numeric behavior,
+                 including NumPy scalars. The scripted ``dice_loss_jit`` wrapper accepts
+                 only Tensor, float, or int; convert another numeric type with
+                 ``float(...)`` before calling that wrapper.
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
     numerator = 2 * (inputs * targets).sum(-1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
-    result: Tensor = loss.sum() / num_masks
+    # Branch on the denominator's type instead of normalizing it to a Tensor up front: wrapping a
+    # Python float in a Tensor first would quantize it to `inputs`' dtype before dividing, which is
+    # not what plain ``tensor / python_float`` does (that keeps the historical re-exported functions'
+    # exact numerics -- see TestMaskLossDenominatorStaysOnDevice's backward-compatibility tests).
+    # TorchScript also requires this isinstance refinement to resolve `loss.sum() / num_masks` at all
+    # for a 3-way Union -- an unrefined `Union[Tensor, float, int]` divisor fails to compile.
+    if isinstance(num_masks, float):
+        result: Tensor = loss.sum() / num_masks
+    elif isinstance(num_masks, int):
+        result = loss.sum() / num_masks
+    else:
+        result = loss.sum() / num_masks
     return result
 
 
@@ -319,22 +370,37 @@ dice_loss_jit = dice_loss if sys.version_info >= (3, 14) else torch.jit.script(d
 def sigmoid_ce_loss(
     inputs: Tensor,
     targets: Tensor,
-    num_masks: float,
+    num_masks: Union[Tensor, float, int],
 ) -> Tensor:
-    """
+    """Compute sigmoid cross-entropy loss for mask predictions.
     Args:
         inputs: A float tensor of arbitrary shape.
                 The predictions for each example.
         targets: A float tensor with the same shape as inputs. Stores the binary
                  classification label for each element in inputs
                 (0 for the negative class and 1 for the positive class).
+        num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
+                 caller never has to sync it to the host (a host read cuts XLA's lazy
+                 graph every step). This eager function retains Python numeric behavior,
+                 including NumPy scalars. The scripted ``sigmoid_ce_loss_jit`` wrapper
+                 accepts only Tensor, float, or int; convert another numeric type with
+                 ``float(...)`` before calling that wrapper.
 
     Returns:
         Loss tensor
     """
     loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
 
-    return loss.mean(1).sum() / num_masks
+    # See dice_loss's comment: branching preserves the historical re-exported functions'
+    # exact numerics for a Python-float/int caller instead of quantizing the value up front,
+    # and is required for TorchScript to resolve the division at all over this 3-way Union.
+    if isinstance(num_masks, float):
+        result: Tensor = loss.mean(1).sum() / num_masks
+    elif isinstance(num_masks, int):
+        result = loss.mean(1).sum() / num_masks
+    else:
+        result = loss.mean(1).sum() / num_masks
+    return result
 
 
 sigmoid_ce_loss_jit = sigmoid_ce_loss if sys.version_info >= (3, 14) else torch.jit.script(sigmoid_ce_loss)
@@ -458,10 +524,21 @@ class SetCriterion(nn.Module):
             3.0
         """
         group_detr = self.group_detr if self.training else 1
-        num_boxes = sum(len(t["labels"]) for t in targets)
-        if not self.sum_group_losses:
-            num_boxes = num_boxes * group_detr
-        num_boxes_tensor = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
+        if targets and "valid" in targets[0]:
+            # Fixed-size target padding: only the real rows count toward the denominator, and the
+            # count is kept as a device tensor so reading it never syncs to the host.
+            num_boxes_tensor = (
+                torch.stack([target["valid"].sum() for target in targets])
+                .sum()
+                .to(dtype=torch.float, device=self._output_device(outputs))
+            )
+            if not self.sum_group_losses:
+                num_boxes_tensor = num_boxes_tensor * group_detr
+        else:
+            num_boxes = sum(len(t["labels"]) for t in targets)
+            if not self.sum_group_losses:
+                num_boxes = num_boxes * group_detr
+            num_boxes_tensor = torch.as_tensor(num_boxes, dtype=torch.float, device=self._output_device(outputs))
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_boxes_tensor)
         return torch.clamp(num_boxes_tensor / get_world_size(), min=1.0)
@@ -479,6 +556,13 @@ class SetCriterion(nn.Module):
         dim [nb_target_boxes]"""
         assert "pred_logits" in outputs
         src_logits = outputs["pred_logits"]
+        valid_mask = self._matched_valid_mask(targets, indices)
+        if valid_mask is not None and not self.ia_bce_loss:
+            raise NotImplementedError(
+                "Fixed-size target padding masks padded pairs only in the IoU-aware BCE classification "
+                "branch (ia_bce_loss=True, which is the TrainConfig default). The position-supervised, "
+                "varifocal and plain focal branches would count the padding as real matches."
+            )
 
         if matched_targets is None:
             idx = self._get_src_permutation_idx(indices)
@@ -511,8 +595,18 @@ class SetCriterion(nn.Module):
             t = prob[tuple(pos_ind)].pow(alpha) * pos_ious.pow(1 - alpha)
             t = torch.clamp(t, 0.01).detach()
 
-            pos_weights[tuple(pos_ind)] = t.to(pos_weights.dtype)
-            neg_weights[tuple(pos_ind)] = 1 - t.to(neg_weights.dtype)
+            if valid_mask is None:
+                pos_weights[tuple(pos_ind)] = t.to(pos_weights.dtype)
+                neg_weights[tuple(pos_ind)] = 1 - t.to(neg_weights.dtype)
+            else:
+                # A query matched to a filler target is really unmatched: it must keep the plain
+                # ``prob ** gamma`` negative weight it was initialised with, not the 1 - t a real
+                # match would write, and contribute no positive weight at all.
+                keep = valid_mask.to(torch.bool)
+                pos_weights[tuple(pos_ind)] = (t * valid_mask).to(pos_weights.dtype)
+                neg_weights[tuple(pos_ind)] = torch.where(
+                    keep, (1 - t).to(neg_weights.dtype), neg_weights[tuple(pos_ind)]
+                )
             # a reformulation of the standard loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
             # with a focus on statistical stability by using fused logsigmoid
             loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (pos_weights + neg_weights)
@@ -616,7 +710,14 @@ class SetCriterion(nn.Module):
 
         if log:
             # TODO this should probably be a separate loss, not hacked in this one here
-            losses["class_error"] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
+            if valid_mask is None:
+                losses["class_error"] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
+            else:
+                # Selecting the real pairs would make this tensor's shape depend on the box count
+                # again, which is the whole thing padding exists to avoid -- so weight them out.
+                # Equivalent to accuracy(..., topk=(1,)) restricted to the real matches.
+                correct = (src_logits[idx].argmax(dim=-1) == target_classes_o).to(valid_mask.dtype)
+                losses["class_error"] = 100 - 100 * (correct * valid_mask).sum() / valid_mask.sum().clamp(min=1)
         return losses
 
     @torch.no_grad()
@@ -634,7 +735,16 @@ class SetCriterion(nn.Module):
         """
         pred_logits = outputs["pred_logits"]
         device = pred_logits.device
-        tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
+        if targets and "valid" in targets[0]:
+            # Fixed-size target padding (pad_targets_to) pads every "labels" row count to the same
+            # constant, so len() would report a constant error against a constant instead of the real
+            # ground-truth count -- "valid" marks which rows are real. Stacking the per-image device
+            # scalars (as num_boxes_for_targets does) and moving the whole batch in one transfer keeps
+            # this on device; an int() per image would read each one back to the host instead, cutting
+            # XLA's lazy graph every layer, every step.
+            tgt_lengths = torch.stack([v["valid"].sum() for v in targets]).to(device=device)
+        else:
+            tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
         # Sigmoid/focal heads have no background class; count predictions whose top score is confident
         card_pred = (pred_logits.sigmoid().max(-1).values > 0.5).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
@@ -662,6 +772,9 @@ class SetCriterion(nn.Module):
         )
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
+        valid_mask = self._matched_valid_mask(targets, indices)
+        if valid_mask is not None:
+            loss_bbox = loss_bbox * valid_mask[:, None]
 
         losses = {}
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
@@ -670,6 +783,8 @@ class SetCriterion(nn.Module):
             box_ops.box_cxcywh_to_xyxy(src_boxes),
             box_ops.box_cxcywh_to_xyxy(target_boxes),
         )
+        if valid_mask is not None:
+            loss_giou = loss_giou * valid_mask
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
 
@@ -685,6 +800,12 @@ class SetCriterion(nn.Module):
         Expects outputs to contain 'pred_masks' of shape [B, Q, H, W] and targets with key 'masks'.
         """
         assert "pred_masks" in outputs, "pred_masks missing in model outputs"
+        if targets and "valid" in targets[0]:
+            raise NotImplementedError(
+                "Fixed-size target padding does not cover the mask loss yet: loss_masks point-samples "
+                "every matched pair, so the filler pairs would contribute real gradient. Leave "
+                "pad_targets_to unset for segmentation training."
+            )
         idx = self._get_src_permutation_idx(indices)
         pred_masks = outputs["pred_masks"]  # [B, Q, H, W]
 
@@ -761,20 +882,19 @@ class SetCriterion(nn.Module):
             # get gt labels
             point_labels = _sample_target_masks_at_points(targets, indices, point_coords)
 
-        # On supported Python versions, ``sigmoid_ce_loss_jit`` and ``dice_loss_jit``
-        # are TorchScripted with ``num_masks: float`` in their signatures, so they
-        # reject Tensor inputs at runtime with an "expected float, got Tensor" error.
-        # Python 3.14+ uses the eager aliases, but retaining the same scalar boundary
-        # keeps behavior consistent across supported interpreters. ``SetCriterion.forward``
-        # now hands the criterion a Tensor denominator (so it can be all-reduced across
-        # ranks and accumulated across grad-accum microbatches), so it must be unwrapped
-        # to a Python scalar here. Using ``float(...)`` instead of ``.item()`` keeps the
-        # conversion safe whether ``num_boxes`` arrives as a Tensor, a Python int/float,
-        # or a numpy scalar.
-        num_boxes_scalar = float(num_boxes)
+        # Both JIT losses take the denominator as a Tensor, so ``num_boxes`` -- all-reduced
+        # across distributed ranks by ``num_boxes_for_targets``, or an explicit
+        # grad-accum-aware override supplied by a manual-optimization caller -- is handed
+        # straight through.  Unwrapping it to a Python scalar here forced a device-to-host
+        # sync on every call to ``loss_masks``, once per matched output layer (the final
+        # layer plus every aux and enc layer, i.e. several times per training step for a
+        # segmentation model), cutting XLA's lazy graph each time.  TorchScript does not
+        # reject a Tensor passed for a ``float`` parameter -- it converts it inside the
+        # scripted function -- so the signatures have to change for the sync to actually go
+        # away.
         losses = {
-            "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes_scalar),
-            "loss_mask_dice": dice_loss_jit(point_logits, point_labels, num_boxes_scalar),
+            "loss_mask_ce": sigmoid_ce_loss_jit(point_logits, point_labels, num_boxes),
+            "loss_mask_dice": dice_loss_jit(point_logits, point_labels, num_boxes),
         }
 
         del src_masks
@@ -789,6 +909,12 @@ class SetCriterion(nn.Module):
     ) -> dict[str, Tensor]:
         """Compute keypoint losses on matched prediction/target pairs."""
         assert "pred_keypoints" in outputs
+        if targets and "valid" in targets[0]:
+            raise NotImplementedError(
+                "Fixed-size target padding does not cover the keypoint loss yet: loss_keypoints "
+                "reads every matched pair with no valid-row mask, so the filler pairs would "
+                "contribute real gradient. Leave pad_targets_to unset for keypoint training."
+            )
         idx = self._get_src_permutation_idx(indices)
         src_keypoints = outputs["pred_keypoints"][idx]
         target_keypoints = torch.cat([target["keypoints"][j] for target, (_, j) in zip(targets, indices)], dim=0)
@@ -841,6 +967,29 @@ class SetCriterion(nn.Module):
             ),
             boxes=torch.cat([target["boxes"][target_indices] for target, (_, target_indices) in zip(targets, indices)]),
         )
+
+    @staticmethod
+    def _matched_valid_mask(targets: list[dict[str, Tensor]], indices: list[tuple[Tensor, Tensor]]) -> Tensor | None:
+        """Per-matched-pair mask marking which pairs point at a real target rather than padding.
+
+        Returns ``None`` when the batch carries no ``valid`` key, which is every batch that did not go
+        through fixed-size target padding -- so the unpadded path keeps its exact previous arithmetic.
+
+        Args:
+            targets: Per-image target dictionaries in batch order.
+            indices: Per-image matcher results, source and target indices.
+
+        Returns:
+            A float mask flattened in the same order as the matched tensors, or ``None``.
+
+        Examples:
+            >>> SetCriterion._matched_valid_mask([{"labels": torch.zeros(1)}], [(torch.zeros(1), torch.zeros(1))])
+        """
+        if not targets or "valid" not in targets[0]:
+            return None
+        return torch.cat(
+            [target["valid"][target_indices] for target, (_, target_indices) in zip(targets, indices)]
+        ).float()
 
     def _get_tgt_permutation_idx(self, indices: list[tuple[Tensor, Tensor]]) -> tuple[Tensor, Tensor]:
         # permute targets following indices

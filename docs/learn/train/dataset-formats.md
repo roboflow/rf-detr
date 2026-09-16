@@ -380,6 +380,107 @@ model.train(
 
 ---
 
+## WebDataset Shards (Sequential I/O)
+
+A COCO-format split stored as loose files costs one `open()` per image per epoch. Raising `num_workers` to keep a GPU fed multiplies that into thousands of concurrent random opens — cheap against a local NVMe disk, expensive against network storage, an object-store mount, or any filesystem whose metadata operations are slow.
+
+`dataset_file="webdataset"` reads the same images from a handful of `.tar` shards instead. Each worker walks its own shards front to back, so an epoch becomes a set of large sequential reads and one `open()` per shard rather than one per image. Augmentation is unchanged: shards decode into the same `(image, target)` pairs the loose-file loader produces, go through the same CPU Albumentations/torchvision pipeline, and reach the GPU through the same `pin_memory` hand-off and Kornia stage.
+
+This is an alternative input path, not a replacement — `coco`, `roboflow` and `yolo` behave exactly as before.
+
+!!! note "It is not a general speed-up"
+
+    Whether packing helps depends on where your input pipeline is actually blocked. Measured on a 32-vCPU machine with an NVMe-attached persistent disk, on COCO 2017, throughput was the same either way — between 0.92x and 1.03x across six configurations. Measurements identified the worker-to-main batch transfer as the ceiling, not decode/augmentation or file access: `iowait` stayed under 1%, and raw reads on the same disk sustained roughly 5.5x the images per second the loader consumed. Packing pays off where per-file access genuinely is the constraint — network filesystems, object-store mounts, directories with millions of small files. What it improves regardless is construction.
+
+### What it does change, everywhere
+
+Building the dataset stops parsing the split's annotation file. `dataset_file="coco"` loads `instances_train2017.json` into a `pycocotools` index before the first batch; the streaming path reads a small JSON listing shards, sample count and categories, and takes each image's annotations from the shard next to its pixels.
+
+On full COCO 2017 that is a median 19.9 s and 2,810 MB of resident memory before the first batch, against 0.012 s and 0.9 MB (three cold runs per arm; the spread is under 0.13 s and RSS is identical to the tenth of a MB). Both are per process, so per rank under DDP.
+
+### Packing a split
+
+Shards are written with the standard library, so packing needs no extra dependency:
+
+```bash
+python -m rfdetr.cli.webdataset \
+    --image-dir /data/coco/train2017 \
+    --annotations /data/coco/annotations/instances_train2017.json \
+    --output-dir /data/coco-shards \
+    --split train
+```
+
+Repeat once per split, into the same `--output-dir`:
+
+```
+coco-shards/
+├── train-a1b2c3d4-000000.tar   # ~100 MB each, override with --max-shard-mb
+├── train-a1b2c3d4-000001.tar
+├── ...
+├── train-index.json        # shard list, sample count, categories
+├── val-5e6f7a8b-000000.tar
+└── val-index.json
+```
+
+The hex segment in a shard name is a generation token derived from the packed contents. It lets a re-pack write its shards alongside the ones the published index still points at, so the index swap is the only moment the pack changes; because it is derived from the contents rather than random, re-packing unchanged data reproduces the same names instead of churning the directory.
+
+Repacking is an offline operation: stop every reader and other packer for that split before starting. Publication swaps the index after all new shards exist, then removes the old generation. A running dataset retains its old index and can fail with `FileNotFoundError` after that cleanup. Atomic index publication does not make live repacking safe; construct new datasets/loaders after repacking completes.
+
+Image bytes are copied verbatim — no re-encode — so a packed split decodes to exactly the same pixels as the directory it came from. A `.json` member next to each image carries that image's `image_id`, `file_name` and annotation list, segmentation polygons included.
+
+`--category-ids` chooses the label space, and the index records the choice so the loader never has to guess:
+
+| Value             | Labels                                                       | Matches                   |
+| ----------------- | ------------------------------------------------------------ | ------------------------- |
+| `remap` (default) | contiguous `0..N-1`, unannotated grouping categories dropped | `dataset_file="roboflow"` |
+| `raw`             | the source `category_id` values                              | `dataset_file="coco"`     |
+
+### Training from shards
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall()
+model.train(
+    dataset_dir="/data/coco-shards",
+    dataset_file="webdataset",
+    epochs=10,
+    batch_size=16,
+    num_workers=16,
+)
+```
+
+Install the reader with `pip install "rfdetr[data]"`.
+
+`num_classes` auto-detects from `train-index.json` when not set on the model, the same as the other formats — under `raw`, that is the **highest `id` in `categories`, plus one** (COCO's own ids run 1-90 with gaps for its 80 categories, so `len(categories)` undercounts it — the same `max_obj_id + 1` convention `dataset_file="coco"` uses); under `remap`, it is simply the number of categories left after grouping nodes are dropped. Class *names* are read from the same index, indexed by the same labels the loader emits, so checkpoints and `predict()` label output are unaffected. Pass `num_classes` explicitly to override auto-detection, e.g. to keep a pretrained head's width.
+
+### How an epoch is sized
+
+A streaming dataset has no index to sample from, so the two loaders size an epoch differently:
+
+- **Training** gives every worker the same fixed number of samples, with full batches per worker and full accumulation windows across each rank. For `W = max(1, num_workers)` workers and `A = max(1, grad_accum_steps)`, each worker's count is floored to a multiple of `batch_size × A / gcd(W, A)`. For example, two workers with batch size 4 and accumulation 2 need only 4 samples each: together they supply one complete accumulation window. The epoch length is then exact, which is what the LR schedule needs — it is derived from `trainer.estimated_stepping_batches`. The cost is that a worker holding fewer shards than average repeats some of its own samples inside the epoch.
+- **Validation and test** let every worker drain its shards once, so the split is scored exactly once with nothing repeated or dropped. Those loaders report no length, so their progress bar shows no total.
+
+The test stage uses a packed `test` split when the directory has one, and falls back to `val` with a log line when it does not — a shard directory only has a split someone packed deliberately.
+
+Training raises a `ValueError` rather than starting if `world_size × num_workers` exceeds the shard count, because a worker left without a shard would silently shorten every epoch. Pack with a smaller `--max-shard-mb` to get more shards, or lower `num_workers`.
+
+### Pack plenty of shards
+
+Shards are split across workers by count, so an uneven split leaves the worst-served worker short of the samples a fixed epoch asks of it: it repeats some of its own while better-supplied workers leave some unseen. This is measurable. On a 2,000-image, 3-epoch fine-tune at `num_workers=8`, packing into 39 shards — the short worker 18% under the average — scored about 0.011 `mAP@50:95` below the loose-file loader; re-packing the identical split into 290 shards, 0.6% under, matched it. The loader logs a warning when that shortfall passes 5%, measured from each shard's real sample count (shards are cut by byte size, so a count-only estimate can be badly wrong when image sizes vary a lot within a split).
+
+Aim for a shard count that divides `world_size × num_workers`, or simply for many more shards than workers. `--max-shard-mb` is the knob.
+
+### Shuffling
+
+Shard visiting order is shuffled, and samples are shuffled again in a reservoir buffer as they stream. That is a local shuffle, not the global permutation `shuffle=True` gives a map-style loader: two samples in the same shard stay more likely to land in the same epoch region. The loader uses a dedicated generator initialized from the dataset seed on every rank, so rank-local random draws cannot change the shared pre-split shard permutation. Restarted workers receive the next generator seed; persistent workers retain their initial seed and advance a local epoch counter. Augmentation and reservoir seeds remain rank- and worker-specific. All ranks must use the same dataset seed, worker configuration and epoch sequence. This does not guarantee identical sample order across worker configurations or checkpoint-resumed runs.
+
+### Not covered
+
+Keypoint training rejects `dataset_file="webdataset"` with an explicit error. Its label space is inferred from a whole parsed COCO annotation file, which a shard index does not carry — use `coco`, `roboflow` or `yolo` for keypoints. Detection and segmentation splits are supported.
+
+---
+
 ## Converting Between Formats
 
 ### YOLO to COCO

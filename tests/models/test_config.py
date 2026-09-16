@@ -35,6 +35,7 @@ from rfdetr.config import (
     SegmentationTrainConfig,
     TrainConfig,
     _detect_device,
+    _resolve_amp_dtype,
 )
 
 
@@ -510,6 +511,20 @@ class TestTrainConfigT42PromotedFields:
         tc = self._tc(tmp_path, batch_size="auto")
         assert tc.batch_size == "auto"
 
+    def test_fp8_rejects_auto_batch(self, tmp_path: Path) -> None:
+        """The ordinary autocast probe cannot size a Transformer Engine model."""
+        with pytest.raises(ValueError, match="FP8.*explicit.*batch_size"):
+            self._tc(tmp_path, batch_size="auto", amp_dtype="fp8")
+
+    @pytest.mark.parametrize("amp_dtype", ["auto", "bf16", "fp16"])
+    def test_other_precisions_allow_auto_batch(self, tmp_path: Path, amp_dtype: str) -> None:
+        """Existing autocast modes retain automatic batch sizing."""
+        assert self._tc(tmp_path, batch_size="auto", amp_dtype=amp_dtype).batch_size == "auto"
+
+    def test_fp8_allows_explicit_batch(self, tmp_path: Path) -> None:
+        """An explicit FP8 micro-batch does not need the unsupported probe."""
+        assert self._tc(tmp_path, batch_size=1, amp_dtype="fp8").batch_size == 1
+
     @pytest.mark.parametrize(
         "field,value",
         [
@@ -548,6 +563,24 @@ class TestTrainConfigT42PromotedFields:
     def test_eval_batch_size_defaults_to_none(self, tmp_path: Path) -> None:
         """eval_batch_size defaults to None so eval loaders inherit the resolved train batch size."""
         assert self._tc(tmp_path).eval_batch_size is None
+
+    @pytest.mark.parametrize(
+        "pad_targets_to",
+        [
+            pytest.param(0, id="zero"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_pad_targets_to_rejects_non_positive_values(self, tmp_path: Path, pad_targets_to: int) -> None:
+        """pad_targets_to must be >= 1 when provided, caught at construction, not at first collate."""
+        with pytest.raises(
+            ValidationError, match=r"pad_targets_to\s+Value error, pad_targets_to must be a positive integer"
+        ):
+            self._tc(tmp_path, pad_targets_to=pad_targets_to)
+
+    def test_pad_targets_to_defaults_to_none(self, tmp_path: Path) -> None:
+        """pad_targets_to defaults to None so training keeps the variable-length path CUDA wants."""
+        assert self._tc(tmp_path).pad_targets_to is None
 
     @pytest.mark.parametrize("ema_headroom", [0.0, 1.5])
     def test_auto_batch_ema_headroom_must_be_in_open_one(self, tmp_path, ema_headroom):
@@ -647,6 +680,80 @@ class TestTrainConfigT42PromotedFields:
         """eval_masks_head_resolution=True is accepted (opt-in, no cross-field constraint)."""
         tc = self._tc(tmp_path, eval_masks_head_resolution=True)
         assert tc.eval_masks_head_resolution is True
+
+
+class TestResolveAmpDtype:
+    """``amp_dtype`` is the live AMP authority; ``ModelConfig.amp`` is a deprecated fallback."""
+
+    def _tc(self, tmp_path: Path, **kwargs: object) -> TrainConfig:
+        """Build a minimal training configuration.
+
+        Examples:
+            >>> config = TestResolveAmpDtype()._tc(Path("/tmp"), amp_dtype=None)
+            >>> config.amp_dtype is None
+            True
+        """
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    def test_default_resolves_to_auto(self, tmp_path):
+        """Neither field touched: AMP stays on with the auto-selected dtype."""
+        assert _resolve_amp_dtype(RFDETRNanoConfig(), self._tc(tmp_path)) == "auto"
+
+    def test_explicit_none_disables_amp(self, tmp_path):
+        """amp_dtype=None is the supported way to train in full fp32."""
+        assert _resolve_amp_dtype(RFDETRNanoConfig(), self._tc(tmp_path, amp_dtype=None)) is None
+
+    def test_explicit_amp_dtype_outranks_deprecated_amp_false(self, tmp_path):
+        """A caller-set amp_dtype is never silently disabled by a stale amp=False."""
+        assert _resolve_amp_dtype(RFDETRNanoConfig(amp=False), self._tc(tmp_path, amp_dtype="bf16")) == "bf16"
+
+    def test_explicit_fp8_outranks_deprecated_amp_false(self, tmp_path):
+        """Fp8 is no exception to the precedence rule; hardware checks, not amp, gate it downstream."""
+        resolved = _resolve_amp_dtype(RFDETRNanoConfig(amp=False), self._tc(tmp_path, amp_dtype="fp8", batch_size=4))
+        assert resolved == "fp8"
+
+    def test_deprecated_amp_false_applies_when_amp_dtype_is_default(self, tmp_path):
+        """Legacy amp=False keeps working while amp_dtype is untouched."""
+        with pytest.warns(FutureWarning, match="ModelConfig.amp is deprecated"):
+            assert _resolve_amp_dtype(RFDETRNanoConfig(amp=False), self._tc(tmp_path)) is None
+
+    def test_deprecated_amp_false_survives_a_train_config_round_trip(self, tmp_path):
+        """A reloaded config carries amp_dtype explicitly; that must not silently void the legacy toggle."""
+        reloaded = TrainConfig(**self._tc(tmp_path).model_dump())
+        with pytest.warns(FutureWarning, match="ModelConfig.amp is deprecated"):
+            assert _resolve_amp_dtype(RFDETRNanoConfig(amp=False), reloaded) is None
+
+    def test_amp_true_does_not_warn(self, tmp_path):
+        """The default amp=True is not a deprecated usage and must stay silent."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            assert _resolve_amp_dtype(RFDETRNanoConfig(), self._tc(tmp_path)) == "auto"
+
+    def test_none_is_accepted_by_validation(self, tmp_path):
+        """None is a valid amp_dtype, not an unknown value coerced back to 'auto'."""
+        assert self._tc(tmp_path, amp_dtype=None).amp_dtype is None
+
+
+class TestDeprecatedFp16Eval:
+    """``fp16_eval`` is inert and superseded by ``amp_dtype``."""
+
+    def _tc(self, tmp_path, **kwargs):
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    def test_explicit_true_warns(self, tmp_path):
+        """Setting the flag surfaces that it does nothing rather than silently ignoring it."""
+        with pytest.warns(FutureWarning, match="fp16_eval is deprecated"):
+            self._tc(tmp_path, fp16_eval=True)
+
+    def test_default_does_not_warn(self, tmp_path):
+        """The untouched default must stay silent, including on a dumped-config reload."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            TrainConfig(**self._tc(tmp_path).model_dump())
 
 
 class TestTrainConfigLRScheduler:

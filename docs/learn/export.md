@@ -1,5 +1,5 @@
 ---
-description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and native CoreML (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
+description: Export RF-DETR models to ONNX, TensorRT, TFLite, LiteRT, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
 ---
 
 # Export RF-DETR Model
@@ -7,14 +7,17 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, and na
 !!! tip "Key Takeaways"
 
     - Export to ONNX for cross-platform inference with ONNX Runtime, OpenVINO, or TensorRT
+    - Export to OpenVINO IR for optimized inference on CPU (x86, ARM), GPU (Intel integrated & discrete GPU) and AI accelerators (Intel NPU)
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
+    - Export to LiteRT (`.tflite`) straight from PyTorch with `litert-torch` — no ONNX or TensorFlow step — see [LiteRT Export](#litert-export)
     - TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)
-    - INT8 quantization requires calibration data from your dataset for accurate results
+    - INT8 quantization is dynamic-range and needs no calibration data
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment — see [Native CoreML Export](#native-coreml-export-mlpackage)
+    - Adding a format is an in-tree contribution — see [Exporter Blueprint](export-blueprint.md)
 
-RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, and native CoreML formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
+RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
 ## Installation
 
@@ -24,8 +27,14 @@ Install the export dependencies you need:
 # ONNX export only
 pip install "rfdetr[onnx]"
 
+# OpenVINO IR export
+pip install "rfdetr[openvino]"
+
 # TFLite export
 pip install "rfdetr[tflite]"
+
+# LiteRT export (.tflite straight from PyTorch via litert-torch)
+pip install "rfdetr[litert]"
 
 # ExecuTorch export (on-device inference: XNNPACK/CoreML/QNN)
 pip install "rfdetr[executorch]"
@@ -64,27 +73,28 @@ This command saves the ONNX model to the `output` directory by default.
 
 The `export()` method accepts several parameters to customize the export process:
 
-| Parameter          | Default    | Description                                                                                                                                                                                      |
-| ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `output_dir`       | `"output"` | Directory where the exported model will be saved.                                                                                                                                                |
-| `format`           | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), `"executorch"`, or `"coreml"`.                                                                                               |
-| `quantization`     | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                              |
-| `calibration_data` | `None`     | Calibration data for TFLite export. Image directory, `.npy` file path, NumPy array, or `None`. See [TFLite Export](#tflite-export).                                                              |
-| `max_images`       | `100`      | Maximum number of images to load from a calibration directory for TFLite INT8 quantization. Ignored for other calibration data formats.                                                          |
-| `infer_dir`        | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                          |
-| `backbone_only`    | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                            |
-| `opset_version`    | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                   |
-| `verbose`          | `True`     | Whether to print verbose export information.                                                                                                                                                     |
-| `shape`            | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.  |
-| `batch_size`       | `1`        | Batch size for the exported model.                                                                                                                                                               |
-| `dynamic_batch`    | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime.                                                                                      |
-| `patch_size`       | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                |
-| `backend`          | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                 |
-| `soc`              | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                      |
-| `fp16`             | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). Pass `False` to build an FP32 engine — required on TensorRT builds that do not expose the FP16 builder flag. |
-| `notes`            | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                            |
-| `coreml_precision` | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (smaller, ANE-oriented bundle). Ignored for every other format.                 |
-| `output_name`      | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_{backend}` detail suffix — see [Output Files](#output-files).    |
+| Parameter            | Default    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `output_dir`         | `"output"` | Directory where the exported model will be saved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `format`             | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), `"executorch"`, `"openvino"`, `"coreml"` or `"litert"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `quantization`       | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`; `format="litert"` accepts only `None`/`"fp32"` and raises `NotImplementedError` otherwise.                                                                                                                                                                                                                                                                                                                                                                                   |
+| `calibration_data`   | `None`     | Optional image directory, `.npy` file path, NumPy array, or `None`. Not consumed when building the generated `.tflite` models.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `max_images`         | `100`      | Maximum number of images to load from a `calibration_data` directory. Ignored for other calibration data formats.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `infer_dir`          | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `backbone_only`      | `False`    | Export only the backbone feature extractor instead of the full model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `opset_version`      | `17`       | ONNX opset version to use for export. Higher versions support more operations.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `verbose`            | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `shape`              | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `batch_size`         | `1`        | Batch size for the exported model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime. Only supported for `format="onnx"` and `format="tflite"` — TensorRT, ExecuTorch, CoreML, OpenVINO and LiteRT bake a fixed batch size.                                                                                                                                                                                                                                                                                                                                |
+| `patch_size`         | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `backend`            | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `fp16`               | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). TensorRT 11+ removed the FP16 builder flag, so there the engine is built from an FP16-cast graph instead; engine inputs and outputs stay FP32 either way. On strongly typed TensorRT (11+), this graph cast requires `onnx`/`onnxconverter-common` — install `rfdetr[tensorrt]` for the complete set, or export raises `ImportError`. A lean/partial TensorRT < 11 wheel lacking the FP16 builder flag falls back to an FP32 engine with a warning instead. Pass `False` for an FP32 engine. |
+| `notes`              | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `coreml_precision`   | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (smaller, ANE-oriented bundle). Ignored for every other format.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `openvino_precision` | `None`     | IR *storage* weight precision for `format="openvino"`: `None`/`"float16"` (OpenVINO's default FP16 weight compression) or `"float32"` (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename.                                                                                                                                                                                                                          |
+| `output_name`        | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_{backend}` detail suffix — see [Output Files](#output-files).                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Advanced Export Examples
 
@@ -122,19 +132,24 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(backbone_only=True)
 ```
 
+The backbone export contains the encoder and its feature projector, without the detection decoder or prediction heads. ONNX outputs are feature maps in NCHW layout, ordered by `projector_scale`: `features` for the first level, followed by `features_1`, `features_2`, and so on when more levels are configured. Backbones with a second projector also return its levels as `cross_attn_features`, `cross_attn_features_1`, and so on, after the primary levels. These outputs are feature maps, not decoded boxes, masks, or keypoint coordinates.
+
 ## Output Files
 
 Filenames are built from the model's variant name (e.g. `rfdetr-medium`, falling back to `inference_model` when no variant or `output_name` is set, or `backbone_model` when `backbone_only=True` in that same case) plus a detail suffix whenever a detail materially changes the artifact — even at its default value, since the file needs to say what it actually is:
 
-| Format       | Filename pattern                                                                                                                                                                       | Detail encoded                                           |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `onnx`       | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`); without a variant or `output_name`, `inference_model.onnx` (or `backbone_model.onnx` if `backbone_only=True`) | none — `-backbone` is structural, not a precision detail |
-| `coreml`     | `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage`                                                                                                                                | `coreml_precision`                                       |
-| `executorch` | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_qnn_{soc}.pte`                                                                                                           | `backend` (+ `soc` for `qnn`)                            |
-| `tensorrt`   | `{variant}_fp16.trt` / `{variant}_fp32.trt`                                                                                                                                            | `fp16`                                                   |
-| `tflite`     | `{variant}_fp32.tflite` + `{variant}_fp16.tflite` (+ `{variant}_dynamic_range_quant.tflite` for `quantization="int8"`)                                                                 | precision / quantization mode                            |
+| Format       | Filename pattern                                                                                                                                                                                                                     | Detail encoded                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `onnx`       | `{variant}.onnx` (or `{variant}-backbone.onnx` if `backbone_only=True`); without a variant or `output_name`, `inference_model.onnx` (or `backbone_model.onnx` if `backbone_only=True`)                                               | none — `-backbone` is structural, not a precision detail                     |
+| `coreml`     | `{variant}_fp32.mlpackage` / `{variant}_fp16.mlpackage` (or `{variant}_fp32-backbone.mlpackage` if `backbone_only=True`); without a variant or `output_name`, `backbone_model_fp32.mlpackage` if `backbone_only=True`                | `coreml_precision`, plus `-backbone` when named                              |
+| `executorch` | `{variant}_xnnpack.pte` / `{variant}_coreml.pte` / `{variant}_qnn_{soc}.pte` (or `{variant}_xnnpack-backbone.pte` if `backbone_only=True`); without a variant or `output_name`, `backbone_model_xnnpack.pte` if `backbone_only=True` | `backend` (+ `soc` for `qnn`), plus `-backbone` when named                   |
+| `tensorrt`   | `{variant}_fp16.trt` / `{variant}_fp32.trt` (or `{variant}-backbone_fp16.trt` / `{variant}-backbone_fp32.trt` if `backbone_only=True`)                                                                                               | `fp16`, plus `-backbone` when named                                          |
+| `tflite`     | `{variant}_fp32.tflite` + `{variant}_fp16.tflite` (+ `{variant}_dynamic_range_quant.tflite` for `quantization="int8"`)                                                                                                               | precision / quantization mode                                                |
+| `openvino`   | `{variant}.xml` + `{variant}.bin` (or `{variant}-backbone.xml`/`.bin` if `backbone_only=True`); without a variant or `output_name`, `inference_model.xml`/`.bin` (or `backbone_model.xml`/`.bin` if `backbone_only=True`)            | none — `openvino_precision` controls IR weight compression, not the filename |
 
 Pass `output_name="my-model"` to override the variant name and write `{output_name}.{ext}` verbatim — this suppresses the detail suffix for every format **except** `tflite`, which always writes multiple files and so keeps its `_fp32`/`_fp16`/`_dynamic_range_quant` suffix even with a custom name (`{output_name}_fp32.tflite`, etc.).
+
+With `backbone_only=True`, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a `-backbone` marker before the extension even when `output_name` is set, for example `my-model-backbone.onnx`. This distinguishes the backbone artifact from the full detector exported with the same name.
 
 ## Optional: Convert ONNX to TensorRT
 
@@ -146,7 +161,7 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 
 ### Prerequisites
 
-- Install the TensorRT extra: `pip install rfdetr[tensorrt]` (provides `tensorrt` + `polygraphy`; no `trtexec` binary needed)
+- Install the TensorRT extra: `pip install rfdetr[tensorrt]` (provides `tensorrt`, `polygraphy`, `onnx`, and `onnxconverter-common`; the latter two cast the ONNX graph to FP16 on TensorRT 11+; no `trtexec` binary needed)
 - A CUDA GPU (the engine is built for the local GPU architecture)
 - Export an ONNX model first (for example: `output/inference_model.onnx`)
 
@@ -164,6 +179,10 @@ model.export(format="tensorrt")
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](#export-parameters) — unless `output_name` is set).
 
+!!! note "`dynamic_batch=True` is not supported"
+
+    The engine is compiled without a TensorRT optimization profile, so it accepts only the batch size baked into the intermediate ONNX graph. Export one engine per batch size instead.
+
 !!! note "Who consumes the `.trt` engine?"
 
     The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw TensorRT deployment. It is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases.
@@ -172,14 +191,21 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 
 ### Python API Conversion
 
-```python
-from rfdetr.export._tensorrt import build_engine
+Use this only to convert an **already-exported** `.onnx` file without re-running the model export. To go straight from a checkpoint to an engine, use [`format="tensorrt"`](#export-directly-to-tensorrt) above.
 
-engine_path = build_engine("output/inference_model.onnx", fp16=True)
+!!! warning "Internal API"
+
+    `rfdetr.export._tensorrt.exporter` is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. `RFDETR.export(format="tensorrt")` is the supported entry point; use the class below only when you need to convert an already-exported `.onnx` file.
+
+```python
+from rfdetr.export._tensorrt.exporter import TensorRTConfig, TensorRTExporter
+
+exporter = TensorRTExporter(TensorRTConfig(fp16=True))
+engine_path = exporter.build_engine("output/inference_model.onnx")
 # -> "output/inference_model_fp16.trt"
 ```
 
-`build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file. Pass `output_name="my-engine"` to write `output/my-engine.trt` verbatim instead.
+`TensorRTExporter.build_engine` builds the engine in-process via the TensorRT Python API (no `trtexec` subprocess) and returns the path to the generated `.trt` engine file. Precision and progress logging come from the `TensorRTConfig` the exporter is constructed with — pass `TensorRTConfig(output_name="my-engine")` to write `output/my-engine.trt` verbatim instead.
 
 ## Run Inference with `inference-models`
 
@@ -255,7 +281,7 @@ predictions = model(image)
 
     - `onnx2tf` output graph structure can change between minor versions, silently altering output tensor layout and breaking downstream inference code.
     - `ai_edge_litert` (Google's replacement for `tflite-runtime`) is still stabilising its public API; version pinning is strongly recommended.
-    - INT8 quantization accuracy is sensitive to calibration data quality — poor calibration causes silent precision loss with no error at export time.
+    - INT8 quantization is dynamic-range (INT8 weights, float activations). It is applied without calibration, and quantizing a transformer's weights to 8 bits can still cost accuracy — validate the INT8 model before deploying it.
     - The ONNX → TF → TFLite conversion chain introduces numerical rounding that may produce slightly different predictions from the original PyTorch model.
     - Installation of the `[tflite]` extra may conflict with existing TensorFlow or NumPy versions in your environment.
     - `onnx` and TensorFlow both bundle Abseil and export its symbols weakly, so whichever loads first supplies them to both. RF-DETR imports TensorFlow first on the TFLite route; if your own code imports `onnx` before `tensorflow`, RF-DETR logs a warning and the conversion may block forever while restoring the SavedModel (no error, 0% CPU). Importing `onnx` *after* `tensorflow` is safe; otherwise, in a fresh process, preload/import `tensorflow` before `onnx` and then run the export — freshness alone is not sufficient.
@@ -299,92 +325,22 @@ pip install "rfdetr[tflite]"
 
 This produces both `output/inference_model_fp32.tflite` and `output/inference_model_fp16.tflite`.
 
-### INT8 Quantization with Calibration Data
+### INT8 Quantization
 
-For INT8 quantization, provide representative images from your dataset as calibration data. This is **critical** for preserving model accuracy — without real calibration data, the quantizer uses random noise and accuracy will be poor.
+`quantization="int8"` produces a **dynamic-range** INT8 model: weights are stored as INT8, activations stay in float, and the weight scales are derived from the weights themselves. No calibration data is required, and supplying it does not change the result — static/full-integer INT8, the mode that *would* need representative data, is intentionally unsupported because RF-DETR's transformer activations do not survive it.
 
-#### Option 1: Point to an Image Directory (Recommended)
+Dynamic-range INT8 requires a float-capable runtime and is not suitable for integer-only accelerators such as the Coral Edge TPU or integer-only NPUs.
 
-The simplest approach — just point `calibration_data` to a directory containing JPEG/PNG images. The converter automatically loads, resizes, and prepares the images:
-
-```python
-from rfdetr import RFDETRNano
-
-model = RFDETRNano()
-model.export(
-    format="tflite",
-    quantization="int8",
-    calibration_data="path/to/val2017/",  # directory of images
-    output_dir="output",
-)
-```
-
-The converter loads up to 100 images from the directory by default, resizes them to the model's input resolution, and uses them for both output validation and INT8 calibration. Supported formats: JPEG, PNG, BMP, WebP.
-
-You can control how many images are loaded with the `max_images` parameter:
+`calibration_data` accepts a directory of JPEG, PNG, BMP or WebP images, a path to an `.npy` file of shape `(N, H, W, 3)` (float32, values in `[0, 1]`), or a NumPy array in that format; `max_images` caps how many images are read from a directory. These arguments are not consumed when building the generated `.tflite` models. Omitting them is the normal path:
 
 ```python
-model.export(
-    format="tflite",
-    quantization="int8",
-    calibration_data="path/to/val2017/",
-    max_images=200,  # load up to 200 images (default: 100)
-    output_dir="output",
-)
-```
-
-#### Option 2: NumPy `.npy` File
-
-Prepare calibration data as a NumPy array and save it to a `.npy` file:
-
-- Shape: `(N, H, W, 3)` — NHWC format with 3 color channels
-- Data type: `float32`
-- Value range: `[0, 1]` (divide by 255, but do **not** apply ImageNet normalization — the converter handles that automatically)
-- Recommended: 20–100 representative images from your dataset
-
-```python
-import numpy as np
-from PIL import Image
-import torchvision.transforms.functional as F
 from rfdetr import RFDETRSmall
 
 model = RFDETRSmall()
-target_resolution = model.model_config.resolution
-
-# Load representative images from your dataset
-images = []
-for path in image_paths[:50]:  # 50 representative samples
-    img = Image.open(path).convert("RGB")
-    image_tensor = F.to_tensor(img)
-    image_tensor = F.resize(image_tensor, [target_resolution, target_resolution], antialias=False)
-    images.append(image_tensor.permute(1, 2, 0).contiguous().numpy())
-
-calibration_data = np.stack(images)  # shape: (50, H, W, 3)
-
-# Save to .npy for reuse
-np.save("calibration_data.npy", calibration_data)
-
-# Export with INT8 quantization
-model.export(
-    format="tflite",
-    quantization="int8",
-    calibration_data="calibration_data.npy",
-    output_dir="output",
-)
+model.export(format="tflite", quantization="int8", output_dir="output")
 ```
 
-#### Option 3: NumPy Array Directly
-
-You can also pass the NumPy array directly without saving to disk:
-
-```python
-model.export(
-    format="tflite",
-    quantization="int8",
-    calibration_data=calibration_data,  # np.ndarray
-    output_dir="output",
-)
-```
+This writes `output/inference_model_dynamic_range_quant.tflite` alongside the FP32 and FP16 models. When GridSample ops are patched, the filename includes a `_gs_patched` infix: `output/inference_model_gs_patched_dynamic_range_quant.tflite` (the standard RF-DETR path).
 
 ### FP16 Export
 
@@ -462,6 +418,199 @@ if boxes_detail is None or labels_detail is None:
 
 boxes = interpreter.get_tensor(boxes_detail["index"])
 labels = interpreter.get_tensor(labels_detail["index"])
+```
+
+## OpenVINO IR Export
+
+OpenVINO IR (Intermediate Representation) is a proprietary model format used by the OpenVINO Toolkit to optimize and deploy deep learning models.
+
+### Prerequisites
+
+```bash
+pip install "rfdetr[openvino]"
+```
+
+### Basic OpenVINO Export
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRMedium
+
+    model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="openvino", output_dir="output")
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegMedium
+
+    model = RFDETRSegMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="openvino", output_dir="output")
+    ```
+
+This produces two files (named after the model's variant):
+
+- `output/<model-variant>.xml` - The model structure (Intermediate Representation)
+- `output/<model-variant>.bin` - The model weights
+
+### OpenVINO Export with Custom Resolution
+
+```python
+from rfdetr import RFDETRMedium
+
+model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+
+model.export(format="openvino", shape=(608, 608))
+```
+
+### OpenVINO Export with Precision
+
+OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only; actual execution precision still depends on the compiled device (`CPU`/`GPU`/`NPU`), so parity with the eager PyTorch model is not guaranteed on every device:
+
+```python
+model.export(format="openvino", openvino_precision="float32")
+```
+
+### OpenVINO Inference Example
+
+`OpenVINOInference` loads an exported IR and runs it. It takes already-preprocessed NCHW tensors and returns the model's raw output tensors — decoding those into detections is up to you (see [Using the Exported Model](#using-the-exported-model) for the decode steps).
+
+!!! warning "The input array must be float32 and contiguous"
+
+    `infer()` validates this at the boundary and raises `ValueError` if violated, but a resize step that diverges from `predict()`'s own preprocessing (e.g. PIL's default `Image.resize()`, which resamples with bicubic) will still silently produce different — not obviously wrong — detections. Use `torchvision.transforms.functional.resize(..., antialias=False)` as below to match `predict()`'s antialias-free bilinear resize exactly.
+
+```python
+import torchvision.transforms.functional as F
+from PIL import Image
+from rfdetr.export.inference import OpenVINOInference
+
+# Load the exported model; device is "AUTO", "CPU", "GPU" or "NPU"
+model = OpenVINOInference("output/rfdetr-medium.xml", device="AUTO")
+
+# Prepare input image (NCHW format, ImageNet normalized) — matches predict()'s own preprocessing
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [576, 576], antialias=False)
+
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+image_tensor = F.normalize(image_tensor, mean, std)
+
+# Convert to NCHW format
+image_array = image_tensor.unsqueeze(0).numpy()
+
+# Run inference
+outputs = model(image_array)
+boxes, labels = outputs  # boxes: normalized cxcywh (center_x, center_y, width, height), not xywh
+```
+
+!!! tip "Construct once, and use one instance per worker thread"
+
+    Building an `OpenVINOInference` compiles the model, which is the expensive step — do it once and reuse the instance for every image. Pass `cache_dir="<dir>"` to reuse compiled kernels across process starts as well. Calls through a single instance are serialized by an internal lock, so sharing one instance across threads is safe but not faster; for parallel throughput give each worker thread its own instance.
+
+### Benchmark OpenVINO Model
+
+Use OpenVINO's `benchmark_app` tool to measure performance:
+
+```bash
+benchmark_app -m output/rfdetr-medium.xml -data_shape [1,3,576,576]
+```
+
+### OpenVINO Model Outputs
+
+The exported OpenVINO IR model produces the following outputs:
+
+- **Object Detection Models**:
+
+    - Output 0: Bounding boxes `[batch, 300, 4]` — normalized `cxcywh` (center_x, center_y, width, height), not top-left `xywh`
+    - Output 1: Class logits `[batch, 300, num_classes]`
+
+- **Segmentation Models**:
+
+    - Output 0: Bounding boxes `[batch, 300, 4]`
+    - Output 1: Class logits `[batch, 300, num_classes]`
+    - Output 2: Instance masks (if segmentation head is present)
+
+- **Keypoint Models**:
+
+    - Output 0: Bounding boxes `[batch, 300, 4]`
+    - Output 1: Class logits `[batch, 300, num_classes]`
+    - Output 2: Keypoints (if keypoint head is present)
+
+## LiteRT Export
+
+!!! warning "Experimental — Use with Caution"
+
+    LiteRT export is **experimental**. `litert-torch` is pre-1.0 and its converter changes between releases; the `[litert]` extra pins the range this route was validated on (0.9.4).
+
+    **Known limitations:**
+
+    - Float32 only: `quantization` other than `None` / `"fp32"` raises `NotImplementedError` on this route (use `format="tflite"` for its FP16/INT8 modes, or quantize the exported file with [ai-edge-quantizer](https://github.com/google-ai-edge/ai-edge-quantizer)).
+    - `dynamic_batch=True` is not supported: the `.tflite` bakes a fixed input shape, so export one file per batch size.
+    - Keypoint models are not supported on litert-torch 0.9.4: its converter rejects the rank-4 `batch_matmul` that the keypoint head's `nn.Linear` lowers to.
+    - The single exported graph includes the two-stage query selection (`TOPK_V2` / `GATHER_ND`), which the LiteRT GPU delegate has no kernels for, so the file runs on the CPU (XNNPACK) delegate. Running the detector on a phone GPU needs further graph rewrites and a two-graph split that this route does not do yet.
+
+LiteRT (formerly TensorFlow Lite) is Google's on-device runtime. `format="litert"` hands the PyTorch model to [litert-torch](https://github.com/google-ai-edge/litert-torch), which captures it with `torch.export` and lowers it to a `.tflite` file directly — no ONNX and no TensorFlow step, unlike the [TFLite export](#tflite-export) above, which converts ONNX → TensorFlow → TFLite with `onnx2tf`. Both routes produce a `.tflite` that the same `ai_edge_litert` interpreter runs; this one keeps PyTorch's NCHW layout and the deformable-attention sampling as litert-torch lowers it. On CPU the exported graphs track eager PyTorch closely. Measured with the pretrained Nano and Seg-Nano checkpoints on a real photo, the ten highest-confidence queries differ by at most about `1e-7` for boxes and `3e-5` for class logits and mask probabilities; across all 300 queries the maxima rise to about `6e-6` (boxes), `4e-4` (class logits) and `2e-3` (raw mask logits, about `3e-5` after sigmoid), because low-confidence proposals reorder slightly between backends. The `e2e_litert` test suite asserts looser bounds on the confident queries (boxes `1e-3`, logits `0.1`, mask probabilities `0.05`) as a regression gate; those bounds are not the measured precision.
+
+### Prerequisites
+
+```bash
+pip install "rfdetr[litert]"
+```
+
+### Basic LiteRT Export
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRSmall
+
+    model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="litert", output_dir="output")
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegSmall
+
+    model = RFDETRSegSmall(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="litert", output_dir="output")
+    ```
+
+This writes one float32 file named after the model's variant, `output/<model-variant>.tflite` (for example `output/rfdetr-small.tflite`; `-backbone` is appended with `backbone_only=True`, and `output_name` overrides the stem). `shape=(H, W)` picks a custom resolution exactly as for the other formats.
+
+### LiteRT Inference Example
+
+The file has one input (NCHW float32, ImageNet-normalized like `predict()`) and positional outputs: boxes `[batch, 300, 4]` in normalized `cxcywh`, class logits `[batch, 300, num_classes]`, and — for segmentation models — mask logits as a third output. Output tensor names are litert-torch's own (`serving_default_output_<i>_output`), so match outputs by position, as for the CoreML and OpenVINO exports.
+
+```python
+import numpy as np
+import torchvision.transforms.functional as F
+from ai_edge_litert.interpreter import Interpreter
+from PIL import Image
+
+interpreter = Interpreter(model_path="output/rfdetr-small.tflite")
+interpreter.allocate_tensors()
+(input_detail,) = interpreter.get_input_details()
+_, _, height, width = input_detail["shape"]
+
+# Same preprocessing as predict(): antialias-free bilinear resize, then ImageNet normalization
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [height, width], antialias=False)
+image_tensor = F.normalize(image_tensor, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+
+interpreter.set_tensor(input_detail["index"], image_tensor.unsqueeze(0).numpy())
+interpreter.invoke()
+boxes, logits = (interpreter.get_tensor(d["index"]) for d in interpreter.get_output_details()[:2])
+scores = 1 / (1 + np.exp(-logits))  # sigmoid; boxes are normalized cxcywh
 ```
 
 ## ExecuTorch Export
@@ -675,6 +824,12 @@ outputs = list(mlmodel.predict({"input": image_array.astype(np.float32)}).values
 boxes, labels = outputs[0], outputs[1]
 ```
 
+## How Export Works
+
+Every format is written by an `Exporter` class built from that format's own configuration, and `model.export()` is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent `ExportGraph`, and hands the graph to the exporter. The signature and return value on this page are the supported surface; the classes behind it are internal.
+
+If you want to add a format, or you are reading the export code, see [Exporter Blueprint](export-blueprint.md) for the contract each format implements and the steps a new one takes.
+
 ## Using the Exported Model
 
 Once exported, you can use the ONNX model with various inference frameworks:
@@ -771,8 +926,10 @@ After exporting your model, you may want to:
 
 - Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
 
-- Deploy TFLite models on mobile/edge devices with TensorFlow Lite
+- Deploy TFLite and LiteRT `.tflite` models on mobile/edge devices with the LiteRT runtime
 
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
+
+- Read the [Exporter Blueprint](export-blueprint.md) to add a new export format

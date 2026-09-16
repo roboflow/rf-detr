@@ -30,7 +30,7 @@ from typing import Any, cast
 
 import torch
 
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import ModelConfig, TrainConfig, _resolve_amp_dtype
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
 from rfdetr.training.module_model import _is_builtin_fused_adamw
@@ -566,8 +566,8 @@ def resolve_auto_batch_config(
 
     Args:
         model_context: Object with .device and .model (e.g. RFDETR.model from get_model()).
-        model_config: Architecture config (resolution, num_classes, amp, segmentation_head).
-        train_config: Training config (auto_batch_target_effective); batch_size should be "auto".
+        model_config: Architecture config (resolution, num_classes, segmentation_head).
+        train_config: Training config (auto_batch_target_effective, amp_dtype); batch_size should be "auto".
         safety_margin: Fraction of max batch to use (passed to probe_max_micro_batch).
         max_micro_batch: Upper bound on batch size to try (passed to probe_max_micro_batch).
 
@@ -599,6 +599,12 @@ def resolve_auto_batch_config(
         probe_resolution = model_config.resolution
 
     max_targets_per_image = getattr(train_config, "auto_batch_max_targets_per_image", 100)
+    pad_targets_to = getattr(train_config, "pad_targets_to", None)
+    if pad_targets_to is not None:
+        # With fixed-size target padding the count is not a worst-case guess any more, it is exactly
+        # what every image will carry -- so probe that instead of the generic ceiling, which is both
+        # too pessimistic for a small pad size and too optimistic for one above the default.
+        max_targets_per_image = pad_targets_to
 
     optimizer_cfg = getattr(train_config, "optimizer", "adamw")
     # Whether the real optimizer's *state* is AdamW-shaped -- a broader question than which optimizer
@@ -624,8 +630,8 @@ def resolve_auto_batch_config(
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
-    amp_enabled = bool(model_config.amp)
-    amp_dtype_str = getattr(train_config, "amp_dtype", "auto")
+    amp_dtype_str = _resolve_amp_dtype(model_config, train_config, warn_legacy=False)
+    amp_enabled = amp_dtype_str is not None
     if amp_enabled:
         if amp_dtype_str == "fp16":
             probe_autocast_dtype: torch.dtype | None = torch.float16

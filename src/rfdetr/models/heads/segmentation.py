@@ -14,7 +14,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 from torch.nn.grad import conv2d_input, conv2d_weight
 
-from rfdetr.utilities.tensors import _bilinear_grid_sample
+from rfdetr.utilities.tensors import _bilinear_grid_sample, _nearest_grid_sample
 
 
 class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
@@ -160,17 +160,15 @@ class DepthwiseConvBlock(nn.Module):
         # backward.  A plain context-manager only covers forward; the backward
         # for nn.Conv2d runs outside that scope and re-enables cuDNN,
         # triggering RuntimeError on T4/P100 GPUs (issue #731).
-        return cast(
-            Tensor,
-            _DepthwiseConvWithoutCuDNN.apply(  # type: ignore[no-untyped-call]
-                x,
-                self.dwconv.weight,
-                self.dwconv.bias,
-                self.dwconv.stride,
-                self.dwconv.padding,
-                self.dwconv.dilation,
-                self.dwconv.groups,
-            ),
+        depthwise_conv = cast(Callable[..., Tensor], _DepthwiseConvWithoutCuDNN.apply)
+        return depthwise_conv(
+            x,
+            self.dwconv.weight,
+            self.dwconv.bias,
+            self.dwconv.stride,
+            self.dwconv.padding,
+            self.dwconv.dilation,
+            self.dwconv.groups,
         )
 
     def forward(self, x: Tensor) -> Tensor:
@@ -388,8 +386,14 @@ def point_sample(input: Tensor, point_coords: Tensor, **kwargs: Any) -> Tensor:
                 padding_mode=padding_mode,
                 align_corners=align_corners,
             )
+    elif mode == "nearest" and not kwargs and padding_mode in ("zeros", "border"):
+        # Same reasoning as the bilinear branch: F.grid_sample lowers to an aten::grid_sampler_2d
+        # host fallback on XLA, so the gather path keeps mask-label sampling on device. CUDA/CPU
+        # still get the fused kernel from inside the helper. Exact ties retain the helper's documented
+        # kernel-dependent backend difference.
+        output = _nearest_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
     else:
-        # Delegate to torch.nn.functional.grid_sample for other modes (e.g. "nearest"),
+        # Delegate to torch.nn.functional.grid_sample for the remaining modes and padding modes,
         # forwarding any remaining supported kwargs.
         output = F.grid_sample(
             input,

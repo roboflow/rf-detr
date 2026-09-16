@@ -12,6 +12,7 @@ import inspect
 import math
 import random
 import warnings
+from contextlib import nullcontext
 from typing import Any, Callable, cast
 
 import torch
@@ -34,7 +35,12 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
-from rfdetr.training.param_groups import get_param_dict
+from rfdetr.training.param_groups import (
+    _build_param_dicts,
+    get_param_dict,
+    regroup_unmerged_optimizer_state,
+    regroup_unmerged_scheduler_kwargs,
+)
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -414,14 +420,19 @@ class RFDETRModelModule(LightningModule):
 
         accelerator = str(train_config.accelerator).lower()
         uses_cuda_accelerator = accelerator in {"auto", "gpu", "cuda"}
-        compile_enabled = (
-            model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator and not train_config.multi_scale
-        )
-        if model_config.compile and train_config.multi_scale:
+        # multi_scale is deliberately not part of this gate. The XLA concern it used to carry
+        # (one graph trace per scale) cannot arise here: DEVICE == "cuda" and an accelerator of
+        # auto/gpu/cuda are both required first, so an XLA or TPU run has already disabled
+        # compilation before multi-scale is even considered. Excluding it only ever disabled the
+        # CUDA path, where dynamic=True below is precisely what handles the varying (H, W).
+        compile_enabled = model_config.compile and DEVICE == "cuda" and uses_cuda_accelerator
+        if model_config.compile and not compile_enabled:
             logger.info(
-                "Disabling torch.compile: multi_scale=True causes dynamic shapes "
-                "(incompatible with XLA -- each scale = separate graph trace). "
-                "Use do_random_resize_via_padding=True on TPU to avoid recompilation overhead."
+                "Disabling torch.compile: RF-DETR enables it only on a CUDA device with a "
+                "CUDA-family accelerator (got DEVICE=%r, accelerator=%r). CPU and MPS are not "
+                "expected to benefit; on XLA/TPU the graph is compiled by the XLA runtime instead.",
+                DEVICE,
+                accelerator,
             )
         if compile_enabled:
             # dynamic=True: one compiled graph handles all multi-scale input sizes instead
@@ -435,9 +446,27 @@ class RFDETRModelModule(LightningModule):
             # would cause PendingUnbackedSymbolNotFound (which only occurs without dynamic).
             torch._dynamo.config.suppress_errors = True
             torch._dynamo.config.capture_scalar_outputs = True
+            # Inductor's coalesce tiling analysis is unsupported on the dynamic-shape path
+            # (torch/_inductor/config.py: "coalesce_tiling_analysis does not yet apply to
+            # dynamic shapes"), yet it still runs and reaches an assert in
+            # tiling_utils.get_pw_red_splits comparing size hints. That assert has no
+            # symbolic-shape escape, unlike the CantSplit branch below it, so entire forward
+            # frames fall back to eager. Turning the analysis off costs nothing under
+            # dynamic=True. Passed as a compile option rather than assigned on the inductor
+            # config module, so the default is preserved for any other compilation in this
+            # process. The knob is absent on older torch versions, where passing it would raise
+            # RuntimeError("Unexpected optimization option ..."), hence the hasattr guard.
+            # Local import: pulls in inductor, which an uncompiled run never needs.
+            import torch._inductor.config as inductor_config
+
+            compile_options: dict[str, Any] = {}
+            if hasattr(inductor_config.triton, "coalesce_tiling_analysis"):
+                compile_options["triton.coalesce_tiling_analysis"] = False
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
-            self.model = torch.compile(self.model, dynamic=True)  # type: ignore[assignment]
+            self.model = torch.compile(  # type: ignore[assignment]
+                self.model, dynamic=True, options=compile_options or None
+            )
 
     # ------------------------------------------------------------------
     # PTL lifecycle hooks
@@ -612,8 +641,17 @@ class RFDETRModelModule(LightningModule):
             # loss_for_backward is only None in the automatic-optimization branch above,
             # which is mutually exclusive with _use_manual_optimization.
             assert loss_for_backward is not None
-            self.manual_backward(loss_for_backward)
-            if self._should_step_optimizer(batch_idx):
+            should_step = self._should_step_optimizer(batch_idx)
+            # LightningOptimizer maps sync_grad=False to DDP's no_sync context. Intermediate
+            # microbatches accumulate locally; the closing backward reduces the whole window.
+            sync_context = (
+                optimizer.toggle_model(sync_grad=should_step)
+                if isinstance(optimizer, LightningOptimizer)
+                else nullcontext()
+            )
+            with sync_context:
+                self.manual_backward(loss_for_backward)
+            if should_step:
                 self._step_optimizer(optimizer)
         if self.train_config.compute_train_metrics:
             with torch.no_grad():
@@ -1151,7 +1189,7 @@ class RFDETRModelModule(LightningModule):
             self.model_config.fused_optimizer
             and torch.cuda.is_available()
             and torch.cuda.is_bf16_supported()
-            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true"}
+            and str(self.trainer.precision) in {"bf16-mixed", "bf16", "bf16-true", "transformer-engine"}
         )
 
     @property
@@ -1200,7 +1238,6 @@ class RFDETRModelModule(LightningModule):
         # name-prefix mismatches that put the same tensor in multiple groups.
         model_for_params = getattr(self.model, "_orig_mod", self.model)
         param_dicts = get_param_dict(ns, model_for_params)
-        param_dicts = [param_group for param_group in param_dicts if param_group["params"].requires_grad]
 
         optimizer_cfg = tc.optimizer
         optimizer: torch.optim.Optimizer
@@ -1273,9 +1310,16 @@ class RFDETRModelModule(LightningModule):
             else:
                 # Explicit dotted import path: constructed from lr_scheduler_kwargs only.
                 scheduler_class = _import_scheduler_class(scheduler_cfg)
-                scheduler = _instantiate_explicit_scheduler(
-                    scheduler_class, scheduler_cfg, optimizer, tc.lr_scheduler_kwargs
-                )
+                scheduler_kwargs = tc.lr_scheduler_kwargs
+                # Only a per-parameter lr_lambda list needs the legacy unmerged groups;
+                # regroup_unmerged_scheduler_kwargs returns its input untouched otherwise, so
+                # skip rebuilding the (discarded) unmerged layout for every other scheduler.
+                if isinstance(scheduler_kwargs.get("lr_lambda"), list):
+                    scheduler_kwargs = regroup_unmerged_scheduler_kwargs(
+                        scheduler_kwargs,
+                        _build_param_dicts(ns, model_for_params),
+                    )
+                scheduler = _instantiate_explicit_scheduler(scheduler_class, scheduler_cfg, optimizer, scheduler_kwargs)
             interval = tc.lr_scheduler_interval
             if isinstance(scheduler, ReduceLROnPlateau):
                 monitor = tc.lr_scheduler_monitor
@@ -1432,7 +1476,7 @@ class RFDETRModelModule(LightningModule):
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.
 
-        PTL calls this hook before applying ``checkpoint["state_dict"]`` to the module.  Three normalisation steps are
+        PTL calls this hook before applying ``checkpoint["state_dict"]`` to the module.  Four normalisation steps are
         applied in order:
 
         1. **Raw legacy format** — a ``*.pth`` file loaded directly by
@@ -1445,7 +1489,16 @@ class RFDETRModelModule(LightningModule):
            PE to ``model_config.positional_encoding_size`` before PTL applies the state dict.  Regression fix for
            :issue:`998`.
 
-        3. **Converted format** — a file produced by
+        3. **FP8 extra-state removal** — under Transformer Engine (``amp_dtype="fp8"``), the live module's
+           ``state_dict()`` carries ``_extra_state`` entries recording FP8 scaling history. Since ``strict_loading``
+           is disabled on this module, ``load_state_dict()`` tolerates a missing or unexpected key afterward, but
+           that does not stop it from calling ``set_extra_state()`` for any such key present in both the checkpoint
+           and the module —
+           and Transformer Engine intentionally rejects pickle-deserialised extra state. The entries are removed from
+           ``checkpoint["state_dict"]`` here so the full-checkpoint resume path (``Trainer(ckpt_path=...)``) cannot
+           abort on them, mirroring :meth:`~rfdetr.training.callbacks.ema.RFDETREMACallback._without_extra_state`.
+
+        4. **Converted format** — a file produced by
            :func:`~rfdetr.training.checkpoint.convert_legacy_checkpoint` that already has ``"state_dict"`` but also
            carries ``"legacy_ema_state_dict"``.  The EMA weights are stashed on ``self._pending_legacy_ema_state`` for
            optional restoration by :class:`~rfdetr.training.callbacks.ema.RFDETREMACallback`.
@@ -1472,6 +1525,21 @@ class RFDETRModelModule(LightningModule):
                 checkpoint["state_dict"],
                 self.model_config.positional_encoding_size,
             )
+
+        # Drop Transformer Engine's `_extra_state` entries before PTL applies the state dict.
+        # `strict_loading=False` (set in __init__) only tolerates a missing or unexpected key
+        # afterward — it does not stop `load_state_dict()` from calling `set_extra_state()` for a
+        # key present in both the checkpoint and the module, and Transformer Engine rejects that
+        # pickle round-trip.
+        if "state_dict" in checkpoint:
+            extra_state_keys = [key for key in checkpoint["state_dict"] if key.rsplit(".", 1)[-1] == "_extra_state"]
+            for key in extra_state_keys:
+                del checkpoint["state_dict"][key]
+
+        # Optimizer/scheduler state saved before parameters were grouped by hyperparameters carries
+        # one parameter group per parameter, a layout the optimizer no longer has. Regroup it so
+        # resuming such a run keeps its momentum and LR schedule instead of failing to load.
+        regroup_unmerged_optimizer_state(checkpoint)
 
         # Stash legacy EMA weights for RFDETREMACallback.setup(), which restores
         # them into AveragedModel when resuming from converted legacy checkpoints.

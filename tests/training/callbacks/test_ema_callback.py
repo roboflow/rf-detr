@@ -10,11 +10,12 @@ from __future__ import annotations
 import math
 import warnings
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
+from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import Tensor, nn
 from torch.optim.swa_utils import AveragedModel
 from torch.utils.data import DataLoader, TensorDataset
@@ -34,6 +35,40 @@ class _EMAContainerModule(nn.Module):
     @property
     def device(self) -> torch.device:
         return next(self.parameters()).device
+
+
+class _GuardedExtraStateMixin:
+    """Reject Transformer Engine-style extra-state deserialization.
+
+    Examples:
+        >>> _GuardedExtraStateLinear(1, 1).get_extra_state()
+        {'fp8_scaling': 'serialized'}
+    """
+
+    def get_extra_state(self) -> dict[str, str]:
+        """Return representative serialized state attached by Transformer Engine.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).get_extra_state()
+            {'fp8_scaling': 'serialized'}
+        """
+        return {"fp8_scaling": "serialized"}
+
+    def set_extra_state(self, state: object) -> None:
+        """Reject unsafe deserialization in the same way as Transformer Engine.
+
+        Examples:
+            >>> _GuardedExtraStateLinear(1, 1).set_extra_state({})
+            Traceback (most recent call last):
+            ...
+            RuntimeError: unsafe FP8 extra state must not be deserialized
+        """
+        del state
+        raise RuntimeError("unsafe FP8 extra state must not be deserialized")
+
+
+class _GuardedExtraStateLinear(_GuardedExtraStateMixin, nn.Linear):
+    """Linear layer that rejects serialized FP8-like extra state."""
 
 
 class TestAvgFnDecayFormula:
@@ -165,6 +200,190 @@ class TestInit:
         assert "weight" in state
         assert "bias" in state
 
+    def test_on_fit_start_initializes_ema_after_precision_conversion(self) -> None:
+        """EMA weights must match live BF16 weights after Lightning precision conversion.
+
+        Lightning runs callback ``setup`` before its precision plugin replaces or casts the live module. Constructing
+        ``AveragedModel`` in ``setup`` therefore leaves it in FP32, which makes its second update fail once the live
+        model is BF16.
+        """
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        trainer = MagicMock()
+
+        cb.setup(trainer, pl_module, stage="fit")
+        pl_module.to(dtype=torch.bfloat16)
+
+        cb.on_fit_start(trainer, pl_module)
+
+        assert cb._average_model is not None
+        for ema_parameter, live_parameter in zip(
+            cb._average_model.module.parameters(), pl_module.parameters(), strict=True
+        ):
+            assert ema_parameter.shape == live_parameter.shape
+            assert ema_parameter.dtype is live_parameter.dtype
+            assert ema_parameter.device == live_parameter.device
+        cb._average_model.update_parameters(pl_module)
+        cb._average_model.update_parameters(pl_module)
+        assert int(cb._average_model.n_averaged) == 2
+
+    def test_xla_keeps_averaged_model_counter_on_cpu(self) -> None:
+        """XLA must not place AveragedModel's Python-control-flow counter on the lazy device."""
+        cb = RFDETREMACallback()
+        pl_module = MagicMock(device=torch.device("xla"))
+
+        with patch("rfdetr.training.callbacks.ema.AveragedModel") as averaged_model:
+            cb.on_fit_start(MagicMock(), pl_module)
+
+        assert averaged_model.call_args.kwargs["device"] is None
+
+    def test_xla_average_uses_host_counter_without_reading_lazy_argument(self) -> None:
+        """Decay lookup must not materialize AveragedModel's per-group XLA counter copy."""
+        cb = RFDETREMACallback()
+        cb._average_model = MagicMock(n_averaged=torch.tensor(7))
+        lazy_counter = MagicMock()
+        lazy_counter.item.side_effect = AssertionError("the per-group XLA counter copy must remain unread")
+
+        value = cb._num_averaged_value(lazy_counter, device_type="xla")
+
+        assert value == 7
+
+    @pytest.mark.parametrize("device_type", ["cpu", "cuda"])
+    def test_eager_average_keeps_using_supplied_counter(self, device_type: str) -> None:
+        """Eager backends retain the existing per-group counter path."""
+        cb = RFDETREMACallback()
+        cb._average_model = MagicMock(n_averaged=torch.tensor(7))
+
+        value = cb._num_averaged_value(torch.tensor(5), device_type=device_type)
+
+        assert value == 5
+
+
+class TestXLARealDeviceExecution:
+    """Real torch_xla PJRT execution -- proves the EMA counter lookup never reads a lazy device tensor back to the host
+    (T1-lane pattern already established by ``test_denominator_is_not_read_back_to_the_host_on_xla`` in
+    ``tests/models/test_criterion.py``; runs on any PJRT backend, so ``PJRT_DEVICE=CPU`` exercises it with no TPU)."""
+
+    @pytest.mark.xla
+    def test_num_averaged_value_does_not_read_the_lazy_per_group_counter_back_to_the_host(self) -> None:
+        """No ``aten::_local_scalar_dense`` host read: the XLA branch must use the CPU-resident model counter.
+
+        A wrong implementation that called ``.item()`` on the lazy per-group counter instead of
+        ``self._average_model.n_averaged`` would both return the wrong value (0, not 7) and trigger a real
+        device-to-host transfer on the XLA tensor below -- this test fails on either symptom.
+        """
+        pytest.importorskip("torch_xla")
+        import torch_xla
+        import torch_xla.debug.metrics as met
+
+        device = torch_xla.device()
+        cb = RFDETREMACallback()
+        cb._average_model = MagicMock(n_averaged=torch.tensor(7))
+        lazy_per_group_counter = torch.zeros((), device=device)
+        torch_xla.sync()
+
+        met.clear_all()
+        value = cb._num_averaged_value(lazy_per_group_counter, device_type="xla")
+        torch_xla.sync()
+
+        assert value == 7
+        assert met.counter_value("aten::_local_scalar_dense") is None
+
+
+class TestExtraStateTransfers:
+    """EMA state transfers must not deserialize Transformer Engine extra state."""
+
+    def test_on_train_end_copies_ema_weights_without_loading_extra_state(self) -> None:
+        """Training end must load EMA weights even when FP8 extra state rejects deserialization."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        trainer = MagicMock()
+        cb.on_fit_start(trainer, pl_module)
+        assert cb._average_model is not None
+
+        with torch.no_grad():
+            pl_module.model.weight.fill_(7.0)
+            cb._average_model.module.model.weight.fill_(5.0)
+
+        cb.on_train_end(trainer, pl_module)
+
+        assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 5.0))
+
+    def test_get_ema_model_state_dict_omits_extra_state(self) -> None:
+        """Checkpoint export must retain model tensors while omitting guarded FP8 metadata."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        cb.on_fit_start(MagicMock(), pl_module)
+
+        state = cb.get_ema_model_state_dict()
+
+        assert state is not None
+        assert set(state) == {"weight", "bias"}
+
+    def test_callback_state_round_trip_preserves_ema_without_loading_extra_state(self) -> None:
+        """Checkpoint resume must retain EMA weights and counters without deserializing FP8 metadata."""
+        source_callback = RFDETREMACallback()
+        source_module = _EMAContainerModule()
+        source_module.model = _GuardedExtraStateLinear(4, 2)
+        source_callback.on_fit_start(MagicMock(), source_module)
+        assert source_callback._average_model is not None
+        with torch.no_grad():
+            source_callback._average_model.module.model.weight.fill_(5.0)
+            source_callback._average_model.n_averaged.fill_(3)
+
+        callback_state = source_callback.state_dict()
+        average_state = callback_state["average_model_state_dict"]
+        assert isinstance(average_state, dict)
+        assert all(key.rsplit(".", maxsplit=1)[-1] != "_extra_state" for key in average_state)
+        restored_callback = RFDETREMACallback()
+        restored_module = _EMAContainerModule()
+        restored_module.model = _GuardedExtraStateLinear(4, 2)
+        restored_callback.load_state_dict(callback_state)
+        restored_callback.on_fit_start(MagicMock(), restored_module)
+
+        assert restored_callback._average_model is not None
+        assert int(restored_callback._average_model.n_averaged) == 3
+        assert torch.equal(
+            restored_callback._average_model.module.model.weight,
+            torch.full_like(restored_callback._average_model.module.model.weight, 5.0),
+        )
+
+    def test_swap_models_round_trip_copies_weights_without_loading_extra_state(self) -> None:
+        """Test-time EMA swapping must restore live weights without deserializing FP8 state."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        trainer = MagicMock()
+        cb.on_fit_start(trainer, pl_module)
+        assert cb._average_model is not None
+
+        with torch.no_grad():
+            pl_module.model.weight.fill_(7.0)
+            cb._average_model.module.model.weight.fill_(5.0)
+
+        cb._swap_models(pl_module)
+        assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 5.0))
+        assert cb._swapped_state_dict is not None
+
+        cb._swap_models(pl_module)
+        assert torch.equal(pl_module.model.weight, torch.full_like(pl_module.model.weight, 7.0))
+        assert cb._swapped_state_dict is None
+
+    def test_swap_models_rejects_non_extra_state_shape_mismatch(self) -> None:
+        """Ignoring FP8 extra state must not hide an EMA parameter shape mismatch."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        pl_module.model = _GuardedExtraStateLinear(4, 2)
+        trainer = MagicMock()
+        cb.on_fit_start(trainer, pl_module)
+        assert cb._average_model is not None
+        cb._average_model.module.model = nn.Linear(5, 2)
+
+        with pytest.raises(RuntimeError, match=r"size mismatch for model\.weight"):
+            cb._swap_models(pl_module)
+
 
 class TestUpdateInterval:
     """Verify update_interval_steps throttles EMA updates on step hooks."""
@@ -185,6 +404,69 @@ class TestUpdateInterval:
             cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=step - 1)
 
         assert cb._average_model.update_parameters.call_count == 2
+
+    def test_xla_ema_update_runs_inside_optimizer_step(self) -> None:
+        """XLA queues EMA before Lightning's optimizer-owned step marker without a second synchronization."""
+        parameter = nn.Parameter(torch.ones(()))
+        optimizer = torch.optim.SGD([parameter], lr=0.1)
+        trainer = MagicMock(global_step=0, optimizers=[optimizer])
+        pl_module = MagicMock(device=torch.device("xla"))
+        cb = RFDETREMACallback()
+        cb._average_model = MagicMock()
+
+        cb._register_xla_optimizer_hook(trainer, pl_module)
+        optimizer.step()
+        cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=0)
+
+        cb._average_model.update_parameters.assert_called_once_with(pl_module)
+        assert cb._latest_update_step == 1
+
+        cb.teardown(trainer, pl_module, stage="fit")
+        trainer.global_step = 1
+        optimizer.step()
+        cb._average_model.update_parameters.assert_called_once_with(pl_module)
+
+    def test_xla_ema_update_computes_the_correct_step_through_lightning_optimizer(self) -> None:
+        """The ``global_step + 1`` assumption must hold through ``LightningOptimizer``, not just a raw optimizer.
+
+        The keypoint model's manual-optimization path (``module_model.py``'s ``training_step`` calls
+        ``self.optimizers()``, which returns a ``LightningOptimizer``-wrapped instance, and steps that wrapper instead
+        of the raw ``torch.optim.Optimizer``. ``LightningOptimizer.step()`` calls ``_on_before_step()``, then the
+        strategy's ``optimizer_step`` (which calls the wrapped raw optimizer's real ``.step()`` -- where our post-hook
+        fires, synchronously, mid-call), then ``_on_after_step()``. Manual optimization's own ``trainer.global_step`` is
+        backed by a counter that ``_on_after_step()`` increments, so at the moment our hook reads
+        ``trainer.global_step`` it still holds the pre-step value -- the same relative ordering the fix already relies
+        on for automatic optimization. A wrong implementation that read ``global_step`` after the wrapper's full call
+        (post-increment, without the ``+ 1``) would double count here.
+        """
+        parameter = nn.Parameter(torch.ones(()))
+        raw_optimizer = torch.optim.SGD([parameter], lr=0.1)
+        completed_steps = 0
+
+        def _increment_completed() -> None:
+            nonlocal completed_steps
+            completed_steps += 1
+
+        lightning_optimizer = LightningOptimizer(raw_optimizer)
+        lightning_optimizer._on_before_step = lambda: None
+        lightning_optimizer._on_after_step = _increment_completed
+        strategy = MagicMock()
+        strategy.optimizer_step.side_effect = lambda optimizer, closure, **kwargs: optimizer.step(closure=closure)
+        lightning_optimizer._strategy = strategy
+
+        trainer = MagicMock(optimizers=[raw_optimizer])
+        type(trainer).global_step = PropertyMock(side_effect=lambda: completed_steps)
+        pl_module = MagicMock(device=torch.device("xla"))
+        cb = RFDETREMACallback()
+        cb._average_model = MagicMock()
+
+        cb._register_xla_optimizer_hook(trainer, pl_module)
+        parameter.grad = torch.zeros_like(parameter)
+        lightning_optimizer.step()
+
+        cb._average_model.update_parameters.assert_called_once_with(pl_module)
+        assert cb._latest_update_step == 1
+        assert completed_steps == 1
 
 
 class TestEpochBoundaryNoDoubleUpdate:
@@ -249,8 +531,8 @@ class TestLegacyEMAResume:
 
         assert cb.state_dict() == {"latest_update_step": 7}
 
-    def test_setup_loads_pending_legacy_ema_state_into_average_model(self) -> None:
-        """`_pending_legacy_ema_state` must initialize EMA weights at fit setup."""
+    def test_on_fit_start_loads_pending_legacy_ema_state_into_average_model(self) -> None:
+        """`_pending_legacy_ema_state` must initialize EMA weights after precision conversion."""
         cb = RFDETREMACallback()
         pl_module = _EMAContainerModule()
         trainer = MagicMock()
@@ -259,6 +541,7 @@ class TestLegacyEMAResume:
         pl_module._pending_legacy_ema_state = legacy_ema_state
 
         cb.setup(trainer, pl_module, stage="fit")
+        cb.on_fit_start(trainer, pl_module)
 
         assert cb._average_model is not None
         restored = cb._average_model.module.model.state_dict()
@@ -283,13 +566,14 @@ class _BufferContainerModule(nn.Module):
 class TestMultiAvgFn:
     """Foreach ``multi_avg_fn`` path must reproduce the per-tensor ``avg_fn`` numerics exactly."""
 
-    def test_setup_registers_multi_avg_fn(self) -> None:
-        """Fit setup must wire multi_avg_fn (foreach branch) and leave avg_fn unset."""
+    def test_on_fit_start_registers_multi_avg_fn(self) -> None:
+        """Post-conversion fit start must wire multi_avg_fn and leave avg_fn unset."""
         cb = RFDETREMACallback()
         pl_module = _EMAContainerModule()
         trainer = MagicMock()
 
         cb.setup(trainer, pl_module, stage="fit")
+        cb.on_fit_start(trainer, pl_module)
 
         assert cb._average_model is not None
         assert cb._average_model.multi_avg_fn is not None
@@ -595,6 +879,70 @@ class TestRealTrainerResume:
             assert torch.equal(probe.average_state[key], expected)
         assert ema_cb2._average_model is not None
         assert int(ema_cb2._average_model.n_averaged) == expected_updates + len(train_loader)
+
+
+class TestRealXLATrainerEMA:
+    """Run the XLA optimizer-hook lifecycle through a real Lightning Trainer when hardware is available."""
+
+    @pytest.mark.xla
+    def test_optimizer_hook_updates_once_per_interval_across_resume(self, tmp_path: Path) -> None:
+        """A real XLA Trainer updates EMA at steps 2 and 4, including after checkpoint resume.
+
+        CPU-PJRT provides an XLA device for device-level tests but Lightning refuses its ``"tpu"`` Trainer accelerator
+        without actual XLA hardware. This test therefore remains hardware-gated while exercising the production
+        optimizer hook, rather than replacing that lifecycle with the existing raw-optimizer simulation.
+        """
+        pytest.importorskip("torch_xla")
+        from pytorch_lightning.accelerators import XLAAccelerator
+
+        if not XLAAccelerator.is_available():
+            pytest.skip(
+                "a real Lightning XLA Trainer requires TPU or other available XLA hardware; CPU-PJRT cannot launch it"
+            )
+
+        x = torch.ones(4, 4)
+        y = torch.zeros(4, 1)
+        train_loader = DataLoader(TensorDataset(x, y), batch_size=1)
+        checkpoint_path = tmp_path / "xla-ema-resume.ckpt"
+
+        first_callback = RFDETREMACallback(decay=0.5, tau=0, update_interval_steps=2)
+        first_trainer = Trainer(
+            max_epochs=1,
+            accelerator="tpu",
+            devices=1,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            limit_train_batches=2,
+            callbacks=[first_callback],
+            default_root_dir=str(tmp_path),
+        )
+        first_trainer.fit(_EMAResumeModule(), train_dataloaders=train_loader)
+        first_trainer.save_checkpoint(str(checkpoint_path))
+
+        assert first_callback._average_model is not None
+        assert first_trainer.global_step == 2
+        assert int(first_callback._average_model.n_averaged) == 1
+
+        resumed_callback = RFDETREMACallback(decay=0.5, tau=0, update_interval_steps=2)
+        resumed_trainer = Trainer(
+            max_epochs=2,
+            accelerator="tpu",
+            devices=1,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            limit_train_batches=2,
+            callbacks=[resumed_callback],
+            default_root_dir=str(tmp_path),
+        )
+        resumed_trainer.fit(_EMAResumeModule(), train_dataloaders=train_loader, ckpt_path=str(checkpoint_path))
+
+        assert resumed_callback._average_model is not None
+        assert resumed_trainer.global_step == 4
+        assert int(resumed_callback._average_model.n_averaged) == 2
 
 
 class TestSuppressTestSwap:

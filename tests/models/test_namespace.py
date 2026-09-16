@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import RFDETRBaseConfig, RFDETRSegNanoConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.config import RFDETRNanoConfig, RFDETRSegNanoConfig, RFDETRSmallConfig, SegmentationTrainConfig, TrainConfig
 from rfdetr.models._types import BuilderArgs
 
 
@@ -21,7 +21,7 @@ class TestNamespaceForwarding:
 
     def _make_ns(self: "TestNamespaceForwarding", **tc_kwargs: Any) -> Any:
         """Build a namespace for tests with minimal default TrainConfig values."""
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         tc_kwargs.setdefault("dataset_dir", "/tmp")
         tc = TrainConfig(**tc_kwargs)
         return _namespace_from_configs(mc, tc)
@@ -56,7 +56,7 @@ class TestNamespaceProtocol:
     """_namespace_from_configs() output must satisfy the BuilderArgs Protocol."""
 
     def _make_ns(self, mc=None, tc=None):
-        mc = mc or RFDETRBaseConfig(num_classes=80)
+        mc = mc or RFDETRNanoConfig(num_classes=80)
         tc = tc or TrainConfig(dataset_dir="/tmp")
         return _namespace_from_configs(mc, tc)
 
@@ -83,7 +83,7 @@ class TestNamespaceFieldOwnership:
     """Verify that the namespace reads each field from the authoritative owner."""
 
     def _make_ns(self, mc=None, tc=None):
-        mc = mc or RFDETRBaseConfig(num_classes=80)
+        mc = mc or RFDETRNanoConfig(num_classes=80)
         tc = tc or TrainConfig(dataset_dir="/tmp")
         return _namespace_from_configs(mc, tc)
 
@@ -91,7 +91,7 @@ class TestNamespaceFieldOwnership:
 
     def test_cls_loss_coef_from_train_config(self) -> None:
         """ns.cls_loss_coef must reflect TrainConfig.cls_loss_coef, not ModelConfig."""
-        mc = RFDETRBaseConfig(num_classes=80)
+        mc = RFDETRNanoConfig(num_classes=80)
         tc = TrainConfig(dataset_dir="/tmp", cls_loss_coef=2.5)
         ns = _namespace_from_configs(mc, tc)
         assert ns.cls_loss_coef == pytest.approx(2.5)
@@ -123,7 +123,7 @@ class TestNamespaceFieldOwnership:
         "config_class, expected_num_select",
         [
             pytest.param(RFDETRSegNanoConfig, 100, id="seg_nano"),
-            pytest.param(RFDETRBaseConfig, 300, id="base"),
+            pytest.param(RFDETRSmallConfig, 300, id="small"),
         ],
     )
     def test_num_select_matches_model_config_variant(self, config_class, expected_num_select) -> None:

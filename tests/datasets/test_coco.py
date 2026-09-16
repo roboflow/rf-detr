@@ -30,6 +30,7 @@ from rfdetr.datasets.coco import (
     filter_parent_categories,
     scale_coco_annotation,
 )
+from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
 from rfdetr.detr import RFDETR
 from rfdetr.utilities import PackedTargets, pack_targets
 
@@ -244,6 +245,39 @@ def _write_roboflow_keypoint_coco(path: Path, *, category_id: int = 0) -> None:
         ],
     }
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _pipeline_args(dataset_dir: object, **overrides: object) -> types.SimpleNamespace:
+    """Build a builder namespace carrying the image-pipeline options the dataset builders require.
+
+    The builders read these options directly, with no literal fallback, so a namespace handed to one must spell
+    them out. The values here reproduce the pipeline the removed ``getattr`` fallbacks used to produce, which
+    keeps tests that only care about label space or backend resolution behaviourally unchanged. Tests asserting
+    that the *configured* values reach the pipeline live in ``tests/datasets/test_builder_options.py``.
+
+    Args:
+        dataset_dir: Dataset root recorded on the namespace.
+        **overrides: Extra fields to add, or pipeline options to replace.
+
+    Returns:
+        Namespace accepted by the Roboflow COCO and YOLO builders.
+
+    Examples:
+        >>> _pipeline_args("/tmp/ds", augmentation_backend="gpu").multi_scale
+        False
+    """
+    options = {
+        "dataset_dir": str(dataset_dir),
+        "square_resize_div_64": False,
+        "segmentation_head": False,
+        "multi_scale": False,
+        "expanded_scales": False,
+        "do_random_resize_via_padding": False,
+        "patch_size": 16,
+        "num_windows": 4,
+    }
+    options.update(overrides)
+    return types.SimpleNamespace(**options)
 
 
 class TestLoadClassesHierarchy:
@@ -474,6 +508,9 @@ class TestBuildO365RawGpuBackend:
             self.square_resize_div_64 = square_resize_div_64
             self.multi_scale = False
             self.expanded_scales = False
+            self.do_random_resize_via_padding = False
+            self.patch_size = 16
+            self.num_windows = 4
             self.dataset_dir = "/nonexistent/o365"
             self.coco_path = "/nonexistent/o365"
 
@@ -629,7 +666,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
 
         from rfdetr.datasets.coco import build_roboflow_from_coco
 
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        args = _pipeline_args(tmp_path, augmentation_backend="gpu")
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
             pytest.raises(RuntimeError, match="CUDA"),
@@ -643,7 +680,7 @@ class TestBuildRoboflowFromCocoBackendResolution:
         from rfdetr.config import AugmentationBackend
         from rfdetr.datasets.coco import build_roboflow_from_coco
 
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path), augmentation_backend="gpu")
+        args = _pipeline_args(tmp_path, augmentation_backend="gpu")
         with (
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True),
             patch.object(AugmentationBackend, "_is_available", lambda self: self is not AugmentationBackend.KORNIA),
@@ -1761,6 +1798,46 @@ class TestPhantomRootConsistency:
         assert names == [dataset.coco.cats[dataset.label2cat[label]]["name"] for label in range(len(names))]
 
 
+class TestDetectNumClassesWebDataset:
+    """A packed webdataset shard directory carries the answer directly, without a raw annotation file to read.
+
+    Regression coverage for class-count autodetection: _detect_num_classes_for_training previously had no
+    webdataset-aware branch, so a shard directory (no train/_annotations.coco.json, no data.yaml) always fell
+    through to _load_classes, raised FileNotFoundError, and was swallowed at logger.debug by the caller
+    (_align_num_classes_from_dataset) -- num_classes auto-detection silently never worked for this dataset_file.
+    """
+
+    def test_remap_policy_matches_the_filtered_category_count(self, tmp_path: Path) -> None:
+        """A 'remap' pack detects the same class count the loose-file COCO path would for the same categories."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        dataset = CocoDetection(tmp_path / "train", ann_file, transforms=None, remap_category_ids=True)
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train", category_ids="remap")
+        assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == len(set(dataset.cat2label.values()))
+
+    def test_raw_policy_uses_max_category_id_plus_one(self, tmp_path: Path) -> None:
+        """A 'raw' pack detects max(category_id) + 1, matching dataset_file='coco''s existing convention."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train", category_ids="raw")
+        assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
+
+    def test_raw_policy_retains_unannotated_declared_category(self, tmp_path: Path) -> None:
+        """Evaluation may contain the highest declared category even when training has no instance of it."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1])
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, category_ids="raw")
+        assert RFDETR._detect_num_classes_for_training(str(shard_dir)) == 5
+
+    def test_keypoint_mode_does_not_read_the_shard_index(self, tmp_path: Path) -> None:
+        """Keypoint training never reaches the webdataset branch: that format rejects keypoints outright."""
+        ann_file = _write_roboflow_hierarchy_split(tmp_path / "train", [1, 4])
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(tmp_path / "train", ann_file, shard_dir, split="train")
+        with pytest.raises(FileNotFoundError):
+            RFDETR._detect_num_classes_for_training(str(shard_dir), use_grouppose_keypoints=True)
+
+
 class TestCrossSplitLabelSpace:
     """Val/test splits must reuse the train label space whatever their own annotation coverage is."""
 
@@ -1768,7 +1845,7 @@ class TestCrossSplitLabelSpace:
         """A grouping category annotated in train only keeps its train label slot in val instead of shifting it."""
         _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
         _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path))
+        args = _pipeline_args(tmp_path)
 
         train_dataset = build_roboflow_from_coco("train", args, resolution=64)
         val_dataset = build_roboflow_from_coco("val", args, resolution=64)
@@ -1779,7 +1856,7 @@ class TestCrossSplitLabelSpace:
         """Val targets carry the label index training assigned, not the one val's own coverage would produce."""
         _write_roboflow_hierarchy_split(tmp_path / "train", [0, 1])
         _write_roboflow_hierarchy_split(tmp_path / "valid", [1])
-        args = types.SimpleNamespace(dataset_dir=str(tmp_path))
+        args = _pipeline_args(tmp_path)
 
         val_dataset = build_roboflow_from_coco("val", args, resolution=64)
         _, target = val_dataset[0]
