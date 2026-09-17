@@ -80,7 +80,7 @@ train = [
     "ultrafast-pycocotools>=0.1.10,<0.2",
     "pycocotools",
     "scipy",
-    "simplejpeg>=1.7,<2",  # libjpeg-turbo JPEG decoding straight into NumPy for the training dataset (#1391); wheels bundle the library, Pillow is the fallback
+    "simplejpeg>=1.9,<2",  # libjpeg-turbo JPEG decoding straight into NumPy for the training dataset (#1391); wheels bundle the library, Pillow is the fallback
     # Batched Hungarian solver for the matcher (Apache-2.0). Speeds up the CUDA path only — its
     # Triton backend needs Linux + compute capability >= 8.0 + torch >= 2.4; everywhere else it
     # falls back internally to the same SciPy solve the matcher would have called, so only speed

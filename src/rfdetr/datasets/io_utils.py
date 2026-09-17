@@ -126,10 +126,15 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     before allocating, exactly as ``PIL.Image.open`` would.
 
     Returning an array rather than a PIL image lets a caller that wants an array skip a round trip, which is where the
-    speedup lands: 1.3-1.8x over Pillow for the YOLO loader, varying with image size and with how much high-frequency
-    detail the JPEG carries.  Callers needing a PIL image wrap the result with ``Image.fromarray`` (``CocoDetection``,
-    the WebDataset reader); that wrap costs about what the faster decode saves, so those paths take the shared decoder
-    policy rather than a speedup.
+    speedup lands: 1.3-1.8x over Pillow at the decode stage for array consumers such as ``_LazyYoloDetectionDataset``,
+    varying with image size and with how much high-frequency detail the JPEG carries.  Most of that array-out gain comes
+    from skipping Pillow's ``convert("RGB")`` and ``np.array`` copies rather than from a faster codec: the raw
+    libjpeg-turbo decode itself is only about 12% faster, since Pillow's wheels link the same library.  Callers needing
+    a PIL image wrap the result with ``Image.fromarray`` (``YoloDetection``, ``CocoDetection``, the WebDataset reader);
+    that wrap costs about what the faster decode saves, so the net effect there is hardware-dependent: ``YoloDetection``
+    keeps a smaller end-to-end gain because its previous path copied through ``np.array`` too, while other PIL-out
+    consumers may see a slight regression on some platforms until the CPU pipeline consumes arrays directly, and take
+    the shared decoder policy rather than a speedup.
 
     When ``draft_size`` is set, both decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to
     keep the image at least ``draft_size`` on both axes; it is a no-op for non-JPEG files.
