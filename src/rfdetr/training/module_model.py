@@ -515,6 +515,8 @@ class RFDETRModelModule(LightningModule):
         """
         if not hasattr(torch.compiler, "cudagraph_mark_step_begin"):
             return "this torch version has no torch.compiler.cudagraph_mark_step_begin"
+        if train_config.amp_dtype == "fp8":
+            return "FP8 graph replay requires Transformer Engine capture with compile=False"
         if model_config.segmentation_head:
             return "segmentation training is not supported"
         if model_config.use_grouppose_keypoints:
@@ -598,7 +600,8 @@ class RFDETRModelModule(LightningModule):
 
         Raises:
             RuntimeError: If Inductor CUDA graph replay was compiled in but the trainer resolved gradient
-                accumulation or more than one process, neither of which that path supports.
+                accumulation, more than one process, or Transformer Engine precision; or if the FP8 capture
+                plugin has no recipe or a compatible Transformer Engine capture API is unavailable.
         """
         self._cuda_graph_runner = None
         if not getattr(self.model_config, "cuda_graphs", False):
@@ -629,6 +632,11 @@ class RFDETRModelModule(LightningModule):
                     f"accumulation, but the trainer resolved accumulate_grad_batches={accumulate_grad_batches} and "
                     f"world_size={world_size}. Set cuda_graphs=False or drop the accumulation / extra devices."
                 )
+            if str(getattr(self.trainer, "precision", "")).startswith("transformer-engine"):
+                raise RuntimeError(
+                    "FP8 CUDA graphs require compile=False and Transformer Engine capture; "
+                    "the trainer precision cannot override an already compiled Inductor graph run."
+                )
             logger.info(
                 "CUDA graph replay is handled by Inductor cudagraph trees for the compiled model on %s; "
                 "the eager graph runner stays off.",
@@ -647,15 +655,28 @@ class RFDETRModelModule(LightningModule):
             unsupported_reason = "keypoint training is not supported"
         elif self.model_config.gradient_checkpointing:
             unsupported_reason = "gradient checkpointing is not supported"
+        elif str(self.trainer.precision) == "transformer-engine":
+            if not self.train_config.square_resize_div_64:
+                unsupported_reason = "FP8 capture requires square_resize_div_64=True"
+            elif self.train_config.multi_scale or self.train_config.do_random_resize_via_padding:
+                unsupported_reason = "FP8 capture requires multi_scale=False and do_random_resize_via_padding=False"
+            elif int(getattr(self.trainer, "accumulate_grad_batches", self.train_config.grad_accum_steps)) != 1:
+                unsupported_reason = "FP8 capture does not support gradient accumulation"
         elif str(self.trainer.precision) not in {"bf16-mixed", "bf16-true"}:
             unsupported_reason = (
-                f"the trainer precision is {self.trainer.precision!r}; only BF16 is validated for capture"
+                f"the trainer precision is {self.trainer.precision!r}; capture requires BF16 or Transformer Engine FP8"
             )
 
         if unsupported_reason is not None:
             logger.warning("Disabling CUDA graphs because %s; training will run eagerly.", unsupported_reason)
             return
-        self._cuda_graph_runner = CudaGraphTrainingRunner(self.model)
+        if str(self.trainer.precision) == "transformer-engine":
+            recipe = getattr(self.trainer.precision_plugin, "recipe", None)
+            if recipe is None:
+                raise RuntimeError("FP8 CUDA graph capture requires the active Lightning Transformer Engine recipe.")
+            self._cuda_graph_runner = CudaGraphTrainingRunner(self.model, fp8_recipe=recipe)
+        else:
+            self._cuda_graph_runner = CudaGraphTrainingRunner(self.model)
         logger.info(
             "CUDA graph replay enabled for the training forward on %s (%s); the first batch of each input "
             "shape runs eager warm-up and capture.",

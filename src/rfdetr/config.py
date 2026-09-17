@@ -488,7 +488,9 @@ class ModelConfig(BaseConfig):
             sizes it matches eager and ``compile`` is the better lever. Combined with
             ``compile=True`` the replay is delegated to Inductor's CUDA graph trees, which
             stacks both gains at small batch sizes and matches plain compilation at large
-            ones. Defaults to ``False``.
+            ones. With ``amp_dtype="fp8"`` and ``compile=False``, uses Transformer Engine's
+            FP8-aware capture instead, requiring fixed resolution and no gradient accumulation.
+            Combining FP8 with both flags stays compile-only. Defaults to ``False``.
         pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
         device: Target device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if not set.
         gradient_checkpointing: Trade compute for memory by checkpointing activations. Defaults
