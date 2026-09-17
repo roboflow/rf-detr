@@ -339,10 +339,9 @@ def dice_loss(
                 (0 for the negative class and 1 for the positive class).
         num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
                  caller never has to sync it to the host (a host read cuts XLA's lazy
-                 graph every step). This eager function retains Python numeric behavior,
-                 including NumPy scalars. The scripted ``dice_loss_jit`` wrapper accepts
-                 only Tensor, float, or int; convert another numeric type with
-                 ``float(...)`` before calling that wrapper.
+                 graph every step). This eager function accepts Python and NumPy scalars.
+                 On Python 3.10–3.13, the scripted ``dice_loss_jit`` wrapper accepts only
+                 Tensor, float, or int; on Python 3.14+, it is this eager function.
     """
     inputs = inputs.sigmoid()
     inputs = inputs.flatten(1)
@@ -382,10 +381,9 @@ def sigmoid_ce_loss(
                 (0 for the negative class and 1 for the positive class).
         num_masks: Normalizing denominator. Pass a Tensor to keep it on-device so the
                  caller never has to sync it to the host (a host read cuts XLA's lazy
-                 graph every step). This eager function retains Python numeric behavior,
-                 including NumPy scalars. The scripted ``sigmoid_ce_loss_jit`` wrapper
-                 accepts only Tensor, float, or int; convert another numeric type with
-                 ``float(...)`` before calling that wrapper.
+                 graph every step). This eager function accepts Python and NumPy scalars.
+                 On Python 3.10–3.13, the scripted ``sigmoid_ce_loss_jit`` wrapper accepts
+                 only Tensor, float, or int; on Python 3.14+, it is this eager function.
 
     Returns:
         Loss tensor
