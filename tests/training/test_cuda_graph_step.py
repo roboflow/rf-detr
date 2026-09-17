@@ -276,11 +276,13 @@ def test_nano_capture_replay_matches_eager_loss_gradients_and_optimizer_step(mon
                     # Scale-aware bound: an element-wise atol cannot separate kernel noise on a large gradient
                     # from a wrong gradient on a small one. A capture bug (stale input, dropped or doubled
                     # accumulation) shows as a relative error of 1e-2 or more; kernel noise stays below 1e-5.
-                    difference = parameter.grad - reference.grad
-                    relative_error = difference.norm() / reference.grad.norm().clamp_min(1e-12)
-                    assert relative_error < 1e-4, (
-                        f"{name}: relative Frobenius error {relative_error:.3e}; "
-                        f"max|reference| {reference.grad.abs().max():.3e}; max|diff| {difference.abs().max():.3e}"
+                    # The absolute floor covers analytically zero gradients (softmax attention key biases,
+                    # ~1e-12 of rounding residue) whose relative error is meaningless.
+                    difference_norm = (parameter.grad - reference.grad).norm()
+                    reference_norm = reference.grad.norm()
+                    assert difference_norm <= 1e-4 * reference_norm + 1e-9, (
+                        f"{name}: ||diff|| {difference_norm:.3e} vs ||reference|| {reference_norm:.3e}; "
+                        f"max|reference| {reference.grad.abs().max():.3e}"
                     )
 
     assert len(runner._graphed_cache) == 2
