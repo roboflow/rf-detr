@@ -28,6 +28,14 @@ from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
 
 _TRANSFORMER_ENGINE_INSTALLED = importlib.util.find_spec("transformer_engine") is not None
+_FP8_CUDA_AVAILABLE = torch.cuda.is_available() and torch.cuda.get_device_capability(0) >= (8, 9)
+
+_skip_without_fp8_cuda = pytest.mark.skipif(
+    not _FP8_CUDA_AVAILABLE, reason="requires FP8-capable CUDA hardware (compute capability >= 8.9)"
+)
+_skip_without_transformer_engine = pytest.mark.skipif(
+    not _TRANSFORMER_ENGINE_INSTALLED, reason="requires transformer-engine"
+)
 
 
 class _TinyGraphableModel(nn.Module):
@@ -349,20 +357,6 @@ class TestTransformerEngineCaptureBoundary:
         assert pytorch_calls[0]["allow_unused_input"] is True
 
 
-def _require_real_te_fp8() -> Any:
-    """Import real Transformer Engine only on an FP8-capable CUDA worker.
-
-    Examples:
-        >>> _require_real_te_fp8()  # doctest: +SKIP
-        # Requires CUDA, Transformer Engine, and FP8-capable hardware.
-    """
-    if not torch.cuda.is_available():
-        pytest.skip("requires CUDA")
-    if torch.cuda.get_device_capability(0) < (8, 9):
-        pytest.skip("requires FP8-capable CUDA hardware (compute capability >= 8.9)")
-    return pytest.importorskip("transformer_engine.pytorch", reason="requires transformer-engine")
-
-
 class _FakeFp8Dataset(torch.utils.data.Dataset):
     """Synthetic (3, 384, 384) detection samples for a real ``Trainer.fit()`` FP8 run.
 
@@ -389,13 +383,14 @@ class _FakeFp8Dataset(torch.utils.data.Dataset):
         return image, target
 
 
+@_skip_without_transformer_engine
+@_skip_without_fp8_cuda
 class TestTransformerEngineCaptureGPU:
     """Unmocked CUDA checks; intentionally skipped on CPU-only development machines."""
 
     @pytest.mark.gpu
     def test_runner_fp8_replay_matches_eager_outputs_gradients_and_updates(self) -> None:
         """Real Transformer Engine replay preserves changing outputs, gradients, and updates."""
-        _require_real_te_fp8()
         from pytorch_lightning.plugins.precision import TransformerEnginePrecision
 
         torch.manual_seed(0)
@@ -452,7 +447,6 @@ class TestTransformerEngineCaptureGPU:
 
         EMA and checkpoint serialization remain outside this runner-level test.
         """
-        _require_real_te_fp8()
         from pytorch_lightning.plugins.precision import TransformerEnginePrecision
 
         torch.manual_seed(0)
@@ -507,7 +501,6 @@ class TestTransformerEngineCaptureGPU:
 
         Authored but unverified in this environment (no GPU available here); pending CI/GPU hardware.
         """
-        _require_real_te_fp8()
         import transformer_engine.pytorch as te_pytorch
 
         conversion_seen_before_first_capture: list[bool] = []
