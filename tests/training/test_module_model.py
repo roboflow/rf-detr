@@ -645,6 +645,7 @@ class TestInit:
             pytest.param({}, {"grad_accum_steps": 2}, id="gradient-accumulation"),
             pytest.param({}, {"devices": 2}, id="multi-device"),
             pytest.param({}, {"num_nodes": 2}, id="multi-node"),
+            pytest.param({}, {"amp_dtype": "fp8"}, id="fp8-needs-te-capture"),
             pytest.param({"segmentation_head": True}, {}, id="segmentation"),
             pytest.param({"use_grouppose_keypoints": True, "num_keypoints_per_class": [1]}, {}, id="keypoints"),
             pytest.param({"gradient_checkpointing": True}, {}, id="gradient-checkpointing"),
@@ -3367,6 +3368,21 @@ class TestCudaGraphLifecycle:
         assert module._inductor_cudagraphs is False
         runner_type.assert_not_called()
 
+    def test_on_train_start_rejects_te_precision_override_of_inductor(self, tmp_path: Path) -> None:
+        """A precision-plugin override cannot bypass the FP8 compile/capture separation."""
+        mc = RFDETRNanoConfig(
+            pretrain_weights=None, device="cpu", cuda_graphs=True, compile=True, fused_optimizer=False
+        )
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+        trainer = SimpleNamespace(world_size=1, accumulate_grad_batches=1, precision="transformer-engine")
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            pytest.raises(RuntimeError, match="FP8 CUDA graphs require compile=False"),
+        ):
+            module.on_train_start()
+
     def test_on_train_start_keeps_cpu_training_eager(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -3433,14 +3449,75 @@ class TestCudaGraphLifecycle:
         runner_type.assert_not_called()
         assert module._cuda_graph_runner is None
 
+    def test_on_train_start_routes_fp8_to_te_with_live_recipe(self, tmp_path: Path) -> None:
+        """FP8 capture receives the actual post-conversion Lightning recipe, not a new default."""
+        mc = RFDETRNanoConfig(pretrain_weights=None, device="cpu", cuda_graphs=True, fused_optimizer=False)
+        tc = _base_train_config(tmp_path, amp_dtype="fp8")
+        module, model, _, _ = _build_module(model_config=mc, train_config=tc)
+        recipe = object()
+        trainer = SimpleNamespace(
+            world_size=1,
+            precision="transformer-engine",
+            accumulate_grad_batches=1,
+            precision_plugin=SimpleNamespace(recipe=recipe),
+        )
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+        ):
+            module.on_train_start()
+
+        runner_type.assert_called_once_with(model, fp8_recipe=recipe)
+        assert module._cuda_graph_runner is runner_type.return_value
+
     @pytest.mark.parametrize(
-        "precision",
-        ["16-mixed", "32-true", "transformer-engine"],
-        ids=["fp16", "fp32", "fp8"],
+        ("train_overrides", "accumulation"),
+        [
+            pytest.param({"multi_scale": True}, 1, id="multi-scale"),
+            pytest.param({"square_resize_div_64": False}, 1, id="aspect-ratio-resize"),
+            pytest.param({"do_random_resize_via_padding": True}, 1, id="random-padding"),
+            pytest.param({}, 2, id="trainer-overrides-accumulation"),
+        ],
     )
+    def test_on_train_start_keeps_fp8_outside_fixed_shape_scope_eager(
+        self, train_overrides: dict[str, object], accumulation: int, tmp_path: Path
+    ) -> None:
+        """FP8 scope is checked at final trainer placement, including accumulation overrides."""
+        mc = RFDETRNanoConfig(pretrain_weights=None, device="cpu", cuda_graphs=True, fused_optimizer=False)
+        tc = _base_train_config(tmp_path, amp_dtype="fp8", **train_overrides)
+        module, _, _, _ = _build_module(model_config=mc, train_config=tc)
+        trainer = SimpleNamespace(
+            world_size=1,
+            precision="transformer-engine",
+            accumulate_grad_batches=accumulation,
+            precision_plugin=SimpleNamespace(recipe=object()),
+        )
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+        ):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
+    def test_on_train_start_rejects_fp8_plugin_without_recipe(self, tmp_path: Path) -> None:
+        """A missing Transformer Engine recipe cannot accidentally select the BF16 capture backend."""
+        mc = RFDETRNanoConfig(pretrain_weights=None, device="cpu", cuda_graphs=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path, amp_dtype="fp8"))
+        trainer = SimpleNamespace(world_size=1, precision="transformer-engine", precision_plugin=SimpleNamespace())
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            pytest.raises(RuntimeError, match="recipe"),
+        ):
+            module.on_train_start()
+
+    @pytest.mark.parametrize("precision", ["16-mixed", "32-true", "transformer-engine-float16"])
     def test_on_train_start_keeps_non_bf16_precision_eager(self, precision: str, tmp_path: Path) -> None:
-        """Only the BF16 precision validated by real-CUDA capture/replay tests enters capture; FP16 and FP8 (Transformer
-        Engine) reach the config but stay eager until they get their own coverage."""
+        """FP16, FP32 and Transformer Engine with FP16 fallback stay outside the supported capture paths."""
         mc = _base_model_config(cuda_graphs=True, fused_optimizer=False)
         module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
         trainer = SimpleNamespace(world_size=1, precision=precision)

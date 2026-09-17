@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable, cast
 
 import torch
@@ -72,12 +73,29 @@ class CudaGraphTrainingRunner:
     Args:
         inner: Detection model to execute.
         num_warmup_iters: Warmup iterations used by ``make_graphed_callables``.
+        fp8_recipe: Lightning's active Transformer Engine recipe. When supplied, use
+            Transformer Engine's FP8-aware capture API for one fixed execution signature.
     """
 
-    def __init__(self, inner: nn.Module, num_warmup_iters: int = 3) -> None:
+    def __init__(self, inner: nn.Module, num_warmup_iters: int = 3, *, fp8_recipe: Any | None = None) -> None:
+        """Select and validate the capture backend without replacing registered parameters."""
         self.inner = inner
         self.num_warmup_iters = num_warmup_iters
+        self.fp8_recipe = fp8_recipe
+        self._te_capture: Callable[..., Any] | None = None
         self._graphed_cache: dict[_ExecutionKey, _GraphedCallable] = {}
+
+        if fp8_recipe is not None:
+            # Optional CUDA extension: ordinary BF16 capture must not import Transformer Engine.
+            from transformer_engine.pytorch import make_graphed_callables  # type: ignore[import-not-found]
+
+            required = {"enabled", "recipe", "cache_quantized_params", "clone_param_grads_on_return"}
+            if not required <= set(inspect.signature(make_graphed_callables).parameters):
+                raise RuntimeError(
+                    "FP8 CUDA graphs require the Transformer Engine 2.19 capture API, including "
+                    "clone_param_grads_on_return. Install a compatible Transformer Engine or set cuda_graphs=False."
+                )
+            self._te_capture = make_graphed_callables
 
         transformer = getattr(inner, "transformer", None)
         enable_capture = getattr(transformer, "enable_cuda_graph_capture", None)
@@ -108,8 +126,21 @@ class CudaGraphTrainingRunner:
         )
         graphed = self._graphed_cache.get(key)
         if graphed is None:
+            if self.fp8_recipe is not None:
+                # A second capture would mutate FP8 scaling state shared with the first graph.
+                # Keep the initial integration fixed-shape until multi-signature parity is verified.
+                if self._graphed_cache:
+                    # Exactly one capture exists here: FP8 mode never admits a second signature.
+                    cached_key = next(iter(self._graphed_cache))
+                    raise RuntimeError(
+                        f"FP8 CUDA graphs require one fixed execution signature; captured {cached_key}, got {key}. "
+                        "Keep batch size, resolution, dtype and autocast fixed, or set cuda_graphs=False."
+                    )
+                if any(parameter.grad is not None for parameter in self.inner.parameters()):
+                    raise RuntimeError("FP8 CUDA graph capture requires no existing parameter gradients.")
             graphed = self._try_capture(tensors, mask, key)
-        self._own_accumulated_gradients()
+        if self.fp8_recipe is None:
+            self._own_accumulated_gradients()
         return graphed(tensors, mask)
 
     def _own_accumulated_gradients(self) -> None:
@@ -135,15 +166,32 @@ class CudaGraphTrainingRunner:
                 # make_graphed_callables rejects autocast's weight cache because its
                 # pointer lifetime is incompatible with capture. Preserve caller state.
                 torch.set_autocast_cache_enabled(False)
-            graphed = cast(
-                _GraphedCallable,
-                torch.cuda.make_graphed_callables(
-                    graphable,
-                    (tensors, mask),
-                    num_warmup_iters=self.num_warmup_iters,
-                    allow_unused_input=True,
-                ),
-            )
+            if self._te_capture is not None:
+                # Transformer Engine owns scale/amax updates during capture and replay. Returned gradients
+                # must own their storage; otherwise the next replay can overwrite .grad aliases.
+                graphed = cast(
+                    _GraphedCallable,
+                    self._te_capture(
+                        graphable,
+                        (tensors, mask),
+                        num_warmup_iters=self.num_warmup_iters,
+                        allow_unused_input=True,
+                        enabled=True,
+                        recipe=self.fp8_recipe,
+                        cache_quantized_params=False,
+                        clone_param_grads_on_return=True,
+                    ),
+                )
+            else:
+                graphed = cast(
+                    _GraphedCallable,
+                    torch.cuda.make_graphed_callables(
+                        graphable,
+                        (tensors, mask),
+                        num_warmup_iters=self.num_warmup_iters,
+                        allow_unused_input=True,
+                    ),
+                )
         except Exception as exc:
             raise RuntimeError(
                 f"CUDA graph capture failed for execution signature {key}. "
@@ -158,10 +206,11 @@ class CudaGraphTrainingRunner:
         tensor_shape, mask_shape, *_rest, autocast_enabled, autocast_dtype = key
         logger.info(
             "Captured CUDA graph %d for input shape %s (mask %s, autocast %s); "
-            "later batches with this signature replay it.",
+            "later batches with this signature replay it. Backend: %s.",
             len(self._graphed_cache),
             tensor_shape,
             mask_shape,
             autocast_dtype if autocast_enabled else "off",
+            "Transformer Engine FP8" if self.fp8_recipe is not None else "PyTorch",
         )
         return graphed
