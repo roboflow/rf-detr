@@ -466,6 +466,10 @@ As one BF16 reference point, RF-DETR Nano on an NVIDIA L4 with BF16, batch 4, de
 
 For the Transformer Engine route, a synthetic RF-DETR Nano run at 384 px and batch 4 on an RTX PRO 6000 Blackwell used 20 warm-up and 50 measured steps: eager averaged 78.075 ms per step versus 40.066 ms with Transformer Engine-aware graphs (about 1.95x throughput), with one graph capture serving 70 calls. This is a single fixed-shape experiment, not COCO parity or accuracy evidence, and does not establish a large-batch gain. Repeat numerical-parity and performance checks on your target GPU before treating it as a production baseline.
 
+!!! note "FP8 CUDA-graph capture/replay tests are CI-blind today"
+
+    `tests/training/test_cuda_graph_te.py` covers this route, but the repository's GPU CI runner is a Tesla T4 (compute capability 7.5). The test's FP8-hardware gate checks `torch.cuda.get_device_capability(0) >= (8, 9)` before anything imports Transformer Engine, so on a T4 the whole module skips rather than exercising the capture path. These tests are validated only by local or manual runs on Ada/Hopper-class or newer hardware until an 8.9+ GPU is available in CI.
+
 A second reference point, on real data, shows the other end of the range. RF-DETR Nano on an NVIDIA RTX PRO 6000 (Blackwell, 96 GB) with BF16, batch 64, resolution 384, `multi_scale=False`, COCO train2017 through the Albumentations CPU pipeline on Colab: eager and `cuda_graphs=True` both ran at 3.54 it/s (about 8 min 40 s per epoch, one captured graph, no fallback), while `compile=True` finished the same epoch in 7 min 10 s, about 17% faster. Nothing was wrong with the capture; the two options remove different costs.
 
 ### Choosing between CUDA graphs and compilation
