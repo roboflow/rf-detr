@@ -8,9 +8,12 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -18,8 +21,13 @@ from torch import Tensor, nn
 
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.models.lwdetr import build_model_from_config
+from rfdetr.training import build_trainer
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
+from rfdetr.training.module_data import RFDETRDataModule
+from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
+
+_TRANSFORMER_ENGINE_INSTALLED = importlib.util.find_spec("transformer_engine") is not None
 
 
 class _TinyGraphableModel(nn.Module):
@@ -99,7 +107,8 @@ def fake_transformer_engine(monkeypatch: pytest.MonkeyPatch) -> _FakeTransformer
     """Install a Transformer Engine 2.19-shaped module without its CUDA extension.
 
     Examples:
-        This fixture needs pytest's ``monkeypatch`` fixture and cannot run standalone.
+        >>> fake_transformer_engine(monkeypatch)  # doctest: +SKIP
+        # Needs pytest's monkeypatch fixture; cannot run standalone.
     """
     fake = _FakeTransformerEngine()
     package = ModuleType("transformer_engine")
@@ -176,6 +185,20 @@ class TestTransformerEngineCaptureBoundary:
             "clone_param_grads_on_return": True,
         }
 
+    @pytest.mark.skipif(
+        _TRANSFORMER_ENGINE_INSTALLED,
+        reason="transformer_engine is installed in this environment; cannot exercise the absent-package path",
+    )
+    def test_runner_fp8_without_transformer_engine_raises_module_not_found_error(self) -> None:
+        """A genuinely absent Transformer Engine fails construction with a clear import error.
+
+        No ``sys.modules`` fake is installed here (unlike every other test in this class): this checks the real import
+        at ``cuda_graph_step.py``'s ``fp8_recipe is not None`` branch, which is otherwise never exercised because every
+        other FP8 test fakes the module.
+        """
+        with pytest.raises(ModuleNotFoundError, match="transformer_engine"):
+            CudaGraphTrainingRunner(_TinyGraphableModel(), fp8_recipe=object())
+
     def test_runner_old_transformer_engine_api_rejects_before_capture(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An old Transformer Engine API fails before CUDA capture begins.
 
@@ -224,6 +247,38 @@ class TestTransformerEngineCaptureBoundary:
             runner(_samples())
 
         assert fake_transformer_engine.calls == []
+
+    def test_runner_fp8_replay_ignores_pending_gradients_unlike_first_capture(
+        self, fake_transformer_engine: _FakeTransformerEngine
+    ) -> None:
+        """KNOWN GAP: replaying a cached FP8 signature has no guard against un-zeroed gradients.
+
+        ``CudaGraphTrainingRunner.__call__`` only checks for existing parameter gradients inside
+        its ``if graphed is None`` branch (``cuda_graph_step.py`` around the FP8 capture guard), so
+        the check in :meth:`test_runner_fp8_first_capture_with_existing_gradients_rejects_before_backend`
+        protects only the *first* capture of a signature. ``_own_accumulated_gradients`` -- which
+        clones live gradients before replay for the non-FP8 backend -- is also skipped whenever
+        ``fp8_recipe`` is set. So replaying an already-cached FP8 signature with a pending, non-
+        zeroed gradient (e.g. multiple microbatches accumulated without an intervening
+        ``zero_grad()``) succeeds silently instead of raising, unlike the identical situation before
+        the first capture. Production safety today depends entirely on the caller-side check in
+        ``RFDETRModelModule.on_train_start`` (``module_model.py``, FP8 + accumulation guard), which
+        direct construction of the runner -- as this whole test file does -- bypasses entirely. This
+        test documents today's silent, unguarded behavior; a future internal guard should make the
+        replay below raise instead.
+        """
+        runner = CudaGraphTrainingRunner(_TinyGraphableModel(), fp8_recipe=object())
+        runner(_samples())  # First call captures and caches this execution signature.
+
+        runner.inner.projection.weight.grad = torch.ones_like(runner.inner.projection.weight)
+
+        # No zero_grad() before this replay of the SAME cached signature: unlike the pre-capture
+        # check above, nothing here rejects the pending gradient.
+        output = runner(_samples())
+
+        assert output["pred"].shape == (2, 3)
+        assert len(runner._graphed_cache) == 1
+        assert len(fake_transformer_engine.calls) == 1
 
     def test_runner_fp8_signature_change_after_first_capture_rejects(
         self, fake_transformer_engine: _FakeTransformerEngine
@@ -306,6 +361,32 @@ def _require_real_te_fp8() -> Any:
     if torch.cuda.get_device_capability(0) < (8, 9):
         pytest.skip("requires FP8-capable CUDA hardware (compute capability >= 8.9)")
     return pytest.importorskip("transformer_engine.pytorch", reason="requires transformer-engine")
+
+
+class _FakeFp8Dataset(torch.utils.data.Dataset):
+    """Synthetic (3, 384, 384) detection samples for a real ``Trainer.fit()`` FP8 run.
+
+    384x384 matches the resolution already proven against the real Nano model's forward in
+    :meth:`TestTransformerEngineCaptureGPU.test_runner_fp8_nano_train_eval_train_reuses_one_capture`, so a real
+    ``Trainer.fit()`` run gets the same shape a real capture already handles correctly.
+    """
+
+    def __init__(self, length: int = 2) -> None:
+        self._length = length
+
+    def __len__(self) -> int:
+        return self._length
+
+    def __getitem__(self, idx: int) -> tuple[Tensor, dict[str, Tensor]]:
+        image = torch.rand(3, 384, 384)
+        target = {
+            "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]]),
+            "labels": torch.tensor([1]),
+            "image_id": torch.tensor(idx),
+            "orig_size": torch.tensor([384, 384]),
+            "size": torch.tensor([384, 384]),
+        }
+        return image, target
 
 
 class TestTransformerEngineCaptureGPU:
@@ -409,3 +490,70 @@ class TestTransformerEngineCaptureGPU:
         assert first_parameter.grad is not None
         assert torch.isfinite(first_parameter.grad).all()
         assert len(runner._graphed_cache) == 1
+
+    @pytest.mark.gpu
+    def test_fit_converts_to_transformer_engine_before_first_capture(self, tmp_path: Path) -> None:
+        """A real ``Trainer.fit()`` converts modules to Transformer Engine layers before FP8 capture fires.
+
+        Unlike the two tests above, this drives the FULL ``RFDETRModelModule.on_train_start()`` ->
+        ``CudaGraphTrainingRunner`` path through a real ``pytorch_lightning.Trainer.fit()`` call -- not manual
+        ``precision.convert_module()`` plus direct runner construction -- so it proves Lightning's actual internal hook
+        order (convert, then capture) instead of an order this test file merely assumes. A CPU test cannot exercise this
+        ordering: ``RFDETRModelModule. on_train_start``'s device-type gate (``module_model.py``) disables CUDA graphs
+        entirely -- before ``CudaGraphTrainingRunner`` is ever constructed -- whenever the module is not on CUDA. Only
+        dataset I/O is faked here (a filesystem/network boundary this test does not own); the real Nano model, real
+        criterion, real Transformer Engine precision plugin, and real capture call all run unmocked, matching this
+        class's other real-CUDA tests.
+
+        Authored but unverified in this environment (no GPU available here); pending CI/GPU hardware.
+        """
+        _require_real_te_fp8()
+        import transformer_engine.pytorch as te_pytorch
+
+        conversion_seen_before_first_capture: list[bool] = []
+        real_make_graphed_callables = te_pytorch.make_graphed_callables
+
+        def spying_make_graphed_callables(modules: nn.Module, *args: Any, **kwargs: Any) -> nn.Module:
+            """Record whether Transformer Engine layers already replaced plain ``Linear`` at capture time."""
+            conversion_seen_before_first_capture.append(
+                any("transformer_engine.pytorch" in type(module).__module__ for module in modules.modules())
+            )
+            return real_make_graphed_callables(modules, *args, **kwargs)
+
+        model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda", cuda_graphs=True)
+        train_config = TrainConfig(
+            dataset_dir=str(tmp_path / "dataset"),
+            output_dir=str(tmp_path / "output"),
+            epochs=1,
+            batch_size=1,
+            amp_dtype="fp8",
+            drop_path=0.0,
+            multi_scale=False,
+            do_random_resize_via_padding=False,
+            grad_accum_steps=1,
+            square_resize_div_64=True,
+            num_workers=0,
+            tensorboard=False,
+            use_ema=False,
+            run_test=False,
+        )
+
+        with (
+            patch("rfdetr.training.module_data.build_dataset", return_value=_FakeFp8Dataset()),
+            patch("transformer_engine.pytorch.make_graphed_callables", side_effect=spying_make_graphed_callables),
+        ):
+            module = RFDETRModelModule(model_config, train_config)
+            datamodule = RFDETRDataModule(model_config, train_config)
+            trainer = build_trainer(
+                train_config,
+                model_config,
+                accelerator="cuda",
+                devices=1,
+                fast_dev_run=1,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                logger=False,
+            )
+            trainer.fit(module, datamodule=datamodule)
+
+        assert conversion_seen_before_first_capture == [True]
