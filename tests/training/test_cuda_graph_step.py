@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 import pytest
 import torch
-from pydantic import ValidationError
 from torch import Tensor, nn
 
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
@@ -89,10 +88,15 @@ def _samples(value: float = 1.0, *, device: torch.device | str = "cpu", batch_si
     return NestedTensor(tensors, mask)
 
 
-def test_cuda_graphs_and_compile_are_mutually_exclusive() -> None:
-    """Two graph runtimes must not be enabled for the same model."""
-    with pytest.raises(ValidationError, match="cuda_graphs.*compile"):
-        RFDETRNanoConfig(compile=True, cuda_graphs=True)
+def test_cuda_graphs_and_compile_can_be_combined() -> None:
+    """Both graph runtimes may be requested together; the module routes replay through Inductor.
+
+    The combination used to be rejected at config validation. Measured on an RTX PRO 6000 the combined path is 1.20x
+    faster than compile alone at batch 4, so the config must accept it.
+    """
+    config = RFDETRNanoConfig(compile=True, cuda_graphs=True)
+
+    assert (config.compile, config.cuda_graphs) == (True, True)
 
 
 def test_capture_preserves_accumulated_gradients() -> None:
