@@ -317,11 +317,6 @@ override-dependencies = [
     "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
-# ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
-# from executorch's own metadata) are unsatisfiable together -- no CI job combines them, but
-# `uv sync --all-groups` and a plain `uv lock` need to know that so the universal resolver
-# forks the two instead of failing to find one lockfile that satisfies both at once.
-#
 # coreml (torch<2.12, see coreml extra comment) and executorch (torch>=2.12.0a0) are likewise
 # unsatisfiable together -- no CI job combines them either, same fork rationale.
 conflicts = [
@@ -353,12 +348,6 @@ conflicts = [
     [
         { group = "typing" },
         { extra = "xla" },
-    ],
-    # ci-executorch-pin now carries an executorch cap, so it inherits every fork the
-    # executorch extra needs (same torch floor) plus the typing group's torch==2.14.0 pin.
-    [
-        { group = "ci-executorch-pin" },
-        { group = "ci-gpu-pin" },
     ],
     [
         { group = "ci-executorch-pin" },
