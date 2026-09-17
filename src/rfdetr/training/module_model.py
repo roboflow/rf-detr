@@ -603,6 +603,14 @@ class RFDETRModelModule(LightningModule):
             # The construction-time gate read TrainConfig; trainer_kwargs can override
             # accumulate_grad_batches and devices="auto" can resolve to several GPUs. The model is
             # already compiled with cudagraphs, so the only safe response now is to stop.
+            if self.device.type != "cuda":
+                self._inductor_cudagraphs = False
+                logger.warning(
+                    "Disabling Inductor CUDA graph replay because the model is on %r, not CUDA; "
+                    "training will remain compile-only.",
+                    self.device.type,
+                )
+                return
             accumulate_grad_batches = int(getattr(self.trainer, "accumulate_grad_batches", 1))
             world_size = int(getattr(self.trainer, "world_size", 1))
             if accumulate_grad_batches > 1 or world_size != 1:
