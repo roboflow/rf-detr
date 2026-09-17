@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-12T22:10:31">
+  <meta property="article:modified_time" content="2026-09-17T10:24:17">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-12T22:10:31",
+    "dateModified": "2026-09-17T10:24:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3683,6 +3683,10 @@ model = RFDETRNano(compile=True, pretrain_weights=None)  # type: ignore[no-untyp
 matching loss, weight updates, learning-rate scheduling, and periodic COCO mAP validation.</p>
 <p><code>CSVLogger</code> appends one row of metrics per epoch to <code>output_dir/metrics.csv</code>, plotted below. The progress bar
 reports elapsed time per epoch. Compilation adds startup overhead: time subsequent epochs separately.
+This notebook uses <code>compile=True</code>. To compare CUDA graphs, construct a fresh model with
+<code>cuda_graphs=True</code> instead (never enable both), keeping data, batch size, BF16 precision, and scales identical.
+Measure startup, steady-state images/s, and peak memory; CUDA-graph-versus-eager measurements do not
+establish an advantage over compilation. A failed CUDA capture requires a runtime restart before retrying.
 First try <code>EPOCHS=1</code> to verify training, validation, EMA, and shutdown before committing to 40 epochs.</p>
 <p>To <strong>resume an interrupted run</strong>, add <code>resume=f"{OUTPUT_DIR}/last.ckpt"</code> to the call below and re-run this cell.
 <code>last.ckpt</code> is rewritten every epoch (the archive <code>checkpoint_&lt;epoch&gt;.ckpt</code> files follow <code>checkpoint_interval</code>,
@@ -3906,7 +3910,7 @@ plt.close(map_figure)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 12, 2026 22:10:31 UTC">2026-09-12 22:10:31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 10:24:17 UTC">2026-09-17 10:24:17</span>
   </span>
 
     

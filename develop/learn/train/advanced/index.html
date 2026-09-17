@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-10T11:54:22">
+  <meta property="article:modified_time" content="2026-09-17T10:24:17">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-10T11:54:22",
+    "dateModified": "2026-09-17T10:24:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1396,6 +1396,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Quick Start
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cuda-graph-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CUDA Graph Training
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CUDA Graph Training">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choosing-between-cuda-graphs-and-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing between CUDA graphs and compilation
       
     </span>
   </a>
@@ -3057,6 +3085,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#cuda-graph-training" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CUDA Graph Training
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CUDA Graph Training">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#choosing-between-cuda-graphs-and-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing between CUDA graphs and compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#memory-optimization" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3633,6 +3689,26 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span></code></pre></div>
 <p><code>scale_jitter</code> defaults to <code>True</code>. Set it to <code>False</code> to use direct resize only — no random crop, so annotations near image borders are never clipped.</p>
 <hr />
+<h2 id="cuda-graph-training">CUDA Graph Training<a class="headerlink" href="#cuda-graph-training" title="Permanent link">&para;</a></h2>
+<p>For a long-running detection job on one NVIDIA GPU, enable CUDA graph replay on the model constructor:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="n">cuda_graphs</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>An INFO line at train start confirms replay is enabled, and each captured input shape logs its own INFO line; without one of these the run is eager (and the reason was logged as a warning). The first batch at each input shape runs CUDA graph warm-up and capture. Later batches with the same batch size, resolution, dtype, device, and autocast mode replay the captured forward and backward. This makes the option most useful for jobs long enough to amortize capture; multi-scale training creates one cached graph per resolution. Graphs also keep their private CUDA memory pools alive, so compare peak memory and the largest usable batch size as well as step time on your own workload.</p>
+<p>The option supports detection training on a single CUDA GPU with BF16 precision (<code>amp_dtype="bf16"</code> or <code>"auto"</code> resolving to BF16). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, and any other trainer precision (FP16, FP32, FP8/Transformer Engine) stay on the eager path and log the reason — only BF16 has real-CUDA capture/replay coverage today. <code>cuda_graphs=True</code> and <code>compile=True</code> are mutually exclusive; gradient checkpointing instead disables graph capture for that run and falls back to eager, rather than raising. Gradient accumulation is supported; first-use capture preserves gradients already accumulated by earlier microbatches. A capture failure stops training with the original exception attached: an invalidated capture can leave CUDA state unsafe for further operations. Restart the process before retrying with <code>cuda_graphs=False</code>; catching the exception and continuing in the same process is not a supported fallback.</p>
+<p>CUDA graphs and <code>compile=True</code> are alternative acceleration modes, not interchangeable benchmark results. The measurements below compare CUDA graphs with eager training, not with compilation; they do not establish which is faster for the COCO cookbook. Compare steady-state throughput, startup time, and peak memory with identical data, batch size, precision, and resolutions before choosing. Compilation keeps positional-embedding interpolation eager to avoid PyTorch's symbolic antialiased-bicubic backward failure; its interpolation math and gradients are unchanged. This is a compatibility mitigation, not an upstream compiler fix.</p>
+<p>As one reference point, RF-DETR Nano on an NVIDIA L4 with BF16, batch 4, deterministic synthetic detection batches, and a fixed 8-resolution multi-scale set (<code>expanded_scales=False</code>) reduced the median Lightning training batch from 149.8 ms to 101.7 ms across five runs — a 32.4% median reduction in the five paired per-run measurements. Peak allocated memory increased from 2,395 MiB to 3,466 MiB, and peak reserved memory increased from 2,754 MiB to 14,550 MiB for those 8 captured graph pools. <code>TrainConfig</code>'s own default is <code>expanded_scales=True</code>, which resolves to 11 multi-scale resolutions for this model and was not benchmarked; expect proportionally more graph pools and higher peak reserved memory under that default. The speed and memory cost depend on the model, shapes, batch size, GPU, and PyTorch version; this option is not a good fit when memory already limits the batch size.</p>
+<p>A second reference point, on real data, shows the other end of the range. RF-DETR Nano on an NVIDIA RTX PRO 6000 (Blackwell, 96 GB) with BF16, batch 64, resolution 384, <code>multi_scale=False</code>, COCO train2017 through the Albumentations CPU pipeline on Colab: eager and <code>cuda_graphs=True</code> both ran at 3.54 it/s (about 8 min 40 s per epoch, one captured graph, no fallback), while <code>compile=True</code> finished the same epoch in 7 min 10 s, about 17% faster. Nothing was wrong with the capture; the two options remove different costs.</p>
+<h3 id="choosing-between-cuda-graphs-and-compilation">Choosing between CUDA graphs and compilation<a class="headerlink" href="#choosing-between-cuda-graphs-and-compilation" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>CUDA graphs</strong> remove kernel-launch gaps and CPU dispatch between the model's kernels. They pay when each kernel is short, so the GPU idles between launches: small batch size, small model, low resolution, or a fast GPU driven by a slow CPU. They do nothing for the kernels themselves. When the batch is large enough that every kernel runs for a long time, replay measures the same as eager — that is expected, not a capture failure.</li>
+<li><strong><code>compile=True</code></strong> (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. That gain does not depend on the batch size, but compilation adds startup time and, with <code>dynamic=True</code>, one compiled graph per run.</li>
+<li>Rule of thumb from the two measurements above: at batch 4 with a mid-range GPU (L4) graphs gave 32%; at batch 64 on a high-end GPU they gave 0% and compilation gave 17%. Prefer graphs when the effective batch per step is in the single digits or the progress bar shows the GPU far from saturated; prefer compilation for large batches. In between, run 200 steps of each with identical settings and compare the steady-state it/s — startup and capture time distort the first epoch.</li>
+<li>The two are mutually exclusive today. Combining them (compilation with CUDA graph replay of the compiled kernels, as <code>torch.compile(mode="reduce-overhead")</code> does) is the planned next iteration and has not been measured on RF-DETR.</li>
+</ul>
+<hr />
 <h2 id="memory-optimization">Memory Optimization<a class="headerlink" href="#memory-optimization" title="Permanent link">&para;</a></h2>
 <h3 id="gradient-checkpointing">Gradient Checkpointing<a class="headerlink" href="#gradient-checkpointing" title="Permanent link">&para;</a></h3>
 <p>For large models or high resolutions, enable gradient checkpointing to trade compute for memory.</p>
@@ -3640,14 +3716,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Constructor parameter — not a <code>train()</code> parameter</p>
 <p><code>gradient_checkpointing</code> is a <code>ModelConfig</code> field and must be passed to the <strong>model constructor</strong>, not to <code>train()</code>. Passing it to <code>train()</code> will raise a <code>ValidationError</code> because <code>TrainConfig</code> has <code>extra="forbid"</code>.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>
-</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
-</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># May be able to increase with checkpointing</span>
-</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># May be able to increase with checkpointing</span>
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>This re-computes activations during the backward pass instead of storing them, reducing memory usage by ~30-40% at the cost of ~20% slower training.</p>
 <h3 id="memory-efficient-configurations">Memory-Efficient Configurations<a class="headerlink" href="#memory-efficient-configurations" title="Permanent link">&para;</a></h3>
@@ -3769,7 +3845,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 10, 2026 11:54:22 UTC">2026-09-10 11:54:22</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 10:24:17 UTC">2026-09-17 10:24:17</span>
   </span>
 
     
