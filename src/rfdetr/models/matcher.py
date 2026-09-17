@@ -424,16 +424,22 @@ class HungarianMatcher(nn.Module):
             targets: The step's targets, unchanged across every :meth:`forward` call it feeds.
 
         Returns:
-            ``None`` when :meth:`_compact_path_applicable` rules the compact path out for this batch
-            entirely, since :meth:`forward` then never reaches the safety gate and sweeping the
-            targets would be pure overhead. Otherwise a :class:`_TargetSideSafety` to pass as
+            ``None`` when neither the detection-only compact path nor the CUDA masks-hybrid path can
+            run for this batch, since :meth:`forward` then never reaches the safety gate and sweeping
+            the targets would be pure overhead. Otherwise a :class:`_TargetSideSafety` to pass as
             :meth:`forward`'s ``target_side_safety`` argument. :meth:`forward` verifies the exact
             ``targets`` object (by identity) plus the dtype/device/``num_classes`` it was computed
             against still match the current call before trusting it, falling back to a fresh
             computation otherwise — reusing it never changes what :meth:`forward` returns, only how
             much redundant work it does to get there.
         """
-        if not self._compact_path_applicable(outputs, targets):
+        detection_compact_applicable = self._compact_path_applicable(outputs, targets)
+        mask_compact_applicable = (
+            self._mask_compact_device_supported(outputs)
+            and self._compact_mask_path_applicable(outputs, targets)
+            and self._mask_compact_worth_it(outputs, targets)
+        )
+        if not (detection_compact_applicable or mask_compact_applicable):
             return None
         pred_boxes = outputs["pred_boxes"]
         num_classes = outputs["pred_logits"].shape[-1]
@@ -921,17 +927,27 @@ class HungarianMatcher(nn.Module):
             compact_class_bbox_giou = self._compute_compact_detection_cost_matrix(outputs, targets)
             cost_mask_ce, cost_mask_dice = self._compute_mask_costs(outputs, targets)
             precomputed_mask_costs = (cost_mask_ce, cost_mask_dice)
-            mask_cost = (self.cost_mask_ce * cost_mask_ce + self.cost_mask_dice * cost_mask_dice).view(
-                bs, num_queries, -1
-            )
+            weighted_mask_ce = (self.cost_mask_ce * cost_mask_ce).view(bs, num_queries, -1)
+            weighted_mask_dice = (self.cost_mask_dice * cost_mask_dice).view(bs, num_queries, -1)
             target_offsets = [0]
             for size in sizes:
                 target_offsets.append(target_offsets[-1] + size)
-            mask_cost_diagonal = torch.cat(
-                [mask_cost[index, :, target_offsets[index] : target_offsets[index + 1]] for index in range(bs)],
+            mask_ce_diagonal = torch.cat(
+                [weighted_mask_ce[index, :, target_offsets[index] : target_offsets[index + 1]] for index in range(bs)],
                 dim=-1,
             )
-            combined_cost_matrix = (compact_class_bbox_giou + mask_cost_diagonal).float()
+            mask_dice_diagonal = torch.cat(
+                [
+                    weighted_mask_dice[index, :, target_offsets[index] : target_offsets[index + 1]]
+                    for index in range(bs)
+                ],
+                dim=-1,
+            )
+            # Preserve the full path's left-associative addition order exactly: floating-point
+            # addition is not associative, and regrouping the mask terms can change a near-tied
+            # Hungarian assignment by one ULP.
+            combined_cost_matrix = compact_class_bbox_giou + mask_ce_diagonal
+            combined_cost_matrix = (combined_cost_matrix + mask_dice_diagonal).float()
             if torch.isfinite(combined_cost_matrix).all():
                 if combined_cost_matrix.is_cuda:
                     return _assignment.assign_many_bucketed([combined_cost_matrix], sizes, group_detr)[0]

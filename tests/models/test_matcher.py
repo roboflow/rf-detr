@@ -6,6 +6,7 @@
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -1583,6 +1584,39 @@ class TestMasksPresentCompactHybrid:
 
         assert calls == [1]
 
+    def test_combined_cost_preserves_full_path_addition_order(
+        self, monkeypatch: pytest.MonkeyPatch, matcher: HungarianMatcher
+    ) -> None:
+        """The hybrid matrix must add detection, mask-CE, and mask-Dice terms in the full path's exact order.
+
+        These finite float32 values make ``detection + (mask_ce + mask_dice)`` differ by one ULP from ``(detection +
+        mask_ce) + mask_dice``. Capturing the matrix at the assignment boundary pins the latter order independently of
+        which assignment a larger randomized fixture happens to select.
+        """
+        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
+        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
+        outputs, targets = _random_segmentation_batch(seed=300, sizes=[1, 1], num_queries=1)
+        detection_cost = torch.full((1, 2), 14.94161605834961, dtype=torch.float32)
+        mask_ce = torch.tensor([[5.640276908874512, 0.0], [0.0, 5.640276908874512]], dtype=torch.float32)
+        mask_dice = torch.tensor([[4.21762752532959, 0.0], [0.0, 4.21762752532959]], dtype=torch.float32)
+        assignment = MagicMock(
+            return_value=[
+                (torch.tensor([0]), torch.tensor([0])),
+                (torch.tensor([0]), torch.tensor([0])),
+            ]
+        )
+        monkeypatch.setattr(matcher, "_compute_compact_detection_cost_matrix", MagicMock(return_value=detection_cost))
+        monkeypatch.setattr(matcher, "_compute_mask_costs", MagicMock(return_value=(mask_ce, mask_dice)))
+        monkeypatch.setattr(matcher, "_assign_compact_cost_matrix", assignment)
+
+        matcher(outputs, targets)
+
+        combined_cost = assignment.call_args.args[0]
+        expected = (detection_cost + mask_ce.diagonal().unsqueeze(0)) + mask_dice.diagonal().unsqueeze(0)
+        regrouped = detection_cost + (mask_ce.diagonal().unsqueeze(0) + mask_dice.diagonal().unsqueeze(0))
+        assert not torch.equal(expected, regrouped), "the fixture must expose the float32 addition-order difference"
+        assert torch.equal(combined_cost, expected)
+
     @pytest.mark.parametrize("seed", [401, 402, 403, 404, 405])
     @pytest.mark.parametrize(
         "sizes",
@@ -2492,12 +2526,12 @@ class TestTargetSideSafetyCaching:
             f"reused across all 4 matcher() calls), got {len(calls)} calls"
         )
 
-    def test_target_side_sweep_skipped_when_masks_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """No wasted work: the target-side sweep must not run for a step whose compact path can never apply regardless
-        (masks present), since HungarianMatcher.forward() would never reach the safety gate for such a step anyway.
+    def test_target_side_sweep_skipped_for_masks_below_threshold(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No wasted work: the target-side sweep must not run for a masks-present step below the hybrid threshold.
 
         ``_precompute_target_side_safety`` itself is still called -- it owns the compact-path eligibility rule and
-        returns None here -- so what this pins is that it costs no actual sweep, which is the work worth skipping.
+        returns None here -- so what this pins is that it retains the worth-it gate rather than sweeping targets for
+        segmentation steps whose hybrid route will not run. Device support is forced true to isolate that predicate.
 
         Uses ``bs`` matching its two targets and a real ``pred_masks`` tensor on every layer (main/aux/enc) so the full
         ``criterion()`` call actually completes end to end -- a prior version of this test used the default ``bs=3``
@@ -2514,21 +2548,52 @@ class TestTargetSideSafetyCaching:
         for target in targets:
             target["masks"] = torch.zeros(len(target["labels"]), mask_size, mask_size, dtype=torch.bool)
         criterion = self._criterion(num_classes=num_classes)
+        monkeypatch.setattr(HungarianMatcher, "_mask_compact_device_supported", staticmethod(lambda o: True))
+        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 10**9)
 
         calls = _spy_on_target_side_precheck(monkeypatch)
         criterion(outputs, targets, num_boxes=1.0)
 
-        assert calls == [], "the target-side sweep must not run when masks are present"
+        assert calls == [], "the target-side sweep must not run when the mask hybrid is below threshold"
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_target_side_precheck_computed_once_for_eligible_masks_on_cuda(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An eligible CUDA segmentation step must precompute once and reuse the result across main/aux/enc matching."""
+        bs, num_queries, num_classes, mask_size = 2, 8, 5, 4
+        outputs, targets = self._step_outputs_and_targets(
+            bs=bs, num_queries=num_queries, num_classes=num_classes, sizes=[2, 3]
+        )
+        for layer_outputs in (outputs, *outputs["aux_outputs"], outputs["enc_outputs"]):
+            layer_outputs["pred_logits"] = layer_outputs["pred_logits"].cuda()
+            layer_outputs["pred_boxes"] = layer_outputs["pred_boxes"].cuda()
+            layer_outputs["pred_masks"] = torch.rand(bs, num_queries, mask_size, mask_size, device="cuda")
+        targets = [
+            {
+                **{key: value.cuda() for key, value in target.items()},
+                "masks": torch.zeros(len(target["labels"]), mask_size, mask_size, dtype=torch.bool, device="cuda"),
+            }
+            for target in targets
+        ]
+        criterion = self._criterion(num_classes=num_classes)
+        monkeypatch.setattr(matcher_module, "_MASK_COMPACT_SAVED_ELEMENT_LIMIT", 1)
+
+        calls = _spy_on_target_side_precheck(monkeypatch)
+        criterion(outputs, targets, num_boxes=1.0)
+
+        assert calls == [1], "the target-side sweep must be precomputed once and reused across all four matcher calls"
 
     def test_target_side_sweep_skipped_when_keypoints_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No wasted work: the target-side sweep must not run for a keypoint step either, whose compact path can never
         apply regardless (``pred_keypoints`` in outputs and ``keypoints`` in targets), so HungarianMatcher.forward()
         would never reach the safety gate for it.
 
-        The mask half of ``_compact_path_applicable``'s skip rule was already pinned by the test above; the keypoint
-        half is the compound clause (``"pred_keypoints" in outputs and "keypoints" in targets[0]``) that had no test of
-        its own at the matcher level -- ``tests/models/test_criterion_keypoints.py`` drives keypoint losses through a
-        matcher stub, which never reaches ``_precompute_target_side_safety`` at all.
+        The mask hybrid's below-threshold skip is pinned by the test above; this pins the separate keypoint exclusion
+        (``"pred_keypoints" in outputs and "keypoints" in targets[0]``), which otherwise has no matcher-level cache
+        test -- ``tests/models/test_criterion_keypoints.py`` drives keypoint losses through a matcher stub and never
+        reaches ``_precompute_target_side_safety`` at all.
 
         Like the mask case, ``_precompute_target_side_safety`` itself still runs and returns None; what this pins is
         that it costs no actual sweep. Real ``pred_keypoints`` on every layer (main/aux/enc) plus a matcher configured
