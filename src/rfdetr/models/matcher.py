@@ -60,7 +60,7 @@ _PADDED_TARGET_COST = 1.0e4
 #:
 #: Set to the smallest measured winning workload on an NVIDIA L4: real ``RFDETRSegNano`` with
 #: ``batch_size=8``, 1,300 training-time queries, and 10 targets/image avoids 728,000 entries and
-#: improves the steady-state forward+criterion+backward step by 8.31% (7.72-9.36% across 5 repeats).
+#: improves the steady-state forward+criterion+backward step by 7.98% (7.79-9.03% across 5 repeats).
 #: The measured batch-4 workload avoids only 156,000 entries and is neutral (-0.04%, -1.29% to
 #: +0.39%), so it stays on the established path. The route is CUDA-only because no other backend
 #: was benchmarked.
