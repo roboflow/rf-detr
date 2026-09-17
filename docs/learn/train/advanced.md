@@ -12,7 +12,7 @@ This page covers advanced training topics including resuming training, early sto
 
 ## FP8 Training on NVIDIA CUDA
 
-FP8 is an opt-in training mode for supported NVIDIA GPUs. RF-DETR uses Lightning's built-in Transformer Engine precision plugin; no custom accelerator is needed. Eligible layers use FP8 computation with BF16 weights. Installing the `cuda` extra alone does not change training precision: `amp_dtype` still defaults to `"auto"`.
+FP8 is an opt-in training mode for supported NVIDIA GPUs. RF-DETR uses Lightning's built-in Transformer Engine precision plugin; no custom accelerator is needed. Eligible layers use FP8 computation with BF16 weights. Installing the `cuda` extra alone does not change training precision: `amp_dtype` still defaults to `"auto"`. The optional Transformer Engine-aware CUDA-graph path is separate from Lightning's precision plugin and is described in [CUDA Graph Training](#cuda-graph-training).
 
 ### Install the CUDA extra
 
@@ -25,14 +25,18 @@ The `cuda` extra installs `transformer-engine[pytorch]>=2.18,<3` on Linux x86-64
 3. Install RF-DETR's training and CUDA extras into that same environment:
 
     ```bash
-    python -m pip install --no-build-isolation 'rfdetr[train,cuda]'
+    python -m pip install --progress-bar on --no-build-isolation 'rfdetr[train,cuda]'
+    python -m pip install --progress-bar on 'jedi>=0.18'
+    python -m pip check
     ```
 
     With `uv`, use `uv pip install --no-build-isolation 'rfdetr[train,cuda]'`. From a local RF-DETR checkout, replace `rfdetr[train,cuda]` with `.[train,cuda]`. Restart the notebook kernel after installing or replacing compiled dependencies.
 
 !!! warning "Match the CUDA core library to your environment"
 
-    Successful package resolution does not validate CUDA toolkit, driver, or PyTorch ABI compatibility. Our dependency-resolution check selected `transformer-engine-cu13` for Transformer Engine 2.18.0; do not assume the extra selects CUDA 12 merely because your PyTorch reports CUDA 12.8. Check the resolved packages against NVIDIA's installation instructions, including its `core_cu12` / `core_cu13` selection and source-build guidance. Adding a second core library alone does not establish compatibility with the PyTorch extension.
+    Successful package resolution does not validate CUDA toolkit, driver, or PyTorch ABI compatibility. Our historical dependency-resolution check selected `transformer-engine-cu13` for Transformer Engine 2.18.0; do not treat that old lock outcome as a promise for every environment, and do not assume a CUDA 12 PyTorch build selects CUDA 12 in that older resolver path. The tested Transformer Engine 2.19 PyTorch installer derives its core CUDA major from `torch.version.cuda`, but you must still verify the resolved package, toolkit, driver, cuDNN, and ABI together. Adding a second core library alone does not establish compatibility with the PyTorch extension.
+
+The Transformer Engine-aware FP8 graph path was tested with Transformer Engine 2.19.0 and uses the current named-argument API of [`make_graphed_callables`](https://docs.nvidia.com/deeplearning/transformer-engine/api/pytorch.html#transformer_engine.pytorch.make_graphed_callables). Install it through RF-DETR's existing `cuda` extra; the tested 2.19 PyTorch installer derives its core CUDA major from `torch.version.cuda`, so this guide adds no separate core wheel or CUDA-version override. The PyTorch extension is compiled against the active CUDA toolkit, cuDNN, driver, and C++ ABI; a wheel resolving successfully does not prove that those components match. Follow [NVIDIA's Transformer Engine prerequisites](https://docs.nvidia.com/deeplearning/transformer-engine/installation.html), use the same environment as RF-DETR, and restart the kernel after installing compiled dependencies.
 
 ### Verify and enable FP8
 
@@ -430,13 +434,37 @@ model = RFDETRNano(cuda_graphs=True)
 model.train(dataset_dir="path/to/dataset")
 ```
 
-An INFO line at train start confirms replay is enabled, and each captured input shape logs its own INFO line; without one of these the run is eager (and the reason was logged as a warning). The first batch at each input shape runs CUDA graph warm-up and capture. Later batches with the same batch size, resolution, dtype, device, and autocast mode replay the captured forward and backward. This makes the option most useful for jobs long enough to amortize capture; multi-scale training creates one cached graph per resolution. Graphs also keep their private CUDA memory pools alive, so compare peak memory and the largest usable batch size as well as step time on your own workload.
+An INFO line at train start confirms replay is enabled, and each captured input shape logs its own INFO line; without one of these the run is eager (and the reason was logged as a warning). The first batch at each input signature runs CUDA graph warm-up and capture. Later batches with the same batch size, resolution, dtype, device, and autocast mode replay the captured forward and backward. BF16 capture can cache one graph per signature, so multi-scale training retains one graph and memory pool per resolution. Graph pools are private CUDA allocations; compare peak memory and the largest usable batch size as well as step time on your own workload.
 
-The option supports detection training on a single CUDA GPU with BF16 precision (`amp_dtype="bf16"` or `"auto"` resolving to BF16). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, and any other trainer precision (FP16, FP32, FP8/Transformer Engine) stay on the eager path and log the reason — only BF16 has real-CUDA capture/replay coverage today. `cuda_graphs=True` may be combined with `compile=True` (see [Combining CUDA graphs with compilation](#combining-cuda-graphs-with-compilation)); gradient checkpointing disables graph capture for that run and falls back to eager, rather than raising. Gradient accumulation is supported; first-use capture preserves gradients already accumulated by earlier microbatches. A capture failure stops training with the original exception attached: an invalidated capture can leave CUDA state unsafe for further operations. Restart the process before retrying with `cuda_graphs=False`; catching the exception and continuing in the same process is not a supported fallback.
+There are two capture routes:
+
+- **BF16/eager route:** `cuda_graphs=True` with `compile=False` supports single-GPU detection with BF16 (`amp_dtype="bf16"` or `"auto"` resolving to BF16). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, FP16, FP32, and unsupported trainer combinations remain eager and log a warning. BF16 graph replay supports gradient accumulation; the runner preserves gradients already accumulated by earlier microbatches.
+- **FP8/Transformer Engine route:** with a tested-compatible Transformer Engine release (2.19.0 was tested), use `cuda_graphs=True`, `compile=False`, and `amp_dtype="fp8"`. This route calls Transformer Engine's native `make_graphed_callables` with the active Lightning FP8 recipe, disables quantized-parameter caching, and clones returned parameter gradients. It is intentionally limited to single-GPU detection, `grad_accum_steps=1`, no gradient checkpointing, `multi_scale=False`, `do_random_resize_via_padding=False`, and `square_resize_div_64=True`. The last setting keeps the external image boundary on a fixed square shape; aspect-preserving batches with `square_resize_div_64=False` stay eager. It captures one fixed batch/resolution signature; a later shape change raises. Unsupported combinations stay eager with a warning.
+
+`cuda_graphs=True` may be combined with `compile=True` (see [Combining CUDA graphs with compilation](#combining-cuda-graphs-with-compilation)), but that is the Inductor route. Ordinary FP8 with `compile=False` still uses Lightning's normal Transformer Engine plugin. When all three flags — `cuda_graphs=True`, `compile=True`, and `amp_dtype="fp8"` — are selected, RF-DETR warns and keeps the run compile-only; it does not wrap the compiled module in the Transformer Engine graph helper. FP8 with `compile=True` but `cuda_graphs=False` uses ordinary compiled FP8 training without this graph-routing warning. A capture failure stops training with the original exception attached: an invalidated capture can leave CUDA state unsafe for further operations. Restart the process before retrying with graphs disabled; catching the exception and continuing in the same process is not a supported fallback.
+
+Use the Transformer Engine-aware route explicitly:
+
+```python
+from rfdetr import RFDETRNano
+
+model = RFDETRNano(cuda_graphs=True, compile=False)
+model.train(
+    dataset_dir="path/to/dataset",
+    amp_dtype="fp8",
+    batch_size=4,
+    grad_accum_steps=1,
+    multi_scale=False,
+    do_random_resize_via_padding=False,
+    square_resize_div_64=True,
+)
+```
 
 CUDA graphs and `compile=True` remove different costs, and they can be enabled together. The two measurements immediately below compare CUDA graphs with eager training; the matrix in [Combining CUDA graphs with compilation](#combining-cuda-graphs-with-compilation) compares all four combinations on one GPU. Compare steady-state throughput, startup time, and peak memory with identical data, batch size, precision, and resolutions before choosing. Compilation keeps positional-embedding interpolation eager to avoid PyTorch's symbolic antialiased-bicubic backward failure; its interpolation math and gradients are unchanged. This is a compatibility mitigation, not an upstream compiler fix.
 
-As one reference point, RF-DETR Nano on an NVIDIA L4 with BF16, batch 4, deterministic synthetic detection batches, and a fixed 8-resolution multi-scale set (`expanded_scales=False`) reduced the median Lightning training batch from 149.8 ms to 101.7 ms across five runs — a 32.4% median reduction in the five paired per-run measurements. Peak allocated memory increased from 2,395 MiB to 3,466 MiB, and peak reserved memory increased from 2,754 MiB to 14,550 MiB for those 8 captured graph pools. `TrainConfig`'s own default is `expanded_scales=True`, which resolves to 11 multi-scale resolutions for this model and was not benchmarked; expect proportionally more graph pools and higher peak reserved memory under that default. The speed and memory cost depend on the model, shapes, batch size, GPU, and PyTorch version; this option is not a good fit when memory already limits the batch size.
+As one BF16 reference point, RF-DETR Nano on an NVIDIA L4 with BF16, batch 4, deterministic synthetic detection batches, and a fixed 8-resolution multi-scale set (`expanded_scales=False`) reduced the median Lightning training batch from 149.8 ms to 101.7 ms across five runs — a 32.4% median reduction in the five paired per-run measurements. Peak allocated memory increased from 2,395 MiB to 3,466 MiB, and peak reserved memory increased from 2,754 MiB to 14,550 MiB for those 8 captured graph pools. `TrainConfig`'s own default is `expanded_scales=True`, which resolves to 11 multi-scale resolutions for this model and was not benchmarked; expect proportionally more graph pools and higher peak reserved memory under that default. The speed and memory cost depend on the model, shapes, batch size, GPU, and PyTorch version; this option is not a good fit when memory already limits the batch size.
+
+For the Transformer Engine route, a synthetic RF-DETR Nano run at 384 px and batch 4 on an RTX PRO 6000 Blackwell used 20 warm-up and 50 measured steps: eager averaged 78.075 ms per step versus 40.066 ms with Transformer Engine-aware graphs (about 1.95x throughput), with one graph capture serving 70 calls. This is a single fixed-shape experiment, not COCO parity or accuracy evidence, and does not establish a large-batch gain. Repeat numerical-parity and performance checks on your target GPU before treating it as a production baseline.
 
 A second reference point, on real data, shows the other end of the range. RF-DETR Nano on an NVIDIA RTX PRO 6000 (Blackwell, 96 GB) with BF16, batch 64, resolution 384, `multi_scale=False`, COCO train2017 through the Albumentations CPU pipeline on Colab: eager and `cuda_graphs=True` both ran at 3.54 it/s (about 8 min 40 s per epoch, one captured graph, no fallback), while `compile=True` finished the same epoch in 7 min 10 s, about 17% faster. Nothing was wrong with the capture; the two options remove different costs.
 
@@ -471,7 +499,7 @@ Scope and cost:
 
 - Validated for single-GPU detection training without gradient accumulation. Segmentation, keypoints, gradient checkpointing, `grad_accum_steps > 1`, and multi-device or multi-node runs fall back to `compile=True` alone with a warning. Gradient accumulation is the hard limit: cudagraph trees allocate the backward's gradient outputs inside the graph pool, so a `.grad` adopted by the first microbatch is overwritten by the next replay.
 - The fallback is decided from `TrainConfig` when the model is built. If the trainer later resolves gradient accumulation (for example through `trainer_kwargs`) or more than one process (`devices="auto"` on a multi-GPU host), training stops at train start with a `RuntimeError` naming the conflict, because the model is already compiled with graph replay by then.
-- The combined path skips the eager runner's BF16-only gate; only BF16 was measured. Other precisions run but are unverified.
+- The combined path skips the eager runner's BF16-only gate; BF16 is the measured path. FP8 remains compile-only with a warning, by design; it does not use the Transformer Engine graph wrapper.
 - The benchmark ran training steps only (`use_ema=False`, no validation). With the default `use_ema=True` validation runs the eager EMA copy; with `use_ema=False` or `eval_base_model=True` the compiled model also records an eval-mode graph. Neither validation nor EMA was exercised under the combined path.
 - With `multi_scale=True`, `dynamic=True` compilation records one graph per resolution (each with its own memory pool) and PyTorch warns after `torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit` (8) distinct shapes. Benchmark `multi_scale=False` first, then confirm memory with the multi-scale set you train on.
 - Compilation start-up dominates short runs: 5–7 minutes on the RTX PRO 6000 and 13–15 minutes on an A100 for Nano before the first timed step. `TORCH_LOGS=cudagraphs` prints the graph partitions Inductor records, including any operator it refused to capture.
