@@ -130,7 +130,12 @@ class CudaGraphTrainingRunner:
                 # A second capture would mutate FP8 scaling state shared with the first graph.
                 # Keep the initial integration fixed-shape until multi-signature parity is verified.
                 if self._graphed_cache:
-                    raise RuntimeError("FP8 CUDA graphs require one fixed execution signature; set cuda_graphs=False.")
+                    # Exactly one capture exists here: FP8 mode never admits a second signature.
+                    cached_key = next(iter(self._graphed_cache))
+                    raise RuntimeError(
+                        f"FP8 CUDA graphs require one fixed execution signature; captured {cached_key}, got {key}. "
+                        "Keep batch size, resolution, dtype and autocast fixed, or set cuda_graphs=False."
+                    )
                 if any(parameter.grad is not None for parameter in self.inner.parameters()):
                     raise RuntimeError("FP8 CUDA graph capture requires no existing parameter gradients.")
             graphed = self._try_capture(tensors, mask, key)
