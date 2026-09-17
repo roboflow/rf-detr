@@ -492,6 +492,48 @@ class TestInit:
 
         assert len(resized_shapes) == 2
 
+    @pytest.mark.gpu
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or not hasattr(torch.compiler, "cudagraph_mark_step_begin"),
+        reason="combined cudagraph regression requires CUDA graph-tree support",
+    )
+    def test_compiled_cudagraph_trees_replay_two_optimizer_steps(self, tmp_path: Path) -> None:
+        """Combined compilation and CUDA graph trees must preserve finite gradients across optimizer replays."""
+        torch.manual_seed(0)
+        model_config = _base_model_config(compile=True, cuda_graphs=True, resolution=128)
+        train_config = _base_train_config(tmp_path, multi_scale=False)
+        model = _DynamicShapeModel().cuda().train()
+        criterion = _FakeCriterion()
+
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+        ):
+            module = RFDETRModelModule(model_config, train_config)
+
+        assert module._inductor_cudagraphs is True
+        optimizer = torch.optim.SGD(module.model.parameters(), lr=1e-3)
+        trainer = SimpleNamespace(accumulate_grad_batches=1)
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        with patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer):
+            for step in range(2):
+                samples, targets = _make_batch(h=128, w=128)
+                samples.tensors = samples.tensors.cuda()
+                samples.mask = samples.mask.cuda()
+                loss = module.training_step((samples, targets), batch_idx=step)
+                loss.backward()
+
+                assert torch.isfinite(loss)
+                assert model.weight.grad is not None
+                assert torch.isfinite(model.weight.grad).all()
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
     def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, accelerator, tmp_path):
         """XLA/TPU never compiles, and that no longer depends on multi_scale being set.
@@ -3237,6 +3279,30 @@ class TestCudaGraphLifecycle:
         assert module._cuda_graph_runner is None
         assert any("Inductor" in record.getMessage() for record in caplog.records)
 
+    def test_on_train_start_keeps_compile_only_fallback_out_of_eager_capture(self, tmp_path: Path) -> None:
+        """Gradient accumulation must not wrap a compiled fallback in the eager CUDA graph runner."""
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        tc = _base_train_config(tmp_path, grad_accum_steps=2)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace())),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda model, **_: model),
+        ):
+            module, _, _, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        trainer = SimpleNamespace(world_size=1, precision="bf16-mixed")
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+        ):
+            module.on_train_start()
+
+        assert module._compile_active is True
+        assert module._inductor_cudagraphs is False
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+
     @pytest.mark.parametrize(
         "trainer",
         [
@@ -3262,6 +3328,23 @@ class TestCudaGraphLifecycle:
             pytest.raises(RuntimeError, match="validated for single-GPU training without gradient accumulation"),
         ):
             module.on_train_start()
+
+    def test_on_train_start_disables_inductor_replay_when_trainer_resolves_cpu(self, tmp_path: Path) -> None:
+        """A CUDA-capable construction must not mark graph steps after Lightning places the module on CPU."""
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+        trainer = SimpleNamespace(world_size=1, accumulate_grad_batches=1, precision="bf16-mixed")
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cpu")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+        ):
+            module.on_train_start()
+
+        assert module._inductor_cudagraphs is False
+        runner_type.assert_not_called()
 
     def test_on_train_start_keeps_cpu_training_eager(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch

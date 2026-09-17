@@ -392,6 +392,9 @@ class RFDETRModelModule(LightningModule):
         # compiled kernels, so _configure_cuda_graph_runner leaves the eager runner unset and
         # training_step marks each step for the graph-tree allocator instead.
         self._inductor_cudagraphs: bool = False
+        # Compilation can remain enabled after the narrower Inductor graph-tree gate declines a request.
+        # Keep this separate so the eager runner never captures an OptimizedModule in a compile-only fallback.
+        self._compile_active: bool = False
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -492,6 +495,7 @@ class RFDETRModelModule(LightningModule):
             self.model = torch.compile(  # type: ignore[assignment]
                 self.model, dynamic=True, options=compile_options or None
             )
+            self._compile_active = True
 
     @staticmethod
     def _inductor_cudagraphs_unsupported_reason(model_config: ModelConfig, train_config: TrainConfig) -> str | None:
@@ -598,6 +602,12 @@ class RFDETRModelModule(LightningModule):
         """
         self._cuda_graph_runner = None
         if not getattr(self.model_config, "cuda_graphs", False):
+            return
+        if self._compile_active and not self._inductor_cudagraphs:
+            logger.info(
+                "CUDA graphs requested with compilation outside Inductor's validated scope; "
+                "training remains compile-only."
+            )
             return
         if self._inductor_cudagraphs:
             # The construction-time gate read TrainConfig; trainer_kwargs can override
