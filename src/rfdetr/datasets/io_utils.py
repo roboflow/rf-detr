@@ -74,7 +74,18 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     Raises:
         PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
     """
-    return decode_image_bytes(path.read_bytes(), draft_size)
+    if simplejpeg is not None:
+        with path.open("rb") as encoded:
+            if encoded.read(len(_JPEG_SOI)) == _JPEG_SOI:
+                encoded.seek(0)
+                return decode_image_bytes(encoded.read(), draft_size)
+
+    with Image.open(path) as image:
+        full_width, full_height = image.size
+        if draft_size is not None:
+            image.draft("RGB", (draft_size, draft_size))
+        pixels = np.asarray(image.convert("RGB"))
+    return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
 
 
 def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
