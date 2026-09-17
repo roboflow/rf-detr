@@ -152,6 +152,40 @@ def validate_segmentation_coreml_vs_pytorch(
     )
 
 
+def validate_keypoint_coreml_vs_pytorch(
+    mlpackage_path: Path,
+    pytorch_model: torch.nn.Module,
+    example_input: torch.Tensor,
+) -> None:
+    """Compare CoreML keypoint outputs (boxes, logits, keypoints) to eager export-mode PyTorch.
+
+    Keypoints occupy the same third output slot segmentation uses for masks, and both are rank-4, so the
+    count alone does not distinguish them; per-output shapes are asserted by :func:`_coreml_parity_diffs`
+    against eager.
+
+    Args:
+        mlpackage_path: Path to the exported ``.mlpackage``.
+        pytorch_model: Export-mode PyTorch keypoint module on CPU.
+        example_input: ``(N, C, H, W)`` tensor used for both forwards.
+
+    Raises:
+        AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
+
+    Examples:
+        Requires a real exported ``.mlpackage`` and ``coremltools`` — not runnable standalone.
+        See ``TestCoreMLEndToEnd`` for real invocations.
+
+        >>> callable(validate_keypoint_coreml_vs_pytorch)
+        True
+    """
+    diffs = _coreml_parity_diffs(mlpackage_path, pytorch_model, example_input)
+    assert len(diffs) == 3, f"keypoint export must yield (boxes, logits, keypoints), got {len(diffs)} outputs"
+    assert max(diffs) < _COREML_MAX_ABS_DIFF, (
+        f"CoreML keypoint outputs diverge from PyTorch: max abs diff {max(diffs)} "
+        f"(boxes={diffs[0]}, logits={diffs[1]}, keypoints={diffs[2]}, bound={_COREML_MAX_ABS_DIFF})"
+    )
+
+
 # ---------------------------------------------------------------------------
 # CoreMLExporter — unit / dependency behaviour
 # ---------------------------------------------------------------------------
@@ -218,9 +252,9 @@ class TestExportCoremlValidation:
 class TestExportCoremlBareDefaultNaming:
     """``variant_name=None`` + ``output_name=None`` combined with a non-default ``compute_precision`` (fp16).
 
-    Real ``coremltools.convert``/``torch.export.export`` are mocked out so this stays a fast unit test — only the
-    naming path (``resolve_export_stem`` -> precision-suffix branch) is under test, not conversion correctness (that is
-    covered by ``TestCoreMLEndToEnd``, gated on a real ``coremltools`` install).
+    Real ``coremltools.convert``/``torch.export.export`` are mocked out so this stays a fast unit test — only the naming
+    path (``resolve_export_stem`` -> precision-suffix branch) is under test, not conversion correctness (that is covered
+    by ``TestCoreMLEndToEnd``, gated on a real ``coremltools`` install).
     """
 
     @coreml_only
@@ -357,11 +391,12 @@ class TestExportFormatParameter:
         self._mock_stack.close()
 
     @staticmethod
-    def _make_rfdetr(*, segmentation_head: bool = False) -> Any:
+    def _make_rfdetr(*, segmentation_head: bool = False, use_grouppose_keypoints: bool = False) -> Any:
         """Create a minimal RFDETR instance with mocked internals.
 
         Args:
             segmentation_head: Whether the mocked config reports a seg head.
+            use_grouppose_keypoints: Whether the mocked config reports a keypoint head.
         """
         from rfdetr.detr import RFDETR
 
@@ -372,20 +407,32 @@ class TestExportFormatParameter:
         obj.model.model.to.return_value = obj.model.model
         obj.model_config = mock.MagicMock()
         obj.model_config.segmentation_head = segmentation_head
-        obj.model_config.use_grouppose_keypoints = False
+        obj.model_config.use_grouppose_keypoints = use_grouppose_keypoints
         obj.model_config.patch_size = 14
         obj.model_config.num_windows = 1
         obj.model_config.num_channels = 3
         return obj
 
     @pytest.mark.parametrize(
-        "segmentation_head",
-        [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")],
+        ("segmentation_head", "use_grouppose_keypoints"),
+        [
+            pytest.param(False, False, id="detection"),
+            pytest.param(True, False, id="segmentation"),
+            pytest.param(False, True, id="keypoint"),
+        ],
     )
-    def test_coreml_format_dispatches_to_coreml_exporter_not_onnx(self, segmentation_head: bool) -> None:
-        """``format="coreml"`` must dispatch to ``CoreMLExporter`` (not the ONNX one) and warn (experimental), for both
-        detection and segmentation models."""
-        obj = self._make_rfdetr(segmentation_head=segmentation_head)
+    def test_coreml_format_dispatches_to_coreml_exporter_not_onnx(
+        self, segmentation_head: bool, use_grouppose_keypoints: bool
+    ) -> None:
+        """``format="coreml"`` must dispatch to ``CoreMLExporter`` (not the ONNX one) and warn (experimental), for every
+        task the format supports.
+
+        Dispatch keys off ``format``, not off the head, so all three cases assert the same thing. They are enumerated
+        anyway to keep this task list aligned with ``_COREML_E2E_VARIANTS``. The head-specific part — the
+        ``dets``/``labels``/``keypoints`` output contract — is asserted format-agnostically in
+        ``tests/export/test_prepare.py``, not here: ``CoreMLExporter._convert`` is mocked out in this class.
+        """
+        obj = self._make_rfdetr(segmentation_head=segmentation_head, use_grouppose_keypoints=use_grouppose_keypoints)
         with pytest.warns(UserWarning, match="experimental"):
             obj.export(format="coreml", output_dir=str(self._tmp_path / "out"))
         self._mock_coreml_convert.assert_called_once()
@@ -429,6 +476,9 @@ class TestExportFormatParameter:
 _COREML_E2E_VARIANTS = [
     ("RFDETRNano", validate_detection_coreml_vs_pytorch),
     ("RFDETRSegNano", validate_segmentation_coreml_vs_pytorch),
+    # Keypoints are preview-only and therefore XLarge at resolution 576 — several times the work of the
+    # two Nano variants, which is why this variant is the slow one in the `e2e_coreml` job.
+    ("RFDETRKeypointPreview", validate_keypoint_coreml_vs_pytorch),
 ]
 
 # coremltools 9.0's MIL converter occasionally constant-folds a weights-only `linear` op via
@@ -467,11 +517,11 @@ def people_walking_image_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
         os.chdir(cwd)
 
 
-@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS, ids=["detection", "segmentation"])
+@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS, ids=["detection", "segmentation", "keypoint"])
 def coreml_export(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> tuple[Any, torch.Tensor, Path, Any]:
-    """Export RFDETRNano/RFDETRSegNano to a ``.mlpackage`` once per variant for e2e tests.
+    """Export RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview to a ``.mlpackage`` once per variant for e2e tests.
 
     Re-seeds to ``_COREML_EXPORT_SEED`` (a verified-good draw, see module-level comment) immediately before model
     construction, overriding the autouse ``reset_random_seeds`` fixture's default seed for this specific known-flaky

@@ -1691,10 +1691,9 @@ class RFDETR:
                 ``backend="coreml"`` together does **not** fall through
                 to the ExecuTorch delegate; ``backend`` is ignored (with
                 a warning) and the native ``.mlpackage`` path always runs.
-                Keypoint models are untested with ``format="coreml"`` — detection and segmentation have
-                registry-clean and numerical-parity test coverage (see
-                ``tests/export/test_coreml_op_coverage.py`` / ``test_coreml_export.py``), keypoint models
-                currently do not.
+                Detection, segmentation and keypoint models all have registry-clean and numerical-parity
+                test coverage for this format (see ``tests/export/test_coreml_op_coverage.py`` /
+                ``test_coreml_export.py``).
 
                 .. warning::
                     TFLite, ExecuTorch, CoreML, and LiteRT export are experimental

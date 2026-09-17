@@ -242,10 +242,11 @@ class TestUnsupportedCoremlOps:
             pytest.param("RFDETRMedium", id="medium"),
             pytest.param("RFDETRLarge", id="large"),
             pytest.param("RFDETRSegNano", id="seg-nano"),
+            pytest.param("RFDETRKeypointPreview", id="keypoint-preview"),
         ],
     )
     def test_registry_clean_after_patches(self, model_cls_name: str) -> None:
-        """Each other released size (detection + one segmentation) must have no registry gaps after patches.
+        """Each other released size (detection + one segmentation + keypoint) must have no registry gaps after patches.
 
         Previously proven only for Nano-detection (see ``test_nano_registry_clean_after_patches`` above, which reuses
         the shared Nano fixture) — a flagged op kind on an untested size/variant could otherwise false-fail a valid
