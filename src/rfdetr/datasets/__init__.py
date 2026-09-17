@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import torchvision
 from torch.utils.data import Dataset, Subset
 
+from rfdetr.config import DatasetFile
 from rfdetr.datasets._keypoint_schema import infer_coco_keypoint_schema as infer_coco_keypoint_schema
 from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer_yolo_keypoint_schema
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
@@ -87,15 +89,32 @@ def build_roboflow(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
     return build_roboflow_from_yolo(image_set, args, resolution)
 
 
+#: Dataset builder per ``TrainConfig.dataset_file`` value. Adding a layout means one entry here plus its name in
+#: :data:`rfdetr.config.DatasetFile`; ``tests/datasets/test_builder_options.py`` keeps the two in sync.
+_DATASET_BUILDERS: dict[DatasetFile, Callable[[str, Any, int], Dataset[Any]]] = {
+    "coco": build_coco,
+    "o365": build_o365,
+    "roboflow": build_roboflow,
+    "yolo": build_roboflow_from_yolo,
+    "webdataset": build_webdataset,
+}
+
+
 def build_dataset(image_set: str, args: Any, resolution: int) -> Dataset[Any]:
-    if args.dataset_file == "coco":
-        return build_coco(image_set, args, resolution)
-    if args.dataset_file == "o365":
-        return build_o365(image_set, args, resolution)
-    if args.dataset_file == "roboflow":
-        return build_roboflow(image_set, args, resolution)
-    if args.dataset_file == "yolo":
-        return build_roboflow_from_yolo(image_set, args, resolution)
-    if args.dataset_file == "webdataset":
-        return build_webdataset(image_set, args, resolution)
-    raise ValueError(f"dataset {args.dataset_file} not supported")
+    """Build the dataset for *image_set* using the builder registered for ``args.dataset_file``.
+
+    Args:
+        image_set: Split to build, e.g. ``"train"``, ``"val"`` or ``"test"``.
+        args: Merged model/train config namespace; ``args.dataset_file`` selects the builder.
+        resolution: Target square resolution in pixels.
+
+    Returns:
+        The dataset produced by the registered builder.
+
+    Raises:
+        ValueError: If ``args.dataset_file`` names no registered builder.
+    """
+    builder = _DATASET_BUILDERS.get(args.dataset_file)
+    if builder is None:
+        raise ValueError(f"dataset {args.dataset_file} not supported; expected one of {tuple(_DATASET_BUILDERS)}")
+    return builder(image_set, args, resolution)

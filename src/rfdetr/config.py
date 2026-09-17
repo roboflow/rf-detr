@@ -22,9 +22,15 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+#: Dataset layout selectable via ``TrainConfig.dataset_file``. The builder registry that resolves each name lives
+#: in ``rfdetr.datasets``; this alias is the single typed source of the accepted names.
+DatasetFile: TypeAlias = Literal["coco", "o365", "roboflow", "yolo", "webdataset"]
 PathLikeStr: TypeAlias = str | Path
 #: Mixed-precision autocast dtype; ``None`` disables autocast (full fp32).
 AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
+#: COCO evaluation backend selectable via ``TrainConfig.eval_backend``. The runtime registry that resolves each
+#: name lives in ``rfdetr.training.coco_map``; this alias is the single typed source of the accepted names.
+CocoEvalBackend: TypeAlias = Literal["hotcoco", "faster_coco_eval", "ufcoco"]
 #: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
 #: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
 _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
@@ -32,6 +38,8 @@ _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
 __all__ = [
     "AmpDtype",
     "AugmentationBackend",
+    "CocoEvalBackend",
+    "DatasetFile",
     "ModelConfig",
     "RFDETRBaseConfig",
     "RFDETRLargeDeprecatedConfig",
@@ -1075,7 +1083,7 @@ class TrainConfig(BaseConfig):
     keypoint_oks_sigmas: list[float] | None = None
     # "webdataset" streams pre-packed tar shards instead of loose image files; see
     # rfdetr.datasets.webdataset for the packer and the sizing contract it imposes on the loaders.
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "webdataset"] = "roboflow"
+    dataset_file: DatasetFile = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
@@ -1114,16 +1122,18 @@ class TrainConfig(BaseConfig):
     amp_dtype: AmpDtype = Field(
         default=_AMP_DTYPE_DEFAULT,
         description=(
-            "Mixed-precision autocast dtype. Sole live authority for AMP enable+dtype; see "
+            "Mixed-precision training precision. Sole live authority for AMP enable+dtype; see "
             "_resolve_amp_dtype for the deprecated ModelConfig.amp fold-in. "
             "None disables autocast (full fp32). "
-            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
-            "'fp16' forces fp16. "
+            "On TPU, 'auto' and 'bf16' select XLA's bf16-true precision. "
+            "Elsewhere, 'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' selects bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' selects fp16 on supported CUDA/MPS backends. "
+            "Explicit XLA uses full fp32 until CPU/GPU PJRT BF16 execution is verified. "
             "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "
             "an explicit 'fp8' is honored even if the deprecated ModelConfig.amp=False. "
             "Any non-default value here always wins over the deprecated ModelConfig.amp. "
-            "Has no effect when training on CPU."
+            "The direct CPU accelerator always uses full fp32."
         ),
     )
     best_model_metric: Literal["map", "mar"] = Field(
@@ -1152,12 +1162,12 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
-    eval_backend: Literal["hotcoco", "faster_coco_eval"] = Field(
+    eval_backend: CocoEvalBackend = Field(
         default="hotcoco",
         description=(
-            "COCO evaluation backend used for validation and test mAP. Both ship with 'rfdetr[train]' and produce "
-            "identical metrics; 'hotcoco' is several times faster to compute. Set 'faster_coco_eval' to fall back "
-            "to the previous evaluator."
+            "COCO evaluation backend used for validation and test mAP. All three ship with 'rfdetr[train]' and "
+            "produce identical metrics; 'hotcoco' is several times faster to compute than 'faster_coco_eval', the "
+            "previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during

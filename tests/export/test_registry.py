@@ -21,6 +21,7 @@ import pytest
 from rfdetr.export import registry as registry_module
 from rfdetr.export._coreml.exporter import CoreMLConfig
 from rfdetr.export._executorch.exporter import ExecuTorchExporter
+from rfdetr.export._litert.exporter import LiteRTConfig
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._openvino.exporter import OpenVINOConfig
 from rfdetr.export._tensorrt.exporter import TensorRTConfig
@@ -159,6 +160,7 @@ class TestBuildConfig:
             pytest.param("coreml", CoreMLConfig, id="coreml"),
             pytest.param("tflite", TFLiteConfig, id="tflite"),
             pytest.param("tensorrt", TensorRTConfig, id="tensorrt"),
+            pytest.param("litert", LiteRTConfig, id="litert"),
         ],
     )
     def test_builds_the_configuration_class_the_exporter_declares(self, format: str, expected_type: type) -> None:
@@ -282,7 +284,7 @@ class TestExporterCapabilityChecks:
     """The shared capability checks every exporter inherits, exercised without any optional dependency.
 
     Each format used to carry its own copy of these guards. They now live once on the base class, so a mistake here
-    reaches all six formats — and the branches are cheapest to pin on a subclass that declares nothing.
+    reaches all seven formats — and the branches are cheapest to pin on a subclass that declares nothing.
     """
 
     def test_unsupported_dynamic_batch_is_rejected_at_construction(self) -> None:
