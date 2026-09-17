@@ -388,6 +388,10 @@ class RFDETRModelModule(LightningModule):
         self._aux_aggregate_cache: dict[str, str | None] | None = None
         self._aux_aggregate_cache_keys: frozenset[str] | None = None
         self._cuda_graph_runner: CudaGraphTrainingRunner | None = None
+        # True when cuda_graphs and compile are both active: Inductor's CUDA graph trees replay the
+        # compiled kernels, so _configure_cuda_graph_runner leaves the eager runner unset and
+        # training_step marks each step for the graph-tree allocator instead.
+        self._inductor_cudagraphs: bool = False
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -463,11 +467,65 @@ class RFDETRModelModule(LightningModule):
             compile_options: dict[str, Any] = {}
             if hasattr(inductor_config.triton, "coalesce_tiling_analysis"):
                 compile_options["triton.coalesce_tiling_analysis"] = False
+            if model_config.cuda_graphs:
+                # Replay the compiled kernels with Inductor's CUDA graph trees. This is what
+                # mode="reduce-overhead" sets, but torch.compile rejects mode= together with
+                # options=, so the option key is passed directly. The eager CudaGraphTrainingRunner
+                # must not wrap the OptimizedModule on top of this: make_graphed_callables would
+                # capture Inductor's launch path a second time (see _configure_cuda_graph_runner).
+                unsupported_reason = self._inductor_cudagraphs_unsupported_reason(model_config, train_config)
+                if unsupported_reason is None:
+                    compile_options["triton.cudagraphs"] = True
+                    self._inductor_cudagraphs = True
+                    logger.info(
+                        "CUDA graph replay of the compiled model enabled through Inductor cudagraph trees; "
+                        "each new input shape records its own graph (TORCH_LOGS=cudagraphs shows partitions)."
+                    )
+                else:
+                    logger.warning(
+                        "Falling back to compile-only because %s; cuda_graphs together with compile is "
+                        "validated for single-GPU detection training without gradient accumulation.",
+                        unsupported_reason,
+                    )
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
             self.model = torch.compile(  # type: ignore[assignment]
                 self.model, dynamic=True, options=compile_options or None
             )
+
+    @staticmethod
+    def _inductor_cudagraphs_unsupported_reason(model_config: ModelConfig, train_config: TrainConfig) -> str | None:
+        """Explain why Inductor CUDA graph replay must stay off for this run, or return ``None`` when it may run.
+
+        Mirrors the single-GPU detection scope of :class:`CudaGraphTrainingRunner` from what is known at construction
+        time, plus one limit specific to cudagraph trees: the compiled backward allocates its gradient outputs inside
+        the graph pool, so a ``.grad`` adopted by the first microbatch is overwritten by the next replay and gradient
+        accumulation raises on the second microbatch.
+
+        Args:
+            model_config: Model configuration being built.
+            train_config: Training configuration for this fit run.
+
+        Returns:
+            A human-readable reason, or ``None`` when the combined path is within its validated scope.
+        """
+        if not hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+            return "this torch version has no torch.compiler.cudagraph_mark_step_begin"
+        if model_config.segmentation_head:
+            return "segmentation training is not supported"
+        if model_config.use_grouppose_keypoints:
+            return "keypoint training is not supported"
+        if model_config.gradient_checkpointing:
+            return "gradient checkpointing is not supported"
+        if int(train_config.grad_accum_steps) > 1:
+            return f"gradient accumulation (grad_accum_steps={train_config.grad_accum_steps}) is not supported"
+        devices = train_config.devices
+        multi_device = int(train_config.num_nodes) > 1 or (isinstance(devices, int) and devices > 1)
+        if isinstance(devices, str) and devices not in {"1", "auto"}:
+            multi_device = True
+        if multi_device:
+            return f"distributed training (devices={devices!r}, num_nodes={train_config.num_nodes}) is not supported"
+        return None
 
     # ------------------------------------------------------------------
     # PTL lifecycle hooks
@@ -532,9 +590,32 @@ class RFDETRModelModule(LightningModule):
             )
 
     def _configure_cuda_graph_runner(self) -> None:
-        """Enable CUDA graph replay only for its validated single-GPU detection scope."""
+        """Enable CUDA graph replay only for its validated single-GPU detection scope.
+
+        Raises:
+            RuntimeError: If Inductor CUDA graph replay was compiled in but the trainer resolved gradient
+                accumulation or more than one process, neither of which that path supports.
+        """
         self._cuda_graph_runner = None
         if not getattr(self.model_config, "cuda_graphs", False):
+            return
+        if self._inductor_cudagraphs:
+            # The construction-time gate read TrainConfig; trainer_kwargs can override
+            # accumulate_grad_batches and devices="auto" can resolve to several GPUs. The model is
+            # already compiled with cudagraphs, so the only safe response now is to stop.
+            accumulate_grad_batches = int(getattr(self.trainer, "accumulate_grad_batches", 1))
+            world_size = int(getattr(self.trainer, "world_size", 1))
+            if accumulate_grad_batches > 1 or world_size != 1:
+                raise RuntimeError(
+                    "cuda_graphs=True with compile=True is validated for single-GPU training without gradient "
+                    f"accumulation, but the trainer resolved accumulate_grad_batches={accumulate_grad_batches} and "
+                    f"world_size={world_size}. Set cuda_graphs=False or drop the accumulation / extra devices."
+                )
+            logger.info(
+                "CUDA graph replay is handled by Inductor cudagraph trees for the compiled model on %s; "
+                "the eager graph runner stays off.",
+                self.device,
+            )
             return
 
         unsupported_reason: str | None = None
@@ -635,6 +716,11 @@ class RFDETRModelModule(LightningModule):
         """
         samples, targets = batch
         batch_size = len(targets)
+        if self._inductor_cudagraphs:
+            # Lightning holds the logged loss tensors past this step. Marking the step lets cudagraph
+            # trees reuse the previous step's output memory instead of raising "accessing tensor
+            # output of CUDAGraphs that has been overwritten by a subsequent run" on the next replay.
+            torch.compiler.cudagraph_mark_step_begin()  # type: ignore[no-untyped-call]
         outputs = (
             self._cuda_graph_runner(samples, targets)
             if self._cuda_graph_runner is not None
@@ -1155,6 +1241,10 @@ class RFDETRModelModule(LightningModule):
             Dict with ``results`` (postprocessed predictions) and ``targets``.
         """
         samples, targets = batch
+        if self._inductor_cudagraphs:
+            # Same reason as in training_step: with eval_base_model=True or use_ema=False the
+            # compiled model runs here and records its own eval-mode graph.
+            torch.compiler.cudagraph_mark_step_begin()  # type: ignore[no-untyped-call]
         outputs = self._resolve_eval_model()(samples)
         if self._should_compute_val_loss:
             loss_dict = self.criterion(outputs, targets)

@@ -485,7 +485,10 @@ class ModelConfig(BaseConfig):
             ``False``.
         cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
             graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
-            sizes it matches eager and ``compile`` is the better lever. Defaults to ``False``.
+            sizes it matches eager and ``compile`` is the better lever. Combined with
+            ``compile=True`` the replay is delegated to Inductor's CUDA graph trees, which
+            stacks both gains at small batch sizes and matches plain compilation at large
+            ones. Defaults to ``False``.
         pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
         device: Target device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if not set.
         gradient_checkpointing: Trade compute for memory by checkpointing activations. Defaults
@@ -547,13 +550,6 @@ class ModelConfig(BaseConfig):
             "without inspecting ``pretrain_weights``."
         ),
     )
-
-    @model_validator(mode="after")
-    def _validate_graph_runtime(self) -> "ModelConfig":
-        """Reject mutually exclusive CUDA graph runtimes."""
-        if self.cuda_graphs and self.compile:
-            raise ValueError("cuda_graphs=True is incompatible with compile=True; enable only one graph runtime.")
-        return self
 
     @model_validator(mode="after")
     def _sync_pe_with_resolution(self) -> "ModelConfig":

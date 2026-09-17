@@ -574,6 +574,64 @@ class TestInit:
 
         assert triton_config.coalesce_tiling_analysis is True
 
+    def test_cuda_graphs_with_compile_requests_inductor_cudagraphs(self, tmp_path):
+        """``cuda_graphs=True`` together with ``compile=True`` turns on Inductor's CUDA graph trees.
+
+        ``torch.compile(mode="reduce-overhead")`` cannot be used here because ``mode`` and ``options`` are mutually
+        exclusive in ``torch.compile``; the equivalent option key is what must reach the compiler alongside the existing
+        coalesce-tiling workaround.
+        """
+        triton_config = SimpleNamespace(coalesce_tiling_analysis=True)
+        mc = _base_model_config(compile=True, cuda_graphs=True)
+        tc = _base_train_config(tmp_path, multi_scale=False)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+        ):
+            module, _, _, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        assert mock_compile.call_args.kwargs["options"] == {
+            "triton.coalesce_tiling_analysis": False,
+            "triton.cudagraphs": True,
+        }
+        assert module._inductor_cudagraphs is True
+
+    @pytest.mark.parametrize(
+        ("model_overrides", "train_overrides"),
+        [
+            pytest.param({}, {"grad_accum_steps": 2}, id="gradient-accumulation"),
+            pytest.param({}, {"devices": 2}, id="multi-device"),
+            pytest.param({}, {"num_nodes": 2}, id="multi-node"),
+            pytest.param({"segmentation_head": True}, {}, id="segmentation"),
+            pytest.param({"use_grouppose_keypoints": True, "num_keypoints_per_class": [1]}, {}, id="keypoints"),
+            pytest.param({"gradient_checkpointing": True}, {}, id="gradient-checkpointing"),
+        ],
+    )
+    def test_cuda_graphs_with_compile_falls_back_to_plain_compile_outside_validated_scope(
+        self, model_overrides, train_overrides, tmp_path, caplog, monkeypatch
+    ):
+        """Outside the single-GPU detection scope the combined request degrades to compile-only with a warning.
+
+        Inductor CUDA graph trees allocate gradient outputs inside the graph pool, so a ``.grad`` adopted by the first
+        microbatch is overwritten by the next replay — gradient accumulation cannot run on this path. Model modes and
+        distributed layouts mirror the limits of the eager graph runner.
+        """
+        mc = _base_model_config(compile=True, cuda_graphs=True, **model_overrides)
+        tc = _base_train_config(tmp_path, multi_scale=False, **train_overrides)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace())),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+            caplog.at_level(logging.WARNING, logger="rf-detr"),
+        ):
+            module, _, _, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+
+        assert mock_compile.call_args.kwargs["options"] is None
+        assert module._inductor_cudagraphs is False
+        assert any("compile-only" in record.getMessage() for record in caplog.records)
+
     @patch("rfdetr.training.module_model.torch.compile")
     @patch("rfdetr.config.DEVICE", "cuda")
     def test_compile_disabled_when_train_accelerator_is_cpu(self, _mock_compile: MagicMock, tmp_path):
@@ -1062,6 +1120,21 @@ class TestTrainingStep:
 
         runner.assert_called_once_with(samples, targets)
         fake_model.assert_not_called()
+
+    @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
+    def test_marks_cudagraph_step_only_on_inductor_path(self, inductor_cudagraphs, tmp_path):
+        """Each step on the Inductor CUDA graph path begins with ``cudagraph_mark_step_begin``; other paths never do.
+
+        Lightning keeps the logged loss tensors alive across steps. Without the mark, cudagraph trees raise "accessing
+        tensor output of CUDAGraphs that has been overwritten by a subsequent run" on the next replay.
+        """
+        module, samples, targets, _, _ = self._run_step(tmp_path)
+        module._inductor_cudagraphs = inductor_cudagraphs
+
+        with patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin") as mark_step:
+            module.training_step((samples, targets), batch_idx=0)
+
+        assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
 
     def test_real_model_composes_through_cuda_graph_runner_on_training_step(self, tmp_path: Path) -> None:
         """A real detector, criterion, backward, and optimizer must compose through the graph-runner- wrapped
@@ -2041,6 +2114,25 @@ class TestValidationStep:
         assert "val/loss_giou" in logged_loss_names
         assert "val/loss_giou" not in direct_log_names
         assert "val/giou" not in direct_log_names
+
+    @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
+    def test_marks_cudagraph_step_only_on_inductor_path(self, inductor_cudagraphs, tmp_path):
+        """Validation on the Inductor CUDA graph path marks each step, since the compiled model records an eval graph.
+
+        With ``eval_base_model=True`` or ``use_ema=False`` the ``OptimizedModule`` itself runs validation; the results
+        kept by ``COCOEvalCallback`` across the epoch must not alias a graph output the next batch rewrites.
+        """
+        tc = _base_train_config(tmp_path, compute_val_loss=False)
+        module, fake_model, _, _ = _build_module(train_config=tc, tmp_path=tmp_path)
+        module._inductor_cudagraphs = inductor_cudagraphs
+        samples, targets = _make_batch()
+        fake_model.return_value = {}
+        module.log = MagicMock()
+
+        with patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin") as mark_step:
+            module.validation_step((samples, targets), batch_idx=0)
+
+        assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
 
     def test_can_disable_val_loss_computation(self, tmp_path):
         """compute_val_loss=False skips criterion call and val/loss logging."""
@@ -3118,6 +3210,58 @@ class TestCudaGraphLifecycle:
         runner_type.assert_called_once_with(model)
         assert module._cuda_graph_runner is runner
         assert any("CUDA graph replay enabled" in record.getMessage() for record in caplog.records)
+
+    def test_on_train_start_leaves_replay_to_inductor_when_compiled(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When Inductor owns CUDA graph replay, the eager runner is never wrapped around the compiled model.
+
+        ``make_graphed_callables`` over an ``OptimizedModule`` would capture Inductor's own launch path a second time;
+        cudagraph trees already replay the compiled kernels. The console still announces which runtime replays.
+        """
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+        trainer = SimpleNamespace(world_size=1, precision="bf16-mixed")
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            patch("rfdetr.training.module_model.CudaGraphTrainingRunner") as runner_type,
+            caplog.at_level(logging.INFO, logger="rf-detr"),
+        ):
+            module.on_train_start()
+
+        runner_type.assert_not_called()
+        assert module._cuda_graph_runner is None
+        assert any("Inductor" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.parametrize(
+        "trainer",
+        [
+            pytest.param(SimpleNamespace(world_size=1, accumulate_grad_batches=2), id="accumulation"),
+            pytest.param(SimpleNamespace(world_size=2, accumulate_grad_batches=1), id="distributed"),
+        ],
+    )
+    def test_on_train_start_stops_when_trainer_leaves_inductor_scope(self, trainer, tmp_path: Path) -> None:
+        """A trainer that resolved accumulation or several processes stops an Inductor graph run at train start.
+
+        The construction-time gate reads ``TrainConfig``, but ``trainer_kwargs`` can override
+        ``accumulate_grad_batches`` and ``devices="auto"`` can resolve to several GPUs. The model is already compiled
+        with cudagraphs by then, so the run must stop with a clear message instead of failing on the second microbatch
+        inside cudagraph trees.
+        """
+        mc = _base_model_config(cuda_graphs=True, compile=True, fused_optimizer=False)
+        module, _, _, _ = _build_module(model_config=mc, train_config=_base_train_config(tmp_path))
+        module._inductor_cudagraphs = True
+
+        with (
+            patch.object(type(module), "device", new_callable=PropertyMock, return_value=torch.device("cuda")),
+            patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer),
+            pytest.raises(RuntimeError, match="validated for single-GPU training without gradient accumulation"),
+        ):
+            module.on_train_start()
 
     def test_on_train_start_keeps_cpu_training_eager(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch

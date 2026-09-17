@@ -229,7 +229,7 @@ uv run twine check --strict dist/*
 - RFDETR wrappers: `self.model` is the model context returned by `get_model()`
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
-- Opt-in CUDA graph training is routed by `RFDETRModelModule` through the plain-object `CudaGraphTrainingRunner`; never replace the registered `self.model`, because optimizer, EMA, and checkpoint keys must keep their existing parameter ownership. The graph path is single-GPU detection only and falls back per execution signature.
+- Opt-in CUDA graph training is routed by `RFDETRModelModule` through the plain-object `CudaGraphTrainingRunner`; never replace the registered `self.model`, because optimizer, EMA, and checkpoint keys must keep their existing parameter ownership. The graph path is single-GPU detection only and falls back per execution signature. With `compile=True` as well, replay is delegated to Inductor cudagraph trees (`triton.cudagraphs` compile option + `torch.compiler.cudagraph_mark_step_begin()` per `training_step`); `CudaGraphTrainingRunner` never wraps the `OptimizedModule`.
 
 **Model Export:**
 
