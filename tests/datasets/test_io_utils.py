@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for the shared image decoder in ``rfdetr.datasets.io_utils``."""
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ import pytest
 from PIL import Image
 
 from rfdetr.datasets import io_utils
+from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.io_utils import decode_image, decode_image_bytes
 
 
@@ -50,18 +52,40 @@ def pillow_decode(path: Path, draft_size: int | None = None) -> tuple[np.ndarray
     return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
 
 
+def write_cmyk_jpeg(path: Path, width: int, height: int) -> None:
+    """Write an Adobe-marked CMYK JPEG with gradient content, for tolerance checks against RGB decoders.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     jpeg_path = Path(tmp) / "cmyk.jpg"
+        ...     write_cmyk_jpeg(jpeg_path, 8, 6)
+        ...     Image.open(jpeg_path).mode
+        'CMYK'
+    """
+    cyan = np.linspace(0, 255, width, dtype=np.uint8)
+    magenta = np.linspace(0, 255, height, dtype=np.uint8)
+    image = Image.new("CMYK", (width, height))
+    image.putdata([(int(cyan[x]), int(magenta[y]), 128, 64) for y in range(height) for x in range(width)])
+    image.save(path, format="JPEG", quality=90)
+
+
 requires_simplejpeg = pytest.mark.skipif(io_utils.simplejpeg is None, reason="simplejpeg is not installed")
 
 
 class TestDecodeImage:
     """``decode_image`` yields Pillow's pixel arrays whichever decoder handles the file.
 
-    Comparisons between ``simplejpeg`` and Pillow assert exact equality on purpose.  The two packages may bundle
-    different libjpeg-turbo builds, so equality is not guaranteed in general, but it holds for the PyPI wheels on every
-    CI leg, and exactness is what catches a decoder-setting drift: ``fastdct=True`` moves these noisy test images by a
-    mean of ~1.1 levels and smooth content by ~0.5, so a mean-difference tolerance near 1 would barely or not at all
-    separate it from rounding.  If a future wheel pair diverges by rounding alone, loosen these to a bounded difference
-    rather than chasing the pixels.
+    Comparisons between ``simplejpeg`` and Pillow assert exact equality for RGB and grayscale JPEG sources, on
+    purpose.  The two packages may bundle different libjpeg-turbo builds, so equality is not guaranteed in general,
+    but it holds for the PyPI wheels on every CI leg, and exactness is what catches a decoder-setting drift:
+    ``fastdct=True`` moves these noisy test images by a mean of ~1.1 levels and smooth content by ~0.5, so a
+    mean-difference tolerance near 1 would barely or not at all separate it from rounding.  If a future wheel pair
+    diverges by rounding alone, loosen these to a bounded difference rather than chasing the pixels.
+
+    CMYK sources are the one exception: ``simplejpeg`` and Pillow both apply the Adobe CMYK-to-RGB conversion but
+    round it slightly differently, so that comparison uses a small tolerance (measured max absolute difference of 2
+    on the fixture below) instead of exact equality.
     """
 
     @requires_simplejpeg
@@ -113,6 +137,24 @@ class TestDecodeImage:
         np.testing.assert_array_equal(pixels, expected)
 
     @requires_simplejpeg
+    def test_cmyk_jpeg_matches_pillow_within_rounding_tolerance(self, tmp_path: Path) -> None:
+        """CMYK JPEG sources decode to RGB pixels within a small rounding tolerance of Pillow's conversion.
+
+        ``simplejpeg`` and Pillow both apply the Adobe CMYK-to-RGB conversion but round it slightly differently
+        (measured max absolute difference of 2 on this fixture), so unlike every other comparison in this class this one
+        does not assert exact equality — see the class docstring.
+        """
+        jpeg_path = tmp_path / "cmyk.jpg"
+        write_cmyk_jpeg(jpeg_path, 40, 32)
+        expected, _ = pillow_decode(jpeg_path)
+
+        pixels, scales = decode_image(jpeg_path)
+
+        assert scales == (1.0, 1.0)
+        assert pixels.shape == expected.shape
+        np.testing.assert_allclose(pixels.astype(int), expected.astype(int), atol=2)
+
+    @requires_simplejpeg
     def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path) -> None:
         """A JPEG simplejpeg rejects falls through to Pillow, so callers see the same ``OSError`` as before."""
         jpeg_path = tmp_path / "img.jpg"
@@ -159,6 +201,22 @@ class TestDecodeImage:
         assert scales == (1.0, 1.0)
         np.testing.assert_array_equal(pixels, expected)
 
+    def test_bytes_png_uses_pillow_and_ignores_draft(self, tmp_path: Path) -> None:
+        """Non-JPEG bytes decode through Pillow at full resolution regardless of ``draft_size``.
+
+        Every other ``decode_image_bytes`` case in this file feeds JPEG bytes; this is the only one confirming its final
+        ``Image.open`` fallback also handles a non-JPEG payload, which is what an in-memory reader (an archive member
+        whose extension does not guarantee JPEG content) can hand it.
+        """
+        png_path = tmp_path / "img.png"
+        expected = np.random.default_rng(0).integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+        Image.fromarray(expected).save(png_path)
+
+        pixels, scales = decode_image_bytes(png_path.read_bytes(), draft_size=8)
+
+        assert scales == (1.0, 1.0)
+        np.testing.assert_array_equal(pixels, expected)
+
     @pytest.mark.parametrize("draft_size", [None, 256])
     def test_bytes_entry_point_matches_path_entry_point(self, tmp_path: Path, draft_size: int | None) -> None:
         """``decode_image_bytes`` is the policy ``decode_image`` applies, so in-memory readers get the same result."""
@@ -182,3 +240,70 @@ class TestDecodeImage:
 
         assert scales == expected_scales
         np.testing.assert_array_equal(pixels, expected)
+
+    @pytest.mark.parametrize("draft_size", [None, 256])
+    def test_bytes_without_simplejpeg_falls_back_to_pillow(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, draft_size: int | None
+    ) -> None:
+        """With ``simplejpeg`` unavailable, ``decode_image_bytes`` still drafts through Pillow.
+
+        ``WebDatasetDetection._decode`` calls ``decode_image_bytes`` directly rather than going through
+        ``decode_image``, so a reader without the ``[train]`` extra takes exactly this fallback path; the
+        ``test_without_simplejpeg_falls_back_to_pillow`` case above only exercises it via ``decode_image``'s file-based
+        wrapper.
+        """
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_jpeg(jpeg_path, 961, 541)
+        expected, expected_scales = pillow_decode(jpeg_path, draft_size)
+
+        pixels, scales = decode_image_bytes(jpeg_path.read_bytes(), draft_size)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(pixels, expected)
+
+    @requires_simplejpeg
+    def test_bytes_garbage_after_soi_raises_pillow_error(self) -> None:
+        """Bytes with a valid JPEG SOI marker but a garbage payload raise the same error Pillow would.
+
+        Exercises the ``except ValueError: pass`` fallback in ``decode_image_bytes``:
+        ``simplejpeg.decode_jpeg_header`` rejects the corrupt payload with a ``ValueError``, so decoding must fall
+        through to Pillow and surface Pillow's own error instead of swallowing it.
+        """
+        data = b"\xff\xd8" + bytes(range(256))
+
+        with pytest.raises(Image.UnidentifiedImageError):
+            decode_image_bytes(data)
+
+
+class TestCocoDetectionRealPathParity:
+    """The dataset's real read path preserves the pixel-parity contract ``decode_image`` provides directly."""
+
+    def test_getitem_image_matches_pillow_reference(self, tmp_path: Path) -> None:
+        """``CocoDetection.__getitem__`` returns pixels identical to a direct Pillow decode of the same file.
+
+        Every other test in this file calls ``decode_image``/``decode_image_bytes`` directly.  This drives the real
+        consumer path instead -- ``CocoDetection._decode_image`` -> ``Image.fromarray`` -> ``ConvertCoco`` -> the
+        returned image -- so a mismatch introduced anywhere along that chain, not only inside ``io_utils``, would
+        surface here.
+        """
+        img_dir = tmp_path / "images"
+        img_dir.mkdir()
+        jpeg_path = img_dir / "img1.jpg"
+        write_test_jpeg(jpeg_path, 64, 48)
+        expected, _ = pillow_decode(jpeg_path)
+        ann_file = tmp_path / "annotations.json"
+        ann_file.write_text(
+            json.dumps(
+                {
+                    "images": [{"id": 1, "file_name": "img1.jpg", "width": 64, "height": 48}],
+                    "annotations": [],
+                    "categories": [{"id": 1, "name": "cat", "supercategory": "animal"}],
+                }
+            )
+        )
+
+        dataset = CocoDetection(img_dir, ann_file, transforms=None)
+        image, _ = dataset[0]
+
+        np.testing.assert_array_equal(np.array(image), expected)
