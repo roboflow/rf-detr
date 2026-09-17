@@ -109,7 +109,21 @@ class CudaGraphTrainingRunner:
         graphed = self._graphed_cache.get(key)
         if graphed is None:
             graphed = self._try_capture(tensors, mask, key)
+        self._own_accumulated_gradients()
         return graphed(tensors, mask)
+
+    def _own_accumulated_gradients(self) -> None:
+        """Move live gradients out of the static buffers a previous graphed backward handed to autograd.
+
+        ``make_graphed_callables`` returns its static gradient buffers from every backward. When ``.grad`` was ``None``,
+        autograd adopts the buffer itself instead of copying it, and the next replay overwrites that buffer before
+        autograd accumulates into it, turning ``g0 + g1`` into ``2 * g1``. Copying before the replay costs one gradient-
+        sized copy per microbatch after the first of an accumulation window and nothing when
+        ``zero_grad(set_to_none=True)`` ran in between.
+        """
+        for parameter in self.inner.parameters():
+            if parameter.grad is not None:
+                parameter.grad = parameter.grad.clone()
 
     def _try_capture(self, tensors: Tensor, mask: Tensor, key: _ExecutionKey) -> _GraphedCallable:
         """Capture one signature without modifying live accumulated gradients."""

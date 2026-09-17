@@ -51,6 +51,32 @@ class _CaptureUnsupportedModel(_TinyGraphableModel):
         return output
 
 
+class _StaticGradProjection(torch.autograd.Function):
+    """Linear projection whose backward hands out the same gradient buffers on every call.
+
+    This mirrors the ``Graphed`` function inside ``torch.cuda.make_graphed_callables``: the backward graph writes into
+    static buffers and returns ``buffer.detach()``, so a replay overwrites whatever autograd received before.
+    """
+
+    @staticmethod
+    def forward(ctx: object, static_grads: list[Tensor], tensors: Tensor, weight: Tensor, bias: Tensor) -> Tensor:
+        """Project the spatial mean and remember what backward needs."""
+        pooled = tensors.mean(dim=(-2, -1))
+        ctx.static_grads = static_grads  # type: ignore[attr-defined]
+        ctx.save_for_backward(pooled)  # type: ignore[attr-defined]
+        return torch.nn.functional.linear(pooled, weight, bias)
+
+    @staticmethod
+    @torch.autograd.function.once_differentiable
+    def backward(ctx: object, grad_output: Tensor) -> tuple[None, None, Tensor, Tensor]:
+        """Overwrite the static buffers in place and return them, as a graph replay does."""
+        (pooled,) = ctx.saved_tensors  # type: ignore[attr-defined]
+        weight_grad, bias_grad = ctx.static_grads  # type: ignore[attr-defined]
+        weight_grad.copy_(grad_output.t() @ pooled)
+        bias_grad.copy_(grad_output.sum(dim=0))
+        return None, None, weight_grad.detach(), bias_grad.detach()
+
+
 def _samples(value: float = 1.0, *, device: torch.device | str = "cpu", batch_size: int = 2) -> NestedTensor:
     """Build a fixed-shape RF-DETR input.
 
@@ -83,6 +109,34 @@ def test_capture_preserves_accumulated_gradients() -> None:
         CudaGraphTrainingRunner(model)(_samples())
 
     torch.testing.assert_close(model.projection.weight.grad, original_grad)
+
+
+def test_replay_accumulates_onto_previous_microbatch_gradients() -> None:
+    """A replayed backward adds to the previous microbatch instead of doubling itself.
+
+    ``make_graphed_callables`` returns its static gradient buffers from every backward. When ``.grad`` was ``None``,
+    autograd adopts that buffer as the parameter gradient, and the next replay overwrites it before accumulating, so
+    ``g0 + g1`` silently becomes ``2 * g1`` for every microbatch after the first of an accumulation window.
+    """
+    model = _TinyGraphableModel()
+    reference = copy.deepcopy(model)
+    static_grads = [torch.zeros_like(parameter) for parameter in model.parameters()]
+
+    def _fake_capture(module: nn.Module, _sample_args: tuple[Tensor, Tensor], **_kwargs: object) -> object:
+        def _replay(tensors: Tensor, _mask: Tensor) -> dict[str, Tensor]:
+            return {"pred": _StaticGradProjection.apply(static_grads, tensors, *module.inner.parameters())}
+
+        return _replay
+
+    with patch("torch.cuda.make_graphed_callables", side_effect=_fake_capture):
+        runner = CudaGraphTrainingRunner(model)
+        runner(_samples(1.0))["pred"].sum().backward()
+        runner(_samples(3.0))["pred"].sum().backward()
+    reference(_samples(1.0))["pred"].sum().backward()
+    reference(_samples(3.0))["pred"].sum().backward()
+
+    torch.testing.assert_close(model.projection.weight.grad, reference.projection.weight.grad)
+    torch.testing.assert_close(model.projection.bias.grad, reference.projection.bias.grad)
 
 
 def test_runner_does_not_change_registered_model_state() -> None:
