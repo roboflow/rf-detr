@@ -2485,6 +2485,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Multi-GPU keypoint training with <code>grad_accum_steps &gt; 1</code> now synchronizes gradients once per optimizer step instead of once per microbatch, avoiding redundant DDP reductions.</p>
 </li>
 <li>
+<p>On Python 3.14+, <code>dice_loss_jit</code>, <code>sigmoid_ce_loss_jit</code>, <code>batch_dice_loss_jit</code>, and <code>batch_sigmoid_ce_loss_jit</code> are plain aliases of their eager functions because TorchScript is unsupported there; on Python 3.10–3.13 they remain <code>torch.jit.script</code> products for backward compatibility. As a result, <code>import rfdetr</code> no longer emits the unsupported-TorchScript warning on Python 3.14+. Python 3.14 joins the CPU CI matrix and the package classifiers.</p>
+</li>
+<li>
 <p>The ONNX Runtime CPU inference session built by <code>RFDETR.export(format="onnx")</code>'s inference helper no longer lets its intra-op thread pool busy-spin between calls. Spinning previously contended for CPU with any other work sharing the process — including this same helper's own torchvision-based preprocessing step — for as long as the session was alive.</p>
 </li>
 </ul>
