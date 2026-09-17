@@ -458,12 +458,12 @@ model = RFDETRNano(compile=True, cuda_graphs=True)
 model.train(dataset_dir="path/to/dataset")
 ```
 
-Measured on one NVIDIA RTX PRO 6000 (Blackwell) with RF-DETR Nano, BF16, resolution 384, `multi_scale=False`, synthetic detection batches, torch 2.11, 100 timed steps after warm-up (images per second; GPU busy is the fraction of wall time with a kernel running, from a profiler trace):
+Measured on one NVIDIA RTX PRO 6000 (Blackwell) with RF-DETR Nano, BF16, resolution 384, `multi_scale=False`, synthetic detection batches, torch 2.11, 100 timed steps after warm-up (GPU busy is the fraction of wall time with a kernel running, from a profiler trace):
 
-| batch | eager | `cuda_graphs` | `compile`     | both          | both vs `compile` | GPU busy (eager → both) |
-| ----- | ----- | ------------- | ------------- | ------------- | ----------------- | ----------------------- |
-| 4     | 78.7  | 95.3 (1.21×)  | 96.8 (1.23×)  | 116.0 (1.47×) | **1.20×**         | 0.32 → 0.42             |
-| 64    | 246.8 | 249.7 (1.01×) | 322.8 (1.31×) | 325.7 (1.32×) | 1.01×             | 0.85 → 0.83             |
+| batch [img] | eager [img/s] | `cuda_graphs` [img/s] | `compile` [img/s] | both [img/s]  | both vs `compile` [×] | GPU busy eager → both [-] |
+| ----------- | ------------- | --------------------- | ----------------- | ------------- | --------------------- | ------------------------- |
+| 4           | 78.7          | 95.3 (1.21×)          | 96.8 (1.23×)      | 116.0 (1.47×) | **1.20×**             | 0.32 → 0.42               |
+| 64          | 246.8         | 249.7 (1.01×)         | 322.8 (1.31×)     | 325.7 (1.32×) | 1.01×                 | 0.85 → 0.83               |
 
 At batch 4 the two gains stack: compilation alone leaves the launch gaps in place (GPU busy stays at 0.32), and graph replay of the compiled kernels removes them. At batch 64 the compiled kernels already run back to back, so replay adds under 1%, inside run-to-run noise; the remaining 15–20% of each step is spent outside the model (matcher, loss, data loading) and neither option reaches it. The same run on an A100 gave 1.70× over `compile` at batch 4 and the same parity at batch 64, so the small-batch gain depends on how much launch overhead the host adds.
 
