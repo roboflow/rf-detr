@@ -483,6 +483,12 @@ class ModelConfig(BaseConfig):
             ``amp_dtype`` is left at its default and this field is set to ``False``.
         compile: Compile the model with ``torch.compile`` for faster throughput. Defaults to
             ``False``.
+        cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
+            graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
+            sizes it matches eager and ``compile`` is the better lever. Combined with
+            ``compile=True`` the replay is delegated to Inductor's CUDA graph trees, which
+            stacks both gains at small batch sizes and matches plain compilation at large
+            ones. Defaults to ``False``.
         pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
         device: Target device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if not set.
         gradient_checkpointing: Trade compute for memory by checkpointing activations. Defaults
@@ -518,6 +524,7 @@ class ModelConfig(BaseConfig):
     group_detr: int = 13
     gradient_checkpointing: bool = False
     compile: bool = False
+    cuda_graphs: bool = False
     fused_optimizer: bool = True
     positional_encoding_size: int
     ia_bce_loss: bool = True

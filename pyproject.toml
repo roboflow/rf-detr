@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
     "Topic :: Software Development",
     "Topic :: Scientific/Engineering",
@@ -220,13 +221,6 @@ xla = [
 ]
 
 [dependency-groups]
-# TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
-#   Remove this group and the --group ci-gpu-pin references in CI once the driver is updated.
-#   Does not affect users installing rfdetr from PyPI.
-ci-gpu-pin = [
-    "torch<2.11",
-    "torchvision<0.26",
-]
 
 # TODO: Temporary: executorch==1.3.1's prebuilt wheel is compiled against ~torch-2.12.x's C10 ABI
 #   (executorch itself only floors torch>=2.12.0a0, no ceiling). torch>=2.13.0 removed/changed a C10
@@ -236,8 +230,13 @@ ci-gpu-pin = [
 #   ships a release compatible with newer torch. Does not affect users installing rfdetr from PyPI —
 #   see rfdetr.export._executorch.exporter._check_executorch_available(require_runtime=True) for the
 #   equivalent runtime guidance surfaced to end users who hit this.
+#   executorch>=1.4 needs torch>=2.13 and says so, so it never resolved under this pin; 1.5.0
+#   (2026-09-16) dropped its torch requirement entirely, resolves against torch 2.12.1, and its
+#   runtime then fails every `Method.execute` with "tensor does not have a device". Cap executorch
+#   alongside torch until both pins move together.
 ci-executorch-pin = [
     "torch<2.13",
+    "executorch<1.4",
 ]
 
 build = [
@@ -319,18 +318,9 @@ override-dependencies = [
     "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
-# ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
-# from executorch's own metadata) are unsatisfiable together -- no CI job combines them, but
-# `uv sync --all-groups` and a plain `uv lock` need to know that so the universal resolver
-# forks the two instead of failing to find one lockfile that satisfies both at once.
-#
 # coreml (torch<2.12, see coreml extra comment) and executorch (torch>=2.12.0a0) are likewise
 # unsatisfiable together -- no CI job combines them either, same fork rationale.
 conflicts = [
-    [
-        { group = "ci-gpu-pin" },
-        { extra = "executorch" },
-    ],
     [
         { extra = "coreml" },
         { extra = "executorch" },
@@ -360,6 +350,22 @@ conflicts = [
         { group = "typing" },
         { extra = "xla" },
     ],
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "coreml" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "tflite" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "xla" },
+    ],
+    [
+        { group = "ci-executorch-pin" },
+        { group = "typing" },
+    ],
     # litert-torch 0.9.x pins torch<2.14 in its own metadata; the typing group pins torch==2.14.0.
     [
         { group = "typing" },
@@ -370,10 +376,6 @@ conflicts = [
     [
         { extra = "litert" },
         { extra = "tflite" },
-    ],
-    [
-        { group = "typing" },
-        { group = "ci-gpu-pin" },
     ],
     [
         { group = "typing" },

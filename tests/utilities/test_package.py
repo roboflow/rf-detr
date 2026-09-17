@@ -10,7 +10,10 @@ import sys
 from unittest.mock import patch
 
 import pytest
+import torch
 
+from rfdetr.models import criterion
+from rfdetr.utilities import box_ops
 from rfdetr.utilities.package import get_sha
 
 
@@ -197,6 +200,57 @@ class TestImportPaths:
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
+
+    def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
+        """Python 3.14+ imports must not invoke unsupported TorchScript compilation.
+
+        TorchScript remains the compatibility contract on supported earlier Python versions, where its warning does not
+        represent the reported regression.
+        """
+        if sys.version_info < (3, 14):
+            pytest.skip("TorchScript remains supported before Python 3.14")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import warnings\n"
+                    "warnings.filterwarnings('error', message=r'.*torch\\.jit\\.script.*')\n"
+                    "import rfdetr\n"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            "Subprocess for top-level import failed:\n"
+            f"return code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+
+    @pytest.mark.parametrize(
+        ("alias", "eager"),
+        [
+            pytest.param(criterion.dice_loss_jit, criterion.dice_loss, id="dice"),
+            pytest.param(criterion.sigmoid_ce_loss_jit, criterion.sigmoid_ce_loss, id="sigmoid-ce"),
+            pytest.param(box_ops.batch_dice_loss_jit, box_ops.batch_dice_loss, id="batch-dice"),
+            pytest.param(box_ops.batch_sigmoid_ce_loss_jit, box_ops.batch_sigmoid_ce_loss, id="batch-sigmoid-ce"),
+        ],
+    )
+    def test_jit_loss_aliases_select_versioned_implementation(self, alias: object, eager: object) -> None:
+        """Loss aliases select the documented implementation for this Python version.
+
+        Python 3.14+ must not compile TorchScript during import; earlier supported versions preserve their historical
+        scripted aliases.
+        """
+        if sys.version_info >= (3, 14):
+            assert alias is eager
+        else:
+            assert isinstance(alias, torch.jit.ScriptFunction)
+            assert alias is not eager
 
     def test_identity_across_import_paths(self) -> None:
         """The same class object must be returned regardless of import path.

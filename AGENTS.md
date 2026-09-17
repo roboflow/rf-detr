@@ -64,7 +64,7 @@ pip install uv
 uv sync --all-groups
 ```
 
-**Prerequisites:** Python >=3.10 (tested on 3.10-3.13)
+**Prerequisites:** Python >=3.10 (tested on 3.10-3.14)
 
 ### Dependency Information
 
@@ -229,6 +229,7 @@ uv run twine check --strict dist/*
 - RFDETR wrappers: `self.model` is the model context returned by `get_model()`
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
+- Opt-in CUDA graph training is routed by `RFDETRModelModule` through the plain-object `CudaGraphTrainingRunner`; never replace the registered `self.model`, because optimizer, EMA, and checkpoint keys must keep their existing parameter ownership. The graph path is single-GPU detection only and falls back per execution signature. With `compile=True` as well, replay is delegated to Inductor cudagraph trees (`triton.cudagraphs` compile option + `torch.compiler.cudagraph_mark_step_begin()` per `training_step`); `CudaGraphTrainingRunner` never wraps the `OptimizedModule`.
 
 **Model Export:**
 
@@ -345,7 +346,7 @@ result = subprocess.run(
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- **ci-tests-cpu.yml:** CPU tests across OS/Python versions
+- **ci-tests-cpu.yml:** CPU tests on Linux across Python 3.10-3.14, plus Windows and macOS on Python 3.10 and 3.13
 - **ci-tests-gpu.yml:** GPU-dependent tests
 - **ci-github-tests.yml:** Tests and doctests for the helper scripts under `.github/scripts/`, which the CPU/GPU suites never collect; their tests live in `.github/_tests/`
 - **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
