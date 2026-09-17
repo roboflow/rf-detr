@@ -8,13 +8,15 @@
 from __future__ import annotations
 
 import io
+import warnings
 from pathlib import Path
+from typing import IO
 
 import numpy as np
 from numpy.typing import NDArray
 
 try:
-    import simplejpeg  # type: ignore[import-untyped,unused-ignore]
+    import simplejpeg  # type: ignore[import-untyped,import-not-found,unused-ignore]
 except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to Pillow without it
     simplejpeg = None
 from PIL import Image
@@ -41,6 +43,75 @@ def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> in
         return 1
     scale = min(width // draft_size, height // draft_size)
     return next((factor for factor in (8, 4, 2) if scale >= factor), 1)
+
+
+def _check_decompression_bomb(width: int, height: int) -> None:
+    """Apply Pillow's decompression-bomb guard to a header size before any pixel buffer is allocated.
+
+    Mirrors ``PIL.Image._decompression_bomb_check`` through public names only.  ``PIL.Image.MAX_IMAGE_PIXELS`` is
+    read at call time, so a process-wide override (``rfdetr.datasets.o365`` raises it) still applies and ``None``
+    disables the guard; more than twice the limit raises and more than the limit warns, with Pillow's own wording so
+    callers filtering on the message see the same text from either decoder.
+
+    Args:
+        width: Full-size image width from the header.
+        height: Full-size image height from the header.
+
+    Raises:
+        PIL.Image.DecompressionBombError: If ``width * height`` exceeds twice ``PIL.Image.MAX_IMAGE_PIXELS``.
+
+    Examples:
+        >>> _check_decompression_bomb(10, 10)
+    """
+    limit = Image.MAX_IMAGE_PIXELS
+    if limit is None:
+        return
+
+    pixels = max(1, width) * max(1, height)
+
+    if pixels > 2 * limit:
+        msg = (
+            f"Image size ({pixels} pixels) exceeds limit of {2 * limit} pixels, could be decompression bomb DOS attack."
+        )
+        raise Image.DecompressionBombError(msg)
+
+    if pixels > limit:
+        warnings.warn(
+            f"Image size ({pixels} pixels) exceeds limit of {limit} pixels, could be decompression bomb DOS attack.",
+            Image.DecompressionBombWarning,
+        )
+
+
+def _decode_with_pillow(
+    source: Path | IO[bytes], draft_size: int | None
+) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+    """Decode a file or an in-memory stream through Pillow into a writeable RGB array with its decode scales.
+
+    The fallback both entry points share: ``PIL.Image.draft`` applies the JPEG reduction when ``draft_size`` is set
+    (a no-op for other formats) and ``np.array`` copies the converted pixels into a buffer that outlives the closed
+    image.
+
+    Args:
+        source: Image file path, or a binary stream positioned at the start of the encoded bytes.
+        draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+
+    Returns:
+        Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
+        decoder did not reduce.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> Image.fromarray(np.zeros((32, 64, 3), dtype=np.uint8)).save(encoded, format="JPEG")
+        >>> pixels, scales = _decode_with_pillow(io.BytesIO(encoded.getvalue()), draft_size=16)
+        >>> pixels.shape, scales
+        ((16, 32, 3), (0.5, 0.5))
+    """
+    with Image.open(source) as image:
+        full_width, full_height = image.size
+        if draft_size is not None:
+            image.draft("RGB", (draft_size, draft_size))
+        pixels = np.array(image.convert("RGB"))
+    return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
 
 
 def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
@@ -80,12 +151,7 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
                 encoded.seek(0)
                 return decode_image_bytes(encoded.read(), draft_size)
 
-    with Image.open(path) as image:
-        full_width, full_height = image.size
-        if draft_size is not None:
-            image.draft("RGB", (draft_size, draft_size))
-        pixels = np.asarray(image.convert("RGB"))
-    return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
+    return _decode_with_pillow(path, draft_size)
 
 
 def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
@@ -109,8 +175,8 @@ def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDAr
         try:
             header = simplejpeg.decode_jpeg_header(data)
             full_height, full_width = int(header[0]), int(header[1])
-            # Pillow's own check, so the limit and its warn/raise tiers stay exactly those of ``Image.open``.
-            Image._decompression_bomb_check((full_width, full_height))
+            # Pillow's guard on public names, so the limit and its warn/raise tiers stay those of ``Image.open``.
+            _check_decompression_bomb(full_width, full_height)
             reduction = _jpeg_draft_reduction(full_width, full_height, draft_size)
             pixels = simplejpeg.decode_jpeg(
                 data,
@@ -122,8 +188,4 @@ def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDAr
             pass  # corrupt or unsupported JPEG: let Pillow decode it or raise its usual error
         else:
             return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
-    with Image.open(io.BytesIO(data)) as image:
-        full_width, full_height = image.size
-        if draft_size is not None:
-            image.draft("RGB", (draft_size, draft_size))
-        return np.asarray(image.convert("RGB")), (image.width / full_width, image.height / full_height)
+    return _decode_with_pillow(io.BytesIO(data), draft_size)
