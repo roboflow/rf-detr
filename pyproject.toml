@@ -220,13 +220,6 @@ xla = [
 ]
 
 [dependency-groups]
-# TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
-#   Remove this group and the --group ci-gpu-pin references in CI once the driver is updated.
-#   Does not affect users installing rfdetr from PyPI.
-ci-gpu-pin = [
-    "torch<2.11",
-    "torchvision<0.26",
-]
 
 # TODO: Temporary: executorch==1.3.1's prebuilt wheel is compiled against ~torch-2.12.x's C10 ABI
 #   (executorch itself only floors torch>=2.12.0a0, no ceiling). torch>=2.13.0 removed/changed a C10
@@ -333,10 +326,6 @@ override-dependencies = [
 # unsatisfiable together -- no CI job combines them either, same fork rationale.
 conflicts = [
     [
-        { group = "ci-gpu-pin" },
-        { extra = "executorch" },
-    ],
-    [
         { extra = "coreml" },
         { extra = "executorch" },
     ],
@@ -397,10 +386,6 @@ conflicts = [
     [
         { extra = "litert" },
         { extra = "tflite" },
-    ],
-    [
-        { group = "typing" },
-        { group = "ci-gpu-pin" },
     ],
     [
         { group = "typing" },
