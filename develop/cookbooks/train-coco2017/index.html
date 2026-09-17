@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-17T16:52:00">
+  <meta property="article:modified_time" content="2026-09-17T21:21:06">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-17T16:52:00",
+    "dateModified": "2026-09-17T21:21:06",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2451,6 +2451,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4 - Load the model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gpu-configuration-recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU configuration recommendations
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2510,10 +2527,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
-  <a href="#optional-fp8" class="md-nav__link">
+  <a href="#optional-transformer-engine-fp8-graphs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Optional: FP8
+        Optional: Transformer Engine FP8 graphs
       
     </span>
   </a>
@@ -3288,15 +3305,18 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 <p>Downloads the full public <strong>COCO2017</strong> dataset and trains <strong>RF-DETR Nano</strong> from scratch for 40 epochs, end to
 end — <code>pretrain_weights=None</code>, so no released detector checkpoint is loaded (section 4 covers what that costs
 in accuracy).</p>
-<p>This notebook uses <code>torch.compile</code> with automatic mixed precision (bf16 when supported, otherwise fp16) on any CUDA GPU. Measured on an RTX PRO 6000 (96 GB) an epoch takes
-about 7 minutes, so the 40-epoch run fits in about 5 hours; on an L4 (24 GB) an epoch takes about 36 minutes and
-the run needs several sessions with <code>resume</code>. A100, T4 and other CUDA GPUs run the same recipe with <code>batch_size</code>
-adjusted; CPU and Apple MPS do not benefit from compilation and should use the fine-tuning cookbooks instead.
-FP8 via Transformer Engine is optional and covered under the training settings in section 5: on Nano it is
-within a few percent of bf16 either way, because the 14 classification heads (91 outputs) are not FP8-shaped and
-stay in bf16.</p>
+<p>This notebook uses <code>torch.compile</code> with automatic mixed precision (bf16 when supported, otherwise fp16) on
+any CUDA GPU by default. Measured on an RTX PRO 6000 (96 GB) an epoch takes about 7 minutes, so the 40-epoch
+run fits in about 5 hours; on an L4 (24 GB) an epoch takes about 36 minutes and the run needs several
+sessions with <code>resume</code>. A100, T4 and other CUDA GPUs run the same recipe with <code>batch_size</code> adjusted; CPU and
+Apple MPS do not benefit from compilation and should use the fine-tuning cookbooks instead.</p>
+<p>An opt-in Transformer Engine FP8 CUDA-graph route is also available (<code>USE_TE_GRAPHS = True</code> in section 4):
+it nearly doubled throughput in the batch-4 synthetic experiment below, but its full-COCO batch-128
+throughput and accuracy still need validation, so it stays off by default. Enabling every optimization
+together is not supported: FP8 graphs use Transformer Engine capture, not the compiler's graph runtime, so
+<code>USE_TE_GRAPHS=True</code> disables <code>compile</code>.</p>
 <p>Skip the RAM-disk move on a low-RAM host — it needs ~19 GB free in <code>/dev/shm</code>.</p>
-<p>In addition to default throughput improvements, this notebook enables compilation, with host-adaptive knobs
+<p>In addition to library throughput improvements, this notebook enables compilation, with host-adaptive knobs
 (<code>num_workers</code>, <code>seed</code>), a batch size measured on two GPUs, and a learning-rate schedule sized for a 40-epoch
 run, each explained where it is set.</p>
 <p>Kept deliberately minimal: download, train, plot the metrics <code>CSVLogger</code> wrote during training. For dataset
@@ -3501,9 +3521,13 @@ print("COCO2017 is complete.")</div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="2-set-up-the-environment">2 - Set up the environment<a class="anchor-link" href="#2-set-up-the-environment">¶</a></h2><p>The throughput work described above has not shipped in a tagged release yet, so this cell installs from the
-<code>develop</code> branch. Once a release containing it is out, replace the git URL with a version pin.</p>
-<p><strong>GPU required.</strong> Training needs a CUDA GPU — in Colab: <strong>Runtime → Change runtime type → GPU</strong>. The optional
-FP8 path needs one extra dependency and is covered in section 5; the install below is the automatic mixed-precision recipe.</p>
+<code>develop</code> branch. Once a release containing it is out, replace the git URL with a version pin.
+The install below also includes the CUDA/Transformer Engine dependency, needed only if you opt into the
+FP8 graph route (<code>USE_TE_GRAPHS = True</code> in section 4); this cookbook change and its runtime implementation
+must land together. Older revisions can warn and run FP8 eagerly instead. If you enable it, confirm the
+training log reports <code>Backend: Transformer Engine FP8</code>.</p>
+<p><strong>GPU required.</strong> Training needs a CUDA GPU — in Colab: <strong>Runtime → Change runtime type → GPU</strong>. The default recipe
+below is BF16/FP16 compilation; the optional Transformer Engine FP8 graph route is covered in section 4.</p>
 </div>
 </div>
 </div>
@@ -3526,9 +3550,19 @@ FP8 path needs one extra dependency and is covered in section 5; the install bel
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">pip</span> <span class="n">install</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">build</span><span class="o">-</span><span class="n">isolation</span> <span class="s2">"rfdetr[train,augment,visual] @ git+https://github.com/roboflow/rf-detr.git@develop"</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="o">%</span><span class="n">pip</span> <span class="n">install</span> <span class="o">--</span><span class="n">progress</span><span class="o">-</span><span class="n">bar</span> <span class="n">on</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">build</span><span class="o">-</span><span class="n">isolation</span> <span class="s2">"rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"</span>
+<span class="o">%</span><span class="n">pip</span> <span class="n">install</span> <span class="o">--</span><span class="n">progress</span><span class="o">-</span><span class="n">bar</span> <span class="n">on</span> <span class="s2">"jedi&gt;=0.18"</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"Using interpreter:"</span><span class="p">,</span> <span class="n">sys</span><span class="o">.</span><span class="n">executable</span><span class="p">)</span>
+<span class="err">!</span><span class="p">{</span><span class="n">sys</span><span class="o">.</span><span class="n">executable</span><span class="p">}</span> <span class="o">-</span><span class="n">m</span> <span class="n">pip</span> <span class="n">check</span> <span class="o">||</span> <span class="n">echo</span> <span class="s2">"warning: pip check reported conflicts (may be pre-existing/unrelated)"</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">%pip install --no-build-isolation "rfdetr[train,augment,visual] @ git+https://github.com/roboflow/rf-detr.git@develop"</div>
+<div class="clipboard-copy-txt" id="cell-3">%pip install --progress-bar on --no-build-isolation "rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"
+%pip install --progress-bar on "jedi&gt;=0.18"
+import sys
+
+print("Using interpreter:", sys.executable)
+!{sys.executable} -m pip check || echo "warning: pip check reported conflicts (may be pre-existing/unrelated)"</div>
 </div>
 </div>
 </div>
@@ -3651,19 +3685,22 @@ loader already uses, so it does not need to be passed explicitly.</p>
 <span class="n">RAMDISK_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"/dev/shm/coco2017"</span><span class="p">)</span>
 <span class="k">if</span> <span class="n">RAMDISK_ROOT</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
     <span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">RAMDISK_ROOT</span>
+<span class="n">USE_TE_GRAPHS</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># Opt-in: True selects the Transformer Engine FP8 CUDA-graph showcase (RTX PRO 6000).</span>
 <span class="n">OUTPUT_DIR</span> <span class="o">=</span> <span class="s2">"output/det_coco2017_nano"</span>
 <span class="n">EPOCHS</span> <span class="o">=</span> <span class="mi">40</span>
 <span class="c1"># Capped: measured on a 48-core host, uncapped workers sat ~15% CPU-utilized while holding ~70% of RAM.</span>
 <span class="n">NUM_WORKERS</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="ow">or</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>
-<span class="c1"># RTX PRO 6000 / H100: 128 uses ~40 % of memory and already saturates the GPU (288 fits, same img/s).</span>
-<span class="c1"># L4 / T4 / A10: 32. A100 40 GB: 64.</span>
-<span class="n">BATCH_SIZE</span> <span class="o">=</span> <span class="mi">128</span>
-<span class="c1"># CUDA graph replay of the compiled kernels (Inductor cudagraph trees). Pays only when the batch is small enough</span>
-<span class="c1"># that the GPU idles between kernels: measured on the RTX PRO 6000, 1.20x over compile alone at batch 4 and</span>
-<span class="c1"># within 1 % of it at batch 64, so it stays off for this batch-128 recipe. Flip it on for batch &lt;= 16.</span>
-<span class="n">CUDA_GRAPHS</span> <span class="o">=</span> <span class="n">BATCH_SIZE</span> <span class="o">&lt;=</span> <span class="mi">16</span>
+<span class="c1"># Batch 128 saturated the measured RTX PRO 6000 BF16 baseline; FP8 graph memory/throughput needs validation.</span>
+<span class="c1"># Other GPUs: use the configuration table below.</span>
+<span class="n">BATCH_SIZE</span> <span class="o">=</span> <span class="mi">128</span>  <span class="c1"># User-tune this for the available GPU; Transformer Engine evidence below uses synthetic batch 4 only.</span>
+<span class="c1"># FP8 uses Transformer Engine graphs. The compilation alternative enables Inductor graphs only at small batches.</span>
+<span class="n">CUDA_GRAPHS</span> <span class="o">=</span> <span class="n">USE_TE_GRAPHS</span> <span class="ow">or</span> <span class="n">BATCH_SIZE</span> <span class="o">&lt;=</span> <span class="mi">16</span>
 
-<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cuda_graphs</span><span class="o">=</span><span class="n">CUDA_GRAPHS</span><span class="p">,</span> <span class="n">pretrain_weights</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span>
+    <span class="nb">compile</span><span class="o">=</span><span class="ow">not</span> <span class="n">USE_TE_GRAPHS</span><span class="p">,</span>
+    <span class="n">cuda_graphs</span><span class="o">=</span><span class="n">CUDA_GRAPHS</span><span class="p">,</span>
+    <span class="n">pretrain_weights</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-5">import os
 from pathlib import Path
@@ -3684,19 +3721,22 @@ COCO_ROOT = Path("datasets/coco2017")
 RAMDISK_ROOT = Path("/dev/shm/coco2017")
 if RAMDISK_ROOT.is_dir():
     COCO_ROOT = RAMDISK_ROOT
+USE_TE_GRAPHS = False  # Opt-in: True selects the Transformer Engine FP8 CUDA-graph showcase (RTX PRO 6000).
 OUTPUT_DIR = "output/det_coco2017_nano"
 EPOCHS = 40
 # Capped: measured on a 48-core host, uncapped workers sat ~15% CPU-utilized while holding ~70% of RAM.
 NUM_WORKERS = min(os.cpu_count() or 2, 16)
-# RTX PRO 6000 / H100: 128 uses ~40 % of memory and already saturates the GPU (288 fits, same img/s).
-# L4 / T4 / A10: 32. A100 40 GB: 64.
-BATCH_SIZE = 128
-# CUDA graph replay of the compiled kernels (Inductor cudagraph trees). Pays only when the batch is small enough
-# that the GPU idles between kernels: measured on the RTX PRO 6000, 1.20x over compile alone at batch 4 and
-# within 1 % of it at batch 64, so it stays off for this batch-128 recipe. Flip it on for batch &lt;= 16.
-CUDA_GRAPHS = BATCH_SIZE &lt;= 16
+# Batch 128 saturated the measured RTX PRO 6000 BF16 baseline; FP8 graph memory/throughput needs validation.
+# Other GPUs: use the configuration table below.
+BATCH_SIZE = 128  # User-tune this for the available GPU; Transformer Engine evidence below uses synthetic batch 4 only.
+# FP8 uses Transformer Engine graphs. The compilation alternative enables Inductor graphs only at small batches.
+CUDA_GRAPHS = USE_TE_GRAPHS or BATCH_SIZE &lt;= 16
 
-model = RFDETRNano(compile=True, cuda_graphs=CUDA_GRAPHS, pretrain_weights=None)  # type: ignore[no-untyped-call]</div>
+model = RFDETRNano(
+    compile=not USE_TE_GRAPHS,
+    cuda_graphs=CUDA_GRAPHS,
+    pretrain_weights=None,
+)  # type: ignore[no-untyped-call]</div>
 </div>
 </div>
 </div>
@@ -3709,12 +3749,100 @@ model = RFDETRNano(compile=True, cuda_graphs=CUDA_GRAPHS, pretrain_weights=None)
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="gpu-configuration-recommendations">GPU configuration recommendations<a class="anchor-link" href="#gpu-configuration-recommendations">¶</a></h3><p>These settings target throughput for Nano at fixed 384 px, not optimal accuracy. Set <code>USE_TE_GRAPHS</code> and
+<code>BATCH_SIZE</code> in the preceding cell before constructing the model; the precision, compile, and graph flags
+follow automatically. <strong>Starting point</strong> means not benchmarked on that GPU; it is not a fastest-path claim.</p>
+<table>
+<thead>
+<tr>
+<th>GPU</th>
+<th><code>BATCH_SIZE</code></th>
+<th><code>USE_TE_GRAPHS</code></th>
+<th>Precision</th>
+<th>Compile / graphs</th>
+<th>Evidence and recommendation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RTX PRO 6000 Blackwell, 96 GB</td>
+<td>128</td>
+<td><code>False</code></td>
+<td>BF16</td>
+<td>on / off</td>
+<td>Default; measured large-batch COCO baseline.</td>
+</tr>
+<tr>
+<td>RTX PRO 6000 Blackwell, opt-in FP8</td>
+<td>128</td>
+<td><code>True</code></td>
+<td>FP8</td>
+<td>off / on</td>
+<td>Opt-in showcase; graph gain measured only at synthetic batch 4. Validate full-COCO throughput and accuracy before adopting.</td>
+</tr>
+<tr>
+<td>L4, 24 GB</td>
+<td>32</td>
+<td><code>False</code></td>
+<td>BF16</td>
+<td>on / off</td>
+<td>Measured throughput saturates around batch 32; ordinary FP8 was slower. FP8 graphs at this batch are unmeasured.</td>
+</tr>
+<tr>
+<td>H100, 80 GB</td>
+<td>128</td>
+<td><code>False</code></td>
+<td>BF16</td>
+<td>on / off</td>
+<td>Starting point; FP8 is supported, but this workload has no matched FP8-graph benchmark here.</td>
+</tr>
+<tr>
+<td>A100, 40/80 GB</td>
+<td>64</td>
+<td><code>False</code></td>
+<td>BF16</td>
+<td>on / off</td>
+<td>Starting point; Ampere does not support this FP8 route.</td>
+</tr>
+<tr>
+<td>RTX 6000 Ada, 48 GB</td>
+<td>64</td>
+<td><code>False</code></td>
+<td>BF16</td>
+<td>on / off</td>
+<td>Starting point; FP8 capable, but not the Blackwell GPU used in the uploaded graph experiment.</td>
+</tr>
+<tr>
+<td>RTX A6000 / A10</td>
+<td>32</td>
+<td><code>False</code></td>
+<td>BF16</td>
+<td>on / off</td>
+<td>Conservative starting point; Ampere, no FP8 route.</td>
+</tr>
+<tr>
+<td>T4 / Quadro RTX 6000</td>
+<td>32</td>
+<td><code>False</code></td>
+<td>FP16</td>
+<td>on / off</td>
+<td>Starting point; older Turing GPUs, no BF16/FP8 route. Reduce batch if memory is insufficient.</td>
+</tr>
+</tbody>
+</table>
+<p>GPU identity comes from <a href="https://developer.nvidia.com/cuda/gpus">NVIDIA's architecture table</a>;
+<a href="https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/">Transformer Engine supports FP8 on Ada, Hopper and Blackwell</a>.
+All rows retain 40 epochs, <code>grad_accum_steps=1</code>, <code>multi_scale=False</code>, <code>square_resize_div_64=True</code>, and
+<code>num_workers=min(os.cpu_count() or 2, 16)</code>. On CPU-constrained hosts, worker count and JPEG decoding can
+dominate GPU differences. Measure complete epochs after startup, memory, and validation mAP; choose the
+fastest configuration meeting the same accuracy target. Lowering batch size changes effective batch size.</p>
 <h2 id="5-train">5 - Train<a class="anchor-link" href="#5-train">¶</a></h2><p><code>model.train()</code> builds the <code>TrainConfig</code> and hands the rest to PyTorch Lightning: forward pass, bipartite
 matching loss, weight updates, learning-rate scheduling, and periodic COCO mAP validation.</p>
 <p><code>CSVLogger</code> appends one row of metrics per epoch to <code>output_dir/metrics.csv</code>, plotted below. The progress bar
 reports elapsed time per epoch. Compilation adds startup overhead: time subsequent epochs separately.
-A failed CUDA graph capture (<code>CUDA_GRAPHS=True</code>) requires a runtime restart before retrying.
-First try <code>EPOCHS=1</code> to verify training, validation, EMA, and shutdown before committing to 40 epochs.</p>
+A failed CUDA graph capture (<code>CUDA_GRAPHS=True</code> or <code>USE_TE_GRAPHS=True</code>) requires a runtime restart before
+retrying. The Transformer Engine graph path, when enabled, captures one fixed batch/resolution signature;
+changing that shape raises.</p>
 <p>To <strong>resume an interrupted run</strong>, add <code>resume=f"{OUTPUT_DIR}/last.ckpt"</code> to the call below and re-run this cell.
 <code>last.ckpt</code> is rewritten every epoch (the archive <code>checkpoint_&lt;epoch&gt;.ckpt</code> files follow <code>checkpoint_interval</code>,
 10 by default), so a disconnect costs at most the epoch in flight.</p>
@@ -3782,29 +3910,42 @@ depends on the batch, measured on the RTX PRO 6000 with Nano at 384 px, BF16, sy
 </tr>
 </tbody>
 </table>
-<p>At batch 128 the compiled kernels already run back to back, so <code>CUDA_GRAPHS</code> above defaults to off and this
-recipe stays on plain compilation. Turn it on when a small GPU forces the batch into the single digits or low
-teens — it stacks with compilation there. It is validated for single-GPU detection without
+<p>With <code>USE_TE_GRAPHS=False</code> (the default) and batch 128, the compiled kernels already run back to back, so
+this recipe leaves Inductor graphs off. It enables them at batches up to 16, where launch gaps can matter.
+This rule does not affect the optional Transformer Engine graphs, controlled separately by
+<code>USE_TE_GRAPHS</code>. The compiled graph route is validated for single-GPU detection without
 <code>grad_accum_steps &gt; 1</code>; other layouts fall back to plain compilation with a warning. Graph recording adds a few
 seconds per new input shape on top of compile warm-up. See
 <a href="../learn/train/advanced.md#combining-cuda-graphs-with-compilation">Combining CUDA graphs with compilation</a>.</p>
 <h3 id="what-is-left">What is left<a class="anchor-link" href="#what-is-left">¶</a></h3><p>With compilation on, the GPU is busy for about 83 % of each training step at batch 64 and the remaining share
 is spent outside the model: bipartite matching and the loss on the host, and the data loader. No constructor or
-<code>train()</code> flag in this notebook moves that share — larger batches, more workers, FP8, and CUDA graphs were each
-measured and none reach it. The one wall-clock knob that remains is validation: <code>eval_interval=N</code> runs the 5,000-
+<code>train()</code> flag in this notebook moves that share — larger batches, more workers, standard FP8, and Inductor CUDA
+graphs were each measured and none reach it. The optional Transformer Engine graph path has only synthetic
+fixed-shape evidence, not an end-to-end COCO measurement. The one wall-clock knob that remains is validation:
+<code>eval_interval=N</code> runs the 5,000-
 image COCO evaluation every N epochs instead of every epoch, at the cost of a coarser mAP curve in section 6; its
 saving was not measured for this recipe.</p>
-<h3 id="optional-fp8">Optional: FP8<a class="anchor-link" href="#optional-fp8">¶</a></h3><p>Requires the <code>cuda</code> extra (Transformer Engine, Hopper/Ada/Blackwell, Linux x86-64), an integer <code>batch_size</code>, and
+<h3 id="optional-transformer-engine-fp8-graphs">Optional: Transformer Engine FP8 graphs<a class="anchor-link" href="#optional-transformer-engine-fp8-graphs">¶</a></h3><p>Requires the <code>cuda</code> extra (Transformer Engine, Hopper/Ada/Blackwell, Linux x86-64), an integer <code>batch_size</code>, and
 <code>amp_dtype="fp8"</code>. Measured on Nano, FP8 changes throughput by +3 % per epoch on Blackwell and −11 % on an L4,
 and raises the memory ceiling to 320 from 288 (RTX PRO 6000) and to 72 from 64 (L4). Lightning warns at startup
-that 14 linear layers are not FP8-shaped; those are the per-layer classification heads and they run in bf16. Use
-FP8 when you are already set up for it and need the last few percent of batch headroom on Blackwell; otherwise
-bf16 is the recipe.</p>
-<pre><code>%pip install --no-build-isolation "rfdetr[train,augment,visual,cuda] @ git+https://github.com/roboflow/rf-detr.git@develop"
-</code></pre>
-<p>The extra installs <code>transformer-engine[pytorch]</code>, which builds a PyTorch extension at install time: CUDA toolkit
-headers, cuDNN, and a compiler have to be present, Blackwell needs CUDA 12.8 or later, and the kernel has to be
-restarted afterwards. See the <a href="../learn/train/advanced.md#install-the-cuda-extra">advanced FP8 setup guide</a>.</p>
+that 14 linear layers are not FP8-shaped; those are the per-layer classification heads and they run in bf16.
+Those ordinary-FP8 measurements exclude Transformer Engine graphs; they do not predict this combined route.
+The setup cell above installs <code>transformer-engine[pytorch]</code> through RF-DETR's <code>cuda</code> extra
+and builds its PyTorch extension: CUDA toolkit headers, cuDNN, and a compiler have to be present, Blackwell needs
+CUDA 12.8 or later, and the kernel has to be restarted afterwards. See the <a href="../learn/train/advanced.md#install-the-cuda-extra">advanced FP8 setup guide</a>.</p>
+<p>The install cell above uses RF-DETR's existing <code>cuda</code> extra for Transformer Engine and runs <code>pip check</code> after
+installing Jedi. The Transformer Engine-aware graph path was tested with Transformer Engine 2.19.0; no separate
+CUDA-core package or version override is required. Transformer Engine must match the CUDA toolkit, driver,
+cuDNN, and PyTorch ABI; package resolution alone is not compatibility evidence. Restart the kernel after
+installing compiled dependencies, set <code>USE_TE_GRAPHS = True</code>, and run the full 40-epoch
+training cell with <code>amp_dtype="fp8"</code> below.</p>
+<p>This path is limited to single-GPU detection with <code>compile=False</code>, <code>grad_accum_steps=1</code>, <code>multi_scale=False</code>,
+<code>do_random_resize_via_padding=False</code>, and <code>square_resize_div_64=True</code>; aspect-preserving batches with the last
+setting disabled stay eager. It captures one fixed batch/resolution signature; unsupported layouts
+warn and stay eager. A synthetic Nano 384 px / batch-4 run on an RTX PRO 6000 Blackwell used 20 warm-up and
+50 measured steps: 78.075 ms eager versus 40.066 ms with Transformer Engine-aware graphs (about 1.95x
+throughput), with one capture serving 70 calls. This is not COCO parity, accuracy, or large-batch evidence;
+repeat numerical-parity and performance checks on the target GPU before adopting it as a baseline.</p>
 <p>Separately, <code>augmentation_backend="gpu"</code> moves augmentation off the CPU workers — a
 rescue for CPU-starved runtimes (a 2-core Colab), and exactly backwards on this notebook's target: with the CPU
 mostly idle and the GPU saturated, it would add work to the bottleneck and take it away from idle cores.</p>
@@ -3842,7 +3983,11 @@ mostly idle and the GPU saturated, it would add work to the bottleneck and take 
     <span class="n">warmup_epochs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">tensorboard</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
     <span class="n">progress_bar</span><span class="o">=</span><span class="s2">"tqdm"</span><span class="p">,</span>
+    <span class="n">amp_dtype</span><span class="o">=</span><span class="s2">"fp8"</span> <span class="k">if</span> <span class="n">USE_TE_GRAPHS</span> <span class="k">else</span> <span class="s2">"auto"</span><span class="p">,</span>
+    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
     <span class="n">multi_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">do_random_resize_via_padding</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">square_resize_div_64</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-6">model.train(
@@ -3857,7 +4002,11 @@ mostly idle and the GPU saturated, it would add work to the bottleneck and take 
     warmup_epochs=1,
     tensorboard=False,
     progress_bar="tqdm",
+    amp_dtype="fp8" if USE_TE_GRAPHS else "auto",
+    grad_accum_steps=1,
     multi_scale=False,
+    do_random_resize_via_padding=False,
+    square_resize_div_64=True,
 )</div>
 </div>
 </div>
@@ -3979,7 +4128,7 @@ plt.close(map_figure)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 16:52:00 UTC">2026-09-17 16:52:00</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 21:21:06 UTC">2026-09-17 21:21:06</span>
   </span>
 
     
