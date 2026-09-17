@@ -199,9 +199,8 @@ jobs:
       - name: 🚀 Install Packages (tensorrt + onnx extras)
         timeout-minutes: 8
         # [tensorrt] provides tensorrt/polygraphy for the engine build; [onnx] provides the ONNX
-        # export toolchain (the e2e exports RFDETRNano to ONNX first). --group ci-gpu-pin matches the GPU
-        # runner's CUDA driver (torch<2.11), same as ci-tests-gpu.yml.
-        run: uv pip install -e ".[tensorrt,onnx,train,augment,cli,visual]" --group tests --group ci-gpu-pin
+        # export toolchain (the e2e exports RFDETRNano to ONNX first).
+        run: uv pip install -e ".[tensorrt,onnx,train,augment,cli,visual]" --group tests
 
       - name: 🔎 Verify tensorrt import
         # Guard against a silently-skipped parity test: TestTensorRTEndToEnd is gated by a skipif on

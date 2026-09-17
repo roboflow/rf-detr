@@ -220,13 +220,6 @@ xla = [
 ]
 
 [dependency-groups]
-# TODO: Temporary: GPU runner only has CUDA 12.8 driver (12080); torch>=2.11 requires a newer driver.
-#   Remove this group and the --group ci-gpu-pin references in CI once the driver is updated.
-#   Does not affect users installing rfdetr from PyPI.
-ci-gpu-pin = [
-    "torch<2.11",
-    "torchvision<0.26",
-]
 
 # TODO: Temporary: executorch==1.3.1's prebuilt wheel is compiled against ~torch-2.12.x's C10 ABI
 #   (executorch itself only floors torch>=2.12.0a0, no ceiling). torch>=2.13.0 removed/changed a C10
@@ -324,18 +317,9 @@ override-dependencies = [
     "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
-# ci-gpu-pin (torch<2.11, GPU-driver constraint) and the executorch extra (torch>=2.12.0a0,
-# from executorch's own metadata) are unsatisfiable together -- no CI job combines them, but
-# `uv sync --all-groups` and a plain `uv lock` need to know that so the universal resolver
-# forks the two instead of failing to find one lockfile that satisfies both at once.
-#
 # coreml (torch<2.12, see coreml extra comment) and executorch (torch>=2.12.0a0) are likewise
 # unsatisfiable together -- no CI job combines them either, same fork rationale.
 conflicts = [
-    [
-        { group = "ci-gpu-pin" },
-        { extra = "executorch" },
-    ],
     [
         { extra = "coreml" },
         { extra = "executorch" },
@@ -365,12 +349,6 @@ conflicts = [
         { group = "typing" },
         { extra = "xla" },
     ],
-    # ci-executorch-pin now carries an executorch cap, so it inherits every fork the
-    # executorch extra needs (same torch floor) plus the typing group's torch==2.14.0 pin.
-    [
-        { group = "ci-executorch-pin" },
-        { group = "ci-gpu-pin" },
-    ],
     [
         { group = "ci-executorch-pin" },
         { extra = "coreml" },
@@ -397,10 +375,6 @@ conflicts = [
     [
         { extra = "litert" },
         { extra = "tflite" },
-    ],
-    [
-        { group = "typing" },
-        { group = "ci-gpu-pin" },
     ],
     [
         { group = "typing" },
