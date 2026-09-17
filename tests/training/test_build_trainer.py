@@ -1234,6 +1234,60 @@ class TestBuildTrainerEMAShardingGuard:
         assert RFDETREMACallback in types
 
 
+class TestBuildTrainerEMAXLAGuard:
+    """XLA training must disable EMA and its checkpoint/evaluation bookkeeping."""
+
+    def test_xla_disables_ema_and_uses_regular_checkpoint_track(self, tmp_path):
+        """XLA must omit EMA callbacks and metrics while keeping the regular-model path."""
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+            pytest.warns(UserWarning, match="EMA disabled on XLA"),
+        ):
+            build_trainer(
+                _tc(
+                    tmp_path,
+                    use_ema=True,
+                    eval_base_model=False,
+                ),
+                _mc(),
+                accelerator="xla",
+            )
+
+        callbacks = captured["callbacks"]
+        assert not any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
+        best_callback = next(callback for callback in callbacks if isinstance(callback, BestModelCallback))
+        assert best_callback._monitor_ema is None
+        assert best_callback._evaluates_base_model is True
+
+    def test_xla_evaluation_only_does_not_warn_about_training_ema(self, tmp_path):
+        """Evaluation-only trainers do not build EMA and must not emit the training warning."""
+        import unittest.mock as mock
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", return_value=MagicMock()),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            build_trainer(
+                _tc(tmp_path, use_ema=True),
+                _mc(),
+                accelerator="xla",
+                include_training_callbacks=False,
+            )
+
+        assert not any("EMA disabled on XLA" in str(warning.message) for warning in caught)
+
+
 class TestBuildTrainerLoggers:
     """build_trainer() must wire loggers from TrainConfig flags."""
 
