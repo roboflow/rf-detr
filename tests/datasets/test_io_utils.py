@@ -266,9 +266,9 @@ class TestDecodeImage:
     def test_bytes_garbage_after_soi_raises_pillow_error(self) -> None:
         """Bytes with a valid JPEG SOI marker but a garbage payload raise the same error Pillow would.
 
-        Exercises the ``except ValueError: pass`` fallback in ``decode_image_bytes``:
-        ``simplejpeg.decode_jpeg_header`` rejects the corrupt payload with a ``ValueError``, so decoding must fall
-        through to Pillow and surface Pillow's own error instead of swallowing it.
+        Exercises the ``except ValueError: pass`` fallback in ``decode_image_bytes``: ``simplejpeg.decode_jpeg_header``
+        rejects the corrupt payload with a ``ValueError``, so decoding must fall through to Pillow and surface Pillow's
+        own error instead of swallowing it.
         """
         data = b"\xff\xd8" + bytes(range(256))
 
