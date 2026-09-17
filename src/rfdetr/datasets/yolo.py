@@ -30,10 +30,10 @@ from rfdetr.datasets._keypoint_schema import (
 )
 from rfdetr.datasets._torchvision import Compose
 from rfdetr.datasets.coco import (
-    decode_image,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
+from rfdetr.datasets.io_utils import decode_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.utilities.logger import get_logger
 
