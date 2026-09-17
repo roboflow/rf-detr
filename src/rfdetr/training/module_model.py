@@ -782,10 +782,12 @@ class RFDETRModelModule(LightningModule):
             batch_size=batch_size,
         )
         self._log_train_progress_metrics(loss, loss_dict, batch_size=batch_size)
-        optimizer = self.optimizers()
-        if isinstance(optimizer, list):
-            optimizer = optimizer[0]
         if self._use_manual_optimization:
+            # Only the manual path drives the optimizer itself; Lightning owns it on the
+            # automatic path, so fetching it there would touch trainer.strategy for nothing.
+            optimizer = self.optimizers()
+            if isinstance(optimizer, list):
+                optimizer = optimizer[0]
             # loss_for_backward is only None in the automatic-optimization branch above,
             # which is mutually exclusive with _use_manual_optimization.
             assert loss_for_backward is not None

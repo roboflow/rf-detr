@@ -1151,6 +1151,27 @@ class TestTrainingStep:
 
         assert loss.item() == pytest.approx(1.0 + 10.0 + 6.0)
 
+    def test_automatic_optimization_never_touches_trainer_strategy(self, tmp_path: Path) -> None:
+        """Detection models must not fetch ``self.optimizers()`` — Lightning owns the optimizer on that path.
+
+        ``optimizers()`` dereferences ``trainer.strategy._lightning_optimizers``. Only the keypoint manual-optimization
+        branch consumes the result, so a trainer stub that carries nothing but ``accumulate_grad_batches`` must be
+        enough for a detection ``training_step``; anything else means the automatic path grew a hidden dependency.
+        """
+        module, fake_model, fake_criterion, _ = _build_module(tmp_path=tmp_path)
+        samples, targets = _make_batch()
+        fake_model.return_value = {}
+        fake_criterion.return_value = {"loss_ce": torch.tensor(1.0)}
+        fake_criterion.weight_dict = {"loss_ce": 1.0}
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        trainer = SimpleNamespace(accumulate_grad_batches=1)
+
+        with patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer):
+            loss = module.training_step((samples, targets), batch_idx=0)
+
+        assert loss.item() == pytest.approx(1.0)
+
     def test_routes_forward_through_cuda_graph_runner(self, tmp_path: Path) -> None:
         """Once configured, training_step uses the graph runner while leaving self.model registered."""
         module, samples, targets, fake_model, fake_criterion = self._run_step(tmp_path)
