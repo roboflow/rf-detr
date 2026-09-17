@@ -764,11 +764,18 @@ def build_trainer(
                 "strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
             )
     sharded = _is_sharded_strategy(strategy)
-    enable_ema = bool(tc.use_ema) and not sharded
+    enable_ema = bool(tc.use_ema) and not sharded and not xla_accelerator
     if tc.use_ema and sharded:
         warnings.warn(
             f"EMA disabled: RFDETREMACallback is not compatible with sharded strategies "
             f"(strategy={strategy!r}). Set use_ema=False to suppress this warning.",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif include_training_callbacks and tc.use_ema and xla_accelerator:
+        warnings.warn(
+            "EMA disabled on XLA because per-step weight reads can corrupt subsequent optimizer updates. "
+            "Training will continue with the live model weights. Set use_ema=False to suppress this warning.",
             UserWarning,
             stacklevel=2,
         )

@@ -10,7 +10,6 @@ from __future__ import annotations
 import math
 import warnings
 from copy import deepcopy
-from importlib import import_module
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -360,21 +359,7 @@ class RFDETREMACallback(Callback):
         self._latest_update_step = global_step
         should_update_step = global_step % self._update_interval_steps == 0
         if should_update_step and self.should_update(step_idx=global_step - 1):
-            if pl_module.device.type == "xla":
-                self._xla_optimization_barrier(pl_module)
             self._average_model.update_parameters(pl_module)
-
-    @staticmethod
-    def _xla_optimization_barrier(pl_module: LightningModule) -> None:
-        """Fence the optimizer/EMA boundary so XLA cannot optimize across it.
-
-        Args:
-            pl_module: Module whose parameters and buffers are consumed by the EMA update.
-        """
-        xm = import_module("torch_xla.core.xla_model")
-
-        parameters_and_buffers = [*pl_module.parameters(), *pl_module.buffers()]
-        xm.optimization_barrier_(parameters_and_buffers)
 
     def should_update(
         self,
