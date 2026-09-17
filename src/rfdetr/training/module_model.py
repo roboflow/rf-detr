@@ -35,6 +35,7 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
+from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.param_groups import (
     _build_param_dicts,
     get_param_dict,
@@ -386,6 +387,7 @@ class RFDETRModelModule(LightningModule):
         # _aux_aggregate_map() and recomputed only when loss_dict's key set changes between calls.
         self._aux_aggregate_cache: dict[str, str | None] | None = None
         self._aux_aggregate_cache_keys: frozenset[str] | None = None
+        self._cuda_graph_runner: CudaGraphTrainingRunner | None = None
         # Allow partial state-dict loading when resuming from a .pth checkpoint
         # (which contains only model weights, not criterion/postprocess state).
         self.strict_loading = False
@@ -436,15 +438,14 @@ class RFDETRModelModule(LightningModule):
             )
         if compile_enabled:
             # dynamic=True: one compiled graph handles all multi-scale input sizes instead
-            # of recompiling per (H, W) pair. suppress_errors=True: if inductor can't
-            # compile a subgraph (e.g. bicubic backward with symbolic shapes), it falls
-            # back to eager mode for that subgraph rather than crashing.
+            # of recompiling per (H, W) pair. Positional interpolation has its own eager
+            # boundary for unsupported symbolic bicubic backward. Do not suppress other
+            # compiler errors: nested retries can flood logs and conceal lost acceleration.
             # capture_scalar_outputs=True: include Tensor.item() calls
             # (gen_encoder_output_proposals / ms_deform_attn use spatial-shape .item()
             # as Python slice indices). Safe with dynamic=True because item() results
             # are backed symbols derived from input shapes — not unbacked symbols that
             # would cause PendingUnbackedSymbolNotFound (which only occurs without dynamic).
-            torch._dynamo.config.suppress_errors = True
             torch._dynamo.config.capture_scalar_outputs = True
             # Inductor's coalesce tiling analysis is unsupported on the dynamic-shape path
             # (torch/_inductor/config.py: "coalesce_tiling_analysis does not yet apply to
@@ -491,13 +492,19 @@ class RFDETRModelModule(LightningModule):
             seed_everything(self.train_config.seed + self.global_rank, workers=True)
 
     def on_train_start(self) -> None:
-        """Normalize restored fused-optimizer state before the first training step.
+        """Configure the CUDA graph runner, then normalize restored fused-optimizer state.
+
+        Device and world-size placement are only final once Lightning reaches this hook, so
+        :meth:`_configure_cuda_graph_runner` is called first to decide, for this fit run, whether ``training_step``
+        replays a captured graph or stays eager.
 
         Lightning restores optimizer state after ``on_fit_start``.  Fused AdamW is strict about the dtype, device, and
         layout of its moment tensors, so resuming from a checkpoint can fail if Lightning rehydrates those tensors in a
         layout that no longer matches the live parameters.  Recasting same-shaped floating-point tensors here keeps the
         resumed optimizer compatible without discarding the saved momentum state.
         """
+        self._configure_cuda_graph_runner()
+
         if not self._use_fused_optimizer:
             return
 
@@ -523,6 +530,39 @@ class RFDETRModelModule(LightningModule):
                 "Normalized %d restored fused AdamW state tensors after checkpoint resume.",
                 normalized_tensors,
             )
+
+    def _configure_cuda_graph_runner(self) -> None:
+        """Enable CUDA graph replay only for its validated single-GPU detection scope."""
+        self._cuda_graph_runner = None
+        if not getattr(self.model_config, "cuda_graphs", False):
+            return
+
+        unsupported_reason: str | None = None
+        if self.device.type != "cuda":
+            unsupported_reason = f"the model is on {self.device.type!r}, not CUDA"
+        elif int(getattr(self.trainer, "world_size", 1)) != 1:
+            unsupported_reason = "distributed training is not supported"
+        elif self.model_config.segmentation_head:
+            unsupported_reason = "segmentation training is not supported"
+        elif self.model_config.use_grouppose_keypoints:
+            unsupported_reason = "keypoint training is not supported"
+        elif self.model_config.gradient_checkpointing:
+            unsupported_reason = "gradient checkpointing is not supported"
+        elif str(self.trainer.precision) not in {"bf16-mixed", "bf16-true"}:
+            unsupported_reason = (
+                f"the trainer precision is {self.trainer.precision!r}; only BF16 is validated for capture"
+            )
+
+        if unsupported_reason is not None:
+            logger.warning("Disabling CUDA graphs because %s; training will run eagerly.", unsupported_reason)
+            return
+        self._cuda_graph_runner = CudaGraphTrainingRunner(self.model)
+        logger.info(
+            "CUDA graph replay enabled for the training forward on %s (%s); the first batch of each input "
+            "shape runs eager warm-up and capture.",
+            self.device,
+            self.trainer.precision,
+        )
 
     def on_train_batch_start(self, batch: tuple[Any, Any], batch_idx: int) -> None:
         """Apply optional multi-scale resize to the incoming batch.
@@ -595,7 +635,11 @@ class RFDETRModelModule(LightningModule):
         """
         samples, targets = batch
         batch_size = len(targets)
-        outputs = self.model(samples, targets)
+        outputs = (
+            self._cuda_graph_runner(samples, targets)
+            if self._cuda_graph_runner is not None
+            else self.model(samples, targets)
+        )
         if self._use_manual_optimization:
             loss_dict, raw_loss, normalizer = self._compute_train_losses(outputs, targets)
             loss_for_backward = self._scale_loss_for_accumulation(raw_loss, normalizer)

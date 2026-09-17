@@ -11,11 +11,41 @@ the RF-DETR paper's Figure 2 for every config. These tests pin the current, chec
 change to `compute_window_block_indexes` is a deliberate, visible decision rather than a silent drift.
 """
 
+import copy
+
 import pytest
+import torch
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRSmallConfig
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2, compute_window_block_indexes
+from rfdetr.models.backbone.dinov2_with_windowed_attn import (
+    WindowedDinov2WithRegistersConfig,
+    WindowedDinov2WithRegistersEmbeddings,
+)
+
+
+def test_compiled_embeddings_preserve_interpolated_outputs_and_gradients() -> None:
+    """Dynamic compilation must preserve positional gradients across resized inputs without suppressed errors."""
+    torch.manual_seed(0)
+    eager = WindowedDinov2WithRegistersEmbeddings(
+        WindowedDinov2WithRegistersConfig(image_size=32, patch_size=16, hidden_size=16)
+    )
+    model = copy.deepcopy(eager)
+    compiled = torch.compile(model, backend="aot_eager", dynamic=True)
+    with torch._dynamo.config.patch(suppress_errors=False):
+        for height, width in ((48, 48), (64, 48)):
+            inputs = torch.randn(1, 3, height, width)
+            expected = eager(inputs)
+            actual = compiled(inputs)
+            torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+            expected.square().mean().backward()
+            actual.square().mean().backward()
+            torch.testing.assert_close(
+                model.position_embeddings.grad, eager.position_embeddings.grad, rtol=1e-4, atol=1e-6
+            )
+            eager.zero_grad(set_to_none=True)
+            model.zero_grad(set_to_none=True)
 
 
 class TestComputeWindowBlockIndexes:

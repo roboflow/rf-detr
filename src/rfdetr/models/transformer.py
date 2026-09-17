@@ -269,9 +269,18 @@ class Transformer(nn.Module):
         self.bbox_reparam = bbox_reparam
 
         self._export = False
+        self._cuda_graph_spatial_shapes: dict[tuple[torch.device, tuple[tuple[int, int], ...]], Tensor] | None = None
 
     def export(self) -> None:
         self._export = True
+
+    def enable_cuda_graph_capture(self) -> None:
+        """Cache immutable spatial-shape tensors before their captured reuse.
+
+        The cache is opt-in so eager, compile, and export tensor construction remain unchanged. Device is part of the
+        key to keep a later model move safe.
+        """
+        self._cuda_graph_spatial_shapes = {}
 
     def _reset_parameters(self) -> None:
         for p in self.parameters():
@@ -359,7 +368,13 @@ class Transformer(nn.Module):
         # ``torch.compiler.is_compiling`` is public from torch 2.3 onward. The compatibility
         # helper uses the legacy Dynamo predicate for supported torch 2.2 environments, while
         # ``is_exporting`` remains absent below torch 2.7.
-        if getattr(torch.compiler, "is_exporting", _tracer_absent)() or _is_compiling():
+        if self._cuda_graph_spatial_shapes is not None:
+            spatial_key = (srcs[0].device, tuple(spatial_shapes_hw))
+            spatial_shapes = self._cuda_graph_spatial_shapes.get(spatial_key)
+            if spatial_shapes is None:
+                spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
+                self._cuda_graph_spatial_shapes[spatial_key] = spatial_shapes
+        elif getattr(torch.compiler, "is_exporting", _tracer_absent)() or _is_compiling():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
