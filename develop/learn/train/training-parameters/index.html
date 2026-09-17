@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-17T10:24:17">
+  <meta property="article:modified_time" content="2026-09-17T16:52:00">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-17T10:24:17",
+    "dateModified": "2026-09-17T16:52:00",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3363,7 +3363,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>cuda_graphs</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td><strong>Constructor-only parameter.</strong> Capture and replay the detection training forward on one CUDA GPU with BF16 precision. Each input shape pays a first-use capture cost and retains graph memory. Unsupported configurations use eager training with a warning. Combining with <code>compile=True</code> raises; capture errors stop training and require a process restart before retrying eagerly. See <a href="../advanced/#cuda-graph-training">Advanced Training</a>.</td>
+<td><strong>Constructor-only parameter.</strong> Capture and replay the detection training forward on one CUDA GPU with BF16 precision. Each input shape pays a first-use capture cost and retains graph memory. Unsupported configurations use eager training with a warning. Combined with <code>compile=True</code>, replay is delegated to Inductor CUDA graph trees (single-GPU detection, no gradient accumulation); capture errors stop training and require a process restart before retrying eagerly. See <a href="../advanced/#cuda-graph-training">Advanced Training</a>.</td>
 </tr>
 <tr>
 <td><code>gradient_checkpointing</code></td>
@@ -4255,7 +4255,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 10:24:17 UTC">2026-09-17 10:24:17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 16:52:00 UTC">2026-09-17 16:52:00</span>
   </span>
 
     

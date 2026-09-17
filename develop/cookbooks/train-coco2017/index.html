@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-17T10:24:17">
+  <meta property="article:modified_time" content="2026-09-17T16:52:00">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-17T10:24:17",
+    "dateModified": "2026-09-17T16:52:00",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2488,6 +2488,28 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
+  <a href="#cuda-graphs-on-top-of-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CUDA graphs on top of compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-is-left" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is left
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#optional-fp8" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3636,8 +3658,12 @@ loader already uses, so it does not need to be passed explicitly.</p>
 <span class="c1"># RTX PRO 6000 / H100: 128 uses ~40 % of memory and already saturates the GPU (288 fits, same img/s).</span>
 <span class="c1"># L4 / T4 / A10: 32. A100 40 GB: 64.</span>
 <span class="n">BATCH_SIZE</span> <span class="o">=</span> <span class="mi">128</span>
+<span class="c1"># CUDA graph replay of the compiled kernels (Inductor cudagraph trees). Pays only when the batch is small enough</span>
+<span class="c1"># that the GPU idles between kernels: measured on the RTX PRO 6000, 1.20x over compile alone at batch 4 and</span>
+<span class="c1"># within 1 % of it at batch 64, so it stays off for this batch-128 recipe. Flip it on for batch &lt;= 16.</span>
+<span class="n">CUDA_GRAPHS</span> <span class="o">=</span> <span class="n">BATCH_SIZE</span> <span class="o">&lt;=</span> <span class="mi">16</span>
 
-<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">pretrain_weights</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cuda_graphs</span><span class="o">=</span><span class="n">CUDA_GRAPHS</span><span class="p">,</span> <span class="n">pretrain_weights</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># type: ignore[no-untyped-call]</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-5">import os
 from pathlib import Path
@@ -3665,8 +3691,12 @@ NUM_WORKERS = min(os.cpu_count() or 2, 16)
 # RTX PRO 6000 / H100: 128 uses ~40 % of memory and already saturates the GPU (288 fits, same img/s).
 # L4 / T4 / A10: 32. A100 40 GB: 64.
 BATCH_SIZE = 128
+# CUDA graph replay of the compiled kernels (Inductor cudagraph trees). Pays only when the batch is small enough
+# that the GPU idles between kernels: measured on the RTX PRO 6000, 1.20x over compile alone at batch 4 and
+# within 1 % of it at batch 64, so it stays off for this batch-128 recipe. Flip it on for batch &lt;= 16.
+CUDA_GRAPHS = BATCH_SIZE &lt;= 16
 
-model = RFDETRNano(compile=True, pretrain_weights=None)  # type: ignore[no-untyped-call]</div>
+model = RFDETRNano(compile=True, cuda_graphs=CUDA_GRAPHS, pretrain_weights=None)  # type: ignore[no-untyped-call]</div>
 </div>
 </div>
 </div>
@@ -3683,10 +3713,7 @@ model = RFDETRNano(compile=True, pretrain_weights=None)  # type: ignore[no-untyp
 matching loss, weight updates, learning-rate scheduling, and periodic COCO mAP validation.</p>
 <p><code>CSVLogger</code> appends one row of metrics per epoch to <code>output_dir/metrics.csv</code>, plotted below. The progress bar
 reports elapsed time per epoch. Compilation adds startup overhead: time subsequent epochs separately.
-This notebook uses <code>compile=True</code>. To compare CUDA graphs, construct a fresh model with
-<code>cuda_graphs=True</code> instead (never enable both), keeping data, batch size, BF16 precision, and scales identical.
-Measure startup, steady-state images/s, and peak memory; CUDA-graph-versus-eager measurements do not
-establish an advantage over compilation. A failed CUDA capture requires a runtime restart before retrying.
+A failed CUDA graph capture (<code>CUDA_GRAPHS=True</code>) requires a runtime restart before retrying.
 First try <code>EPOCHS=1</code> to verify training, validation, EMA, and shutdown before committing to 40 epochs.</p>
 <p>To <strong>resume an interrupted run</strong>, add <code>resume=f"{OUTPUT_DIR}/last.ckpt"</code> to the call below and re-run this cell.
 <code>last.ckpt</code> is rewritten every epoch (the archive <code>checkpoint_&lt;epoch&gt;.ckpt</code> files follow <code>checkpoint_interval</code>,
@@ -3725,6 +3752,48 @@ forward), so no user-side flag is needed.</p>
 <p><code>multi_scale=False</code> trains Nano at a fixed 384 px rather than the multi-scale ladder's 544 px top scale, which
 is the resolution every number above was measured at; it replaces the previous recipe's 544 px workload and may
 change accuracy.</p>
+<h3 id="cuda-graphs-on-top-of-compilation">CUDA graphs on top of compilation<a class="anchor-link" href="#cuda-graphs-on-top-of-compilation">¶</a></h3><p><code>RFDETRNano(compile=True, cuda_graphs=True)</code> replays the compiled forward and backward through Inductor's CUDA
+graph trees, removing the kernel-launch gaps that compilation leaves in place. Whether that is worth anything
+depends on the batch, measured on the RTX PRO 6000 with Nano at 384 px, BF16, synthetic batches:</p>
+<table>
+<thead>
+<tr>
+<th>batch [img]</th>
+<th>eager [img/s]</th>
+<th><code>compile</code> [img/s]</th>
+<th><code>compile</code> + <code>cuda_graphs</code> [img/s]</th>
+<th>GPU busy <code>compile</code> → both [-]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4</td>
+<td>78.7</td>
+<td>96.8</td>
+<td>116.0 (1.20x over compile)</td>
+<td>0.32 → 0.42</td>
+</tr>
+<tr>
+<td>64</td>
+<td>246.8</td>
+<td>322.8</td>
+<td>325.7 (+0.9 %, noise)</td>
+<td>0.82 → 0.83</td>
+</tr>
+</tbody>
+</table>
+<p>At batch 128 the compiled kernels already run back to back, so <code>CUDA_GRAPHS</code> above defaults to off and this
+recipe stays on plain compilation. Turn it on when a small GPU forces the batch into the single digits or low
+teens — it stacks with compilation there. It is validated for single-GPU detection without
+<code>grad_accum_steps &gt; 1</code>; other layouts fall back to plain compilation with a warning. Graph recording adds a few
+seconds per new input shape on top of compile warm-up. See
+<a href="../learn/train/advanced.md#combining-cuda-graphs-with-compilation">Combining CUDA graphs with compilation</a>.</p>
+<h3 id="what-is-left">What is left<a class="anchor-link" href="#what-is-left">¶</a></h3><p>With compilation on, the GPU is busy for about 83 % of each training step at batch 64 and the remaining share
+is spent outside the model: bipartite matching and the loss on the host, and the data loader. No constructor or
+<code>train()</code> flag in this notebook moves that share — larger batches, more workers, FP8, and CUDA graphs were each
+measured and none reach it. The one wall-clock knob that remains is validation: <code>eval_interval=N</code> runs the 5,000-
+image COCO evaluation every N epochs instead of every epoch, at the cost of a coarser mAP curve in section 6; its
+saving was not measured for this recipe.</p>
 <h3 id="optional-fp8">Optional: FP8<a class="anchor-link" href="#optional-fp8">¶</a></h3><p>Requires the <code>cuda</code> extra (Transformer Engine, Hopper/Ada/Blackwell, Linux x86-64), an integer <code>batch_size</code>, and
 <code>amp_dtype="fp8"</code>. Measured on Nano, FP8 changes throughput by +3 % per epoch on Blackwell and −11 % on an L4,
 and raises the memory ceiling to 320 from 288 (RTX PRO 6000) and to 72 from 64 (L4). Lightning warns at startup
@@ -3910,7 +3979,7 @@ plt.close(map_figure)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 10:24:17 UTC">2026-09-17 10:24:17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 16:52:00 UTC">2026-09-17 16:52:00</span>
   </span>
 
     
