@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-18T10:09:20">
+  <meta property="article:modified_time" content="2026-09-18T18:43:03">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-18T10:09:20",
+    "dateModified": "2026-09-18T18:43:03",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1424,6 +1424,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Choosing between CUDA graphs and compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matcher-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matcher compilation
       
     </span>
   </a>
@@ -3119,6 +3130,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
+  <a href="#matcher-compilation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matcher compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#combining-cuda-graphs-with-compilation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3752,10 +3774,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="choosing-between-cuda-graphs-and-compilation">Choosing between CUDA graphs and compilation<a class="headerlink" href="#choosing-between-cuda-graphs-and-compilation" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>CUDA graphs</strong> remove kernel-launch gaps and CPU dispatch between the model's kernels. They pay when each kernel is short, so the GPU idles between launches: small batch size, small model, low resolution, or a fast GPU driven by a slow CPU. They do nothing for the kernels themselves. When the batch is large enough that every kernel runs for a long time, replay measures the same as eager — that is expected, not a capture failure.</li>
-<li><strong><code>compile=True</code></strong> (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. That gain does not depend on the batch size, but compilation adds startup time and, with <code>dynamic=True</code>, one compiled graph per run.</li>
+<li><strong><code>compile=True</code></strong> (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. Compilation adds startup time; dynamic shapes reduce, but do not eliminate, recompilation. It also compiles the matcher's L1 box cost — see <a href="#matcher-compilation">Matcher compilation</a> below.</li>
 <li>Rule of thumb from the two measurements above: at batch 4 with a mid-range GPU (L4) graphs gave 32%; at batch 64 on a high-end GPU they gave 0% and compilation gave 17%. Prefer graphs when the effective batch per step is in the single digits or the progress bar shows the GPU far from saturated; prefer compilation for large batches. In between, run 200 steps of each with identical settings and compare the steady-state it/s — startup and capture time distort the first epoch.</li>
 <li>For large batches, combining the two buys nothing over <code>compile=True</code> alone; for small batches it stacks. The section below has the numbers.</li>
 </ul>
+<h3 id="matcher-compilation">Matcher compilation<a class="headerlink" href="#matcher-compilation" title="Permanent link">&para;</a></h3>
+<p>On CUDA, <code>compile=True</code> also compiles the matcher's L1 box cost separately from the model. The compiled helper uses dynamic shapes and bypasses the eager target-chunking loop so Inductor can fuse the coordinate reduction. Both compact and full-cartesian matching use it for equal-dtype inputs; mixed-dtype inputs retain the eager helper's autocast/error behavior. Under BF16/FP16 AMP the fused compiled L1 cost serves the decoder (and auxiliary) layers; encoder-stage matching stays on the eager <code>torch.cdist</code> path because its predicted boxes are emitted in the reduced precision while targets stay float32. Target packing, Hungarian assignment, and the remaining losses stay eager. Matcher CUDA graphs stay disabled independently of the model's graph setting. A startup message confirms that L1 compilation is enabled; kernels compile on first use. <code>compile=False</code> retains the memory-bounded eager helper. Measure steady-state throughput and peak memory on your own workload; no additional end-to-end speedup is claimed yet.</p>
 <h3 id="combining-cuda-graphs-with-compilation">Combining CUDA graphs with compilation<a class="headerlink" href="#combining-cuda-graphs-with-compilation" title="Permanent link">&para;</a></h3>
 <p>Set both flags and RF-DETR hands CUDA graph replay to Inductor's CUDA graph trees (the mechanism behind <code>torch.compile(mode="reduce-overhead")</code>, passed here as the <code>triton.cudagraphs</code> compile option so it coexists with RF-DETR's other Inductor settings). The compiled forward and backward kernels are recorded once per input shape and replayed afterwards; the eager graph runner used by <code>cuda_graphs=True</code> alone stays off, and an INFO line at construction says so.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
@@ -3944,7 +3968,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 18, 2026 10:09:20 UTC">2026-09-18 10:09:20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 18, 2026 18:43:03 UTC">2026-09-18 18:43:03</span>
   </span>
 
     
