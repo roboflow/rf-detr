@@ -200,11 +200,10 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
         >>> pairwise_box_l1_cost(boxes1, boxes2).tolist()
         [[0.0], [2.0]]
     """
-    if boxes1.dtype is not boxes2.dtype:
-        # Broadcasting would promote a float32/float64 mix silently, while
-        # ``torch.cdist`` rejects it. The matcher's dtype gate relies on that
-        # rejection to keep achieved precision from depending on batch ordering,
-        # so mismatches stay on the original op: it is an error path, not a hot one.
+    if boxes1.dtype is not boxes2.dtype or boxes1.shape[-1] != boxes2.shape[-1]:
+        # Broadcasting would silently promote mixed dtypes or expand a singleton
+        # feature dimension, while ``torch.cdist`` rejects both. Keep those
+        # validation failures on the original op; neither is a hot path.
         return torch.cdist(boxes1, boxes2, p=1)
 
     targets = boxes2.shape[-2]

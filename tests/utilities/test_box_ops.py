@@ -287,7 +287,7 @@ class TestPairwiseBoxL1Cost:
 
         assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
 
-    def test_matches_cdist_when_chunking_is_required(self, monkeypatch) -> None:
+    def test_matches_cdist_when_chunking_is_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Chunking the target axis must not change any value.
 
         The budget is lowered so several chunks are needed for a small tensor, which is what makes this a test of the

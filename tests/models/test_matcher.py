@@ -3113,7 +3113,7 @@ class TestStackedCostConstruction:
     def test_element_limit_routes_between_stacked_and_per_layer(
         self, monkeypatch: pytest.MonkeyPatch, limit: int, expected_cost_builds: int
     ) -> None:
-        """The element limit decides between one stacked ``cdist`` and one ``cdist`` per layer.
+        """The element limit decides between one stacked ``pairwise_box_l1_cost`` call and one call per layer.
 
         Counts 3-D ``pairwise_box_l1_cost`` calls inside ``_match_many``: the stacked pass issues exactly one for all
         layers, the per-layer loop one per layer. Oversized batches must take the loop because stacking measured
