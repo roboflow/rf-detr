@@ -33,7 +33,13 @@ from torch.nn.utils.rnn import pad_sequence
 from rfdetr.models import _assignment
 from rfdetr.models.heads.keypoints import compute_keypoint_matching_cost
 from rfdetr.models.heads.segmentation import point_sample
-from rfdetr.utilities.box_ops import batch_dice_loss, batch_sigmoid_ce_loss, box_cxcywh_to_xyxy, generalized_box_iou
+from rfdetr.utilities.box_ops import (
+    batch_dice_loss,
+    batch_sigmoid_ce_loss,
+    box_cxcywh_to_xyxy,
+    generalized_box_iou,
+    pairwise_box_l1_cost,
+)
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -548,7 +554,7 @@ class HungarianMatcher(nn.Module):
         target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
         class_cost = self._focal_classification_cost(target_logits)
 
-        bbox_cost = torch.cdist(outputs["pred_boxes"], padded_target_boxes, p=1)
+        bbox_cost = pairwise_box_l1_cost(outputs["pred_boxes"], padded_target_boxes)
         giou_cost = -torch.vmap(generalized_box_iou)(
             box_cxcywh_to_xyxy(outputs["pred_boxes"]),
             box_cxcywh_to_xyxy(padded_target_boxes),
@@ -985,7 +991,7 @@ class HungarianMatcher(nn.Module):
         cost_class = self._focal_classification_cost(tgt_logits)
 
         # Compute the L1 cost between boxes
-        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+        cost_bbox = pairwise_box_l1_cost(out_bbox, tgt_bbox)
 
         if masks_present:
             # Reuse the masks-hybrid branch's own draw when this call reached the fallback because

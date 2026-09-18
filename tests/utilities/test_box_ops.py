@@ -7,12 +7,14 @@
 import pytest
 import torch
 
+from rfdetr.utilities import box_ops
 from rfdetr.utilities.box_ops import (
     box_iou,
     elementwise_box_iou,
     elementwise_generalized_box_iou,
     generalized_box_iou,
     masks_to_boxes,
+    pairwise_box_l1_cost,
 )
 
 
@@ -253,3 +255,84 @@ def test_masks_to_boxes_builds_grid_on_masks_device(monkeypatch) -> None:
     assert boxes.shape == (1, 4)
     assert observed_devices
     assert all(device == masks.device for device in observed_devices)
+
+
+class TestPairwiseBoxL1Cost:
+    """`pairwise_box_l1_cost` replaces `torch.cdist(..., p=1)` in the matcher.
+
+    The matcher feeds its output to a Hungarian solve, so equality with `cdist`
+    has to hold exactly rather than approximately: a reassociated sum would
+    change which assignment wins among near-ties.
+    """
+
+    @pytest.mark.parametrize(
+        ("queries", "targets"),
+        [(1, 1), (7, 1), (1, 7), (300, 12), (64, 97)],
+    )
+    def test_matches_cdist_for_two_dimensional_inputs(self, queries: int, targets: int) -> None:
+        """The full-cartesian matcher path passes `[queries, 4]` against `[targets, 4]`."""
+        boxes1 = _random_xyxy_boxes(queries, seed=1)
+        boxes2 = _random_xyxy_boxes(targets, seed=2)
+
+        assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
+
+    @pytest.mark.parametrize(
+        ("batch", "queries", "targets"),
+        [(1, 8, 3), (4, 64, 12), (5, 130, 37)],
+    )
+    def test_matches_cdist_for_batched_inputs(self, batch: int, queries: int, targets: int) -> None:
+        """The compact matcher path passes a leading batch (or batch x layer) dimension."""
+        boxes1 = _random_xyxy_boxes(batch * queries, seed=3).reshape(batch, queries, 4)
+        boxes2 = _random_xyxy_boxes(batch * targets, seed=4).reshape(batch, targets, 4)
+
+        assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
+
+    def test_matches_cdist_when_chunking_is_required(self, monkeypatch) -> None:
+        """Chunking the target axis must not change any value.
+
+        The budget is lowered so several chunks are needed for a small tensor, which is what makes this a test of the
+        chunked branch rather than of the single-shot one.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        boxes1 = _random_xyxy_boxes(2 * 17, seed=5).reshape(2, 17, 4)
+        boxes2 = _random_xyxy_boxes(2 * 23, seed=6).reshape(2, 23, 4)
+
+        assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
+
+    def test_empty_target_set_returns_empty_cost(self) -> None:
+        """An image with no ground-truth boxes contributes zero columns, not an error."""
+        boxes1 = _random_xyxy_boxes(5, seed=7)
+        boxes2 = torch.zeros((0, 4))
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert cost.shape == (5, 0)
+
+    def test_empty_query_set_returns_empty_cost(self) -> None:
+        """Symmetric guard: no predictions means no rows."""
+        cost = pairwise_box_l1_cost(torch.zeros((0, 4)), _random_xyxy_boxes(3, seed=8))
+
+        assert cost.shape == (0, 3)
+
+    def test_preserves_dtype_and_device(self) -> None:
+        """The cost inherits the boxes' dtype, which the criterion relies on downstream."""
+        boxes1 = _random_xyxy_boxes(4, seed=9).to(torch.float64)
+        boxes2 = _random_xyxy_boxes(2, seed=10).to(torch.float64)
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert cost.dtype is torch.float64
+        assert cost.device == boxes1.device
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_matches_cdist_on_cuda_at_matcher_scale(self) -> None:
+        """Equality has to hold on the device and at the shape that motivated the change.
+
+        `[5 layers x 8 images, 300 queries x 13 groups, targets]` is what RF-DETR Medium's compact path builds during
+        training.
+        """
+        boxes1 = torch.rand(40, 3900, 4, device="cuda")
+        boxes2 = torch.rand(40, 30, 4, device="cuda")
+
+        assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
