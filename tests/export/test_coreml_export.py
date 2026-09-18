@@ -44,7 +44,8 @@ from tests.export.conftest import (
 coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
 # FLOAT32 CoreML convert matches eager to ~1e-5 on boxes/logits; masks need a bit more
-# headroom (~8e-5 observed on SegNano). Bound stays well under structural-failure scale (>=1e-3).
+# headroom (~8e-5 observed on SegNano; keypoints ~1e-5 observed on KeypointPreview). Bound stays
+# well under structural-failure scale (>=1e-3).
 _COREML_MAX_ABS_DIFF = 1e-4
 
 
@@ -464,7 +465,9 @@ _COREML_E2E_VARIANTS = [
 # Overriding to a verified-good seed via the repo's own `seed_all()` helper (not a raw
 # `torch.manual_seed` bypass) makes the export deterministic AND passing. Found by scanning
 # seed_all(0..12): seed=0 passed structured+real-image detection parity on 4/4 independent
-# fresh-process re-runs, plus segmentation. If this starts failing again (model architecture
+# fresh-process re-runs, plus segmentation. Keypoint (RFDETRKeypointPreview) was added without a
+# seed scan: seed=0 is backed by one manual run (max abs diff 9.54e-06 on Apple M3 Pro, coremltools
+# 9.0) plus passing CI macOS 3.11 and 3.13 jobs. If this starts failing again (model architecture
 # or coremltools upgrade changed the op graph), re-run the same small seed scan rather than
 # guessing — see tests/export/README or git history for the search script.
 _COREML_EXPORT_SEED = 0
