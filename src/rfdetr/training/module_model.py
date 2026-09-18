@@ -34,6 +34,7 @@ from rfdetr.config import (
 )
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
+from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
@@ -491,6 +492,16 @@ class RFDETRModelModule(LightningModule):
                         "validated for single-GPU detection training without gradient accumulation.",
                         unsupported_reason,
                     )
+            # Duck-typed like the criterion capability probes below: test doubles and custom criteria
+            # need not expose a matcher at all.
+            matcher = getattr(self.criterion, "matcher", None)
+            if isinstance(matcher, HungarianMatcher):
+                # The matcher owns its compile recipe and builds the compiled cost lazily in the process that
+                # runs it, so spawn-based strategies can still pickle the criterion into their workers. It
+                # shares the model's Inductor options (the coalesce-tiling workaround applies to its dynamic
+                # graph too) and forces CUDA graph replay off on top of them itself.
+                matcher.enable_compiled_l1_cost(compile_options)
+                logger.info("Matcher L1 compilation enabled (dynamic shapes, no CUDA graphs; kernels compile on use).")
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
             self.model = torch.compile(  # type: ignore[assignment]

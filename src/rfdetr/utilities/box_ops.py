@@ -25,6 +25,8 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torchvision.ops.boxes import box_area
 
+from rfdetr.utilities.compiler import is_compiling
+
 
 def box_cxcywh_to_xyxy(x: Tensor) -> Tensor:
     x_c, y_c, w, h = x.unbind(-1)
@@ -178,11 +180,11 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     """Pairwise L1 distance between two sets of boxes.
 
     Equivalent to ``torch.cdist(boxes1, boxes2, p=1)`` for the box-shaped inputs the
-    matcher builds, and bit-identical to it on CPU and between this function's own
-    chunked and single-shot branches on every device, for every shape and dtype the
-    tests exercise. CUDA-vs-``cdist`` parity is exact in practice but is only tested
-    to a numerical tolerance, since kernel reduction order is not guaranteed identical
-    across CUDA runner/torch versions. That guarantee is scoped to an equal-dtype
+    matcher builds. In eager mode it is bit-identical to it on CPU and between this
+    function's own chunked and single-shot branches on every device, for every shape
+    and dtype the tests exercise. CUDA-vs-``cdist`` parity is exact in practice but is
+    only tested to a numerical tolerance, since kernel reduction order is not guaranteed
+    identical across CUDA runner/torch versions. That guarantee is scoped to an equal-dtype
     operand pair -- a mismatched pair delegates to ``torch.cdist`` itself -- with
     narrower-than-float32 operands reduced in float32, the form ``torch.cdist`` is
     handed under autocast and refuses outside one.
@@ -201,9 +203,12 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     :data:`_L1_COST_ELEMENT_BUDGET`. Chunking cannot change the result because the
     reduction runs over the feature axis only, never across chunks.
 
-    A fused kernel -- ``torch.compile``/Inductor, or a hand-written Triton kernel -- would
-    subsume both the chunking loop and its budget constant, since it can hold the coordinate
-    differences in registers instead of materialising them.
+    Under ``torch.compile``, this takes one broadcast reduction rather than the eager chunking
+    loop. Inductor can fuse that expression without unrolling a target-dependent Python loop;
+    eager calls retain the bounded-memory chunked implementation below. The compiled reduction
+    adds the coordinates in a fixed left-to-right order, so on CPU it is bit-identical to the
+    eager branches and to ``torch.cdist``; on CUDA it carries the same tolerance-only guarantee
+    against ``torch.cdist`` as the eager path.
 
     Args:
         boxes1: Boxes of shape ``[*leading, queries, features]``.
@@ -243,6 +248,22 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
         # float32 regardless, so nothing downstream needs the narrow dtype back.
         boxes1 = boxes1.float()
         boxes2 = boxes2.float()
+
+    if is_compiling():
+        # A compiled graph can fuse this reduction without materializing the eager chunks. Keep it
+        # ahead of Python shape arithmetic so dynamic target sizes never specialize the graph by chunk count.
+        # The coordinates are added one at a time, left to right, instead of through ``sum(-1)``: Inductor
+        # is free to reassociate a reduction, and a differently rounded ULP is enough to flip a Hungarian
+        # choice on a near-tie. Explicit binary adds fix the order, which keeps the compiled cost
+        # bit-identical to the eager branches below (whose ``sum`` over four elements runs in that same
+        # order). The feature axis is the box width, so specializing the graph on it costs nothing.
+        difference = (boxes1.unsqueeze(-2) - boxes2.unsqueeze(-3)).abs()
+        if difference.shape[-1] == 0:
+            return difference.new_zeros(difference.shape[:-1])
+        cost = difference[..., 0]
+        for feature in range(1, difference.shape[-1]):
+            cost = cost + difference[..., feature]
+        return cost
 
     # ``torch.cdist`` broadcasts the leading dimensions, so an operand can carry fewer rows than
     # the result has. Sizing anything from ``boxes1`` alone therefore disagrees with it -- silently
