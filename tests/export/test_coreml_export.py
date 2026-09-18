@@ -575,20 +575,25 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     return reference_model, example, Path(mlpackage_path)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS)
 def coreml_default_queries_export(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[torch.nn.Module, torch.Tensor, Path]:
-    """Export RFDETRNano with its shipped query count, which ``coreml_export`` trades away for a separated ranking."""
-    out_dir = tmp_path_factory.mktemp("coreml_default_queries")
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[torch.nn.Module, torch.Tensor, Path, tuple[str, ...]]:
+    """Export each e2e variant with its shipped query count, which ``coreml_export`` trades for a separated ranking.
+
+    Those counts differ per variant (300 for detection, 100 for segmentation and keypoints), and the mask and keypoint
+    output shapes follow them, so every shipped graph is converted and run rather than only the detection one.
+    """
+    model_cls_name, output_labels = request.param
+    out_dir = tmp_path_factory.mktemp(f"coreml_default_queries_{model_cls_name.lower()}")
     seed_all(_COREML_EXPORT_SEED)
-    detector = rfdetr.RFDETRNano(pretrain_weights=None)
+    detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None)
     mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
     model = detector.model.model.to("cpu").eval()
     model.export()
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
-    return model, example, Path(mlpackage_path)
+    return model, example, Path(mlpackage_path), output_labels
 
 
 @coreml_only
@@ -637,16 +642,19 @@ class TestCoreMLEndToEnd:
         )
 
     def test_default_query_count_runs_with_eager_shapes(
-        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path]
+        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, tuple[str, ...]]
     ) -> None:
-        """The shipped 300-query export must run on CoreML with eager's output count, shapes and finite values.
+        """The shipped-query-count export must run on CoreML with eager's output count, shapes and finite values.
 
-        Raw values are not bounded here: this untrained ranking has near-ties, so a legitimate query swap can
-        move them (see the module-level comment). Value parity is covered by the ``coreml_export`` tests.
+        Values are deliberately not bounded here. At the shipped query count the untrained two-stage ranking always has
+        near-ties, so a legitimate fp32 swap can move every output, and no value comparison is both tight and stable
+        (post-processed scores drift up to ~1e-3 on a swap). The graph is the same op for op as the 5-query
+        ``coreml_export`` one, which carries the strict 1e-4 value parity; this test covers what differs: the shipped
+        shapes.
         """
-        model, example, mlpackage_path = coreml_default_queries_export
+        model, example, mlpackage_path, output_labels = coreml_default_queries_export
         diffs = _coreml_parity_diffs(mlpackage_path, model, example)
-        assert len(diffs) == 2, f"expected boxes and logits, got {len(diffs)} outputs"
+        assert len(diffs) == len(output_labels), f"CoreML export must yield {output_labels}, got {len(diffs)} outputs"
         assert all(np.isfinite(diffs)), f"CoreML produced non-finite outputs: max abs diffs {diffs}"
 
 
