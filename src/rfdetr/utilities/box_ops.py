@@ -205,9 +205,10 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
 
     Under ``torch.compile``, this takes one broadcast reduction rather than the eager chunking
     loop. Inductor can fuse that expression without unrolling a target-dependent Python loop;
-    eager calls retain the bounded-memory chunked implementation below. That fused reduction is
-    verified against the eager result to a numerical tolerance (``assert_close``), not
-    bit-for-bit: its reduction order may differ from the eager one.
+    eager calls retain the bounded-memory chunked implementation below. The compiled reduction
+    adds the coordinates in a fixed left-to-right order, so on CPU it is bit-identical to the
+    eager branches and to ``torch.cdist``; on CUDA it carries the same tolerance-only guarantee
+    against ``torch.cdist`` as the eager path.
 
     Args:
         boxes1: Boxes of shape ``[*leading, queries, features]``.
@@ -251,7 +252,16 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     if is_compiling():
         # A compiled graph can fuse this reduction without materializing the eager chunks. Keep it
         # ahead of Python shape arithmetic so dynamic target sizes never specialize the graph by chunk count.
-        return (boxes1.unsqueeze(-2) - boxes2.unsqueeze(-3)).abs().sum(-1)
+        # The coordinates are added one at a time, left to right, instead of through ``sum(-1)``: Inductor
+        # is free to reassociate a reduction, and a differently rounded ULP is enough to flip a Hungarian
+        # choice on a near-tie. Explicit binary adds fix the order, which keeps the compiled cost
+        # bit-identical to the eager branches below (whose ``sum`` over four elements runs in that same
+        # order). The feature axis is the box width, so specializing the graph on it costs nothing.
+        difference = (boxes1.unsqueeze(-2) - boxes2.unsqueeze(-3)).abs()
+        cost = difference[..., 0]
+        for feature in range(1, difference.shape[-1]):
+            cost = cost + difference[..., feature]
+        return cost
 
     # ``torch.cdist`` broadcasts the leading dimensions, so an operand can carry fewer rows than
     # the result has. Sizing anything from ``boxes1`` alone therefore disagrees with it -- silently

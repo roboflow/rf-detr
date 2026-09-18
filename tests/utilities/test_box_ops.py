@@ -258,6 +258,21 @@ def test_masks_to_boxes_builds_grid_on_masks_device(monkeypatch) -> None:
     assert all(device == masks.device for device in observed_devices)
 
 
+def _assert_compiled_matches_eager(actual: torch.Tensor, expected: torch.Tensor) -> None:
+    """Assert a compiled L1 cost equals its eager reference — bit-for-bit on CPU, to tolerance on CUDA.
+
+    The compiled branch adds the four coordinates in a fixed order, so on CPU it must reproduce the eager result
+    exactly; CUDA kernels carry no cross-version reduction-order guarantee, so there the check is tolerance-only.
+
+    Examples:
+        >>> _assert_compiled_matches_eager(torch.tensor([1.0, 2.0]), torch.tensor([1.0, 2.0]))
+    """
+    if actual.device.type == "cpu":
+        assert torch.equal(actual, expected), "compiled L1 cost drifted from the eager result on CPU"
+    else:
+        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
+
 class TestPairwiseBoxL1Cost:
     """`pairwise_box_l1_cost` replaces `torch.cdist(..., p=1)` in the matcher.
 
@@ -521,7 +536,7 @@ class TestPairwiseBoxL1Cost:
             expected = pairwise_box_l1_cost(boxes1, boxes2)
             actual = compiled_cost(boxes1, boxes2)
 
-            torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+            _assert_compiled_matches_eager(actual, expected)
 
         assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before == 1
 
@@ -563,7 +578,7 @@ class TestPairwiseBoxL1Cost:
             actual = compiled_cost(boxes1, boxes2)
 
             assert actual.shape == expected.shape
-            torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+            _assert_compiled_matches_eager(actual, expected)
 
         assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before <= 6
 
@@ -635,7 +650,7 @@ class TestPairwiseBoxL1Cost:
             actual = compiled_cost(boxes1, boxes2)
 
         assert actual.dtype is torch.float32
-        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+        _assert_compiled_matches_eager(actual, expected)
 
     @requires_cpu_inductor
     @torch.no_grad()
@@ -666,7 +681,35 @@ class TestPairwiseBoxL1Cost:
             actual = compiled_cost(pred_boxes, target_boxes)
 
         assert actual.dtype is torch.float32
-        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+        _assert_compiled_matches_eager(actual, expected)
+
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_preserves_coordinate_addition_order_on_near_ties(self) -> None:
+        """A reassociated four-term sum rounds differently and would flip a near-tied Hungarian choice.
+
+        Two targets sit at the same real L1 distance from a query, but one spreads the distance across coordinates whose
+        float32 sum depends on association order. Fixed left-to-right addition keeps the compiled cost equal to the
+        eager one, so the tie resolves identically in both modes; a fused ``sum(-1)`` is free to reassociate and breaks
+        that, which a whole random matrix also catches at the bit level.
+        """
+        torch._dynamo.reset()
+        compiled_cost = torch.compile(pairwise_box_l1_cost, dynamic=True, options={"triton.cudagraphs": False})
+        tiny = 2.0**-24  # half a float32 ULP at 1.0: absorbed by ``1.0 + tiny`` but not by ``tiny + tiny``
+        query = torch.zeros(1, 1, 4)
+        near_tie = torch.tensor([[[1.0, tiny, tiny, 0.0], [tiny, tiny, 1.0, 0.0]]])
+
+        eager = pairwise_box_l1_cost(query, near_tie)
+        actual = compiled_cost(query, near_tie)
+
+        assert torch.equal(actual, eager)
+        assert torch.equal(eager.argmin(-1), actual.argmin(-1))
+
+        torch.manual_seed(724)
+        boxes1 = torch.rand(4, 300, 4)
+        boxes2 = torch.rand(4, 21, 4)
+        assert torch.equal(compiled_cost(boxes1, boxes2), pairwise_box_l1_cost(boxes1, boxes2))
+        assert torch.equal(compiled_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
