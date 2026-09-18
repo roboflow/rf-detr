@@ -511,7 +511,7 @@ class LWDETR(nn.Module):
             cross_attn_srcs=cross_attn_srcs,
         )
         if self.use_grouppose_keypoints:
-            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs[:7]
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions = transformer_outputs[:6]
         else:
             hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
             keypoint_hs = None
