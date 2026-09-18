@@ -153,7 +153,6 @@ def test_keypoint_training_subset_reports_loss_and_metric(
         compute_val_loss=True,
         multi_scale=False,
         expanded_scales=False,
-        do_random_resize_via_padding=False,
         tensorboard=False,
         wandb=False,
         mlflow=False,

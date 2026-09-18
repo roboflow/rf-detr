@@ -584,7 +584,6 @@ class TestModuleLoadPretrainWeightsPEInterpolationCustomResolution:
             drop_path=0.0,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             grad_accum_steps=1,
             tensorboard=False,
         )

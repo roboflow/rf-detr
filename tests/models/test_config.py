@@ -20,6 +20,7 @@ from rfdetr.config import (
     AugmentationBackend,
     KeypointTrainConfig,
     ModelConfig,
+    MultiScale,
     PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
@@ -237,6 +238,40 @@ class TestTrainConfigRejectsUnknownKwargs:
         stub = SimpleNamespace(_train_config_class=TrainConfig)
         with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
             RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+
+class TestTrainConfigMultiScale:
+    """`multi_scale` is a `MultiScale` enum; booleans are accepted as aliases and never stored."""
+
+    def test_default_is_batch(self, tmp_path) -> None:
+        """The default mode is the per-batch scale draw, matching the old `multi_scale=True` behaviour."""
+        assert TrainConfig(dataset_dir=str(tmp_path)).multi_scale is MultiScale.PER_BATCH
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            pytest.param(True, MultiScale.PER_BATCH, id="legacy-true"),
+            pytest.param(False, MultiScale.OFF, id="legacy-false"),
+            pytest.param("per-batch", MultiScale.PER_BATCH, id="per-batch"),
+            pytest.param("per-sample", MultiScale.PER_SAMPLE, id="per-sample"),
+            pytest.param("off", MultiScale.OFF, id="off"),
+            pytest.param(MultiScale.PER_SAMPLE, MultiScale.PER_SAMPLE, id="member"),
+        ],
+    )
+    def test_inputs_normalize_to_member(self, tmp_path, value, expected) -> None:
+        """Booleans, string values, and members all land on the matching enum member."""
+        assert TrainConfig(dataset_dir=str(tmp_path), multi_scale=value).multi_scale is expected
+
+    def test_model_dump_serializes_to_string(self, tmp_path) -> None:
+        """`model_dump` yields the plain string value so checkpoint hyperparameters stay JSON-safe."""
+        assert (
+            TrainConfig(dataset_dir=str(tmp_path), multi_scale="per-sample").model_dump()["multi_scale"] == "per-sample"
+        )
+
+    def test_unknown_mode_rejected(self, tmp_path) -> None:
+        """A string outside the enum is a validation error."""
+        with pytest.raises(ValidationError, match="multi_scale"):
+            TrainConfig(dataset_dir=str(tmp_path), multi_scale="image")
 
 
 class TestTrainConfigT42PromotedFields:

@@ -758,12 +758,12 @@ class TestNestedTensorNoPadding:
     def test_flag_survives_inplace_batch_uniform_resize(self) -> None:
         """The default training config reaches ``no_padding=True`` and mutates the batch in place afterwards.
 
-        With the defaults (``square_resize_div_64=True``, ``multi_scale=True``, ``do_random_resize_via_padding=False``),
-        every sample is resized to one fixed square scale before collate, so ``nested_tensor_from_tensor_list`` flags
-        the batch. ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly to a randomly
-        chosen scale via the same two in-place ``F.interpolate`` calls reproduced below, without touching
-        ``no_padding``. Nearest-neighbour resampling of an all-False mask stays all-False at any output size, so the
-        flag must still describe the mutated mask truthfully afterwards.
+        With the defaults (``square_resize_div_64=True``, ``multi_scale="per-batch"``), every sample is resized to one
+        fixed square scale before collate, so ``nested_tensor_from_tensor_list`` flags the batch.
+        ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly to a randomly chosen scale
+        via the same two in-place ``F.interpolate`` calls reproduced below, without touching ``no_padding``. Nearest-
+        neighbour resampling of an all-False mask stays all-False at any output size, so the flag must still describe
+        the mutated mask truthfully afterwards.
         """
         images = [torch.rand(3, 512, 512) for _ in range(4)]
         nested = nested_tensor_from_tensor_list(images, block_size=64)

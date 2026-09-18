@@ -25,7 +25,6 @@ ALL_REQUIRED_PIPELINE_OPTIONS = (
     "segmentation_head",
     "multi_scale",
     "expanded_scales",
-    "do_random_resize_via_padding",
     "patch_size",
     "num_windows",
 )
@@ -47,7 +46,7 @@ def _training_namespace(model_config: ModelConfig, dataset_dir: str = "/fake/dat
     Examples:
         >>> namespace = _training_namespace(RFDETRSmallConfig())
         >>> (namespace.multi_scale, namespace.num_windows, namespace.square_resize_div_64)
-        (True, 2, True)
+        ('per-batch', 2, True)
     """
     return _namespace_from_configs(model_config, TrainConfig(dataset_dir=dataset_dir))
 
@@ -291,12 +290,16 @@ class TestConfigValuesReachTheTransformPipeline:
     @pytest.mark.parametrize(
         "namespace_option,configured_value,transform_option,expected_value",
         [
+            ("multi_scale", "per-batch", "multi_scale", True),
+            ("multi_scale", "per-sample", "multi_scale", True),
+            ("multi_scale", "off", "multi_scale", False),
             ("multi_scale", True, "multi_scale", True),
             ("multi_scale", False, "multi_scale", False),
             ("expanded_scales", True, "expanded_scales", True),
             ("expanded_scales", False, "expanded_scales", False),
-            ("do_random_resize_via_padding", True, "skip_random_resize", False),
-            ("do_random_resize_via_padding", False, "skip_random_resize", True),
+            ("multi_scale", "per-batch", "skip_random_resize", True),
+            ("multi_scale", "per-sample", "skip_random_resize", False),
+            ("multi_scale", True, "skip_random_resize", True),
             ("patch_size", 12, "patch_size", 12),
             ("num_windows", 3, "num_windows", 3),
         ],
@@ -306,7 +309,7 @@ class TestConfigValuesReachTheTransformPipeline:
         self,
         builder: BuilderCall,
         namespace_option: str,
-        configured_value: bool | int,
+        configured_value: bool | int | str,
         transform_option: str,
         expected_value: bool | int,
         square_resize_div_64: bool,

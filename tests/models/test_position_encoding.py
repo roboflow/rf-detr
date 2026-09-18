@@ -187,12 +187,12 @@ class TestPositionEmbeddingSineNoPaddingCache:
     def test_training_does_not_cache_after_default_config_batch_uniform_resize(self) -> None:
         """Training recomputes embeddings after the real default-training batch mutation.
 
-        The default training config (``square_resize_div_64=True``, ``multi_scale=True``,
-        ``do_random_resize_via_padding=False``) resizes every sample to one fixed square scale before collate, so the
-        batch is flagged. ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly to a
-        randomly chosen scale via the same two in-place ``F.interpolate`` calls reproduced below, without touching
-        ``no_padding``. Nearest-neighbour resampling of an all-False mask stays all-False at any output size, so the
-        training result must still match the unflagged path without retaining the embedding.
+        The default training config (``square_resize_div_64=True``, ``multi_scale="per-batch"``) resizes every sample to
+        one fixed square scale before collate, so the batch is flagged. ``RFDETRLightningModule.on_train_batch_start``
+        then resizes the whole batch uniformly to a randomly chosen scale via the same two in-place ``F.interpolate``
+        calls reproduced below, without touching ``no_padding``. Nearest-neighbour resampling of an all-False mask stays
+        all-False at any output size, so the training result must still match the unflagged path without retaining the
+        embedding.
         """
         images = [torch.rand(3, 12, 12) for _ in range(2)]
         nested = nested_tensor_from_tensor_list(images)
