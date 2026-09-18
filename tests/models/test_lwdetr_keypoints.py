@@ -255,7 +255,7 @@ def test_two_stage_encoder_keypoint_nonfinite_delta_preserves_finite_predictions
         torch.rand(2, 4),
         torch.randn(2, hidden_dim),
     )
-    _, _, _, ref_enc, _, enc_keypoints, _ = outputs
+    _, _, _, ref_enc, _, enc_keypoints, _, _ = outputs
     assert enc_keypoints is not None
 
     expected_delta = finite_delta.clone()

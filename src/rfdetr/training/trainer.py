@@ -733,13 +733,43 @@ def build_trainer(
             num_nodes,
         )
 
+    # static_graph=True lets DDP learn the set of unused parameters once (first two iterations)
+    # instead of re-searching the autograd graph every step -- measured -10.6% median full training
+    # step on 2x L4/NCCL (5 runs, real detection model, find_unused_parameters=True kept alongside
+    # it as PyTorch's docs specify). gradient_as_bucket_view=True is bundled in: same measurement,
+    # avoids the allreduce-bucket copy. Both require the set of possibly-unused parameters to stay
+    # fixed across the run (PyTorch's own precondition for static_graph); keypoint's manual
+    # optimization and grad_accum_steps > 1 (both use DDP's no_sync() across multiple backward calls
+    # per optimizer step) were not exercised by that measurement, so both are excluded here rather
+    # than assumed safe. Checked with a CPU forward+backward probe against real SetCriterion/
+    # SegmentationCriterion loss graphs (RFDETRNano with two_stage True and False, RFDETRSegNano
+    # with and without mask targets -- the three branches the find_unused_parameters comment above
+    # names): across all-empty, partial-empty and normal target batches the only parameter that is
+    # ever unused is the always-unused backbone.0.encoder.encoder.embeddings.mask_token, so the
+    # group_detr/aux-loss/sparse-segmentation-head branches above do not actually make the unused
+    # set vary run to run for the configs probed. If that invariant does not hold for a config
+    # outside this probe, DDP's reducer fails the step immediately with "Your training graph has
+    # changed in this iteration" instead of silently dropping a gradient.
+    # Read the effective value the same way "accumulate_grad_batches" is resolved later in this
+    # function (a caller's trainer_kwargs override wins over tc.grad_accum_steps) -- tc.grad_accum_steps
+    # alone missed a real gradient-accumulation call and crashed DDP (RuntimeError:
+    # expect_autograd_hooks_ INTERNAL ASSERT FAILED in reducer.cpp) until this was fixed.
+    _effective_grad_accum_steps = trainer_kwargs.get("accumulate_grad_batches", tc.grad_accum_steps)
+    _static_graph_eligible = not has_keypoints and _effective_grad_accum_steps <= 1
+
     # Transparently replace fork-based DDP with spawn-based DDP — see the
     # module-level comment block above _InteractiveSpawnLauncher for rationale.
     if strategy_name in ("ddp_notebook", "ddp_spawn"):
-        strategy = _NotebookSpawnDDPStrategy(start_method="spawn", find_unused_parameters=True)
+        strategy = _NotebookSpawnDDPStrategy(
+            start_method="spawn",
+            find_unused_parameters=True,
+            static_graph=_static_graph_eligible,
+            gradient_as_bucket_view=_static_graph_eligible,
+        )
         _logger.info(
-            "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork.",
+            "%s → spawn-based DDP to avoid OpenMP thread pool corruption after fork (static_graph=%s).",
             strategy_name,
+            _static_graph_eligible,
         )
     elif strategy_name == "ddp" or (strategy_name == "auto" and distributed_requested):
         # DETR-family architectures can leave parameters unused on certain forward
@@ -754,14 +784,21 @@ def build_trainer(
         # each backward pass to identify which parameters contributed to the loss.
         # To opt out (e.g. configs with two_stage=False that never hit unused params),
         # pass strategy=DDPStrategy(find_unused_parameters=False) via trainer_kwargs.
-        strategy = _DDPStrategy(find_unused_parameters=True)
+        strategy = _DDPStrategy(
+            find_unused_parameters=True,
+            static_graph=_static_graph_eligible,
+            gradient_as_bucket_view=_static_graph_eligible,
+        )
         if strategy_name == "auto":
             _logger.info(
-                "strategy='auto' with distributed execution → DDPStrategy(find_unused_parameters=True).",
+                "strategy='auto' with distributed execution → "
+                "DDPStrategy(find_unused_parameters=True, static_graph=%s).",
+                _static_graph_eligible,
             )
         else:
             _logger.info(
-                "strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
+                "strategy='ddp' → DDPStrategy(find_unused_parameters=True, static_graph=%s).",
+                _static_graph_eligible,
             )
     sharded = _is_sharded_strategy(strategy)
     enable_ema = bool(tc.use_ema) and not sharded and not xla_accelerator

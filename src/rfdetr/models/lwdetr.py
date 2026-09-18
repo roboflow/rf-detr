@@ -511,11 +511,15 @@ class LWDETR(nn.Module):
             cross_attn_srcs=cross_attn_srcs,
         )
         if self.use_grouppose_keypoints:
-            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs[:7]
         else:
             hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
             keypoint_hs = None
             enc_kp_predictions = None
+        # Last element: enc_out_class_embed's output at the two-stage selected positions, already
+        # gathered by Transformer._two_stage_group_selection -- None on the rare fallback path
+        # (custom/heterogeneous group modules), where the loop below still recomputes it.
+        cls_ts = transformer_outputs[-1]
 
         out: dict[str, Any] = {}
         if hs is not None:
@@ -578,14 +582,20 @@ class LWDETR(nn.Module):
 
         if self.two_stage:
             assert self.transformer.enc_out_class_embed is not None
-            group_detr = self.group_detr if self.training else 1
-            hs_enc_list = hs_enc.chunk(group_detr, dim=1)
-            cls_enc_list = []
-            for g_idx in range(group_detr):
-                cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
-                cls_enc_list.append(cls_enc_gidx)
+            if cls_ts is not None:
+                # Already computed by Transformer._two_stage_group_selection: enc_out_class_embed is a
+                # plain per-position Linear, so its output gathered at the selected positions there is
+                # exactly what re-running it here on the same gathered hidden state would produce.
+                cls_enc = cls_ts
+            else:
+                group_detr = self.group_detr if self.training else 1
+                hs_enc_list = hs_enc.chunk(group_detr, dim=1)
+                cls_enc_list = []
+                for g_idx in range(group_detr):
+                    cls_enc_gidx = self.transformer.enc_out_class_embed[g_idx](hs_enc_list[g_idx])
+                    cls_enc_list.append(cls_enc_gidx)
 
-            cls_enc = torch.cat(cls_enc_list, dim=1)
+                cls_enc = torch.cat(cls_enc_list, dim=1)
             keypoints_enc = None
             if self.use_grouppose_keypoints and enc_kp_predictions is not None:
                 keypoints_enc = self._format_keypoint_output(
@@ -635,7 +645,7 @@ class LWDETR(nn.Module):
             cross_attn_srcs=cross_attn_srcs,
         )
         if self.use_grouppose_keypoints:
-            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs
+            hs, ref_unsigmoid, hs_enc, ref_enc, keypoint_hs, enc_kp_predictions, _ = transformer_outputs[:7]
         else:
             hs, ref_unsigmoid, hs_enc, ref_enc = transformer_outputs[:4]
             keypoint_hs = None
