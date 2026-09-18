@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import multiprocessing
+from collections.abc import Callable
 from unittest.mock import patch
 
 import pytest
@@ -193,6 +194,36 @@ def test_capture_logs_signature_once() -> None:
     assert message.startswith("Captured CUDA graph 1 for input shape (2, 4, 3, 3)")
 
 
+def test_bf16_captures_share_one_graph_pool() -> None:
+    """Every BF16 signature of one runner captures into the same graph memory pool.
+
+    Private pools reserve a full activation footprint per input signature, which multi-scale training multiplied by the
+    number of resolutions (38.2 GiB reserved for 6.3 GiB allocated at 11 signatures on an RTX PRO 6000). One pool handle
+    per runner, created at the first capture, is what keeps that bounded.
+    """
+    model = _TinyGraphableModel()
+    runner = CudaGraphTrainingRunner(model)
+    handle = object()
+    pools: list[object] = []
+
+    def capture(module: nn.Module, _args: tuple, **kwargs: object) -> nn.Module:
+        pools.append(kwargs["pool"])
+        return module
+
+    with (
+        patch("torch.cuda.is_available", return_value=True),
+        patch("torch.cuda.graph_pool_handle", return_value=handle) as pool_handle,
+        patch("torch.cuda.make_graphed_callables", side_effect=capture),
+    ):
+        runner(_samples(batch_size=2))
+        runner(_samples(batch_size=3))
+        runner(_samples(batch_size=2))
+
+    assert len(runner._graphed_cache) == 2
+    assert pools == [handle, handle]
+    pool_handle.assert_called_once()
+
+
 def test_failed_capture_raises_without_eager_retry() -> None:
     """A capture error must stop training, not execute against potentially damaged CUDA state."""
     model = _TinyGraphableModel()
@@ -271,6 +302,86 @@ def test_cuda_graph_replay_matches_eager_outputs_and_accumulated_gradients() -> 
         expected = eager(_samples(2.5, device="cuda"))["pred"]
     torch.testing.assert_close(replayed.float(), expected.float(), rtol=5e-3, atol=5e-3)
     assert len(runner._graphed_cache) == 1
+
+
+class _ConvGraphableModel(nn.Module):
+    """Convolutional NestedTensor model whose captured activations span several allocator segments."""
+
+    def __init__(self, device: torch.device | str = "cpu") -> None:
+        super().__init__()
+        self.features = nn.Conv2d(4, 64, kernel_size=3, device=device)
+        self.projection = nn.Linear(64, 3, device=device)
+
+    def forward(self, samples: NestedTensor, targets: list[dict[str, Tensor]] | None = None) -> dict[str, Tensor]:
+        """Convolve, pool, project."""
+        del targets
+        pooled = torch.relu(self.features(samples.tensors)).mean(dim=(-2, -1))
+        return {"pred": self.projection(pooled)}
+
+
+def _wide_samples(value: float, batch_size: int) -> NestedTensor:
+    """Build a CUDA input large enough that each captured signature reserves tens of MiB.
+
+    Examples:
+        >>> _wide_samples(1.0, 2)  # doctest: +SKIP
+        # Requires CUDA.
+    """
+    tensors = torch.full((batch_size, 4, 192, 192), value, device="cuda")
+    mask = torch.zeros((batch_size, 192, 192), dtype=torch.bool, device="cuda")
+    return NestedTensor(tensors, mask)
+
+
+def _step(
+    forward: Callable[[NestedTensor], dict[str, Tensor]], model: nn.Module, value: float, batch_size: int
+) -> tuple[Tensor, Tensor]:
+    """Run one forward/backward with a fresh gradient; return ``(output, conv weight grad)``.
+
+    Examples:
+        >>> _step(lambda s: {"pred": s.tensors}, nn.Linear(1, 1), 1.0, 2)  # doctest: +SKIP
+        # Requires CUDA.
+    """
+    model.zero_grad(set_to_none=True)
+    with torch.autocast("cuda", dtype=torch.bfloat16, cache_enabled=True):
+        output = forward(_wide_samples(value, batch_size))["pred"]
+        output.square().sum().backward()
+    grad = model.features.weight.grad  # type: ignore[union-attr]
+    assert grad is not None
+    return output.float(), grad.clone()
+
+
+@pytest.mark.gpu
+def test_shared_pool_replays_out_of_order_signatures_like_eager() -> None:
+    """Two signatures captured into one shared pool must replay interleaved without corrupting each other.
+
+    Multi-scale training replays graphs in random order, the case PyTorch documents as unsafe for a shared pool when one
+    graph's live outputs overlap another's allocations. Here a step consumes its outputs and gradients before the next
+    replay, so A, B, A, B must match eager at every step, and the second capture must not reserve a second full pool.
+    """
+    torch.manual_seed(0)
+    eager = _ConvGraphableModel("cuda")
+    graphed = _ConvGraphableModel("cuda")
+    graphed.load_state_dict(eager.state_dict())
+    runner = CudaGraphTrainingRunner(graphed)
+
+    torch.cuda.synchronize()
+    baseline = torch.cuda.memory_reserved()
+    _step(runner, graphed, 1.0, 4)  # capture signature A
+    growth_first = torch.cuda.memory_reserved() - baseline
+    _step(runner, graphed, 1.0, 6)  # capture signature B (larger) into the same pool
+    growth_second = torch.cuda.memory_reserved() - baseline - growth_first
+
+    for value, batch_size in ((1.5, 4), (2.5, 6), (0.5, 4), (3.5, 6), (1.25, 4)):
+        graph_output, graph_grad = _step(runner, graphed, value, batch_size)
+        eager_output, eager_grad = _step(eager, eager, value, batch_size)
+        torch.testing.assert_close(graph_output, eager_output, rtol=5e-3, atol=5e-3)
+        torch.testing.assert_close(graph_grad, eager_grad, rtol=1e-2, atol=1e-2)
+
+    assert len(runner._graphed_cache) == 2
+    assert runner._graph_pool is not None
+    assert growth_first > 0
+    # With private pools the larger second signature would reserve at least as much again as the first; a shared
+    # pool reuses the first capture's segments and only adds the second signature's excess.
+    assert growth_second < growth_first
 
 
 @pytest.mark.gpu
