@@ -100,10 +100,10 @@ class MultiScale(str, Enum):
     """Multi-scale training mode for ``TrainConfig.multi_scale``.
 
     ``PER_BATCH`` draws one random scale per batch and applies it in ``RFDETRLightningModule.on_train_batch_start`` by
-    interpolating the already collated batch (the dataset resizes every sample to the largest scale).
-    inside the dataset transforms and collate pads to the batch maximum. ``OFF`` trains at the fixed
-    ``ModelConfig.resolution``. Booleans are accepted as input (``True`` is ``PER_BATCH``, the behaviour the old
-    ``multi_scale=True`` default had; ``False`` is ``OFF``) but are never stored as such.
+    interpolating the already collated batch (the dataset resizes every sample to the largest scale). inside the dataset
+    transforms and collate pads to the batch maximum. ``OFF`` trains at the fixed ``ModelConfig.resolution``. Booleans
+    are accepted as input (``True`` is ``PER_BATCH``, the behaviour the old ``multi_scale=True`` default had; ``False``
+    is ``OFF``) but are never stored as such.
     """
 
     OFF = "off"
