@@ -637,6 +637,37 @@ class TestPairwiseBoxL1Cost:
         assert actual.dtype is torch.float32
         torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
 
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_matches_eager_for_bfloat16_pred_boxes_and_float32_targets_pair(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The compiled call matches eager for the real matcher dtype pair, not just matched bfloat16.
+
+        The matcher never hands ``pairwise_box_l1_cost`` two bfloat16 operands: only the encoder layer's ``pred_boxes``
+        is bfloat16 under BF16 AMP, while targets stay float32, so the dtype-mismatch guard routes this exact pair to
+        ``cdist`` -- which the encoder-layer autocast context promotes to float32. A compiled call built with the post-
+        fix production recipe (``fullgraph=False``) must take the same route and agree with the eager result bit-for-
+        bit-equivalent within tolerance.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(725)
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=False,
+            options={"triton.cudagraphs": False},
+        )
+        pred_boxes = torch.rand(2, 5, 4, dtype=torch.bfloat16)
+        target_boxes = torch.rand(2, 13, 4, dtype=torch.float32)
+
+        with torch.amp.autocast("cpu", dtype=torch.bfloat16):
+            expected = pairwise_box_l1_cost(pred_boxes, target_boxes)
+            actual = compiled_cost(pred_boxes, target_boxes)
+
+        assert actual.dtype is torch.float32
+        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_matches_cdist_on_cuda_at_matcher_scale(self, monkeypatch: pytest.MonkeyPatch) -> None:
