@@ -1,4 +1,10 @@
 cards:
+  - href: multi-source-rf100vl/
+    name: "Train on RF100-VL sources with size-balanced weights"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.10.0
+    author: Borda
+    description: "Fine-tune RF-DETR jointly on three RF100-VL datasets 20x apart in size, with WeightedMultiSourceBatchSampler weights computed automatically as the inverse of each source's measured size."
   - href: train-coco2017/
     name: "Train RF-DETR Nano on COCO2017"
     labels: [TRAINING, COCO2017, PYTORCH LIGHTNING]
