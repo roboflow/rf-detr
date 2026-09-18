@@ -796,7 +796,7 @@ model.export(format="coreml", coreml_precision="float16")
 
 !!! note
 
-    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation).
+    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation; `dets, labels, keypoints` for keypoints).
 
 ### CoreML Inference Example
 

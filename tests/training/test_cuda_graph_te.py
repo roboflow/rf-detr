@@ -522,7 +522,6 @@ class TestTransformerEngineCaptureGPU:
             amp_dtype="fp8",
             drop_path=0.0,
             multi_scale=False,
-            do_random_resize_via_padding=False,
             grad_accum_steps=1,
             square_resize_div_64=True,
             num_workers=0,

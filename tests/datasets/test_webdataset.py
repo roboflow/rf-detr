@@ -1401,7 +1401,6 @@ class TestBuildWebdataset:
             "dataset_file": "webdataset",
             "multi_scale": False,
             "expanded_scales": False,
-            "do_random_resize_via_padding": False,
             "patch_size": 16,
             "num_windows": 4,
             "square_resize_div_64": False,

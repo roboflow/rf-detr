@@ -41,6 +41,7 @@ __all__ = [
     "CocoEvalBackend",
     "DatasetFile",
     "ModelConfig",
+    "MultiScale",
     "RFDETRBaseConfig",
     "RFDETRLargeDeprecatedConfig",
     "RFDETRNanoConfig",
@@ -93,6 +94,39 @@ def _package_importable(module_name: str) -> bool:
         return True
     except ImportError:
         return False
+
+
+class MultiScale(str, Enum):
+    """Multi-scale training mode for ``TrainConfig.multi_scale``.
+
+    ``PER_BATCH`` draws one random scale per batch and applies it in ``RFDETRLightningModule.on_train_batch_start`` by
+    interpolating the already collated batch (the dataset resizes every sample to the largest scale). ``PER_SAMPLE``
+    draws a scale per sample inside the dataset transforms and collate pads to the batch maximum. ``OFF`` trains at the
+    fixed ``ModelConfig.resolution``. Booleans are accepted as input (``True`` is ``PER_BATCH``, the behaviour the old
+    ``multi_scale=True`` default had; ``False`` is ``OFF``) but are never stored as such.
+    """
+
+    OFF = "off"
+    PER_BATCH = "per-batch"
+    PER_SAMPLE = "per-sample"
+
+    @classmethod
+    def from_value(cls, value: "MultiScale | str | bool") -> "MultiScale":
+        """Normalize a member, its string value, or a legacy boolean to a member.
+
+        Examples:
+            >>> MultiScale.from_value(True)
+            <MultiScale.PER_BATCH: 'per-batch'>
+            >>> MultiScale.from_value(False)
+            <MultiScale.OFF: 'off'>
+            >>> MultiScale.from_value("per-sample")
+            <MultiScale.PER_SAMPLE: 'per-sample'>
+        """
+        if value is True:
+            return cls.PER_BATCH
+        if value is False:
+            return cls.OFF
+        return cls(value)
 
 
 class AugmentationBackend(str, Enum):
@@ -1096,11 +1130,11 @@ class TrainConfig(BaseConfig):
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
+    # See MultiScale: "per-batch" (default) / "per-sample" / "off"; True and False alias "per-batch" and "off".
     # XLA/TPU: every distinct (H, W) triggers a separate graph compilation. Set multi_scale=False
     # for a static shape (zero recompilations after the first batch) when training on TPU.
-    multi_scale: bool = True
+    multi_scale: MultiScale = MultiScale.PER_BATCH
     expanded_scales: bool = True
-    do_random_resize_via_padding: bool = False
     use_ema: bool = True
     ema_update_interval: int = 1
     # Validation-only: also evaluate the base model, on top of the model validation already forwards
@@ -1193,6 +1227,18 @@ class TrainConfig(BaseConfig):
     scale_jitter: bool = True
     augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"
     save_dataset_grids: bool = False
+
+    @field_validator("multi_scale", mode="before")
+    @classmethod
+    def _coerce_multi_scale(cls, v: Any) -> Any:
+        """Map the boolean spellings to members: ``True`` is ``"per-batch"`` (the old default), ``False`` is
+        ``"off"``."""
+        return MultiScale.from_value(v) if isinstance(v, bool) else v
+
+    @field_serializer("multi_scale")
+    def _serialize_multi_scale(self, value: MultiScale) -> str:
+        """Serialize the mode to its plain string value so ``model_dump`` stays JSON-safe."""
+        return value.value
 
     @field_validator("augmentation_backend", mode="before")
     @classmethod
