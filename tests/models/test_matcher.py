@@ -16,6 +16,7 @@ from rfdetr.models import _assignment
 from rfdetr.models import matcher as matcher_module
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import HungarianMatcher, _TargetSideSafety
+from tests._markers import requires_cpu_inductor
 
 
 @pytest.fixture()
@@ -2323,7 +2324,7 @@ class TestCompiledL1Matching:
     @pytest.mark.parametrize(
         "device",
         [
-            "cpu",
+            pytest.param("cpu", marks=requires_cpu_inductor),
             pytest.param(
                 "cuda",
                 marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")],
@@ -2381,7 +2382,7 @@ class TestCompactPathCriterionEquivalence:
     checked, not just losses.
     """
 
-    @pytest.mark.parametrize("compiled", [False, True])
+    @pytest.mark.parametrize("compiled", [False, pytest.param(True, marks=requires_cpu_inductor)])
     @pytest.mark.parametrize("group_detr", [1, 2])
     def test_losses_and_gradients_match_between_compact_and_fallback_paths(
         self, monkeypatch: pytest.MonkeyPatch, compiled: bool, group_detr: int

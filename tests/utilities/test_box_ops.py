@@ -16,6 +16,7 @@ from rfdetr.utilities.box_ops import (
     masks_to_boxes,
     pairwise_box_l1_cost,
 )
+from tests._markers import requires_cpu_inductor
 
 
 def _random_xyxy_boxes(n: int, seed: int = 0) -> torch.Tensor:
@@ -485,7 +486,7 @@ class TestPairwiseBoxL1Cost:
     @pytest.mark.parametrize(
         "device",
         [
-            "cpu",
+            pytest.param("cpu", marks=requires_cpu_inductor),
             pytest.param(
                 "cuda",
                 marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")],
@@ -527,7 +528,7 @@ class TestPairwiseBoxL1Cost:
     @pytest.mark.parametrize(
         "device",
         [
-            "cpu",
+            pytest.param("cpu", marks=requires_cpu_inductor),
             pytest.param(
                 "cuda",
                 marks=[

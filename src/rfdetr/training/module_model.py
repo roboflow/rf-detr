@@ -493,7 +493,9 @@ class RFDETRModelModule(LightningModule):
                         "validated for single-GPU detection training without gradient accumulation.",
                         unsupported_reason,
                     )
-            matcher = self.criterion.matcher
+            # Duck-typed like the criterion capability probes below: test doubles and custom criteria
+            # need not expose a matcher at all.
+            matcher = getattr(self.criterion, "matcher", None)
             if isinstance(matcher, HungarianMatcher):
                 # Keep ragged target packing and the solver outside Dynamo. Matcher output lifetimes and
                 # changing target counts are independent of the model's optional CUDA graph trees.

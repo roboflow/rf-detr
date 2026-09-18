@@ -583,6 +583,26 @@ class TestInit:
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
 
+    def test_compile_tolerates_criterion_without_matcher(self, tmp_path: Path) -> None:
+        """A criterion that exposes no ``matcher`` attribute must not break compiled construction.
+
+        ``_FakeCriterion`` is what the GPU compile regressions inject; reading ``self.criterion.matcher`` unguarded
+        raised ``AttributeError`` there before the ``getattr`` probe.
+        """
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(_FakeCriterion(), _fake_postprocess()),
+            ),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as compiler,
+        ):
+            module = RFDETRModelModule(_base_model_config(compile=True), _base_train_config(tmp_path))
+
+        assert module._compile_active is True
+        compiler.assert_called_once()
+
     @pytest.mark.parametrize("compile_enabled", [False, True])
     def test_matcher_l1_compilation_follows_model_flag(self, tmp_path: Path, compile_enabled: bool) -> None:
         """Compile only the real matcher's tensor cost, without changing other matcher instances."""
