@@ -370,7 +370,7 @@ def test_shared_pool_replays_out_of_order_signatures_like_eager() -> None:
     _step(runner, graphed, 1.0, 6)  # capture signature B (larger) into the same pool
     growth_second = torch.cuda.memory_reserved() - baseline - growth_first
 
-    for value, batch_size in ((1.5, 4), (2.5, 6), (0.5, 4), (3.5, 6), (1.25, 4)):
+    for value, batch_size in ((2.5, 6), (1.5, 4), (0.5, 4), (3.5, 6), (1.25, 4)):
         graph_output, graph_grad = _step(runner, graphed, value, batch_size)
         eager_output, eager_grad = _step(eager, eager, value, batch_size)
         torch.testing.assert_close(graph_output, eager_output, rtol=5e-3, atol=5e-3)
