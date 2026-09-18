@@ -30,7 +30,7 @@ from PIL import Image
 from torch import Tensor
 from torchvision.transforms.v2 import ToDtype, ToImage
 
-from rfdetr.config import AugmentationBackend
+from rfdetr.config import AugmentationBackend, MultiScale
 from rfdetr.datasets._aug_utils import _warn_keypoint_hflip_disabled, resolve_keypoint_flip_pairs
 from rfdetr.datasets._torchvision import (
     Compose,
@@ -1290,8 +1290,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
 
     Direct callers must provide either ``dataset_dir`` or ``coco_path``, plus
     ``square_resize_div_64``, ``segmentation_head``, ``multi_scale``,
-    ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, and
-    ``num_windows`` on ``args``. Keypoint, custom augmentation, scale-jitter,
+    ``expanded_scales``, ``patch_size``, and ``num_windows`` on ``args``. Keypoint, custom augmentation, scale-jitter,
     and augmentation-backend fields are optional.
 
     Args:
@@ -1311,6 +1310,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     if not root.exists():
         logger.error(f"COCO path {root} does not exist")
         raise FileNotFoundError(f"COCO path {root} does not exist")
+    multi_scale = MultiScale.from_value(args.multi_scale)
 
     # Detection dataset args may omit keypoint fields; default to the detection annotation path.
     has_keypoints = getattr(args, "use_grouppose_keypoints", False)
@@ -1347,7 +1347,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
-        multi_scale=args.multi_scale,
+        multi_scale=multi_scale is not MultiScale.OFF,
         expanded_scales=args.expanded_scales,
         patch_size=args.patch_size,
         num_windows=args.num_windows,
@@ -1363,9 +1363,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             transforms=make_coco_transforms_square_div_64(
                 image_set,
                 resolution,
-                multi_scale=args.multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=args.expanded_scales,
-                skip_random_resize=not args.do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
@@ -1390,9 +1390,9 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             transforms=make_coco_transforms(
                 image_set,
                 resolution,
-                multi_scale=args.multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=args.expanded_scales,
-                skip_random_resize=not args.do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=args.patch_size,
                 num_windows=args.num_windows,
                 aug_config=aug_config,
@@ -1423,7 +1423,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
 
     Direct callers must provide ``dataset_dir``, ``square_resize_div_64``,
     ``segmentation_head``, ``multi_scale``, ``expanded_scales``,
-    ``do_random_resize_via_padding``, ``patch_size``, and ``num_windows`` on
+    ``patch_size``, and ``num_windows`` on
     ``args``. Keypoint, custom augmentation, scale-jitter, and
     augmentation-backend fields are optional.
 
@@ -1457,9 +1457,8 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     # optional task/augmentation fields below retain documented safe defaults.
     square_resize_div_64 = args.square_resize_div_64
     include_masks = args.segmentation_head
-    multi_scale = args.multi_scale
+    multi_scale = MultiScale.from_value(args.multi_scale)
     expanded_scales = args.expanded_scales
-    do_random_resize_via_padding = args.do_random_resize_via_padding
     patch_size = args.patch_size
     num_windows = args.num_windows
     # Roboflow detection exports omit keypoint schema/flip-pair fields; missing values mean detection-only.
@@ -1477,7 +1476,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
-        multi_scale=multi_scale,
+        multi_scale=multi_scale is not MultiScale.OFF,
         expanded_scales=expanded_scales,
         patch_size=patch_size,
         num_windows=num_windows,
@@ -1493,9 +1492,9 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             transforms=make_coco_transforms_square_div_64(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
@@ -1518,9 +1517,9 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             transforms=make_coco_transforms(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,

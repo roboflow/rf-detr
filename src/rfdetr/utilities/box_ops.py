@@ -162,6 +162,127 @@ def generalized_box_iou(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     return iou - (area - union) / area.clamp(min=eps)
 
 
+#: Element budget for the broadcast intermediate in :func:`pairwise_box_l1_cost`.
+#: The intermediate holds ``rows * chunk * features`` values, so capping it keeps
+#: peak memory flat across batch, query and target counts instead of growing with
+#: their product. 32M elements is 128 MiB in float32, 256 MiB in float64; a narrower float
+#: never costs less, since :func:`pairwise_box_l1_cost` reduces it in float32.
+#: The figure is a chosen memory ceiling, not a measured hardware crossover -- unlike
+#: ``_STACKED_COST_ELEMENT_LIMIT`` in :mod:`rfdetr.models.matcher`, which is placed between
+#: two benchmarked points. No shape measured for this change was sensitive to its exact
+#: value, so it bounds a working set rather than tuning one.
+_L1_COST_ELEMENT_BUDGET = 32 * 1024 * 1024
+
+
+def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
+    """Pairwise L1 distance between two sets of boxes.
+
+    Equivalent to ``torch.cdist(boxes1, boxes2, p=1)`` for the box-shaped inputs the
+    matcher builds, and bit-identical to it on CPU and between this function's own
+    chunked and single-shot branches on every device, for every shape and dtype the
+    tests exercise. CUDA-vs-``cdist`` parity is exact in practice but is only tested
+    to a numerical tolerance, since kernel reduction order is not guaranteed identical
+    across CUDA runner/torch versions. That guarantee is scoped to an equal-dtype
+    operand pair -- a mismatched pair delegates to ``torch.cdist`` itself -- with
+    narrower-than-float32 operands reduced in float32, the form ``torch.cdist`` is
+    handed under autocast and refuses outside one.
+    ``torch.cdist`` is a general Minkowski-distance routine: for ``p=1`` on CUDA it
+    dispatches to a generic kernel that cannot exploit how small the feature
+    dimension is, which makes it the most expensive single operator in the matcher
+    despite doing only four subtractions per pair. Broadcasting and reducing over
+    the four box coordinates is memory-bound instead, and measured 15-29x faster on
+    the shapes RF-DETR's matcher produces. That figure is a CUDA measurement, and the
+    trade is device-specific: on CPU the same broadcast form measured 2.7-4.9x *slower*
+    than ``torch.cdist``. Training builds this cost matrix on CUDA, so the CPU regression
+    is confined to tests and small-scale debugging.
+
+    The broadcast form would materialise ``[*leading, queries, targets, features]``,
+    so the target dimension is processed in chunks sized from
+    :data:`_L1_COST_ELEMENT_BUDGET`. Chunking cannot change the result because the
+    reduction runs over the feature axis only, never across chunks.
+
+    A fused kernel -- ``torch.compile``/Inductor, or a hand-written Triton kernel -- would
+    subsume both the chunking loop and its budget constant, since it can hold the coordinate
+    differences in registers instead of materialising them.
+
+    Args:
+        boxes1: Boxes of shape ``[*leading, queries, features]``.
+        boxes2: Boxes of shape ``[*leading, targets, features]``, sharing the dtype and
+            device of *boxes1*. Its leading dimensions broadcast against *boxes1*'s, as
+            they do in ``torch.cdist``.
+
+    Returns:
+        Pairwise L1 cost of shape ``[*leading, queries, targets]``, in the operands' dtype
+        except for floating dtypes narrower than float32, which are reduced in float32.
+
+    Examples:
+        >>> boxes1 = torch.tensor([[0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0]])
+        >>> boxes2 = torch.tensor([[0.0, 0.0, 1.0, 1.0]])
+        >>> pairwise_box_l1_cost(boxes1, boxes2).tolist()
+        [[0.0], [2.0]]
+    """
+    if boxes1.dtype is not boxes2.dtype or boxes1.shape[-1] != boxes2.shape[-1]:
+        # Broadcasting would silently promote mixed dtypes or expand a singleton
+        # feature dimension, while ``torch.cdist`` rejects both outside autocast. Keep
+        # those validation failures on the original op; neither is a hot path.
+        # Under autocast the mismatch is not a failure at all: ``torch.cdist`` accepts a
+        # narrow-float/float32 pair there because autocast promotes both operands to
+        # float32 before the call. That is the live bfloat16-prediction/float32-target
+        # training configuration, so this branch is a normal path for it rather than an
+        # error path. A float32/float64 mix still raises under autocast, which is the
+        # rejection the matcher's dtype gate relies on.
+        return torch.cdist(boxes1, boxes2, p=1)
+
+    if boxes1.dtype.is_floating_point and boxes1.dtype not in (torch.float32, torch.float64):
+        # A narrower-than-float32 pair never reached a low-precision reduction before:
+        # ``torch.cdist`` refuses bfloat16/float16 outright, and under autocast -- which the
+        # advertised BF16 training configuration runs in -- it is handed both operands already
+        # promoted to float32. Broadcasting carries no such promotion, so reducing in the input
+        # dtype would quietly drop mantissa bits the replaced call always kept. One ``.float()``
+        # per 4-wide operand restores it, and the matcher casts the assembled cost matrix to
+        # float32 regardless, so nothing downstream needs the narrow dtype back.
+        boxes1 = boxes1.float()
+        boxes2 = boxes2.float()
+
+    # ``torch.cdist`` broadcasts the leading dimensions, so an operand can carry fewer rows than
+    # the result has. Sizing anything from ``boxes1`` alone therefore disagrees with it -- silently
+    # for the single-shot branch, which broadcasts its way to the right answer regardless, and as a
+    # ``RuntimeError`` for the chunked one, whose preallocated buffer is then too small to assign
+    # into. ``rows`` counts the result's rows, which is what the broadcast intermediate materialises.
+    leading = torch.broadcast_shapes(boxes1.shape[:-2], boxes2.shape[:-2])  # type: ignore[no-untyped-call]
+    queries = boxes1.shape[-2]
+    targets = boxes2.shape[-2]
+    features = boxes1.shape[-1]
+    cost_shape = (*leading, queries, targets)
+    rows = leading.numel() * queries
+    if features == 0 or rows == 0 or targets == 0:
+        # A zero-width feature axis still has pairs to report, and ``torch.cdist`` reports every one
+        # of them as zero, so the buffer has to be zeroed rather than merely allocated. The other two
+        # cases hold no elements at all, which makes the fill value unobservable there.
+        return boxes1.new_zeros(cost_shape)
+
+    # Taking the absolute value in place keeps one intermediate alive instead of two, so the
+    # budget above really does bound peak memory. That saving exists only where no graph is being
+    # recorded: under autograd, ``abs_`` makes PyTorch save a separate copy of the pre-``abs``
+    # values for backward, which reinstates the second buffer and leaves the in-place form buying
+    # nothing. Both matcher call sites run under ``torch.no_grad()`` and take the saving; this is a
+    # public function, so a grad-enabled caller keeps the plain out-of-place form instead of
+    # depending on that implicit copy.
+    reduce_in_place = not torch.is_grad_enabled()
+
+    chunk = max(1, min(targets, _L1_COST_ELEMENT_BUDGET // max(1, rows * features)))
+    if chunk >= targets:
+        difference = boxes1.unsqueeze(-2) - boxes2.unsqueeze(-3)
+        return (difference.abs_() if reduce_in_place else difference.abs()).sum(-1)
+
+    cost = boxes1.new_empty(cost_shape)
+    for start in range(0, targets, chunk):
+        stop = min(start + chunk, targets)
+        difference = boxes1.unsqueeze(-2) - boxes2[..., start:stop, :].unsqueeze(-3)
+        cost[..., start:stop] = (difference.abs_() if reduce_in_place else difference.abs()).sum(-1)
+    return cost
+
+
 def masks_to_boxes(masks: Tensor) -> Tensor:
     """Compute the bounding boxes around the provided masks.
 
