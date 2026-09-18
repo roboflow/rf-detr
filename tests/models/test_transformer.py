@@ -1654,6 +1654,15 @@ def test_two_stage_batching_eligible_false_for_affine_free_layer_norm() -> None:
     assert not transformer._two_stage_batching_eligible()
 
 
+def test_two_stage_batching_eligible_false_for_multi_axis_layer_norm() -> None:
+    """A multi-axis LayerNorm must use the generic path even when every group has the same shape."""
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    transformer.enc_output_norm = nn.ModuleList([nn.LayerNorm((20, 16)) for _ in range(2)])
+    assert not transformer._two_stage_batching_eligible()
+
+
 @pytest.mark.parametrize(
     "mismatch",
     [
@@ -1808,18 +1817,16 @@ def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbo
     )
     assert transformer._two_stage_batching_eligible()
 
-    def _two_stage_parameters(model: Transformer) -> list[torch.Tensor]:
-        # enc_out_class_embed is excluded: its output only ranks torch.topk's (non-differentiable)
-        # selection indices, so it structurally never receives a gradient from memory_ts/boxes_ts,
-        # in the loop and the batched path alike.
-        modules = [*model.enc_output, *model.enc_output_norm, *model.enc_out_bbox_embed]
-        return [parameter for module in modules for parameter in module.parameters()]
-
     _, _, memory_fast, boxes_fast = transformer(
         srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
     )
     fast_loss = memory_fast.sum() + boxes_fast.sum()
-    fast_gradients = torch.autograd.grad(fast_loss, [*srcs, *_two_stage_parameters(transformer)])
+    # enc_out_class_embed is excluded: its output only ranks torch.topk's (non-differentiable)
+    # selection indices, so it structurally never receives a gradient from memory_ts/boxes_ts,
+    # in the loop and the batched path alike.
+    fast_modules = [*transformer.enc_output, *transformer.enc_output_norm, *transformer.enc_out_bbox_embed]
+    fast_parameters = [parameter for module in fast_modules for parameter in module.parameters()]
+    fast_gradients = torch.autograd.grad(fast_loss, [*srcs, *fast_parameters])
 
     transformer_loop = copy.deepcopy(transformer)
     transformer_loop._two_stage_batching_eligible = lambda: False
@@ -1828,7 +1835,13 @@ def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbo
         srcs_loop, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
     )
     loop_loss = memory_loop.sum() + boxes_loop.sum()
-    loop_gradients = torch.autograd.grad(loop_loss, [*srcs_loop, *_two_stage_parameters(transformer_loop)])
+    loop_modules = [
+        *transformer_loop.enc_output,
+        *transformer_loop.enc_output_norm,
+        *transformer_loop.enc_out_bbox_embed,
+    ]
+    loop_parameters = [parameter for module in loop_modules for parameter in module.parameters()]
+    loop_gradients = torch.autograd.grad(loop_loss, [*srcs_loop, *loop_parameters])
 
     # A batched GEMM can select a different accumulation order than separate calls, so compare
     # within float32 tolerance rather than requiring bit-for-bit equality.
@@ -1911,7 +1924,6 @@ def test_two_stage_group_selection_compiles_with_finite_gradients() -> None:
     evidence.
     """
     torch._dynamo.reset()
-    torch._dynamo.config.capture_scalar_outputs = True
     torch.manual_seed(0)
     hidden_dim, num_queries, group_detr = 16, 5, 4
     spatial_shapes_hw = [(8, 8), (4, 4)]
@@ -1927,18 +1939,19 @@ def test_two_stage_group_selection_compiles_with_finite_gradients() -> None:
         hidden_dim, num_queries, group_detr, num_classes=7, bbox_reparam=True
     ).to(device)
     assert transformer._two_stage_batching_eligible()
-    compiled_transformer = torch.compile(transformer, dynamic=True)
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
+        compiled_transformer = torch.compile(transformer, dynamic=True)
 
-    _, _, memory_ts, boxes_ts = compiled_transformer(
-        srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
-    )
-    loss = memory_ts.sum() + boxes_ts.sum()
-    parameters = [
-        parameter
-        for module in [*transformer.enc_output, *transformer.enc_output_norm, *transformer.enc_out_bbox_embed]
-        for parameter in module.parameters()
-    ]
-    gradients = torch.autograd.grad(loss, [*srcs, *parameters])
+        _, _, memory_ts, boxes_ts = compiled_transformer(
+            srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+        )
+        loss = memory_ts.sum() + boxes_ts.sum()
+        parameters = [
+            parameter
+            for module in [*transformer.enc_output, *transformer.enc_output_norm, *transformer.enc_out_bbox_embed]
+            for parameter in module.parameters()
+        ]
+        gradients = torch.autograd.grad(loss, [*srcs, *parameters])
 
     assert torch.isfinite(memory_ts).all()
     assert torch.isfinite(boxes_ts).all()

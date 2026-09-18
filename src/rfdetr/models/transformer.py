@@ -422,7 +422,7 @@ class Transformer(nn.Module):
                 return False
 
         first_norm = enc_output_norm[0]
-        if any(
+        if first_norm.normalized_shape != (self.d_model,) or any(
             m.normalized_shape != first_norm.normalized_shape
             or m.eps != first_norm.eps
             or cast(Tensor, m.weight).dtype != cast(Tensor, first_norm.weight).dtype
