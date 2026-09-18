@@ -439,11 +439,11 @@ An INFO line at train start confirms replay is enabled, and each captured input 
 There are two capture routes:
 
 - **BF16/eager route:** `cuda_graphs=True` with `compile=False` supports single-GPU detection with BF16 (`amp_dtype="bf16"` or `"auto"` resolving to BF16). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, FP16, FP32, and unsupported trainer combinations remain eager and log a warning. BF16 graph replay supports gradient accumulation; the runner preserves gradients already accumulated by earlier microbatches.
-- **FP8/Transformer Engine route:** with a tested-compatible Transformer Engine release (2.19.0 was tested), use `cuda_graphs=True`, `compile=False`, and `amp_dtype="fp8"`. This route calls Transformer Engine's native `make_graphed_callables` with the active Lightning FP8 recipe, disables quantized-parameter caching, and clones returned parameter gradients. It is intentionally limited to single-GPU detection, `grad_accum_steps=1`, no gradient checkpointing, `multi_scale=False`, `do_random_resize_via_padding=False`, and `square_resize_div_64=True`. The last setting keeps the external image boundary on a fixed square shape; aspect-preserving batches with `square_resize_div_64=False` stay eager. It captures one fixed batch/resolution signature; a later shape change raises. Unsupported shape/accumulation combinations stay eager with a warning; an incompatible Transformer Engine version or precision-plugin misconfiguration stops training with an error instead.
+- **FP8/Transformer Engine route:** with a tested-compatible Transformer Engine release (2.19.0 was tested), use `cuda_graphs=True`, `compile=False`, and `amp_dtype="fp8"`. This route calls Transformer Engine's native `make_graphed_callables` with the active Lightning FP8 recipe, disables quantized-parameter caching, and clones returned parameter gradients. It is intentionally limited to single-GPU detection, `grad_accum_steps=1`, no gradient checkpointing, `multi_scale=False` and `square_resize_div_64=True`. The last setting keeps the external image boundary on a fixed square shape; aspect-preserving batches with `square_resize_div_64=False` stay eager. It captures one fixed batch/resolution signature; a later shape change raises. Unsupported shape/accumulation combinations stay eager with a warning; an incompatible Transformer Engine version or precision-plugin misconfiguration stops training with an error instead.
 
 `cuda_graphs=True` may be combined with `compile=True` (see [Combining CUDA graphs with compilation](#combining-cuda-graphs-with-compilation)), but that is the Inductor route. Ordinary FP8 with `compile=False` still uses Lightning's normal Transformer Engine plugin. When all three flags — `cuda_graphs=True`, `compile=True`, and `amp_dtype="fp8"` — are selected, RF-DETR warns and keeps the run compile-only; it does not wrap the compiled module in the Transformer Engine graph helper. FP8 with `compile=True` but `cuda_graphs=False` uses ordinary compiled FP8 training without this graph-routing warning. A capture failure stops training with the original exception attached: an invalidated capture can leave CUDA state unsafe for further operations. Restart the process before retrying with graphs disabled; catching the exception and continuing in the same process is not a supported fallback.
 
-Use the Transformer Engine-aware route explicitly. `TrainConfig.multi_scale` defaults to `True`, so it must be explicitly set to `False` here (along with `do_random_resize_via_padding=False` and `square_resize_div_64=True`) — otherwise the run silently falls back to eager mode, with only a log warning as the signal:
+Use the Transformer Engine-aware route explicitly. `TrainConfig.multi_scale` defaults to `"per-batch"`, so it must be explicitly set to `False` (or `"off"`) here (along with `square_resize_div_64=True`) — otherwise the run silently falls back to eager mode, with only a log warning as the signal:
 
 ```python
 from rfdetr import RFDETRNano
@@ -455,7 +455,6 @@ model.train(
     batch_size=4,
     grad_accum_steps=1,
     multi_scale=False,
-    do_random_resize_via_padding=False,
     square_resize_div_64=True,
 )
 ```
@@ -505,7 +504,7 @@ Scope and cost:
 - The fallback is decided from `TrainConfig` when the model is built. If the trainer later resolves gradient accumulation (for example through `trainer_kwargs`) or more than one process (`devices="auto"` on a multi-GPU host), training stops at train start with a `RuntimeError` naming the conflict, because the model is already compiled with graph replay by then.
 - The combined path skips the eager runner's BF16-only gate; BF16 is the measured path. FP8 remains compile-only with a warning, by design; it does not use the Transformer Engine graph wrapper.
 - The benchmark ran training steps only (`use_ema=False`, no validation). With the default `use_ema=True` validation runs the eager EMA copy; with `use_ema=False` or `eval_base_model=True` the compiled model also records an eval-mode graph. Neither validation nor EMA was exercised under the combined path.
-- With `multi_scale=True`, `dynamic=True` compilation records one graph per resolution (each with its own memory pool) and PyTorch warns after `torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit` (8) distinct shapes. Benchmark `multi_scale=False` first, then confirm memory with the multi-scale set you train on.
+- With `multi_scale="per-batch"` (or `"per-sample"`), `dynamic=True` compilation records one graph per resolution (each with its own memory pool) and PyTorch warns after `torch._inductor.config.triton.cudagraph_dynamic_shape_warn_limit` (8) distinct shapes. Benchmark `multi_scale=False` first, then confirm memory with the multi-scale set you train on.
 - Compilation start-up dominates short runs: 5–7 minutes on the RTX PRO 6000 and 13–15 minutes on an A100 for Nano before the first timed step. `TORCH_LOGS=cudagraphs` prints the graph partitions Inductor records, including any operator it refused to capture.
 
 ---

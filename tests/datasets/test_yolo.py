@@ -118,7 +118,6 @@ class TestBuildRoboflowFromYoloAugConfig:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=None,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
         )
@@ -579,7 +578,6 @@ class TestYoloDetectionLazyMasks:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             aug_config={},
@@ -1155,7 +1153,6 @@ class TestBuildRoboflowFromYoloUltralytics:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=None,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             augmentation_backend="cpu",

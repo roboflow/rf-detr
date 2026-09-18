@@ -99,7 +99,6 @@ def test_train_fast_dev_run(
         tensorboard=False,
         multi_scale=False,
         expanded_scales=False,
-        do_random_resize_via_padding=False,
         drop_path=0.0,
         grad_accum_steps=1,
     )

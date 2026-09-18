@@ -30,7 +30,7 @@ from typing import Any, cast
 
 import torch
 
-from rfdetr.config import ModelConfig, TrainConfig, _resolve_amp_dtype
+from rfdetr.config import ModelConfig, MultiScale, TrainConfig, _resolve_amp_dtype
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
 from rfdetr.training.module_model import _is_builtin_fused_adamw
@@ -582,9 +582,9 @@ def resolve_auto_batch_config(
         raise RuntimeError("batch_size='auto' requires a CUDA device for probing in v1.")
 
     # Use max multi-scale resolution when multi_scale is True so probe reflects worst-case.
-    multi_scale = getattr(train_config, "multi_scale", False)
-    do_random_resize = getattr(train_config, "do_random_resize_via_padding", False)
-    if multi_scale and not do_random_resize:
+    # Both "batch" and "sample" modes can hit the largest scale, so probe it for either.
+    multi_scale = MultiScale.from_value(getattr(train_config, "multi_scale", False))
+    if multi_scale is not MultiScale.OFF:
         expanded_scales = getattr(train_config, "expanded_scales", True)
         patch_size = getattr(model_config, "patch_size", 14)
         num_windows = getattr(model_config, "num_windows", 4)
