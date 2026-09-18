@@ -4,9 +4,69 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+
+import os
+from unittest.mock import patch
+
 import pytest
 
 from rfdetr.assets import ModelWeightAsset, ModelWeights, ModelWeightsBase
+from rfdetr.assets.model_weights import get_model_cache_dir
+
+
+class TestGetModelCacheDir:
+    """Verify get_model_cache_dir reads RF_HOME with correct default."""
+
+    def test_default_when_rf_home_not_set(self, monkeypatch):
+        """Returns ~/.roboflow/models when RF_HOME env var is absent."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.delenv("ROBOFLOW_HOME", raising=False)
+        expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
+        assert get_model_cache_dir() == expected
+
+    def test_custom_rf_home_absolute_path(self, monkeypatch, tmp_path):
+        """Returns exact RF_HOME value when set to an absolute path."""
+        monkeypatch.setenv("RF_HOME", str(tmp_path))
+        assert get_model_cache_dir() == str(tmp_path)
+
+    def test_tilde_in_rf_home_is_expanded(self, monkeypatch):
+        """Tilde in RF_HOME is expanded; result contains no literal tilde."""
+        monkeypatch.setenv("RF_HOME", "~/custom_rfdetr_cache")
+        result = get_model_cache_dir()
+        assert result == os.path.normpath(os.path.expanduser("~/custom_rfdetr_cache"))
+        assert "~" not in result
+
+    def test_returns_string(self, monkeypatch):
+        """Return value is always a str, not a Path."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.delenv("ROBOFLOW_HOME", raising=False)
+        assert isinstance(get_model_cache_dir(), str)
+
+    def test_roboflow_home_alias_used_when_rf_home_absent(self, monkeypatch, tmp_path):
+        """ROBOFLOW_HOME acts as an alias for RF_HOME when RF_HOME is unset."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.setenv("ROBOFLOW_HOME", str(tmp_path))
+        assert get_model_cache_dir() == str(tmp_path)
+
+    def test_rf_home_wins_when_both_set(self, monkeypatch, tmp_path):
+        """RF_HOME is canonical and takes precedence over ROBOFLOW_HOME when both are set."""
+        rf_home = tmp_path / "rf_home"
+        monkeypatch.setenv("RF_HOME", str(rf_home))
+        monkeypatch.setenv("ROBOFLOW_HOME", str(tmp_path / "roboflow_home"))
+        assert get_model_cache_dir() == str(rf_home)
+
+    def test_empty_rf_home_falls_through_to_roboflow_home(self, monkeypatch, tmp_path):
+        """An empty RF_HOME is treated as unset and falls through to ROBOFLOW_HOME."""
+        monkeypatch.setenv("RF_HOME", "")
+        monkeypatch.setenv("ROBOFLOW_HOME", str(tmp_path))
+        assert get_model_cache_dir() == str(tmp_path)
+
+    def test_empty_roboflow_home_falls_through_to_default(self, monkeypatch):
+        """An empty ROBOFLOW_HOME is treated as unset and falls back to the default."""
+        monkeypatch.delenv("RF_HOME", raising=False)
+        monkeypatch.setenv("ROBOFLOW_HOME", "")
+        expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
+        assert get_model_cache_dir() == expected
 
 
 def test_from_filename_found():
@@ -68,14 +128,14 @@ def test_list_models():
     assert all(isinstance(m, str) for m in models)
 
 
-@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+@pytest.mark.parametrize("asset", [pytest.param(a, id=a.filename) for a in ModelWeights])
 def test_all_assets_have_valid_urls(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid URLs."""
     assert asset.url.startswith("http")
     assert len(asset.url) > 20  # Reasonable minimum URL length
 
 
-@pytest.mark.parametrize("asset", list(ModelWeights), ids=[a.filename for a in ModelWeights])
+@pytest.mark.parametrize("asset", [pytest.param(a, id=a.filename) for a in ModelWeights])
 def test_all_assets_have_valid_filenames(asset: ModelWeightAsset) -> None:
     """Test that all assets have valid filenames."""
     assert len(asset.filename) > 0
@@ -100,3 +160,15 @@ def test_model_weights_inherits_from_base():
     assert issubclass(ModelWeights, ModelWeightsBase), (
         "ModelWeights must inherit from ModelWeightsBase for compatibility"
     )
+
+
+def test_rfdetr_large_deprecated_emits_future_warning() -> None:
+    """RFDETRLargeDeprecated emits FutureWarning on instantiation via the pyDeprecate class decorator."""
+    from rfdetr.variants import RFDETRLargeDeprecated
+
+    # The proxy uses num_warns=1; reset counter so this test is order-independent
+    # regardless of whether another test already triggered the warning in this session.
+    RFDETRLargeDeprecated._cfg.warned = 0
+    with patch("rfdetr.detr.RFDETR.__init__", return_value=None):
+        with pytest.warns(FutureWarning):
+            RFDETRLargeDeprecated()

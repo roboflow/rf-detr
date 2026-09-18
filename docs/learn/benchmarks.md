@@ -1,14 +1,31 @@
+---
+description: RF-DETR benchmark results on COCO and RF100-VL for detection, segmentation, and keypoint detection. Compare accuracy and latency against YOLO, D-FINE, and LW-DETR.
+---
+
 # Benchmarks
 
-This page reports RF-DETR benchmark results for object detection and instance segmentation on Microsoft COCO and RF100-VL. All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
+!!! tip "Key Takeaways"
+
+    - RF-DETR-2XL achieves 60.1 AP50:95 on COCO detection at 17.2 ms latency (T4, TensorRT FP16)
+    - RF-DETR-L outperforms YOLOv11x (56.5 vs 50.9 AP50:95) at lower latency (6.8 vs 10.5 ms)
+    - Segmentation models range from 40.3 AP (Nano, 3.4 ms) to 49.9 AP (2XL, 21.8 ms) on COCO
+    - All latency measured on NVIDIA T4 with TensorRT 10.4, CUDA 12.4, FP16, batch size 1
+    - RF100-VL results demonstrate strong domain-shift generalization across 100 diverse datasets
+    - RF-DETR Keypoint (Preview) achieves 71.8 AP50:95 on COCO person keypoints at 9.7 ms (T4, TensorRT FP16)
+
+This page reports RF-DETR benchmark results for object detection, instance segmentation, and keypoint detection on Microsoft COCO and RF100-VL (detection only). All benchmark numbers and plots match the latest released checkpoints and tables shown below. Latency values are measured on an NVIDIA T4 with TensorRT in FP16 at batch size 1. For full methodology details and architectural context, see the RF-DETR paper.
 
 ## Methodology
 
-Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.
+Accuracy is reported using standard COCO metrics computed with pycocotools. For object detection, we report COCO AP50 and COCO AP50:95, and the same metrics are also reported for RF100-VL. COCO results are evaluated on the validation split, following common practice in detector benchmarking. Every model on this page — including third-party models — is re-evaluated in-house with pycocotools in [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking) under this same protocol, scored over the full 5,000-image `val2017` split, so all rows are directly comparable; numbers may therefore differ from vendor-reported figures. The sole exception is rows marked †, which are quoted from the original authors' paper and were not run through SAB; these are flagged in the table footnote and should be read as author-reported rather than independently reproduced. RF100-VL results are averaged across all 100 datasets to reflect performance under diverse real-world data distributions.
 
 Latency is measured as single-image inference latency rather than sustained throughput. All latency numbers are obtained on an NVIDIA T4 GPU using TensorRT 10.4 and CUDA 12.4 with FP16 inference and batch size 1. To reduce variance caused by GPU power throttling and thermal effects, a 200 ms buffer is inserted between consecutive forward passes. This procedure improves reproducibility of latency measurements but is not intended to measure maximum throughput.
 
 Accuracy and latency are always measured using the same model artifact and the same numerical precision. This avoids reporting FP32 accuracy together with FP16 latency, which can lead to misleading comparisons because naive FP16 conversion can significantly degrade accuracy for some models.
+
+!!! info "Metric definitions"
+
+    **AP50**: Detection accuracy at IoU threshold >= 0.50. **AP50:95**: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric. **Params (M)**: Deployment (fused) `nn.Module` parameter count (`model.parameters()`) in millions, excluding training-only branches and folded normalization layers, and counting model parameters rather than the raw tensor count of the saved checkpoint. Rows marked † use the authors' reported counts rather than SAB-measured values. Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1, with 200 ms thermal buffer between passes to reduce GPU thermal variance.
 
 ## Detection
 
@@ -42,6 +59,9 @@ Accuracy and latency are always measured using the same model artifact and the s
 |   D-FINE-M   |         72.6         |          55.0           |          85.5           |            60.6            |     5.4      |    19.2    |  640x640   |
 |   D-FINE-L   |         74.9         |          57.2           |          86.4           |            61.6            |     7.5      |    31.0    |  640x640   |
 |   D-FINE-X   |         76.8         |          59.3           |          86.9           |            62.2            |     11.5     |    62.0    |  640x640   |
+|   SAM 3 †    |          —           |            —            |            —            |            61.6            |      —       |    ~850    | 1008x1008  |
+
+> † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set — the same fully-supervised setting as the RF100VL columns above, and distinct from the 15.2 zero-shot / 36.5 10-shot numbers in the paper's main table. SAM 3's paper independently reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, which confirms the protocols align. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
 
 ## Segmentation
 
@@ -70,3 +90,23 @@ Accuracy and latency are always measured using the same model artifact and the s
 |  YOLO26-M-Seg   |         67.8         |          44.0           |     6.32     |    23.6    |  640x640   |
 |  YOLO26-L-Seg   |         69.8         |          45.5           |     7.58     |    28.0    |  640x640   |
 |  YOLO26-X-Seg   |         71.6         |          46.8           |    12.92     |    62.8    |  640x640   |
+
+## Keypoints
+
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="../assets/keypoints/kp-map-latency.png" />
+
+|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) |
+| :------------------------: | :---------------------: | :----------: | :--------: |
+| RF-DETR Keypoint (Preview) |          71.8           |     9.7      |    40.7    |
+|       YOLO11-pose N        |          48.9           |     3.2      |    2.9     |
+|       YOLO11-pose S        |          57.5           |     3.4      |    9.9     |
+|       YOLO11-pose M        |          64.2           |     5.2      |    20.9    |
+|       YOLO11-pose L        |          65.2           |     6.6      |    26.2    |
+|       YOLO11-pose X        |          68.6           |     10.6     |    58.8    |
+|       YOLO26-pose N        |          55.9           |     1.9      |    2.9     |
+|       YOLO26-pose S        |          62.0           |     2.7      |    10.4    |
+|       YOLO26-pose M        |          68.0           |     4.6      |    21.5    |
+|       YOLO26-pose L        |          69.2           |     5.9      |    25.9    |
+|       YOLO26-pose X        |          71.0           |     9.8      |    57.6    |
+
+> Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.

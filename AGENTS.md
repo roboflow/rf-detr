@@ -24,7 +24,7 @@ As an AI agent contributing to RF-DETR, you are responsible for:
 
     - Run `pre-commit run --all-files` before every commit
     - Follow type hint and docstring requirements
-    - Use direct imports (not `import ... as` pattern)
+    - Prefer direct project imports; conventional third-party aliases are allowed
 
 3. **Maintaining agentic documentation**
 
@@ -45,11 +45,13 @@ As an AI agent contributing to RF-DETR, you are responsible for:
     - Follow existing patterns in the codebase
 
 > [!NOTE]
+>
 > Keeping documentation current ensures consistency across agent contributions and reduces repeated feedback on the same issues.
 
 ## Build & Development Environment
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Development Environment Setup](.github/CONTRIBUTING.md#development-environment-setup) in CONTRIBUTING.md for complete setup instructions.
 
 ### Setup
@@ -62,14 +64,14 @@ pip install uv
 uv sync --all-groups
 ```
 
-**Prerequisites:** Python >=3.10 (tested on 3.10-3.13)
+**Prerequisites:** Python >=3.10 (tested on 3.10-3.14)
 
 ### Dependency Information
 
 See `pyproject.toml` for complete dependency specifications:
 
-- **Core:** PyTorch, torchvision, transformers, pycocotools, supervision, peft, pydantic
-- **Optional:** `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb)
+- **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
+- **Optional:** `[data]` (WebDataset streaming reader), `[train]` (minimal training loop dependencies, including the three COCO evaluation backends selectable via `TrainConfig.eval_backend`), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
@@ -80,6 +82,7 @@ See `pyproject.toml` for complete dependency specifications:
 ## Testing
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Test-Driven Development](.github/CONTRIBUTING.md#test-driven-development) in CONTRIBUTING.md for complete guidelines.
 >
 > **CI Workflows (Source of Truth):** See `.github/workflows/ci-tests-cpu.yml` and `.github/workflows/ci-tests-gpu.yml` for exact test commands used in CI.
@@ -87,11 +90,11 @@ See `pyproject.toml` for complete dependency specifications:
 ### Commands
 
 ```bash
-# CPU tests (default for local development) - matches CI
-uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu" --cov=rfdetr --cov-report=xml
+# CPU tests (default for local development; mirrors CI)
+uv run --no-sync pytest src/ tests/ scripts/ -n 1 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --cov=rfdetr --cov-report=xml --timeout=240 --durations=50
 
-# GPU tests (requires GPU)
-uv run --no-sync pytest src/ tests/ -n 2 -m gpu
+# GPU tests (requires GPU; mirrors CI)
+uv run --no-sync pytest tests/ -m gpu --ignore=tests/legacy/test_checkpoint_compat.py -n 2 --reruns 1 --only-rerun "OutOfMemoryError" --cov=rfdetr --cov-report=xml --timeout=600 --durations=20
 
 # Pre-commit checks (ALWAYS run before committing)
 pre-commit run --all-files
@@ -100,6 +103,7 @@ pre-commit run --all-files
 ### Testing Principles
 
 > [!IMPORTANT]
+>
 > **Testing Requirements:**
 >
 > - ⚠️ **During development:** Tests may fail as you work through TDD cycle
@@ -114,16 +118,18 @@ pre-commit run --all-files
 **Test Organization:**
 
 - Group related tests in classes
-- Use `@pytest.mark.parametrize` with `pytest.param(..., id="name")`
+- Use `pytest.param(..., id="name")` only for a function, object, compound setup passed as one case, a per-case mark, or when the raw value would produce an unclear/empty ID (e.g., `""`); use bare string/number/boolean/`None` values otherwise, and do not maintain a parallel `ids` list
 - Mark GPU/heavy tests with `@pytest.mark.gpu`
 - Avoid multiple validation cases in a single test - see [CONTRIBUTING.md](.github/CONTRIBUTING.md#avoid-multiple-validation-cases-in-a-single-test) for details
+- Fixtures return ready-to-use concrete state or a cohesive tuple of related state. Do not return a callable factory unless fixture-managed lifecycle is required; use an ordinary helper function for configurable construction.
+- Keep fixture dependencies minimal, unpack only the values a test needs, and avoid aliases or wrappers that merely rename or forward an object without adding meaning.
 
-**CI Information:**
-See [CI Testing](.github/CONTRIBUTING.md#ci-testing) in CONTRIBUTING.md for details on OS/Python version matrix and workflow configurations.
+**CI Information:** See [CI Testing](.github/CONTRIBUTING.md#ci-testing) in CONTRIBUTING.md for details on OS/Python version matrix and workflow configurations.
 
 ## Code Quality & Linting
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Code Quality and Linting](.github/CONTRIBUTING.md#code-quality-and-linting) in CONTRIBUTING.md for setup and details.
 
 ### Command
@@ -134,12 +140,18 @@ pre-commit run --all-files
 ```
 
 > [!TIP]
+>
 > Pre-commit hooks will auto-format many issues. Review changes and re-stage files.
 
 **Configuration Files:**
 
 - `.pre-commit-config.yaml` - Pre-commit hooks (ruff, mdformat, prettier, codespell, license headers)
 - `pyproject.toml` - Ruff linting rules (`[tool.ruff]` section)
+
+**Abstraction Discipline:**
+
+- Introduce an abstraction only when it reduces cognitive load and the number of concepts a reader must follow. Extract stable repeated behavior or irrelevant construction mechanics while keeping behavior-defining inputs and outcomes explicit at call sites.
+- Design an extracted helper for the complete related behavior already present, including relevant edge cases, and place it in the narrowest scope shared by its consumers. Prefer small visible duplication over a helper, wrapper, alias, or layer that adds indirection without semantic value.
 
 **License Header (required for all Python files):**
 
@@ -172,7 +184,7 @@ uv run mkdocs build
 - **Config:** `mkdocs.yaml` (uses custom YAML tags: `!!python/name`)
 - **Deployment:** GitHub Actions publishes to GitHub Pages
 
-**Note:** `mkdocs.yaml` is excluded from `check-yaml` pre-commit hook due to custom YAML tags.
+**Note:** `mkdocs.yaml` is checked by the `check-yaml` pre-commit hook with `--unsafe` so custom YAML tags such as `!!python/name` are accepted.
 
 ## Package Building
 
@@ -195,6 +207,7 @@ uv run twine check --strict dist/*
 ## Project Structure
 
 > [!NOTE]
+>
 > **Canonical Reference:** See [Project Structure](.github/CONTRIBUTING.md#project-structure) in CONTRIBUTING.md for complete project organization, directory descriptions, and configuration files.
 >
 > **Quick summary:** `src/rfdetr/` (source code), `tests/` (test suite), `docs/` (documentation), `.github/` (CI/CD), `pyproject.toml` (dependencies and config).
@@ -205,18 +218,46 @@ uv run twine check --strict dist/*
 
 ### Key Patterns
 
+**Augmentations:**
+
+- **Training** uses torchvision-native transforms **unless Albumentations is installed** — `augmentation_backend="cpu"` (the default) then auto-selects Albumentations and injects the default `AUG_CONFIG`, even when `aug_config=None`. Identical training code therefore resolves differently across environments; pass `augmentation_backend="torchvision"` to pin the torchvision pipeline regardless of what is installed. This backend selection only reaches the dataset builders: `_route_transforms` chooses Albumentations only for `image_set == "train"`, so validation always stays on torchvision, and prediction (`src/rfdetr/detr.py`) and export (`src/rfdetr/export/prepare.py`) call torchvision preprocessing directly — do not change inference/export behavior based on the training backend.
+- Custom non-empty `aug_config` values on the CPU path use Albumentations and require `rfdetr[augment]`.
+- `augmentation_backend="auto"` resolves to Kornia when CUDA and Kornia are available, falling back to CPU otherwise; `augmentation_backend="gpu"` pins Kornia and requires `rfdetr[augment]`.
+
 **Model Architecture:**
 
-- RFDETR wrappers: `self.model` is `rfdetr.main.Model` instance
+- RFDETR wrappers: `self.model` is the model context returned by `get_model()`
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
+- Opt-in CUDA graph training is routed by `RFDETRModelModule` through the plain-object `CudaGraphTrainingRunner`; never replace the registered `self.model`, because optimizer, EMA, and checkpoint keys must keep their existing parameter ownership. The graph path is single-GPU detection only; BF16 captures per execution signature, and capture failures are fatal (never retry eagerly in the damaged CUDA context). With `compile=True` as well, replay is delegated to Inductor cudagraph trees (`triton.cudagraphs` compile option + `torch.compiler.cudagraph_mark_step_begin()` per `training_step`); `CudaGraphTrainingRunner` never wraps the `OptimizedModule`.
+- With `amp_dtype="fp8"`, `cuda_graphs=True`, and `compile=False`, pass the active Lightning precision-plugin recipe to the runner's optional Transformer Engine capture backend. Import the CUDA-only dependency lazily, require the FP8-aware API including cloned returned gradients, and keep one fixed execution signature with no accumulation and `square_resize_div_64=True`. Multi-scale, aspect-ratio resize, random-resize padding, distributed, segmentation/keypoints and gradient-checkpointing combinations stay eager with a warning. All three FP8/compile/graphs flags stay compile-only; do not nest capture runtimes. GPU numerical-parity coverage must accompany scope expansion.
+
+**Model Export:**
+
+- Each format is an `Exporter` subclass in `src/rfdetr/export/_<format>/exporter.py`, built from its own frozen config dataclass defined in the same module. `RFDETR.export()` is a facade — signature and return value are the public surface; everything below it is internal.
+- `src/rfdetr/export/base.py` names no format. It holds `ExportConfig` and `Exporter` only; per-format configs and their `RFDETR.export()` keyword mapping (`setting_names`) live with the exporter that reads them.
+- `src/rfdetr/export/registry.py` is data: format name → exporter dotted path, plus the facts needed *before* the heavy optional dependency is imported (`label`, `pip_extra`, `supports_dynamic_batch`, `dynamic_batch_reason`). Those mirror the exporter's class attributes; `tests/export/test_registry.py` is the only thing enforcing that.
+- `src/rfdetr/export/prepare.py` does the format-independent graph work once and returns an `ExportGraph`. Never duplicate it into a format.
+- Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/learn/export-blueprint.md](docs/learn/export-blueprint.md).
+
+**Model Selection (examples, docs, CI, tests, defaults):**
+
+- **Default to `RFDETRSmall` / `"rfdetr-small"` in docs and examples.** Use it wherever an example needs a concrete detection model.
+- **Default to `RFDETRNano` / `"rfdetr-nano"` in CI and tests.**
+- **Never use base models** (`RFDETRBase` / `"rfdetr-base"`) in new examples, docs, CI, or tests — treat as deprecated; substitute `small` in docs/examples and `nano` in CI/tests.
+- **Released detection sizes** — `nano`, `small`, `medium`, `large` (plus `xlarge`/`2xlarge` Plus models). Always pick one of these for plain object detection; never a `-preview` variant.
+- **Released segmentation sizes** — `RFDETRSegNano`/`Small`/`Medium`/`Large` / `"rfdetr-seg-{nano,small,medium,large}"` (plus `xlarge`/`2xlarge`). Use a sized seg model for segmentation; `RFDETRSegPreview` / `"rfdetr-seg-preview"` is now superseded — do not use it in new examples, docs, or tests.
+- **`-preview` variants** are for capabilities with **no released sized version yet**. Only keypoints remain preview-only: `RFDETRKeypointPreview` / `"rfdetr-keypoint-preview"`. Use a preview variant **only** for that task — never as a stand-in for detection or segmentation.
 
 **Imports:**
 
+- Keep imports at module scope by default. Use a local import only for a verified circular-import boundary, optional dependency boundary, import-behavior test, or material startup/side-effect constraint; the reason must be evident from the surrounding code or documented where it is not obvious.
+
 ```python
-# Always use direct imports (NOT import ... as pattern)
-from rfdetr.util.misc import get_rank, get_world_size, is_main_process, save_on_master
-from rfdetr.util.logger import get_logger
+# Prefer direct project imports. Standard aliases such as `numpy as np`,
+# `torch.nn.functional as F`, and lazy module aliases are allowed when conventional.
+from rfdetr.utilities.distributed import get_rank, get_world_size, is_main_process, save_on_master
+from rfdetr.utilities.logger import get_logger
 
 # Logger usage
 logger = get_logger()  # Default name: "rf-detr", reads LOG_LEVEL env var
@@ -258,14 +299,16 @@ result = subprocess.run(
 ### Type Hints & Docstrings
 
 > [!IMPORTANT]
+>
 > **Canonical Reference:** See [Google-Style Docstrings and Mandatory Type Hints](.github/CONTRIBUTING.md#google-style-docstrings-and-mandatory-type-hints) in CONTRIBUTING.md for complete requirements and examples.
-
-**Requirements:**
-
-- MANDATORY type hints for all function parameters and return types
-- MANDATORY Google-style docstrings for all functions and classes
-- **Do not duplicate types in docstrings** - types are in the function signature
-- Target Python version: 3.10+
+>
+> **Requirements:**
+>
+> - MANDATORY type hints for all function parameters and return types
+> - MANDATORY Google-style docstrings for all functions and classes
+> - **Do not duplicate types in docstrings** - types are in the function signature
+> - Target Python version: 3.10+
+> - **Helper functions in `tests/` need a doctest too**: any non-`test_*` function used by tests (fixture builders, assertion helpers, reference implementations) needs a docstring with an `Examples` doctest that exercises it directly — `pyproject.toml` runs `--doctest-plus` across `tests/` on purpose. Skip the live doctest (`# doctest: +SKIP` + one-line reason) only when the helper can't run standalone (e.g. a `@pytest.fixture`, or needs real GPU/XLA/network hardware).
 
 ## Common Workflows
 
@@ -280,7 +323,7 @@ result = subprocess.run(
 4. **Testing:**
     - Bug fixes: Write test first, then fix
     - Features: Test all major use cases
-    - Run: `uv run --no-sync pytest src/ tests/ -n 2 -m "not gpu"`
+    - Run: `uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50`
 5. **Quality checks:** `pre-commit run --all-files`
 6. **Build (if needed):** `uv build`
 7. **Commit:** Pre-commit hooks run automatically
@@ -288,6 +331,7 @@ result = subprocess.run(
 ### Adding New Model Variants
 
 > [!IMPORTANT]
+>
 > **Canonical Reference:** See [Adding a New Model](.github/CONTRIBUTING.md#adding-a-new-model) in CONTRIBUTING.md for detailed guidance.
 >
 > Always consult maintainers before implementing new models.
@@ -303,8 +347,11 @@ result = subprocess.run(
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- **ci-tests-cpu.yml:** CPU tests across OS/Python versions
+- **ci-tests-cpu.yml:** CPU tests on Linux across Python 3.10-3.14, plus Windows and macOS on Python 3.10 and 3.13
 - **ci-tests-gpu.yml:** GPU-dependent tests
+- **ci-github-tests.yml:** Tests and doctests for the helper scripts under `.github/scripts/`, which the CPU/GPU suites never collect; their tests live in `.github/_tests/`
+- **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)
+- **ci-deps-resolution.yml:** Dependency resolution (`uv lock`) plus an install-plan check (`uv sync --dry-run`) for every extra on every Python interpreter allowed by requires-python (3.10-3.14). Resolution alone does not prove a pinned version ships a wheel for the interpreter in use. The `list-extras` job derives the checked set from every `[project.optional-dependencies]` extra, so a new extra is covered automatically
 - **build-package.yml:** Build and validate distributions
 - **ci-build-docs.yml:** Documentation builds
 - **publish-docs.yml:** Deploy docs to GitHub Pages

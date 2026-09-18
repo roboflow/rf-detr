@@ -3,19 +3,18 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """CLI smoke tests and YAML roundtrip tests — PTL Ch4/T7.
 
-Smoke tests run RFDETRCli in-process with args=['--help'] / ['fit', '--help'] /
-['validate', '--help'] and assert SystemExit(0) — no subprocess needed.
+Smoke tests run RFDETRCli in-process with args=['--help'] / ['fit', '--help'] / ['validate', '--help'] and assert
+SystemExit(0) — no subprocess needed.
 
-YAML roundtrip tests load each example config with yaml.safe_load, import the
-class_path, construct the config object with the YAML init_args, and verify
-every specified field survived the round-trip.
+YAML roundtrip tests load each example config with yaml.safe_load, import the class_path, construct the config object
+with the YAML init_args, and verify every specified field survived the round-trip.
 """
 
 import importlib
 import pathlib
+import sys
 
 import pytest
 import yaml
@@ -43,7 +42,11 @@ ALL_CONFIGS = [
 
 
 def _run_cli(*args: str) -> int:
-    """Run RFDETRCli in-process with the given args; return the SystemExit code."""
+    """Run RFDETRCli in-process with the given args; return the SystemExit code.
+
+    >>> _run_cli("--help")  # doctest: +SKIP
+    0
+    """
     from rfdetr.training.cli import RFDETRCli
     from rfdetr.training.module_data import RFDETRDataModule
     from rfdetr.training.module_model import RFDETRModelModule
@@ -54,11 +57,21 @@ def _run_cli(*args: str) -> int:
 
 
 def _load(name: str) -> dict:
+    """Load a config YAML file by stem name.
+
+    >>> _load("rfdetr_small")["model"]["model_config"]["class_path"]  # doctest: +SKIP
+    'rfdetr.config.RFDETRSmallConfig'
+    """
     return yaml.safe_load((CONFIGS_DIR / f"{name}.yaml").read_text())
 
 
 def _instantiate(class_path: str, init_args: dict) -> object:
-    """Import class_path and construct an instance with init_args."""
+    """Import class_path and construct an instance with init_args.
+
+    >>> config = _instantiate("rfdetr.config.RFDETRSmallConfig", {})
+    >>> type(config).__name__
+    'RFDETRSmallConfig'
+    """
     module_path, class_name = class_path.rsplit(".", 1)
     cls = getattr(importlib.import_module(module_path), class_name)
     return cls(**init_args)
@@ -69,25 +82,49 @@ def _instantiate(class_path: str, init_args: dict) -> object:
 # ---------------------------------------------------------------------------
 
 
+class TestCLIEntrypoint:
+    """Module entrypoint and CLI import tests."""
+
+    @pytest.mark.flaky(reruns=3, condition=sys.platform == "darwin")
+    def test_python_module_entrypoint_runs(self) -> None:
+        """Python -m rfdetr --help exits 0 and mentions rfdetr."""
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-m", "rfdetr", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0
+        assert "rfdetr" in result.stdout.lower() or "rfdetr" in result.stderr.lower()
+
+    def test_cli_main_is_importable(self) -> None:
+        """rfdetr.cli module is importable and exposes a callable main."""
+        import importlib
+
+        mod = importlib.import_module("rfdetr.cli")
+        assert callable(getattr(mod, "main", None))
+
+
 class TestCLIHelp:
-    """rfdetr --help and subcommand --help must exit 0."""
+    """Rfdetr --help and subcommand --help must exit 0."""
 
     def test_top_level_help(self):
-        """rfdetr --help exits with code 0."""
+        """Rfdetr --help exits with code 0."""
         assert _run_cli("--help") == 0
 
     def test_fit_help(self):
-        """rfdetr fit --help exits with code 0."""
+        """Rfdetr fit --help exits with code 0."""
         assert _run_cli("fit", "--help") == 0
 
     def test_validate_help(self):
-        """rfdetr validate --help exits with code 0."""
+        """Rfdetr validate --help exits with code 0."""
         assert _run_cli("validate", "--help") == 0
 
     def test_fit_help_exposes_model_config(self):
-        """rfdetr fit --help output lists model.model_config arguments."""
+        """Rfdetr fit --help output lists model.model_config arguments."""
         import io
-        import sys
 
         buf = io.StringIO()
         old_stdout = sys.stdout
@@ -99,9 +136,8 @@ class TestCLIHelp:
         assert "model_config" in buf.getvalue()
 
     def test_fit_help_exposes_train_config(self):
-        """rfdetr fit --help output lists model.train_config arguments."""
+        """Rfdetr fit --help output lists model.train_config arguments."""
         import io
-        import sys
 
         buf = io.StringIO()
         old_stdout = sys.stdout
@@ -148,9 +184,8 @@ class TestTrainConfigRoundtrip:
     def test_train_config_fields_survive_roundtrip(self, name, tmp_path):
         """Every field in train_config.init_args is preserved after instantiation.
 
-        dataset_dir is rewritten to tmp_path so path expansion doesn't fail on
-        the placeholder /data/coco value.  TrainConfig.expand_paths() converts
-        relative paths containing separators to absolute, so both sides are
+        dataset_dir is rewritten to tmp_path so path expansion doesn't fail on the placeholder /data/coco value.
+        TrainConfig.expand_paths() converts relative paths containing separators to absolute, so both sides are
         normalised with os.path.abspath before comparison.
         """
         import os

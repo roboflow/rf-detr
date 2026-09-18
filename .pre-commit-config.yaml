@@ -3,6 +3,7 @@ ci:
   autoupdate_schedule: monthly
   autofix_commit_msg: "fix(pre-commit): 🎨 auto format pre-commit hooks"
   autoupdate_commit_msg: "chore(pre-commit): ⬆ pre_commit autoupdate"
+  skip: [mypy]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -10,12 +11,14 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: check-yaml
-        exclude: mkdocs.yaml
+        args: ["--unsafe"]
       - id: check-executables-have-shebangs
       - id: check-json
       - id: check-toml
       - id: check-case-conflict
       - id: check-added-large-files
+        args: ["--maxkb=200", "--enforce-all"]
+        exclude: uv.lock
       - id: detect-private-key
       - id: pretty-format-json
         args: ["--autofix", "--no-sort-keys", "--indent=4"]
@@ -24,7 +27,7 @@ repos:
       - id: mixed-line-ending
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
-    rev: v3.8.1 # using tag; previously pinned SHA when tags were not persistent
+    rev: v3.9.6 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
         files: \.(ya?ml|toml)$
@@ -32,13 +35,21 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.6
+    rev: v0.16.6
     hooks:
       - id: ruff-check
         args: ["--exit-non-zero-on-fix"]
         exclude: ^notebooks/.*\.py$
       - id: ruff-format
         exclude: ^notebooks/.*\.py$
+
+  - repo: https://github.com/PyCQA/docformatter
+    rev: v1.7.8
+    hooks:
+      - id: docformatter
+        language_version: python3.10
+        additional_dependencies: [tomli]
+        args: ["--in-place"]
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
@@ -48,10 +59,10 @@ repos:
         additional_dependencies:
           - "mdformat-mkdocs[recommended]>=2.1.0"
           - "mdformat-ruff"
-        args: ["--number"]
+        args: ["--number", "--wrap=no"]
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.2
+    rev: v2.4.3
     hooks:
       - id: codespell
         # args: [--write-changes]
@@ -70,9 +81,18 @@ repos:
     hooks:
       - id: insert-license
         files: \.py$
-        exclude: ^notebooks/
+        exclude: ^(notebooks|docs)/
         args:
           - --license-filepath
           - .github/LICENSE_HEADER.txt
           - --comment-style
           - "#"
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        # Run through the project environment, matching ci-typing.yml.
+        entry: uv run --group typing --extra train --extra cli --extra visual mypy src/rfdetr/ scripts/ --no-error-summary
+        language: system
+        pass_filenames: false

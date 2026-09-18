@@ -1,4 +1,15 @@
+---
+description: Deploy fine-tuned RF-DETR detection and segmentation models to Roboflow for cloud inference, edge hardware, and multi-step vision workflows.
+---
+
 # Deploy a Trained RF-DETR Model
+
+!!! tip "Key Takeaways"
+
+    - Deploy fine-tuned RF-DETR models to Roboflow with a single `deploy_to_roboflow()` call
+    - Supports both detection and segmentation model deployment
+    - Run deployed models via Roboflow Inference on cloud, edge hardware, or NVIDIA Jetson
+    - Model weights are cached locally after the first inference run for fast subsequent predictions
 
 You can deploy a fine-tuned RF-DETR model to Roboflow.
 
@@ -15,7 +26,6 @@ To deploy your model to Roboflow, run:
     x.deploy_to_roboflow(
         workspace="<your-workspace>",
         project_id="<your-project-id>",
-        version=1,
         api_key="<YOUR_API_KEY>",
     )
     ```
@@ -29,12 +39,11 @@ To deploy your model to Roboflow, run:
     x.deploy_to_roboflow(
         workspace="<your-workspace>",
         project_id="<your-project-id>",
-        version=1,
         api_key="<YOUR_API_KEY>",
     )
     ```
 
-Above, set your Roboflow Workspace ID, the ID of the project to which you want to upload your model, and your Roboflow API key.
+Above, set your Roboflow Workspace ID, the ID of the project to which you want to upload your model, and your Roboflow API key. By default the model is deployed to the project's latest dataset version; pass `version=<number>` to target a specific one. A project with no generated versions falls back to version `1`, for which the Roboflow SDK raises its usual error.
 
 - [Learn how to find your Workspace and Project ID.](https://docs.roboflow.com/developer/authentication/workspace-and-project-ids)
 - [Learn how to find your API key.](https://docs.roboflow.com/developer/authentication/find-your-roboflow-api-key)

@@ -1,3 +1,7 @@
+---
+description: RF-DETR Lightning training API reference for RFDETRModelModule, RFDETRDataModule, build_trainer, callbacks, and training primitives.
+---
+
 # Training API Reference
 
 This page documents the training primitives that power RF-DETR. For a narrative guide with runnable examples, see [Custom Training API](../learn/train/customization.md).
@@ -88,9 +92,37 @@ This page documents the training primitives that power RF-DETR. For a narrative 
       members:
         - __init__
 
+### GPUMemoryTQDMProgressBar
+
+::: rfdetr.training.callbacks.gpu_memory_progress_bar.GPUMemoryTQDMProgressBar
+    options:
+      show_source: false
+      members:
+        - get_metrics
+      inherited_members:
+        - get_metrics
+
+### GPUMemoryRichProgressBar
+
+::: rfdetr.training.callbacks.gpu_memory_progress_bar.GPUMemoryRichProgressBar
+    options:
+      show_source: false
+      members:
+        - get_metrics
+      inherited_members:
+        - get_metrics
+
 ---
 
 ## RFDETRCli
+
+!!! info "CLI requires the `train` and `cli` extras"
+
+    ```bash
+    pip install "rfdetr[train,cli]"
+    ```
+
+    The `rfdetr` console script and its `--config` / `--print_config` flags are provided by `jsonargparse`, which is included in the `cli` extra.
 
 `RFDETRCli` is the command-line entry point for RF-DETR. It wraps
 `RFDETRModelModule` and `RFDETRDataModule` under a single `rfdetr` command and

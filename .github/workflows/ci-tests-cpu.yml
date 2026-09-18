@@ -4,6 +4,7 @@ on:
   push:
     branches: ["main", "release/*", "develop"]
   pull_request:
+    branches: ["main", "release/*", "develop"]
 
 permissions:
   contents: read
@@ -27,12 +28,12 @@ jobs:
   run-tests:
     name: Testing
     # needs: build  # todo: consider using this build package for testing
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest"]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - { os: "windows-latest", python-version: "3.10" }
           - { os: "macos-latest", python-version: "3.10" }
@@ -41,30 +42,42 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: 📥 Checkout the repository
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@v7.2.0
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
+          version: "0.9.26"
           python-version: ${{ matrix.python-version }}
           activate-environment: true
 
       - name: 🚀 Install Packages
         timeout-minutes: 5
-        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
-        run: uv pip install -e ".[train,cli,visual]" --group tests
+        # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip').
+        # [coreml] added on macOS only (coremltools is a macOS-only dependency).
+        run: |
+          # The data extra installs webdataset for the streaming half of tests/datasets/test_webdataset_io.py behind
+          # importorskip; without it those tests silently skip and only the packer stays covered.
+          EXTRAS="train,augment,cli,visual,data"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            EXTRAS="$EXTRAS,coreml"
+          fi
+          uv pip install -e ".[$EXTRAS]" --group tests
 
       - name: 🧪 Run the Test
+        # `scripts/` holds no test modules; it is listed so pytest-doctestplus collects the doctests in
+        # repository maintenance scripts, which `pyproject.toml` alone cannot reach because paths are explicit here.
         run: |
-          uv run --no-sync pytest src/ tests/ \
-            -n 2 -m "not gpu" \
-            --ignore=tests/try_instantiate_all_models.py \
+          uv run --no-sync pytest src/ tests/ scripts/ \
+            -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" \
+            --ignore=tests/run_smoke_all_models.py \
+            --ignore=tests/legacy/test_checkpoint_compat.py \
             --cov=rfdetr --cov-report=xml \
-            --timeout=240 \
+            --timeout=420 \
             --durations=50
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"

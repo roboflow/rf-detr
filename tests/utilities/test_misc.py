@@ -29,6 +29,40 @@ class TestStripCheckpoint:
         stripped = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         assert set(stripped.keys()) == {"model", "args"}
 
+    def test_strip_checkpoint_preserves_model_name_when_present(self, tmp_path):
+        checkpoint_path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": {"weight": torch.tensor([1.0])},
+                "args": SimpleNamespace(class_names=["a"]),
+                "model_name": "RFDETRSmall",
+                "optimizer": {"lr": 1e-4},
+            },
+            checkpoint_path,
+        )
+
+        strip_checkpoint(str(checkpoint_path))
+
+        stripped = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        assert set(stripped.keys()) == {"model", "args", "model_name"}
+        assert stripped["model_name"] == "RFDETRSmall"
+
+    def test_strip_checkpoint_omits_model_name_when_absent(self, tmp_path):
+        checkpoint_path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": {"weight": torch.tensor([1.0])},
+                "args": SimpleNamespace(class_names=["a"]),
+                "optimizer": {"lr": 1e-4},
+            },
+            checkpoint_path,
+        )
+
+        strip_checkpoint(str(checkpoint_path))
+
+        stripped = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        assert "model_name" not in stripped
+
     def test_strip_checkpoint_is_atomic_when_save_fails(self, tmp_path, monkeypatch):
         checkpoint_path = tmp_path / "checkpoint_best_total.pth"
         original_checkpoint = {

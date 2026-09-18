@@ -1,0 +1,110 @@
+name: XLA tests Workflow
+
+# Hardware-free validation of the XLA code paths (grid_sample gather branch, all_gather device
+# probe, XLAPrecision selection, bool-mask dtype, keypoint host-sync gates, ...). torch_xla reports
+# device.type == "xla" on ANY PJRT backend, so PJRT_DEVICE=CPU exercises every device-gated branch
+# without a TPU. Real-TPU-only concerns (MXU/TFLOPS, bf16-MXU convergence parity) stay on Colab/Kaggle.
+#
+# torch_xla ships Linux x86_64 wheels only -> ubuntu runner. Its _XLAC extension is ABI-locked to
+# ONE torch minor, and torch_xla's latest (2.9) lags torch's latest in [2.2,3.0) (2.13) — so letting
+# both float does NOT align them; the mismatch surfaces as an `undefined symbol` ImportError on
+# `import torch_xla`. We pin torch to torch_xla's minor (torch==2.9.* <-> torch_xla 2.9); uv then
+# resolves torchvision to the matching minor. Bump both together when a newer torch_xla ships.
+#
+# Trigger is manual + PR for now. Enforcing since WP2 (Phase 1 landed the first @pytest.mark.xla
+# test) -- a failing or missing test run now fails this job.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main", "release/*", "develop"]
+    paths:
+      - "src/rfdetr/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/ci-tests-xla.yml"
+
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+
+env:
+  UV_TORCH_BACKEND: "cpu" # CPU-only torch; works with 'uv pip'
+  PJRT_DEVICE: "CPU" # run XLA on the CPU PJRT plugin (no TPU, no libtpu)
+
+concurrency:
+  group: pytest-xla-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  run-xla-tests:
+    name: XLA CPU-PJRT testing
+    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version 3.11
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.11"
+          activate-environment: true
+
+      - name: 🚀 Install Packages (torch + torch_xla, CPU)
+        timeout-minutes: 8
+        # [xla] pulls torch_xla AND pins torch to its matching minor (see the [xla] extra in
+        # pyproject.toml), so the resolver can't float torch ahead of torch_xla into an
+        # ABI-incompatible combo. UV_TORCH_BACKEND=cpu keeps torch CPU-only.
+        run: |
+          uv pip install -e ".[train,xla,cli]" --group tests
+
+      - name: 🔧 Expose libpython for torch_xla
+        # torch_xla's _XLAC extension links the shared libpython3.11.so.1.0, which uv's standalone
+        # CPython keeps in the interpreter LIBDIR — not on the loader path. Put LIBDIR on
+        # LD_LIBRARY_PATH for all later steps, else `import torch_xla` fails with
+        # "libpython3.11.so.1.0: cannot open shared object file".
+        run: |
+          LIBDIR=$(uv run --no-sync python -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+          echo "LD_LIBRARY_PATH=${LIBDIR}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: 🔎 Verify torch_xla runtime
+        # shell: python runs under the setup-uv-activated venv interpreter (VIRTUAL_ENV on PATH).
+        shell: python
+        run: |
+          import importlib.metadata as md
+
+          # torch_xla's _XLAC is ABI-locked to one torch minor. Read the resolved versions from
+          # metadata BEFORE importing torch_xla — a skew must fail here with a clear message, because
+          # `import torch_xla` itself crashes with a cryptic `undefined symbol` error on mismatch.
+          torch_ver = md.version("torch")
+          xla_ver = md.version("torch_xla")
+          torch_minor = torch_ver.split("+")[0].split(".")[:2]
+          xla_minor = xla_ver.split("+")[0].split(".")[:2]
+          assert torch_minor == xla_minor, (
+              f"torch {torch_ver} and torch_xla {xla_ver} have mismatched minors — ABI-incompatible"
+          )
+
+          import torch
+          import torch_xla
+          import torch_xla.core.xla_model as xm
+
+          device = xm.xla_device()
+          print("torch", torch.__version__, "| torch_xla", torch_xla.__version__, "| device", device)
+          assert str(device).startswith("xla"), f"expected an xla device, got {device!r}"
+
+      - name: 🧪 Run the XLA-marked Tests
+        run: |
+          uv run --no-sync pytest src/ tests/ \
+            -n 1 -m "xla and not gpu and not tpu" \
+            --ignore=tests/run_smoke_all_models.py \
+            --ignore=tests/legacy/test_checkpoint_compat.py \
+            --timeout=420 \
+            --durations=50
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci

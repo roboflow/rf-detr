@@ -3,11 +3,9 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-
 """RF-DETR training package (PyTorch Lightning).
 
-Provides the Lightning module, data module, callbacks, and CLI for
-training and evaluation.
+Provides the Lightning module, data module, callbacks, and CLI for training and evaluation.
 
 Exports:
     RFDETRModelModule: LightningModule wrapping the RF-DETR model and training loop.
@@ -21,6 +19,8 @@ from rfdetr.training.callbacks import (
     BestModelCallback,
     COCOEvalCallback,
     DropPathCallback,
+    GPUMemoryRichProgressBar,
+    GPUMemoryTQDMProgressBar,
     RFDETREarlyStopping,
     RFDETREMACallback,
 )
@@ -37,6 +37,8 @@ __all__ = [
     "BestModelCallback",
     "COCOEvalCallback",
     "DropPathCallback",
+    "GPUMemoryRichProgressBar",
+    "GPUMemoryTQDMProgressBar",
     "RFDETRCli",
     "RFDETRDataModule",
     "RFDETREMACallback",

@@ -1,20 +1,26 @@
-# RF-DETR: Real-Time SOTA Detection and Segmentation
+# RF-DETR: Real-Time SOTA Object Detection, Instance Segmentation, and Keypoint Detection
 
-[![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr)
-[![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr)
-[![codecov](https://codecov.io/gh/roboflow/rf-detr/graph/badge.svg?token=K8V4ARR3XV)](https://codecov.io/gh/roboflow/rf-detr)
-[![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr)
-[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/roboflow/rfdetr/blob/main/LICENSE)
+<div align="center">
 
-[![arXiv](https://img.shields.io/badge/arXiv-2511.09554-b31b1b.svg)](https://arxiv.org/abs/2511.09554)
-[![hf space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/SkalskiP/RF-DETR)
-[![colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb)
-[![roboflow](https://raw.githubusercontent.com/roboflow-ai/notebooks/main/assets/badges/roboflow-blogpost.svg)](https://blog.roboflow.com/rf-detr)
-[![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
+[![version](https://badge.fury.io/py/rfdetr.svg)](https://badge.fury.io/py/rfdetr) [![downloads](https://img.shields.io/pypi/dm/rfdetr)](https://pypistats.org/packages/rfdetr) [![codecov](https://codecov.io/gh/roboflow/rf-detr/graph/badge.svg?token=K8V4ARR3XV)](https://codecov.io/gh/roboflow/rf-detr) [![python-version](https://img.shields.io/pypi/pyversions/rfdetr)](https://badge.fury.io/py/rfdetr) [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/roboflow/rf-detr/blob/main/LICENSE)
 
-RF-DETR is a real-time transformer architecture for object detection and instance segmentation developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on [Microsoft COCO](https://cocodataset.org/#home) and [RF100-VL](https://github.com/roboflow/rf100-vl).
+[![arXiv](https://img.shields.io/badge/arXiv-2511.09554-b31b1b.svg)](https://arxiv.org/abs/2511.09554) [![hf space](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/SkalskiP/RF-DETR) [![colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb) [![roboflow](https://raw.githubusercontent.com/roboflow-ai/notebooks/main/assets/badges/roboflow-blogpost.svg)](https://blog.roboflow.com/rf-detr) [![discord](https://img.shields.io/discord/1159501506232451173?logo=discord&label=discord&labelColor=fff&color=5865f2&link=https%3A%2F%2Fdiscord.gg%2FGbfgXGJ8Bk)](https://discord.gg/GbfgXGJ8Bk)
 
-RF-DETR uses a DINOv2 vision transformer backbone and supports both detection and instance segmentation in a single, consistent API. The open-source `rfdetr` package and Apache-designated models are released under Apache 2.0, while Plus components (`rfdetr_plus`, including RF-DETR-XL/2XL detection models) are licensed under PML 1.0.
+[![Papers with Code leaderboard](https://paperswithcode.co/api/v1/papers/2511.09554/leaderboard-badge.svg?eval=821&live=1)](https://paperswithcode.co/api/v1/papers/2511.09554/leaderboard-badge-link?eval=821)
+
+<a href="https://trendshift.io/repositories/14379?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-14379" target="_blank" rel="noopener noreferrer">
+<img src="https://trendshift.io/api/badge/repositories/14379" alt="roboflow%2Frf-detr | Trendshift" width="250" height="55"/>
+</a>
+
+</div>
+
+---
+
+RF-DETR is a real-time transformer architecture for object detection, instance segmentation, and keypoint detection (preview) developed by Roboflow. Built on a DINOv2 vision transformer backbone, RF-DETR delivers state-of-the-art accuracy and latency trade-offs on [Microsoft COCO](https://cocodataset.org/#home) and [RF100-VL](https://github.com/roboflow/rf100-vl).
+
+RF-DETR uses a DINOv2 vision transformer backbone and supports object detection, instance segmentation, and keypoint detection (preview) in a single, consistent API. The open-source `rfdetr` package and Apache-designated models are released under Apache 2.0, while Plus components (`rfdetr_plus`, including RF-DETR-XL/2XL detection models) are licensed under PML 1.0.
+
+The published RF-DETR sizes were created with neural architecture search (NAS) — and the same NAS method is now available on the [Roboflow platform](https://app.roboflow.com/), so you can discover the best architecture for your own dataset. Learn more in the [NAS docs](https://docs.roboflow.com/train/neural-architecture-search).
 
 https://github.com/user-attachments/assets/add23fd1-266f-4538-8809-d7dd5767e8e6
 
@@ -41,7 +47,7 @@ pip install https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip
 
 ## Benchmarks
 
-RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL. The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
+RF-DETR achieves state-of-the-art results in both object detection and instance segmentation, with benchmarks reported on Microsoft COCO and RF100-VL (RF100-VL for detection only). The charts and tables below compare RF-DETR against other top real-time models across accuracy and latency for detection and segmentation. All COCO accuracy numbers are measured in-house for every model shown, computed with pycocotools in SAB over the full 5,000-image `val2017` split, so every row is directly comparable and may differ from vendor-reported figures. The sole exception is rows marked †, which are quoted from the original authors' paper and were not measured in SAB. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Parameter counts are deployment (fused) `nn.Module` parameter counts (`model.parameters()`, not the raw tensor count of the saved checkpoint), except rows marked †, which are the authors' reported counts. For full benchmarking methodology and reproducibility details, see [roboflow/sab](https://github.com/roboflow/single_artifact_benchmarking).
 
 ### Detection
 
@@ -80,6 +86,9 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 |   D-FINE-M    |         72.6         |          55.0           |          85.5           |            60.6            |     5.4      |    19.2    |  640x640   | Apache 2.0 |
 |   D-FINE-L    |         74.9         |          57.2           |          86.4           |            61.6            |     7.5      |    31.0    |  640x640   | Apache 2.0 |
 |   D-FINE-X    |         76.8         |          59.3           |          86.9           |            62.2            |     11.5     |    62.0    |  640x640   | Apache 2.0 |
+|    SAM 3 †    |          —           |            —            |            —            |            61.6            |      —       |    ~850    | 1008x1008  |    N/A     |
+
+> † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set, which is the same setting as the RF100VL columns above — SAM 3's paper reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, so the numbers line up. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
 
 </details>
 
@@ -118,6 +127,39 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 </details>
 
+### Keypoints
+
+<img alt="RF-DETR Keypoint mAP vs latency chart comparing against YOLO26-pose and YOLO11-pose on MS COCO" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/keypoints/kp-map-latency.png" />
+
+<details>
+<summary>See keypoint detection benchmark numbers</summary>
+
+<br>
+
+|        Architecture        | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) |  License   |
+| :------------------------: | :---------------------: | :----------: | :--------: | :--------: |
+| RF-DETR Keypoint (Preview) |          71.8           |     9.7      |    40.7    | Apache 2.0 |
+|       YOLO11-pose N        |          48.9           |     3.2      |    2.9     |  AGPL-3.0  |
+|       YOLO11-pose S        |          57.5           |     3.4      |    9.9     |  AGPL-3.0  |
+|       YOLO11-pose M        |          64.2           |     5.2      |    20.9    |  AGPL-3.0  |
+|       YOLO11-pose L        |          65.2           |     6.6      |    26.2    |  AGPL-3.0  |
+|       YOLO11-pose X        |          68.6           |     10.6     |    58.8    |  AGPL-3.0  |
+|       YOLO26-pose N        |          55.9           |     1.9      |    2.9     |  AGPL-3.0  |
+|       YOLO26-pose S        |          62.0           |     2.7      |    10.4    |  AGPL-3.0  |
+|       YOLO26-pose M        |          68.0           |     4.6      |    21.5    |  AGPL-3.0  |
+|       YOLO26-pose L        |          69.2           |     5.9      |    25.9    |  AGPL-3.0  |
+|       YOLO26-pose X        |          71.0           |     9.8      |    57.6    |  AGPL-3.0  |
+
+</details>
+
+> Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
+
+### NAS on the Roboflow Platform
+
+<img alt="RF100-VL accuracy-latency Pareto chart showing RF-DETR NAS trained on the Roboflow platform outperforming the paper NAS and named configs" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/nas_two_source_comparison_100_test_only.svg" />
+
+Since the paper release, we have improved RF-DETR NAS training on the Roboflow platform even further. A single training run gives you every model size, with results that beat not only the open-source checkpoints but also our own paper NAS results. [Try it now!](https://roboflow.com/)
+
 ## Run Models
 
 ### Detection
@@ -125,22 +167,21 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 RF-DETR provides multiple model sizes, ranging from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
 
 ```python
-import requests
 import supervision as sv
-from PIL import Image
 from rfdetr import RFDETRMedium
 from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRMedium()
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
-detections = model.predict(image, threshold=0.5)
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-annotated_image = sv.BoxAnnotator().annotate(image, detections)
+annotated_image = sv.BoxAnnotator().annotate(detections.metadata["source_image"], detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
+
+> **Note:** `COCO_CLASSES` works for COCO-pretrained models. For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
 
 <details>
 <summary>Run RF-DETR with Inference</summary>
@@ -157,7 +198,7 @@ from inference import get_model
 
 model = get_model("rfdetr-medium")
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
+image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
 predictions = model.infer(image, confidence=0.5)[0]
 detections = sv.Detections.from_inference(predictions)
 
@@ -183,20 +224,17 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
 RF-DETR supports instance segmentation with model sizes from Nano to 2XLarge. To use a different model size, replace the class name in the code snippet below with another class from the table.
 
 ```python
-import requests
 import supervision as sv
-from PIL import Image
 from rfdetr import RFDETRSegMedium
 from rfdetr.assets.coco_classes import COCO_CLASSES
 
 model = RFDETRSegMedium()
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
-detections = model.predict(image, threshold=0.5)
+detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=0.5)
 
 labels = [f"{COCO_CLASSES[class_id]}" for class_id in detections.class_id]
 
-annotated_image = sv.MaskAnnotator().annotate(image, detections)
+annotated_image = sv.MaskAnnotator().annotate(detections.metadata["source_image"], detections)
 annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections, labels)
 ```
 
@@ -215,7 +253,7 @@ from inference import get_model
 
 model = get_model("rfdetr-seg-medium")
 
-image = Image.open("https://media.roboflow.com/dog.jpg")
+image = Image.open(requests.get("https://media.roboflow.com/dog.jpg", stream=True).raw)
 predictions = model.infer(image, confidence=0.5)[0]
 detections = sv.Detections.from_inference(predictions)
 
@@ -234,9 +272,24 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
 |  XL  |   `RFDETRSegXLarge`   | `rfdetr-seg-xlarge`     |         72.2         |          48.8           |     13.5     |    38.1    |  624x624   | Apache 2.0 |
 | 2XL  |  `RFDETRSeg2XLarge`   | `rfdetr-seg-2xlarge`    |         73.1         |          49.9           |     21.8     |    38.6    |  768x768   | Apache 2.0 |
 
+### Keypoints
+
+RF-DETR supports keypoint detection (preview) with `RFDETRKeypointPreview`, pretrained on COCO person keypoints.
+
+```python
+from rfdetr import RFDETRKeypointPreview
+
+model = RFDETRKeypointPreview()
+key_points = model.predict("image.jpg", threshold=0.5)
+```
+
+|        Size        |  RF-DETR package class  | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
+| :----------------: | :---------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+| Keypoint (Preview) | `RFDETRKeypointPreview` |          71.8           |     9.7      |    40.7    |  576x576   | Apache 2.0 |
+
 ### Train Models
 
-RF-DETR supports training for both object detection and instance segmentation. You can train models in [Google Colab](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb) or directly on the Roboflow platform. Below you will find a step-by-step video fine-tuning tutorial.
+RF-DETR supports training for object detection, instance segmentation, and keypoint detection (preview). You can train models in [Google Colab](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/how-to-finetune-rf-detr-on-detection-dataset.ipynb) or directly on the Roboflow platform. Below you will find a step-by-step video fine-tuning tutorial.
 
 [![rf-detr-tutorial-banner](https://github.com/user-attachments/assets/555a45c3-96e8-4d8a-ad29-f23403c8edfd)](https://youtu.be/-OvpdLAElFA)
 
@@ -260,20 +313,24 @@ Our work is built upon [LW-DETR](https://arxiv.org/pdf/2406.03459), [DINOv2](htt
 If you find our work helpful for your research, please consider citing the following BibTeX entry.
 
 ```bibtex
-@misc{rf-detr,
-    title={RF-DETR: Neural Architecture Search for Real-Time Detection Transformers},
-    author={Isaac Robinson and Peter Robicheaux and Matvei Popov and Deva Ramanan and Neehar Peri},
-    year={2025},
-    eprint={2511.09554},
-    archivePrefix={arXiv},
-    primaryClass={cs.CV},
-    url={https://arxiv.org/abs/2511.09554},
+@inproceedings{robinson2026rfdetr,
+  title     = {RF-DETR: Real-Time Detection Transformer},
+  author    = {Robinson, Isaac and Robicheaux, Peter and Popov, Matvei and Ramanan, Deva and Peri, Neehar},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2026},
+  url       = {https://arxiv.org/abs/2511.09554}
 }
 ```
 
 ## Contribute
 
 We welcome and appreciate all contributions! If you notice any issues or bugs, have questions, or would like to suggest new features, please [open an issue](https://github.com/roboflow/rf-detr/issues/new) or pull request. By sharing your ideas and improvements, you help make RF-DETR better for everyone.
+
+## Project Activity
+
+<img src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/weekly-metrics.svg" alt="Weekly Activity and Growth Metrics" role="img" width="100%" />
+
+PyPI downloads cover completed Monday-to-Sunday periods and exclude known mirrors. New stars are calculated from consecutive scheduled GitHub snapshots.
 
 <p align="center">
     <a href="https://youtube.com/roboflow"><img src="https://media.roboflow.com/notebooks/template/icons/purple/youtube.png?ik-sdk-version=javascript-1.4.3&updatedAt=1672949634652" width="3%"/></a>

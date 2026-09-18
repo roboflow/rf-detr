@@ -5,36 +5,47 @@
 # ------------------------------------------------------------------------
 """RF-DETR public package initialiser.
 
-Two-phase legacy-module deprecation
-------------------------------------
-Some sub-packages were relocated in v1.6 and are scheduled for removal in v1.7.
-The migration is handled in two phases so users get a full release cycle to update
-their imports:
-
-**Phase 1 — v1.6 (current):** the old packages (``rfdetr.util``, ``rfdetr.deploy``)
-still exist on disk and work normally, but emit a ``DeprecationWarning`` on import.
-``_RemovedModuleFinder`` is installed in ``sys.meta_path`` but stays dormant: its
-``find_spec`` returns ``None`` whenever ``importlib.machinery.PathFinder`` can
-resolve the name (i.e. while the shim directories are present).
-
-**Phase 2 — v1.7:** the shim directories are deleted.  ``PathFinder`` can no longer
-resolve ``rfdetr.util`` / ``rfdetr.deploy``, so ``_RemovedModuleFinder`` intercepts
-the import and raises a descriptive ``ImportError`` (migration hint) instead of the
-cryptic default ``ModuleNotFoundError: No module named 'rfdetr.util'``.
-
-To complete Phase 2, delete ``src/rfdetr/util/`` and ``src/rfdetr/deploy/`` and bump
-``_REMOVED_IN_V17`` (or rename it) to reflect the new version boundary.
+Removed legacy modules
+----------------------
+Some sub-packages were relocated in v1.6.0 and removed in v1.9.0. ``_RemovedModuleFinder`` is installed in
+``sys.meta_path`` to intercept imports of the removed names (``rfdetr.util``, ``rfdetr.deploy``). Because the shim
+directories no longer exist, ``importlib.machinery.PathFinder`` cannot resolve them, so the finder raises a descriptive
+``ImportError`` with a migration hint instead of the cryptic default ``ModuleNotFoundError: No module named
+'rfdetr.util'``.
 """
 
 import importlib
 import importlib.abc
 import importlib.machinery
 import importlib.util
+import os
 import sys
+from collections.abc import Sequence
+from types import ModuleType
+from typing import Any
 
+# np.complex_ was removed in NumPy 2.0 (June 2024) but some transitive dependencies (e.g. older tensorflow, chumpy)
+# still reference it, raising AttributeError on import. This shim is idempotent and a no-op once the alias exists.
+# TODO(#1061): remove in v1.9.0 once all transitive deps support NumPy 2.x natively; scope to the tflite export path
+#   (rfdetr.export._tflite.exporter) once the import-time consumer set is confirmed.
+try:
+    import numpy
+
+    _IS_NUMPY_INSTALLED = True
+except ImportError:
+    _IS_NUMPY_INSTALLED = False
+
+if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
+    _complex128 = getattr(numpy, "complex128", None)
+    if _complex128 is not None:
+        setattr(numpy, "complex_", _complex128)
+
+
+from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
+    RFDETRKeypointPreview,
     RFDETRLarge,
     RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
     RFDETRMedium,
@@ -51,6 +62,8 @@ from rfdetr.variants import (
 
 __all__ = [
     "ModelContext",
+    "from_checkpoint",
+    "RFDETRKeypointPreview",
     "RFDETRNano",
     "RFDETRSmall",
     "RFDETRMedium",
@@ -63,15 +76,20 @@ __all__ = [
     "RFDETRSeg2XLarge",
 ]
 
+
+def from_checkpoint(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
+    """Convenience wrapper for RFDETR.from_checkpoint(); see that method for full documentation."""
+    return RFDETR.from_checkpoint(path, **kwargs)
+
+
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
 _LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trainer"})
 _PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge"})
 
-# Legacy module aliases delegate to shim packages while they still exist, then raise
-# migration-hint ImportError messages once those shims are removed in v1.7+.
-_REMOVED_IN_V17 = {
-    "util": "rfdetr.util was removed in v1.7. Use rfdetr.utilities instead.",
-    "deploy": "rfdetr.deploy was removed in v1.7. Use rfdetr.export instead.",
+# Legacy module aliases removed in v1.9.0; imports raise a migration-hint ImportError.
+_REMOVE_IN_VERSION_1_9 = {
+    "util": "rfdetr.util was removed in v1.9.0. Use rfdetr.utilities instead.",
+    "deploy": "rfdetr.deploy was removed in v1.9.0. Use rfdetr.export instead.",
 }
 
 
@@ -98,21 +116,21 @@ class _RemovedModuleFinder(importlib.abc.MetaPathFinder):
     def find_spec(
         self,
         fullname: str,
-        path: list[str] | None,
-        target: object | None = None,
+        path: Sequence[str] | None,
+        target: ModuleType | None = None,
     ) -> importlib.machinery.ModuleSpec | None:
         """Return a failing spec with a migration hint for removed legacy modules."""
         if not fullname.startswith(f"{__name__}."):
             return None
         root, _, _ = fullname.removeprefix(f"{__name__}.").partition(".")
-        if root not in _REMOVED_IN_V17:
+        if root not in _REMOVE_IN_VERSION_1_9:
             return None
 
         if self._PATH_FINDER.find_spec(fullname, path) is not None:
             return None
 
         is_package = fullname == f"{__name__}.{root}"
-        loader = _RemovedModuleLoader(_REMOVED_IN_V17[root])
+        loader = _RemovedModuleLoader(_REMOVE_IN_VERSION_1_9[root])
         return importlib.util.spec_from_loader(fullname, loader, is_package=is_package)
 
 
@@ -120,26 +138,24 @@ _REMOVED_MODULE_FINDER = _RemovedModuleFinder()
 
 if not getattr(sys, "_rfdetr_removed_finder", False):
     sys.meta_path.insert(0, _REMOVED_MODULE_FINDER)
-    sys._rfdetr_removed_finder = True
+    setattr(sys, "_rfdetr_removed_finder", True)
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazily resolve training/PTL and plus-only exports and handle removed-module aliases.
 
-    This hook is only invoked on explicit attribute access (e.g. ``rfdetr.RFDETRModelModule``)
-    and supports three behaviors:
+    This hook is only invoked on explicit attribute access (e.g. ``rfdetr.RFDETRModelModule``) and supports three
+    behaviors:
 
     * Training/PTL exports (names in ``_LAZY_TRAINING``) are imported from ``rfdetr.training``
       on first use to avoid importing PyTorch Lightning at ``import rfdetr`` time.
     * Plus-only exports (names in ``_PLUS_EXPORTS``) are imported from ``rfdetr.platform.models``,
-      and a descriptive ``ImportError`` is raised with an installation hint if the model is
-      not available.
-    * Removed-module aliases (keys in ``_REMOVED_IN_V17``, such as ``util`` and ``deploy``)
-      are first attempted via a shim submodule (e.g. ``rfdetr.util``); once the shim files
-      are removed, a migration-hint ``ImportError`` is raised instead of silently masking
+      and a descriptive ``ImportError`` is raised with an installation hint if the model is not available.
+    * Removed-module aliases (keys in ``_REMOVE_IN_VERSION_1_9``, such as ``util`` and ``deploy``)
+      no longer resolve to a shim submodule, so a migration-hint ``ImportError`` is raised instead of silently masking
       unrelated nested import errors.
     """
-    if name in _REMOVED_IN_V17:
+    if name in _REMOVE_IN_VERSION_1_9:
         module_name = f"{__name__}.{name}"
         try:
             value = importlib.import_module(module_name)
@@ -149,7 +165,7 @@ def __getattr__(name: str):
             # Avoid masking nested import errors from within the shim itself.
             if exc.name != module_name:
                 raise
-            raise ImportError(_REMOVED_IN_V17[name]) from None
+            raise ImportError(_REMOVE_IN_VERSION_1_9[name]) from None
 
     if name in _LAZY_TRAINING:
         from rfdetr import training as _training
