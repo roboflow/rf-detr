@@ -309,7 +309,7 @@ class TestConfigValuesReachTheTransformPipeline:
         self,
         builder: BuilderCall,
         namespace_option: str,
-        configured_value: bool | int,
+        configured_value: bool | int | str,
         transform_option: str,
         expected_value: bool | int,
         square_resize_div_64: bool,
