@@ -34,6 +34,7 @@ from rfdetr.config import (
 )
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
+from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
@@ -43,6 +44,7 @@ from rfdetr.training.param_groups import (
     regroup_unmerged_optimizer_state,
     regroup_unmerged_scheduler_kwargs,
 )
+from rfdetr.utilities.box_ops import pairwise_box_l1_cost
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -491,6 +493,14 @@ class RFDETRModelModule(LightningModule):
                         "validated for single-GPU detection training without gradient accumulation.",
                         unsupported_reason,
                     )
+            matcher = self.criterion.matcher
+            if isinstance(matcher, HungarianMatcher):
+                # Keep ragged target packing and the solver outside Dynamo. Matcher output lifetimes and
+                # changing target counts are independent of the model's optional CUDA graph trees.
+                matcher._compiled_l1_cost = torch.compile(
+                    pairwise_box_l1_cost, dynamic=True, fullgraph=True, options={"triton.cudagraphs": False}
+                )
+                logger.info("Matcher L1 compilation enabled (dynamic shapes, no CUDA graphs; kernels compile on use).")
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
             self.model = torch.compile(  # type: ignore[assignment]

@@ -160,6 +160,7 @@ class HungarianMatcher(nn.Module):
         self.keypoint_visible_loss_coef = keypoint_visible_loss_coef
         self.keypoint_nll_loss_coef = keypoint_nll_loss_coef
         self._warned_non_finite_costs = False
+        self._compiled_l1_cost: Callable[[Tensor, Tensor], Tensor] | None = None
 
     @staticmethod
     def _sanitize_cost_matrix(cost_matrix: Tensor) -> Tensor:
@@ -554,7 +555,8 @@ class HungarianMatcher(nn.Module):
         target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
         class_cost = self._focal_classification_cost(target_logits)
 
-        bbox_cost = pairwise_box_l1_cost(outputs["pred_boxes"], padded_target_boxes)
+        l1_cost = self._compiled_l1_cost or pairwise_box_l1_cost
+        bbox_cost = l1_cost(outputs["pred_boxes"], padded_target_boxes)
         giou_cost = -torch.vmap(generalized_box_iou)(
             box_cxcywh_to_xyxy(outputs["pred_boxes"]),
             box_cxcywh_to_xyxy(padded_target_boxes),
@@ -991,7 +993,13 @@ class HungarianMatcher(nn.Module):
         cost_class = self._focal_classification_cost(tgt_logits)
 
         # Compute the L1 cost between boxes
-        cost_bbox = pairwise_box_l1_cost(out_bbox, tgt_bbox)
+        # Mixed dtypes retain cdist's eager autocast/error behavior rather than tracing an error path.
+        l1_cost = (
+            self._compiled_l1_cost
+            if self._compiled_l1_cost is not None and out_bbox.dtype == tgt_bbox.dtype
+            else pairwise_box_l1_cost
+        )
+        cost_bbox = l1_cost(out_bbox, tgt_bbox)
 
         if masks_present:
             # Reuse the masks-hybrid branch's own draw when this call reached the fallback because

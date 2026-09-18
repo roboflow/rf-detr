@@ -20,12 +20,15 @@ from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
+from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.training.callbacks.best_model import RFDETREarlyStopping
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.utilities.box_ops import pairwise_box_l1_cost
 from rfdetr.utilities.tensors import NestedTensor
 
 from .helpers import _fake_postprocess as _helpers_fake_postprocess
@@ -579,6 +582,48 @@ class TestInit:
         ):
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
+
+    @pytest.mark.parametrize("compile_enabled", [False, True])
+    def test_matcher_l1_compilation_follows_model_flag(self, tmp_path: Path, compile_enabled: bool) -> None:
+        """Compile only the real matcher's tensor cost, without changing other matcher instances."""
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+        model = _fake_model()
+        compiled_cost = MagicMock()
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+            patch(
+                "rfdetr.training.module_model.torch.compile",
+                side_effect=lambda value, **_: compiled_cost if value is pairwise_box_l1_cost else value,
+            ) as compiler,
+        ):
+            module = RFDETRModelModule(
+                _base_model_config(compile=compile_enabled, cuda_graphs=True), _base_train_config(tmp_path)
+            )
+
+        assert module.criterion.matcher is matcher
+        assert getattr(HungarianMatcher(), "_compiled_l1_cost", None) is None
+        assert type(matcher).forward is HungarianMatcher.forward
+        if not compile_enabled:
+            compiler.assert_not_called()
+            assert getattr(matcher, "_compiled_l1_cost", None) is None
+            return
+        matcher_call, model_call = compiler.call_args_list
+        assert matcher_call.args == (pairwise_box_l1_cost,)
+        assert matcher_call.kwargs == {"dynamic": True, "fullgraph": True, "options": {"triton.cudagraphs": False}}
+        assert model_call.args == (model,)
+        assert matcher._compiled_l1_cost is compiled_cost
 
     @pytest.mark.parametrize("knob_supported", [True, False])
     def test_coalesce_tiling_knob_passed_only_when_torch_exposes_it(self, knob_supported, tmp_path):

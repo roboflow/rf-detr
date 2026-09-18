@@ -2317,6 +2317,58 @@ class TestBatchedDetectionMatchingOnCUDA:
         assert matcher._match_many([outputs, layer2], targets) is None
 
 
+class TestCompiledL1Matching:
+    """The compiled L1 callable must preserve real compact and full-path assignments."""
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")],
+            ),
+        ],
+    )
+    def test_dynamic_shapes_preserve_assignments(self, device: str) -> None:
+        """One compiled callable handles ragged, empty, and smaller last batches without changing matches."""
+        matcher = HungarianMatcher(cost_class=2, cost_bbox=5, cost_giou=2)
+        compiled_cost = MagicMock(
+            wraps=torch.compile(
+                matcher_module.pairwise_box_l1_cost,
+                dynamic=True,
+                fullgraph=True,
+                options={"triton.cudagraphs": False},
+            )
+        )
+        for sizes, queries in [([2, 0, 3], 8), ([5, 1], 12), ([0, 0], 8), ([1], 8), ([0], 8)]:
+            outputs, targets = _random_detection_batch(seed=721, sizes=sizes, num_queries=queries)
+            outputs = {key: value.to(device) for key, value in outputs.items()}
+            targets = [{key: value.to(device) for key, value in target.items()} for target in targets]
+            matcher._compiled_l1_cost = None
+            expected = matcher(outputs, targets, group_detr=2)
+            matcher._compiled_l1_cost = compiled_cost
+
+            actual = matcher(outputs, targets, group_detr=2)
+
+            _assert_same_indices(actual, expected)
+
+        assert {call.args[0].ndim for call in compiled_cost.call_args_list} == {2, 3}
+
+    def test_compiled_full_path_keeps_mixed_dtype_failure(self) -> None:
+        """A mismatched FP32/FP64 pair still fails eagerly instead of entering Dynamo."""
+        outputs, targets = _random_detection_batch(seed=722, sizes=[2, 3])
+        targets[1]["boxes"] = targets[1]["boxes"].double()
+        matcher = HungarianMatcher()
+        compiled_cost = MagicMock(side_effect=AssertionError("Invalid dtype pair reached compiler"))
+        matcher._compiled_l1_cost = compiled_cost
+
+        with pytest.raises(RuntimeError, match="expected scalar type Float but found Double"):
+            matcher(outputs, targets)
+
+        compiled_cost.assert_not_called()
+
+
 class TestCompactPathCriterionEquivalence:
     """The exploration behind this PR claims the 17 criterion losses (main + 2 aux decoder layers + encoder, each with
     ``labels``/``boxes``/``cardinality``) and their gradients are byte-identical between the compact and fallback paths,
@@ -2329,9 +2381,12 @@ class TestCompactPathCriterionEquivalence:
     checked, not just losses.
     """
 
+    @pytest.mark.parametrize("compiled", [False, True])
+    @pytest.mark.parametrize("group_detr", [1, 2])
     def test_losses_and_gradients_match_between_compact_and_fallback_paths(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, compiled: bool, group_detr: int
     ) -> None:
+        """Real criterion losses and gradients agree with the eager full-cartesian reference."""
         from rfdetr.models.criterion import SetCriterion
 
         torch.manual_seed(401)
@@ -2359,12 +2414,20 @@ class TestCompactPathCriterionEquivalence:
         ]
 
         matcher = HungarianMatcher()
+        if compiled:
+            matcher._compiled_l1_cost = torch.compile(
+                matcher_module.pairwise_box_l1_cost,
+                dynamic=True,
+                fullgraph=True,
+                options={"triton.cudagraphs": False},
+            )
         criterion = SetCriterion(
             num_classes=num_classes,
             matcher=matcher,
             weight_dict={"loss_ce": 1.0, "loss_bbox": 1.0, "loss_giou": 1.0},
             focal_alpha=0.25,
             losses=["labels", "boxes", "cardinality"],
+            group_detr=group_detr,
         )
 
         calls = _spy_on_compact_path(monkeypatch)
@@ -2381,6 +2444,7 @@ class TestCompactPathCriterionEquivalence:
         for layer in all_layer_outputs:
             layer["pred_logits"].grad = None
             layer["pred_boxes"].grad = None
+        matcher._compiled_l1_cost = None
         monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
         fallback_losses = criterion(outputs, targets, num_boxes=1.0)
         sum(fallback_losses.values()).backward()

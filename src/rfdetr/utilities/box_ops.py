@@ -201,9 +201,9 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     :data:`_L1_COST_ELEMENT_BUDGET`. Chunking cannot change the result because the
     reduction runs over the feature axis only, never across chunks.
 
-    A fused kernel -- ``torch.compile``/Inductor, or a hand-written Triton kernel -- would
-    subsume both the chunking loop and its budget constant, since it can hold the coordinate
-    differences in registers instead of materialising them.
+    Under ``torch.compile``, this takes one broadcast reduction rather than the eager chunking
+    loop. Inductor can fuse that expression without unrolling a target-dependent Python loop;
+    eager calls retain the bounded-memory chunked implementation below.
 
     Args:
         boxes1: Boxes of shape ``[*leading, queries, features]``.
@@ -243,6 +243,11 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
         # float32 regardless, so nothing downstream needs the narrow dtype back.
         boxes1 = boxes1.float()
         boxes2 = boxes2.float()
+
+    if torch._dynamo.is_compiling():
+        # A compiled graph can fuse this reduction without materializing the eager chunks. Keep it
+        # ahead of Python shape arithmetic so dynamic target sizes never specialize the graph by chunk count.
+        return (boxes1.unsqueeze(-2) - boxes2.unsqueeze(-3)).abs().sum(-1)
 
     # ``torch.cdist`` broadcasts the leading dimensions, so an operand can carry fewer rows than
     # the result has. Sizing anything from ``boxes1`` alone therefore disagrees with it -- silently

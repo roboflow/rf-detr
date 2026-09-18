@@ -515,8 +515,8 @@ class ModelConfig(BaseConfig):
             automatic mixed precision (bfloat16/float16). Defaults to ``True``. An explicit
             ``TrainConfig.amp_dtype`` always overrides this field; it is only consulted when
             ``amp_dtype`` is left at its default and this field is set to ``False``.
-        compile: Compile the model with ``torch.compile`` for faster throughput. Defaults to
-            ``False``.
+        compile: Compile the model and matcher L1 box cost with ``torch.compile`` on CUDA.
+            Target packing, assignment, and remaining losses stay eager. Defaults to ``False``.
         cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
             graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
             sizes it matches eager and ``compile`` is the better lever. Combined with

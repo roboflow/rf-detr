@@ -482,6 +482,91 @@ class TestPairwiseBoxL1Cost:
         torch.testing.assert_close(boxes1.grad, boxes1_reference.grad)
         torch.testing.assert_close(boxes2.grad, boxes2_reference.grad)
 
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")],
+            ),
+        ],
+    )
+    @torch.no_grad()
+    def test_torch_compile_dynamic_avoids_eager_target_chunking(
+        self, monkeypatch: pytest.MonkeyPatch, device: str
+    ) -> None:
+        """One dynamic full graph handles distinct positive batch/query/target sizes.
+
+        The tiny eager budget makes each reference call traverse the target chunk loop. The compiled call must instead
+        use the fused broadcast reduction, so changing all three dynamic dimensions should reuse its first graph rather
+        than specialize per chunk count.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(723)
+        torch._dynamo.reset()
+        graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=True,
+            options={"triton.cudagraphs": False},
+        )
+
+        for batch, queries, targets in ((2, 5, 13), (3, 7, 11)):
+            boxes1 = torch.rand(batch, queries, 4, device=device)
+            boxes2 = torch.rand(batch, targets, 4, device=device)
+
+            expected = pairwise_box_l1_cost(boxes1, boxes2)
+            actual = compiled_cost(boxes1, boxes2)
+
+            torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
+        assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before == 1
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=[
+                    pytest.mark.gpu,
+                    pytest.mark.skipif(
+                        not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(),
+                        reason="CUDA BF16 unavailable",
+                    ),
+                ],
+            ),
+        ],
+    )
+    @torch.no_grad()
+    def test_torch_compile_preserves_narrow_float_promotion_under_autocast(
+        self, monkeypatch: pytest.MonkeyPatch, device: str
+    ) -> None:
+        """Compiled bfloat16 matcher inputs reduce in float32 under CUDA autocast.
+
+        The eager reference uses a forced chunk loop. Its compiled counterpart must retain the public float32 promotion
+        contract while bypassing the loop.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(724)
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=True,
+            options={"triton.cudagraphs": False},
+        )
+        boxes1 = torch.rand(2, 5, 4, device=device, dtype=torch.bfloat16)
+        boxes2 = torch.rand(2, 13, 4, device=device, dtype=torch.bfloat16)
+
+        with torch.amp.autocast(device, dtype=torch.bfloat16):
+            expected = pairwise_box_l1_cost(boxes1, boxes2)
+            actual = compiled_cost(boxes1, boxes2)
+
+        assert actual.dtype is torch.float32
+        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_matches_cdist_on_cuda_at_matcher_scale(self, monkeypatch: pytest.MonkeyPatch) -> None:

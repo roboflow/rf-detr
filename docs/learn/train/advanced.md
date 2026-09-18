@@ -474,11 +474,13 @@ A second reference point, on real data, shows the other end of the range. RF-DET
 ### Choosing between CUDA graphs and compilation
 
 - **CUDA graphs** remove kernel-launch gaps and CPU dispatch between the model's kernels. They pay when each kernel is short, so the GPU idles between launches: small batch size, small model, low resolution, or a fast GPU driven by a slow CPU. They do nothing for the kernels themselves. When the batch is large enough that every kernel runs for a long time, replay measures the same as eager — that is expected, not a capture failure.
-- **`compile=True`** (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. That gain does not depend on the batch size, but compilation adds startup time and, with `dynamic=True`, one compiled graph per run.
+- **`compile=True`** (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. Compilation adds startup time; dynamic shapes reduce, but do not eliminate, recompilation.
 - Rule of thumb from the two measurements above: at batch 4 with a mid-range GPU (L4) graphs gave 32%; at batch 64 on a high-end GPU they gave 0% and compilation gave 17%. Prefer graphs when the effective batch per step is in the single digits or the progress bar shows the GPU far from saturated; prefer compilation for large batches. In between, run 200 steps of each with identical settings and compare the steady-state it/s — startup and capture time distort the first epoch.
 - For large batches, combining the two buys nothing over `compile=True` alone; for small batches it stacks. The section below has the numbers.
 
 ### Combining CUDA graphs with compilation
+
+On CUDA, `compile=True` also compiles the matcher's L1 box cost separately from the model. The compiled helper uses dynamic shapes and bypasses the eager target-chunking loop so Inductor can fuse the coordinate reduction. Both compact and full-cartesian matching use it for equal-dtype inputs; mixed-dtype inputs retain the eager helper's autocast/error behavior. Target packing, Hungarian assignment, and the remaining losses stay eager. Matcher CUDA graphs stay disabled independently of the model's graph setting. A startup message confirms that L1 compilation is enabled; kernels compile on first use. `compile=False` retains the memory-bounded eager helper. Measure steady-state throughput and peak memory on your own workload; no additional end-to-end speedup is claimed yet.
 
 Set both flags and RF-DETR hands CUDA graph replay to Inductor's CUDA graph trees (the mechanism behind `torch.compile(mode="reduce-overhead")`, passed here as the `triton.cudagraphs` compile option so it coexists with RF-DETR's other Inductor settings). The compiled forward and backward kernels are recorded once per input shape and replayed afterwards; the eager graph runner used by `cuda_graphs=True` alone stays off, and an INFO line at construction says so.
 
@@ -496,7 +498,7 @@ Measured on one NVIDIA RTX PRO 6000 (Blackwell) with RF-DETR Nano, BF16, resolut
 | 4           | 78.7          | 95.3 (1.21×)          | 96.8 (1.23×)      | 116.0 (1.47×) | **1.20×**             | 0.32 → 0.42               |
 | 64          | 246.8         | 249.7 (1.01×)         | 322.8 (1.31×)     | 325.7 (1.32×) | 1.01×                 | 0.85 → 0.83               |
 
-At batch 4 the two gains stack: compilation alone leaves the launch gaps in place (GPU busy stays at 0.32), and graph replay of the compiled kernels removes them. At batch 64 the compiled kernels already run back to back, so replay adds under 1%, inside run-to-run noise; the remaining 15–20% of each step is spent outside the model (matcher, loss, data loading) and neither option reaches it. The same run on an A100 gave 1.70× over `compile` at batch 4 and the same parity at batch 64, so the small-batch gain depends on how much launch overhead the host adds.
+At batch 4 the two gains stack: compilation alone leaves the launch gaps in place (GPU busy stays at 0.32), and graph replay of the compiled kernels removes them. At batch 64 the compiled kernels already run back to back, so replay adds under 1%, inside run-to-run noise. In this historical benchmark, before separate matcher L1 compilation, the remaining 15–20% of each step was spent outside the compiled model (matcher, loss, data loading). The same run on an A100 gave 1.70× over `compile` at batch 4 and the same parity at batch 64, so the small-batch gain depends on how much launch overhead the host adds.
 
 Scope and cost:
 
