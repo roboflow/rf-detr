@@ -40,18 +40,6 @@ You can apply all changes in one go; working through sections one release at a t
 
     The engine is named `{output_name}-backbone.trt` instead of `{output_name}.trt`, matching what `RFDETR.export()`'s documentation already described and what every other format does. Without the marker a backbone engine silently overwrites a full-detector engine exported under the same name. Scripts that rebuilt the path from `output_name` need the suffix added.
 
-!!! warning "Breaking: `do_random_resize_via_padding` folded into the `MultiScale` enum on `multi_scale`"
-
-    `TrainConfig.do_random_resize_via_padding` is gone; `TrainConfig(...)` and `.train(...)` raise on it. Its two settings are now modes of `multi_scale`, typed as `rfdetr.config.MultiScale` with values `"off"`, `"per-batch"`, and `"per-sample"`. `"per-batch"` is the new default and equals the old default pair (`multi_scale=True`, `do_random_resize_via_padding=False`): one random scale per batch, applied in `training_step`. `"per-sample"` equals the old `do_random_resize_via_padding=True`: every sample draws its own scale in the dataset transforms and collate pads to the batch maximum. Booleans still work as input — `True` is `"per-batch"` and `False` is `"off"` — so existing calls that never set `do_random_resize_via_padding` need no change; code that reads `train_config.multi_scale` back gets the enum member (a `str` subclass, so `== "per-batch"` comparisons hold, but `is True`/`is False` checks do not). Callers that build a config namespace for `build_roboflow_from_coco`, `build_roboflow_from_yolo`, or `build_o365_raw` by hand drop `do_random_resize_via_padding` and set `multi_scale` to one of the three values.
-
-    ```python
-    # Before
-    model.train(dataset_dir="dataset", multi_scale=True, do_random_resize_via_padding=True)
-
-    # After
-    model.train(dataset_dir="dataset", multi_scale="per-sample")
-    ```
-
 ### Removed
 
 !!! warning "Removed: `rfdetr.datasets.synthetic`"
