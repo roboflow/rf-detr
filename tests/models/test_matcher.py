@@ -2372,10 +2372,10 @@ class TestCompiledL1Matching:
             matcher(outputs, targets)
             matcher(outputs, targets)
 
+        # No fullgraph=True: hitting Dynamo's recompile limit must fall back to eager, never abort training.
         compiler.assert_called_once_with(
             matcher_module.pairwise_box_l1_cost,
             dynamic=True,
-            fullgraph=True,
             options={"triton.coalesce_tiling_analysis": False, "triton.cudagraphs": False},
         )
         assert compiled_cost.call_count == 2

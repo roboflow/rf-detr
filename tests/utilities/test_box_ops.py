@@ -525,6 +525,75 @@ class TestPairwiseBoxL1Cost:
 
         assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before == 1
 
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_graph_count_stays_bounded_across_specialization_traps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Zero/one-target specialization and duck-size collisions do not blow up the graph cache.
+
+        `test_torch_compile_dynamic_avoids_eager_target_chunking` only ever sees positive targets >= 11, so it is
+        blind to two known Dynamo specialization traps: ``T in {0, 1}`` is unconditionally specialized (a 0/1 input
+        recompiles regardless of `dynamic=True`), and a batch or target count that happens to equal the box feature
+        width (4) can duck-size-bind to that dimension. The first call is deliberately shaped with `targets == 4` to
+        expose the latter. Each new shape may legitimately trigger a recompile, so the assertion is a small bound
+        well under `torch._dynamo.config.recompile_limit` (8), not the `== 1` reuse guarantee the sibling test pins
+        for the specialization-free regime -- and no `FailOnRecompileLimitHit` may escape, which would mean the
+        limit was hit and eager fallback silently engaged.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(726)
+        torch._dynamo.reset()
+        graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=False,
+            options={"triton.cudagraphs": False},
+        )
+
+        # (batch, queries, targets); first call pins targets == 4 to probe duck-size binding to the
+        # box feature-width dimension, then sweeps T in {0, 1, >=2} and batch in {1, 4, n}.
+        shapes = ((1, 5, 4), (4, 5, 4), (7, 5, 0), (1, 5, 1), (7, 5, 6))
+        for batch, queries, targets in shapes:
+            boxes1 = torch.rand(batch, queries, 4)
+            boxes2 = torch.rand(batch, targets, 4)
+
+            expected = pairwise_box_l1_cost(boxes1, boxes2)
+            actual = compiled_cost(boxes1, boxes2)
+
+            assert actual.shape == expected.shape
+            torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
+        assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before <= 6
+
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_zero_targets_returns_correctly_shaped_empty_cost(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A compiled call with zero targets matches the eager zero-fill contract, not just a non-crash.
+
+        `test_zero_width_feature_axis_returns_zeros` and `test_empty_target_set_returns_empty_cost` pin this shape and
+        dtype contract for the eager function; the compiled callable must preserve it rather than tracing a graph that
+        happens to avoid an exception while returning a mismatched shape or dtype.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(727)
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=False,
+            options={"triton.cudagraphs": False},
+        )
+        boxes1 = torch.rand(3, 5, 4)
+        boxes2 = torch.rand(3, 0, 4)
+
+        cost = compiled_cost(boxes1, boxes2)
+
+        assert cost.shape == (3, 5, 0)
+        assert cost.dtype == boxes1.dtype
+
     @pytest.mark.parametrize(
         "device",
         [

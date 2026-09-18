@@ -54,10 +54,15 @@ _LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64
 
 #: ``torch.compile`` recipe for :func:`pairwise_box_l1_cost`, owned by the matcher so the training
 #: module and the tests share one definition. ``dynamic=True``: one graph serves every
-#: ``(batch, queries, targets)`` shape instead of recompiling per target count. ``fullgraph=True``:
-#: the helper is expected to trace as a single graph. Only the compact 3-D and full 2-D box paths use
-#: it; ragged target packing and the assignment solver stay outside Dynamo.
-_L1_COST_COMPILE_KWARGS: dict[str, Any] = {"dynamic": True, "fullgraph": True}
+#: ``(batch, queries, targets)`` shape instead of recompiling per target count. Deliberately not
+#: ``fullgraph=True``: the compact 3-D and full 2-D paths share one code object, so 0/1
+#: specialisation (``max_targets`` of 0 or 1, batch 1) and duck-shape collisions accumulate distinct
+#: guard sets under real training, and once Dynamo's recompile limit (8) is hit, ``fullgraph=True``
+#: raises ``FailOnRecompileLimitHit`` and aborts training, whereas the default falls back to the
+#: numerically identical eager helper. The helper tracing as a single graph is covered by the
+#: ``torch.compile`` tests in ``tests/utilities/test_box_ops.py`` instead. Ragged target packing and
+#: the assignment solver stay outside Dynamo.
+_L1_COST_COMPILE_KWARGS: dict[str, Any] = {"dynamic": True}
 #: Inductor options merged *over* whatever a caller supplies. Matcher output lifetimes and changing
 #: target counts are independent of the model's optional CUDA graph trees, so graph replay stays off
 #: here even when the model compiles with it on.
