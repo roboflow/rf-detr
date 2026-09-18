@@ -583,6 +583,8 @@ def resolve_auto_batch_config(
 
     # Use max multi-scale resolution when multi_scale is True so probe reflects worst-case.
     # Both "batch" and "sample" modes can hit the largest scale, so probe it for either.
+    # The probe is square; with square_resize_div_64=False the aspect-preserving resize lets the long side reach
+    # 1333 px and collate pads per axis, so a mixed portrait/landscape batch can exceed this probe's footprint.
     multi_scale = MultiScale.from_value(getattr(train_config, "multi_scale", False))
     if multi_scale is not MultiScale.OFF:
         expanded_scales = getattr(train_config, "expanded_scales", True)
