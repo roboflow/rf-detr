@@ -51,7 +51,7 @@ class PostProcess(nn.Module):
 
         Args:
             outputs: Model output dictionary containing ``pred_logits`` and ``pred_boxes`` plus optional
-                ``pred_masks`` or ``pred_keypoints``.
+                ``pred_masks``, ``pred_keypoints``, or ``embeddings``.
             target_sizes: Per-image ``(height, width)`` tensor. For inference and evaluation this should be the
                 original image size so normalized boxes and keypoints are returned in source-image pixel coordinates.
             score_threshold: Optional confidence threshold already known to the caller. Detections scoring at or
@@ -71,13 +71,14 @@ class PostProcess(nn.Module):
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         out_masks = outputs.get("pred_masks")
         out_keypoints = outputs.get("pred_keypoints")
+        out_embeddings = outputs.get("embeddings")
         self._validate_outputs(out_logits, out_masks, out_keypoints, target_sizes)
 
         scores, labels, topk_boxes = self._select_topk(out_logits)
         boxes = self._gather_and_scale_boxes(out_bbox, topk_boxes, target_sizes)
 
         if out_masks is not None:
-            return self._postprocess_masks(
+            results = self._postprocess_masks(
                 out_masks,
                 scores,
                 labels,
@@ -87,9 +88,60 @@ class PostProcess(nn.Module):
                 self.upsample_masks_to_image_size,
                 score_threshold=score_threshold,
             )
-        if out_keypoints is not None:
-            return self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
-        return self._postprocess_boxes(scores, labels, boxes)
+        elif out_keypoints is not None:
+            results = self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
+        else:
+            results = self._postprocess_boxes(scores, labels, boxes)
+
+        if out_embeddings is not None:
+            # `_postprocess_masks` drops rows scoring at or below `score_threshold` before returning
+            # `results`, so segmentation embeddings must be filtered with the same per-image predicate
+            # or their row count would diverge from `results[i]["scores"]`/`"masks"`. The keypoint and
+            # box-only paths never filter on `score_threshold` (see the `forward` docstring), so no
+            # filtering is needed there either.
+            self._attach_embeddings(
+                results,
+                out_embeddings,
+                topk_boxes,
+                scores,
+                score_threshold=score_threshold if out_masks is not None else None,
+            )
+
+        return results
+
+    @staticmethod
+    def _attach_embeddings(
+        results: list[dict[str, torch.Tensor]],
+        out_embeddings: torch.Tensor,
+        topk_boxes: torch.Tensor,
+        scores: torch.Tensor | None = None,
+        score_threshold: float | None = None,
+    ) -> None:
+        """Gather per-query embeddings for the selected top-k queries and attach them in-place.
+
+        Args:
+            results: Per-image result dicts already populated by :meth:`forward`; mutated in-place.
+            out_embeddings: Raw per-query embeddings with shape ``(B, Q, H)``.
+            topk_boxes: Selected query indices with shape ``(B, K)``, same indices used to gather
+                boxes/masks/keypoints so embeddings line up 1:1 with the returned detections.
+            scores: Optional pre-filter object scores with shape ``(B, K)``, matching ``topk_boxes``.
+                Required (together with ``score_threshold``) to reproduce the same row filtering
+                ``_postprocess_masks`` already applied to ``results``; ``None`` skips filtering.
+            score_threshold: Optional confidence threshold already applied to ``results`` by
+                ``_postprocess_masks``. When set (together with ``scores``), rows scoring at or below
+                it are dropped here too, so embeddings line up 1:1 with each image's filtered rows.
+                ``None`` (the default) keeps every selected query, matching the unfiltered paths.
+        """
+        for i, res_i in enumerate(results):
+            k_idx = topk_boxes[i]
+            if score_threshold is not None and scores is not None:
+                sel = (scores[i] > score_threshold).nonzero(as_tuple=True)[0]
+                k_idx = k_idx[sel]
+            res_i["embeddings"] = torch.gather(
+                out_embeddings[i],
+                0,
+                k_idx.unsqueeze(-1).repeat(1, out_embeddings.shape[-1]),
+            )  # [K, H]
 
     @staticmethod
     def _validate_outputs(

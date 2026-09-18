@@ -21,6 +21,32 @@ import torch
 from rfdetr.detr import RFDETR
 
 
+class _IdentityAcceptingReturnEmbeddings(torch.nn.Module):
+    """``torch.nn.Identity``-like stub whose ``forward`` also accepts (and ignores) ``return_embeddings``.
+
+    ``predict()`` always calls the unoptimized model with ``return_embeddings=<bool>``, mirroring the real
+    ``LWDETR.forward`` signature. Plain ``torch.nn.Identity`` doesn't accept that kwarg, so test doubles standing
+    in for the base model use this instead.
+
+    Examples:
+        >>> stub = _IdentityAcceptingReturnEmbeddings()
+        >>> x = torch.zeros(1)
+        >>> torch.equal(stub(x, return_embeddings=True), x)
+        True
+    """
+
+    def __init__(self, hidden_dim: int = 4) -> None:
+        """Initialise the stub, remembering ``hidden_dim`` for the synthetic embeddings tensor."""
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.last_return_embeddings: bool | None = None
+
+    def forward(self, x: torch.Tensor, return_embeddings: bool = False) -> torch.Tensor:
+        """Return the input unchanged, recording ``return_embeddings`` for later assertions."""
+        self.last_return_embeddings = return_embeddings
+        return x
+
+
 class _BaseFakeRFDETR(RFDETR):
     """RFDETR test double that skips weight downloads and returns a minimal model config.
 
@@ -59,8 +85,10 @@ class _DummyModel:
         include_masks: bool = False,
         mask_size: int = 4,
         fill_value: float | None = None,
+        include_embeddings: bool = False,
+        embedding_dim: int = 4,
     ) -> None:
-        """Initialise stub with optional class names, label list, device, mask flag, and keypoint flag.
+        """Initialise stub with optional class names, label list, device, mask flag, keypoint flag, and embeddings flag.
 
         Args:
             class_names: Optional class-name list forwarded to consumers that read it.
@@ -79,10 +107,14 @@ class _DummyModel:
                 async device-to-host copy, where a stale zero would otherwise be indistinguishable
                 from a genuine one. ``None`` preserves the original fixed values every existing
                 caller already asserts on.
+            include_embeddings: When ``True``, ``postprocess`` also emits an ``embeddings`` tensor.
+            embedding_dim: When ``include_embeddings`` is set, ``postprocess`` also emits a tensor of
+                shape ``(N, embedding_dim)`` filled with a constant value (``0.5`` by default).
+                This is useful for testing that the embeddings are correctly returned and handled.
         """
         self.device = torch.device(device)
         self.resolution = 28
-        self.model = torch.nn.Identity().to(self.device)
+        self.model = _IdentityAcceptingReturnEmbeddings(hidden_dim=embedding_dim)
         self.class_names = class_names
         self._labels = labels if labels is not None else [1]
         self._include_keypoints = include_keypoints
@@ -94,6 +126,8 @@ class _DummyModel:
         # construction to simulate a model "declared" on CUDA while every tensor op stays mocked
         # CPU-side — `postprocess` must keep allocating on the device it was actually built for.
         self._result_device = self.device
+        self._include_embeddings = include_embeddings
+        self._embedding_dim = embedding_dim
 
     def postprocess(
         self,
@@ -125,6 +159,11 @@ class _DummyModel:
                 )
             if self._include_masks:
                 result["masks"] = torch.ones((n, 1, self._mask_size, self._mask_size), dtype=torch.bool, device=device)
+            if self._include_embeddings:
+                # Identifiable per-label embeddings: row i is filled with value i, so tests can assert on content.
+                result["embeddings"] = torch.stack(
+                    [torch.full((self._embedding_dim,), float(i)) for i in range(len(self._labels))]
+                )
             results.append(result)
         return results
 

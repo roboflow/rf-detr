@@ -197,7 +197,7 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages (tensorrt + onnx extras)
-        timeout-minutes: 8
+        timeout-minutes: 10
         # [tensorrt] provides tensorrt/polygraphy for the engine build; [onnx] provides the ONNX
         # export toolchain (the e2e exports RFDETRNano to ONNX first).
         run: uv pip install -e ".[tensorrt,onnx,train,augment,cli,visual]" --group tests
