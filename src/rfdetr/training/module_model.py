@@ -44,7 +44,6 @@ from rfdetr.training.param_groups import (
     regroup_unmerged_optimizer_state,
     regroup_unmerged_scheduler_kwargs,
 )
-from rfdetr.utilities.box_ops import pairwise_box_l1_cost
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -497,11 +496,11 @@ class RFDETRModelModule(LightningModule):
             # need not expose a matcher at all.
             matcher = getattr(self.criterion, "matcher", None)
             if isinstance(matcher, HungarianMatcher):
-                # Keep ragged target packing and the solver outside Dynamo. Matcher output lifetimes and
-                # changing target counts are independent of the model's optional CUDA graph trees.
-                matcher._compiled_l1_cost = torch.compile(
-                    pairwise_box_l1_cost, dynamic=True, fullgraph=True, options={"triton.cudagraphs": False}
-                )
+                # The matcher owns its compile recipe and builds the compiled cost lazily in the process that
+                # runs it, so spawn-based strategies can still pickle the criterion into their workers. It
+                # shares the model's Inductor options (the coalesce-tiling workaround applies to its dynamic
+                # graph too) and forces CUDA graph replay off on top of them itself.
+                matcher.enable_compiled_l1_cost(compile_options)
                 logger.info("Matcher L1 compilation enabled (dynamic shapes, no CUDA graphs; kernels compile on use).")
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.

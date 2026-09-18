@@ -6,7 +6,7 @@
 
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -2333,41 +2333,69 @@ class TestCompiledL1Matching:
     )
     def test_dynamic_shapes_preserve_assignments(self, device: str) -> None:
         """One compiled callable handles ragged, empty, and smaller last batches without changing matches."""
-        matcher = HungarianMatcher(cost_class=2, cost_bbox=5, cost_giou=2)
-        compiled_cost = MagicMock(
-            wraps=torch.compile(
-                matcher_module.pairwise_box_l1_cost,
-                dynamic=True,
-                fullgraph=True,
-                options={"triton.cudagraphs": False},
-            )
+        eager = HungarianMatcher(cost_class=2, cost_bbox=5, cost_giou=2)
+        compiled = HungarianMatcher(cost_class=2, cost_bbox=5, cost_giou=2)
+        compiled.enable_compiled_l1_cost()
+        real_compile = torch.compile
+        spies: list[MagicMock] = []
+
+        def spy_compile(fn, **kwargs):
+            spies.append(MagicMock(wraps=real_compile(fn, **kwargs)))
+            return spies[-1]
+
+        with patch.object(matcher_module.torch, "compile", side_effect=spy_compile):
+            for sizes, queries in [([2, 0, 3], 8), ([5, 1], 12), ([0, 0], 8), ([1], 8), ([0], 8)]:
+                outputs, targets = _random_detection_batch(seed=721, sizes=sizes, num_queries=queries)
+                outputs = {key: value.to(device) for key, value in outputs.items()}
+                targets = [{key: value.to(device) for key, value in target.items()} for target in targets]
+                expected = eager(outputs, targets, group_detr=2)
+
+                actual = compiled(outputs, targets, group_detr=2)
+
+                _assert_same_indices(actual, expected)
+
+        assert len(spies) == 1, "one lazily built callable must serve every batch"
+        assert {call.args[0].ndim for call in spies[0].call_args_list} == {2, 3}
+
+    def test_enable_defers_compilation_to_first_use_with_matcher_owned_recipe(self) -> None:
+        """Enabling records the request; ``torch.compile`` runs once, on the first call, with the matcher's recipe.
+
+        The caller's Inductor options are forwarded, but matcher CUDA graphs stay off whatever the caller asked for. A
+        request-only state is what keeps the matcher picklable for spawn-based launchers.
+        """
+        outputs, targets = _random_detection_batch(seed=725, sizes=[2, 1])
+        matcher = HungarianMatcher()
+        compiled_cost = MagicMock(wraps=matcher_module.pairwise_box_l1_cost)
+        with patch.object(matcher_module.torch, "compile", return_value=compiled_cost) as compiler:
+            matcher.enable_compiled_l1_cost({"triton.cudagraphs": True, "triton.coalesce_tiling_analysis": False})
+            compiler.assert_not_called()
+            matcher(outputs, targets)
+            matcher(outputs, targets)
+
+        compiler.assert_called_once_with(
+            matcher_module.pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=True,
+            options={"triton.coalesce_tiling_analysis": False, "triton.cudagraphs": False},
         )
-        for sizes, queries in [([2, 0, 3], 8), ([5, 1], 12), ([0, 0], 8), ([1], 8), ([0], 8)]:
-            outputs, targets = _random_detection_batch(seed=721, sizes=sizes, num_queries=queries)
-            outputs = {key: value.to(device) for key, value in outputs.items()}
-            targets = [{key: value.to(device) for key, value in target.items()} for target in targets]
-            matcher._compiled_l1_cost = None
-            expected = matcher(outputs, targets, group_detr=2)
-            matcher._compiled_l1_cost = compiled_cost
-
-            actual = matcher(outputs, targets, group_detr=2)
-
-            _assert_same_indices(actual, expected)
-
-        assert {call.args[0].ndim for call in compiled_cost.call_args_list} == {2, 3}
+        assert compiled_cost.call_count == 2
 
     def test_compiled_full_path_keeps_mixed_dtype_failure(self) -> None:
-        """A mismatched FP32/FP64 pair still fails eagerly instead of entering Dynamo."""
+        """A mismatched FP32/FP64 pair still fails eagerly instead of entering Dynamo -- or even building it."""
         outputs, targets = _random_detection_batch(seed=722, sizes=[2, 3])
         targets[1]["boxes"] = targets[1]["boxes"].double()
         matcher = HungarianMatcher()
-        compiled_cost = MagicMock(side_effect=AssertionError("Invalid dtype pair reached compiler"))
-        matcher._compiled_l1_cost = compiled_cost
+        matcher.enable_compiled_l1_cost()
 
-        with pytest.raises(RuntimeError, match="expected scalar type Float but found Double"):
+        with (
+            patch.object(
+                matcher_module.torch, "compile", side_effect=AssertionError("Invalid dtype pair reached compiler")
+            ) as compiler,
+            pytest.raises(RuntimeError, match="expected scalar type Float but found Double"),
+        ):
             matcher(outputs, targets)
 
-        compiled_cost.assert_not_called()
+        compiler.assert_not_called()
 
 
 class TestCompactPathCriterionEquivalence:
@@ -2416,12 +2444,7 @@ class TestCompactPathCriterionEquivalence:
 
         matcher = HungarianMatcher()
         if compiled:
-            matcher._compiled_l1_cost = torch.compile(
-                matcher_module.pairwise_box_l1_cost,
-                dynamic=True,
-                fullgraph=True,
-                options={"triton.cudagraphs": False},
-            )
+            matcher.enable_compiled_l1_cost()
         criterion = SetCriterion(
             num_classes=num_classes,
             matcher=matcher,
@@ -2445,7 +2468,8 @@ class TestCompactPathCriterionEquivalence:
         for layer in all_layer_outputs:
             layer["pred_logits"].grad = None
             layer["pred_boxes"].grad = None
-        matcher._compiled_l1_cost = None
+        # The eager reference goes through a matcher that never had compilation enabled.
+        criterion.matcher = HungarianMatcher()
         monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
         fallback_losses = criterion(outputs, targets, num_boxes=1.0)
         sum(fallback_losses.values()).backward()
