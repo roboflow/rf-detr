@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple, cast
 
 import numpy as np
@@ -51,6 +51,22 @@ _FOCAL_LOSS_GAMMA = 2.0
 #: elements but regresses to 0.79-1.03x from ~468K, so the budget sits between those points.
 _STACKED_COST_ELEMENT_LIMIT = 350_000
 _LinearSumAssignment = Callable[[Any], tuple[NDArray[np.int64], NDArray[np.int64]]]
+
+#: ``torch.compile`` recipe for :func:`pairwise_box_l1_cost`, owned by the matcher so the training
+#: module and the tests share one definition. ``dynamic=True``: one graph serves every
+#: ``(batch, queries, targets)`` shape instead of recompiling per target count. Deliberately not
+#: ``fullgraph=True``: the compact 3-D and full 2-D paths share one code object, so 0/1
+#: specialisation (``max_targets`` of 0 or 1, batch 1) and duck-shape collisions accumulate distinct
+#: guard sets under real training, and once Dynamo's recompile limit (8) is hit, ``fullgraph=True``
+#: raises ``FailOnRecompileLimitHit`` and aborts training, whereas the default falls back to the
+#: numerically identical eager helper. The helper tracing as a single graph is covered by the
+#: ``torch.compile`` tests in ``tests/utilities/test_box_ops.py`` instead. Ragged target packing and
+#: the assignment solver stay outside Dynamo.
+_L1_COST_COMPILE_KWARGS: dict[str, Any] = {"dynamic": True}
+#: Inductor options merged *over* whatever a caller supplies. Matcher output lifetimes and changing
+#: target counts are independent of the model's optional CUDA graph trees, so graph replay stays off
+#: here even when the model compiles with it on.
+_L1_COST_COMPILE_OPTIONS: dict[str, Any] = {"triton.cudagraphs": False}
 linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 
 # Cost handed to padded (non-real) target columns so the assignment parks them on leftover queries.
@@ -160,6 +176,50 @@ class HungarianMatcher(nn.Module):
         self.keypoint_visible_loss_coef = keypoint_visible_loss_coef
         self.keypoint_nll_loss_coef = keypoint_nll_loss_coef
         self._warned_non_finite_costs = False
+        self._compile_l1_cost = False
+        self._l1_cost_compile_options: dict[str, Any] = {}
+        # Per-process cache filled by `_resolve_l1_cost` on first use; excluded from pickling by
+        # `__getstate__` because a compiled *function* wrapper is not picklable.
+        self._compiled_l1_cost: Callable[[Tensor, Tensor], Tensor] | None = None
+
+    def enable_compiled_l1_cost(self, compile_options: Mapping[str, Any] | None = None) -> None:
+        """Compile the L1 box cost with ``torch.compile`` on its first use in the executing process.
+
+        Only the request is recorded here. The compiled callable is built lazily by whichever process runs
+        the matcher, because a compiled function wrapper cannot be pickled: building it eagerly would break
+        the ``ddp_spawn``/``ddp_notebook`` launchers, which pickle the trainer -- and with it the criterion
+        and this matcher -- into every worker. Mixed-dtype box pairs keep the eager helper regardless, so
+        ``torch.cdist``'s dtype rejection is preserved.
+
+        Args:
+            compile_options: Inductor options forwarded to ``torch.compile``; ``triton.cudagraphs`` is always
+                forced off on top of them (see ``_L1_COST_COMPILE_OPTIONS``).
+
+        Examples:
+            >>> matcher = HungarianMatcher()
+            >>> matcher.enable_compiled_l1_cost({"triton.cudagraphs": True})
+            >>> matcher._l1_cost_compile_options
+            {'triton.cudagraphs': False}
+        """
+        self._compile_l1_cost = True
+        self._l1_cost_compile_options = {**(compile_options or {}), **_L1_COST_COMPILE_OPTIONS}
+        self._compiled_l1_cost = None
+
+    def _resolve_l1_cost(self) -> Callable[[Tensor, Tensor], Tensor]:
+        """Return the L1 box cost callable, compiling it on first use once compilation was enabled."""
+        if not self._compile_l1_cost:
+            return pairwise_box_l1_cost
+        if self._compiled_l1_cost is None:
+            self._compiled_l1_cost = torch.compile(
+                pairwise_box_l1_cost, **_L1_COST_COMPILE_KWARGS, options=self._l1_cost_compile_options
+            )
+        return self._compiled_l1_cost
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Pickle the compilation request but never the per-process compiled callable."""
+        # torch ships nn.Module.__getstate__ unannotated, hence the targeted ignore.
+        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
+        return {**state, "_compiled_l1_cost": None}
 
     @staticmethod
     def _sanitize_cost_matrix(cost_matrix: Tensor) -> Tensor:
@@ -554,7 +614,7 @@ class HungarianMatcher(nn.Module):
         target_logits = torch.gather(outputs["pred_logits"], 2, gather_index)
         class_cost = self._focal_classification_cost(target_logits)
 
-        bbox_cost = pairwise_box_l1_cost(outputs["pred_boxes"], padded_target_boxes)
+        bbox_cost = self._resolve_l1_cost()(outputs["pred_boxes"], padded_target_boxes)
         giou_cost = -torch.vmap(generalized_box_iou)(
             box_cxcywh_to_xyxy(outputs["pred_boxes"]),
             box_cxcywh_to_xyxy(padded_target_boxes),
@@ -991,7 +1051,10 @@ class HungarianMatcher(nn.Module):
         cost_class = self._focal_classification_cost(tgt_logits)
 
         # Compute the L1 cost between boxes
-        cost_bbox = pairwise_box_l1_cost(out_bbox, tgt_bbox)
+        # Mixed dtypes retain cdist's eager autocast/error behavior rather than tracing an error path;
+        # the gate runs before resolving so such a pair never even triggers the lazy compile.
+        l1_cost = self._resolve_l1_cost() if out_bbox.dtype == tgt_bbox.dtype else pairwise_box_l1_cost
+        cost_bbox = l1_cost(out_bbox, tgt_bbox)
 
         if masks_present:
             # Reuse the masks-hybrid branch's own draw when this call reached the fallback because

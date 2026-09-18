@@ -474,9 +474,13 @@ A second reference point, on real data, shows the other end of the range. RF-DET
 ### Choosing between CUDA graphs and compilation
 
 - **CUDA graphs** remove kernel-launch gaps and CPU dispatch between the model's kernels. They pay when each kernel is short, so the GPU idles between launches: small batch size, small model, low resolution, or a fast GPU driven by a slow CPU. They do nothing for the kernels themselves. When the batch is large enough that every kernel runs for a long time, replay measures the same as eager — that is expected, not a capture failure.
-- **`compile=True`** (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. That gain does not depend on the batch size, but compilation adds startup time and, with `dynamic=True`, one compiled graph per run.
+- **`compile=True`** (Inductor) fuses elementwise operations and reduces memory traffic, so the kernels themselves get cheaper. Compilation adds startup time; dynamic shapes reduce, but do not eliminate, recompilation. It also compiles the matcher's L1 box cost — see [Matcher compilation](#matcher-compilation) below.
 - Rule of thumb from the two measurements above: at batch 4 with a mid-range GPU (L4) graphs gave 32%; at batch 64 on a high-end GPU they gave 0% and compilation gave 17%. Prefer graphs when the effective batch per step is in the single digits or the progress bar shows the GPU far from saturated; prefer compilation for large batches. In between, run 200 steps of each with identical settings and compare the steady-state it/s — startup and capture time distort the first epoch.
 - For large batches, combining the two buys nothing over `compile=True` alone; for small batches it stacks. The section below has the numbers.
+
+### Matcher compilation
+
+On CUDA, `compile=True` also compiles the matcher's L1 box cost separately from the model. The compiled helper uses dynamic shapes and bypasses the eager target-chunking loop so Inductor can fuse the coordinate reduction. Both compact and full-cartesian matching use it for equal-dtype inputs; mixed-dtype inputs retain the eager helper's autocast/error behavior. Under BF16/FP16 AMP the fused compiled L1 cost serves the decoder (and auxiliary) layers; encoder-stage matching stays on the eager `torch.cdist` path because its predicted boxes are emitted in the reduced precision while targets stay float32. Target packing, Hungarian assignment, and the remaining losses stay eager. Matcher CUDA graphs stay disabled independently of the model's graph setting. A startup message confirms that L1 compilation is enabled; kernels compile on first use. `compile=False` retains the memory-bounded eager helper. Measure steady-state throughput and peak memory on your own workload; no additional end-to-end speedup is claimed yet.
 
 ### Combining CUDA graphs with compilation
 

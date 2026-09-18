@@ -16,6 +16,7 @@ from rfdetr.utilities.box_ops import (
     masks_to_boxes,
     pairwise_box_l1_cost,
 )
+from tests._markers import requires_cpu_inductor
 
 
 def _random_xyxy_boxes(n: int, seed: int = 0) -> torch.Tensor:
@@ -257,6 +258,21 @@ def test_masks_to_boxes_builds_grid_on_masks_device(monkeypatch) -> None:
     assert all(device == masks.device for device in observed_devices)
 
 
+def _assert_compiled_matches_eager(actual: torch.Tensor, expected: torch.Tensor) -> None:
+    """Assert a compiled L1 cost equals its eager reference — bit-for-bit on CPU, to tolerance on CUDA.
+
+    The compiled branch adds the four coordinates in a fixed order, so on CPU it must reproduce the eager result
+    exactly; CUDA kernels carry no cross-version reduction-order guarantee, so there the check is tolerance-only.
+
+    Examples:
+        >>> _assert_compiled_matches_eager(torch.tensor([1.0, 2.0]), torch.tensor([1.0, 2.0]))
+    """
+    if actual.device.type == "cpu":
+        assert torch.equal(actual, expected), "compiled L1 cost drifted from the eager result on CPU"
+    else:
+        torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-6)
+
+
 class TestPairwiseBoxL1Cost:
     """`pairwise_box_l1_cost` replaces `torch.cdist(..., p=1)` in the matcher.
 
@@ -481,6 +497,219 @@ class TestPairwiseBoxL1Cost:
 
         torch.testing.assert_close(boxes1.grad, boxes1_reference.grad)
         torch.testing.assert_close(boxes2.grad, boxes2_reference.grad)
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            pytest.param("cpu", marks=requires_cpu_inductor),
+            pytest.param(
+                "cuda",
+                marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")],
+            ),
+        ],
+    )
+    @torch.no_grad()
+    def test_torch_compile_dynamic_avoids_eager_target_chunking(
+        self, monkeypatch: pytest.MonkeyPatch, device: str
+    ) -> None:
+        """One dynamic full graph handles distinct positive batch/query/target sizes.
+
+        The tiny eager budget makes each reference call traverse the target chunk loop. The compiled call must instead
+        use the fused broadcast reduction, so changing all three dynamic dimensions should reuse its first graph rather
+        than specialize per chunk count.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(723)
+        torch._dynamo.reset()
+        graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=True,
+            options={"triton.cudagraphs": False},
+        )
+
+        for batch, queries, targets in ((2, 5, 13), (3, 7, 11)):
+            boxes1 = torch.rand(batch, queries, 4, device=device)
+            boxes2 = torch.rand(batch, targets, 4, device=device)
+
+            expected = pairwise_box_l1_cost(boxes1, boxes2)
+            actual = compiled_cost(boxes1, boxes2)
+
+            _assert_compiled_matches_eager(actual, expected)
+
+        assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before == 1
+
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_graph_count_stays_bounded_across_specialization_traps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Zero/one-target specialization and duck-size collisions do not blow up the graph cache.
+
+        `test_torch_compile_dynamic_avoids_eager_target_chunking` only ever sees positive targets >= 11, so it is
+        blind to two known Dynamo specialization traps: ``T in {0, 1}`` is unconditionally specialized (a 0/1 input
+        recompiles regardless of `dynamic=True`), and a batch or target count that happens to equal the box feature
+        width (4) can duck-size-bind to that dimension. The first call is deliberately shaped with `targets == 4` to
+        expose the latter. Each new shape may legitimately trigger a recompile, so the assertion is a small bound
+        well under `torch._dynamo.config.recompile_limit` (8), not the `== 1` reuse guarantee the sibling test pins
+        for the specialization-free regime -- and no `FailOnRecompileLimitHit` may escape, which would mean the
+        limit was hit and eager fallback silently engaged.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(726)
+        torch._dynamo.reset()
+        graphs_before = torch._dynamo.utils.counters["stats"]["unique_graphs"]
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=False,
+            options={"triton.cudagraphs": False},
+        )
+
+        # (batch, queries, targets); first call pins targets == 4 to probe duck-size binding to the
+        # box feature-width dimension, then sweeps T in {0, 1, >=2} and batch in {1, 4, n}.
+        shapes = ((1, 5, 4), (4, 5, 4), (7, 5, 0), (1, 5, 1), (7, 5, 6))
+        for batch, queries, targets in shapes:
+            boxes1 = torch.rand(batch, queries, 4)
+            boxes2 = torch.rand(batch, targets, 4)
+
+            expected = pairwise_box_l1_cost(boxes1, boxes2)
+            actual = compiled_cost(boxes1, boxes2)
+
+            assert actual.shape == expected.shape
+            _assert_compiled_matches_eager(actual, expected)
+
+        assert torch._dynamo.utils.counters["stats"]["unique_graphs"] - graphs_before <= 6
+
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_zero_targets_returns_correctly_shaped_empty_cost(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A compiled call with zero targets matches the eager zero-fill contract, not just a non-crash.
+
+        `test_zero_width_feature_axis_returns_zeros` and `test_empty_target_set_returns_empty_cost` pin this shape and
+        dtype contract for the eager function; the compiled callable must preserve it rather than tracing a graph that
+        happens to avoid an exception while returning a mismatched shape or dtype.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(727)
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=False,
+            options={"triton.cudagraphs": False},
+        )
+        boxes1 = torch.rand(3, 5, 4)
+        boxes2 = torch.rand(3, 0, 4)
+
+        cost = compiled_cost(boxes1, boxes2)
+
+        assert cost.shape == (3, 5, 0)
+        assert cost.dtype == boxes1.dtype
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            pytest.param("cpu", marks=requires_cpu_inductor),
+            pytest.param(
+                "cuda",
+                marks=[
+                    pytest.mark.gpu,
+                    pytest.mark.skipif(
+                        not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(),
+                        reason="CUDA BF16 unavailable",
+                    ),
+                ],
+            ),
+        ],
+    )
+    @torch.no_grad()
+    def test_torch_compile_preserves_narrow_float_promotion_under_autocast(
+        self, monkeypatch: pytest.MonkeyPatch, device: str
+    ) -> None:
+        """Compiled bfloat16 matcher inputs reduce in float32 under CUDA autocast.
+
+        The eager reference uses a forced chunk loop. Its compiled counterpart must retain the public float32 promotion
+        contract while bypassing the loop.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(724)
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=True,
+            options={"triton.cudagraphs": False},
+        )
+        boxes1 = torch.rand(2, 5, 4, device=device, dtype=torch.bfloat16)
+        boxes2 = torch.rand(2, 13, 4, device=device, dtype=torch.bfloat16)
+
+        with torch.amp.autocast(device, dtype=torch.bfloat16):
+            expected = pairwise_box_l1_cost(boxes1, boxes2)
+            actual = compiled_cost(boxes1, boxes2)
+
+        assert actual.dtype is torch.float32
+        _assert_compiled_matches_eager(actual, expected)
+
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_matches_eager_for_bfloat16_pred_boxes_and_float32_targets_pair(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The compiled call matches eager for the real matcher dtype pair, not just matched bfloat16.
+
+        The matcher never hands ``pairwise_box_l1_cost`` two bfloat16 operands: only the encoder layer's ``pred_boxes``
+        is bfloat16 under BF16 AMP, while targets stay float32, so the dtype-mismatch guard routes this exact pair to
+        ``cdist`` -- which the encoder-layer autocast context promotes to float32. A compiled call built with the post-
+        fix production recipe (``fullgraph=False``) must take the same route and agree with the eager result bit-for-
+        bit-equivalent within tolerance.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        torch.manual_seed(725)
+        compiled_cost = torch.compile(
+            pairwise_box_l1_cost,
+            dynamic=True,
+            fullgraph=False,
+            options={"triton.cudagraphs": False},
+        )
+        pred_boxes = torch.rand(2, 5, 4, dtype=torch.bfloat16)
+        target_boxes = torch.rand(2, 13, 4, dtype=torch.float32)
+
+        with torch.amp.autocast("cpu", dtype=torch.bfloat16):
+            expected = pairwise_box_l1_cost(pred_boxes, target_boxes)
+            actual = compiled_cost(pred_boxes, target_boxes)
+
+        assert actual.dtype is torch.float32
+        _assert_compiled_matches_eager(actual, expected)
+
+    @requires_cpu_inductor
+    @torch.no_grad()
+    def test_torch_compile_preserves_coordinate_addition_order_on_near_ties(self) -> None:
+        """A reassociated four-term sum rounds differently and would flip a near-tied Hungarian choice.
+
+        Two targets sit at the same real L1 distance from a query, but one spreads the distance across coordinates whose
+        float32 sum depends on association order. Fixed left-to-right addition keeps the compiled cost equal to the
+        eager one, so the tie resolves identically in both modes; a fused ``sum(-1)`` is free to reassociate and breaks
+        that, which a whole random matrix also catches at the bit level.
+        """
+        torch._dynamo.reset()
+        compiled_cost = torch.compile(pairwise_box_l1_cost, dynamic=True, options={"triton.cudagraphs": False})
+        tiny = 2.0**-24  # half a float32 ULP at 1.0: absorbed by ``1.0 + tiny`` but not by ``tiny + tiny``
+        query = torch.zeros(1, 1, 4)
+        near_tie = torch.tensor([[[1.0, tiny, tiny, 0.0], [tiny, tiny, 1.0, 0.0]]])
+
+        eager = pairwise_box_l1_cost(query, near_tie)
+        actual = compiled_cost(query, near_tie)
+
+        assert torch.equal(actual, eager)
+        assert torch.equal(eager.argmin(-1), actual.argmin(-1))
+
+        torch.manual_seed(724)
+        boxes1 = torch.rand(4, 300, 4)
+        boxes2 = torch.rand(4, 21, 4)
+        assert torch.equal(compiled_cost(boxes1, boxes2), pairwise_box_l1_cost(boxes1, boxes2))
+        assert torch.equal(compiled_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
