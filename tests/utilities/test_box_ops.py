@@ -7,12 +7,14 @@
 import pytest
 import torch
 
+from rfdetr.utilities import box_ops
 from rfdetr.utilities.box_ops import (
     box_iou,
     elementwise_box_iou,
     elementwise_generalized_box_iou,
     generalized_box_iou,
     masks_to_boxes,
+    pairwise_box_l1_cost,
 )
 
 
@@ -253,3 +255,269 @@ def test_masks_to_boxes_builds_grid_on_masks_device(monkeypatch) -> None:
     assert boxes.shape == (1, 4)
     assert observed_devices
     assert all(device == masks.device for device in observed_devices)
+
+
+class TestPairwiseBoxL1Cost:
+    """`pairwise_box_l1_cost` replaces `torch.cdist(..., p=1)` in the matcher.
+
+    The matcher feeds its output to a Hungarian solve, so equality with `cdist`
+    has to hold exactly rather than approximately: a reassociated sum would
+    change which assignment wins among near-ties. That exact equality is
+    asserted bit-for-bit on CPU, and between this function's own chunked and
+    single-shot branches on every device. The CUDA-vs-`cdist` leg is asserted
+    with tolerance instead, because CUDA kernel reduction order is not
+    guaranteed identical across runner/torch versions (unpinned self-hosted
+    CI hardware) — see `test_matches_cdist_on_cuda_at_matcher_scale`.
+    """
+
+    @pytest.mark.parametrize(
+        ("queries", "targets"),
+        [(1, 1), (7, 1), (1, 7), (300, 12), (64, 97)],
+    )
+    def test_matches_cdist_for_two_dimensional_inputs(self, queries: int, targets: int) -> None:
+        """The full-cartesian matcher path passes `[queries, 4]` against `[targets, 4]`."""
+        boxes1 = _random_xyxy_boxes(queries, seed=1)
+        boxes2 = _random_xyxy_boxes(targets, seed=2)
+
+        assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
+
+    @pytest.mark.parametrize(
+        ("batch", "queries", "targets"),
+        [(1, 8, 3), (4, 64, 12), (5, 130, 37)],
+    )
+    def test_matches_cdist_for_batched_inputs(self, batch: int, queries: int, targets: int) -> None:
+        """The compact matcher path passes a leading batch (or batch x layer) dimension."""
+        boxes1 = _random_xyxy_boxes(batch * queries, seed=3).reshape(batch, queries, 4)
+        boxes2 = _random_xyxy_boxes(batch * targets, seed=4).reshape(batch, targets, 4)
+
+        assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
+
+    def test_matches_cdist_when_chunking_is_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Chunking the target axis must not change any value.
+
+        The budget is lowered so several chunks are needed for a small tensor, which is what makes this a test of the
+        chunked branch rather than of the single-shot one.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 64)
+        boxes1 = _random_xyxy_boxes(2 * 17, seed=5).reshape(2, 17, 4)
+        boxes2 = _random_xyxy_boxes(2 * 23, seed=6).reshape(2, 23, 4)
+
+        assert torch.equal(pairwise_box_l1_cost(boxes1, boxes2), torch.cdist(boxes1, boxes2, p=1))
+
+    def test_realized_chunk_width_matches_computed_formula_when_wider_than_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A chunk width greater than 1 pins the chunking formula, not just per-chunk correctness.
+
+        `test_matches_cdist_when_chunking_is_required` only ever produces a chunk width of 1 (23
+        single-column writes) at its budget/shape. Here `rows * features == 8` and the budget is 60, so
+        `chunk = 60 // 8 == 7`: the target axis (23) is realized as `range(0, 23, 7)`, one call producing
+        four writes into the pre-allocated `cost` tensor. The realized chunk width is observed by spying on
+        the module-global `range` name the loop resolves through, not by recomputing the formula.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 60)
+        boxes1 = _random_xyxy_boxes(2, seed=13).reshape(2, 1, 4)
+        boxes2 = _random_xyxy_boxes(2 * 23, seed=14).reshape(2, 23, 4)
+
+        observed_calls: list[tuple[int, ...]] = []
+        real_range = range
+
+        def _spy_range(*args: int) -> range:
+            observed_calls.append(args)
+            return real_range(*args)
+
+        monkeypatch.setattr(box_ops, "range", _spy_range, raising=False)
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert torch.equal(cost, torch.cdist(boxes1, boxes2, p=1))
+        assert observed_calls == [(0, 23, 7)]
+
+    @pytest.mark.parametrize(
+        "budget",
+        [pytest.param(2**31, id="single-shot"), pytest.param(64, id="chunked")],
+    )
+    def test_matches_cdist_when_leading_dimensions_broadcast(
+        self, budget: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Broadcastable leading dimensions widen to the larger shape, exactly as `torch.cdist` widens them.
+
+        A singleton batch on one side against a real batch on the other is legal for `torch.cdist` and produces the
+        larger batch. Sizing the output buffer from one operand alone disagrees with that, and raises outright once the
+        target axis is chunked and the undersized buffer is assigned into.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", budget)
+        boxes1 = _random_xyxy_boxes(4, seed=17).reshape(1, 4, 4)
+        boxes2 = _random_xyxy_boxes(2 * 23, seed=18).reshape(2, 23, 4)
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert torch.equal(cost, torch.cdist(boxes1, boxes2, p=1))
+
+    def test_zero_width_feature_axis_returns_zeros(self) -> None:
+        """Boxes with no coordinates give a zero cost matrix, which is what `torch.cdist` gives.
+
+        Every pair is trivially at distance zero, yet the result still has real rows and columns, so a merely allocated
+        buffer would hand the matcher whatever the allocator last left there.
+        """
+        boxes1 = torch.zeros((5, 0))
+        boxes2 = torch.zeros((3, 0))
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert torch.equal(cost, torch.cdist(boxes1, boxes2, p=1))
+
+    def test_empty_target_set_returns_empty_cost(self) -> None:
+        """An image with no ground-truth boxes contributes zero columns, not an error."""
+        boxes1 = _random_xyxy_boxes(5, seed=7)
+        boxes2 = torch.zeros((0, 4))
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert cost.shape == (5, 0)
+
+    def test_empty_query_set_returns_empty_cost(self) -> None:
+        """Symmetric guard: no predictions means no rows."""
+        cost = pairwise_box_l1_cost(torch.zeros((0, 4)), _random_xyxy_boxes(3, seed=8))
+
+        assert cost.shape == (0, 3)
+
+    def test_preserves_dtype_and_device(self) -> None:
+        """A float32/float64 cost inherits the boxes' dtype, which the criterion relies on downstream."""
+        boxes1 = _random_xyxy_boxes(4, seed=9).to(torch.float64)
+        boxes2 = _random_xyxy_boxes(2, seed=10).to(torch.float64)
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert cost.dtype is torch.float64
+        assert cost.device == boxes1.device
+
+    def test_matches_cdist_propagation_for_nan_and_inf_coordinates(self) -> None:
+        """NaN/Inf coordinates propagate through the broadcast-subtract path the same as through `cdist`.
+
+        `nan`, `+inf` and `-inf` each poison a different pairing: `nan` makes every cost touching it `nan`, `+inf`
+        vs. a finite box gives `+inf`, and `+inf` vs. `+inf` cancels to `nan` (`inf - inf`). `torch.equal` would
+        report every `nan` cell as unequal to itself, so parity is asserted with `equal_nan=True` instead.
+        """
+        boxes1 = torch.tensor(
+            [
+                [0.0, 0.0, float("nan"), 1.0],
+                [0.0, 0.0, float("inf"), 1.0],
+                [0.0, 0.0, float("-inf"), 1.0],
+            ]
+        )
+        boxes2 = torch.tensor([[0.0, 0.0, 1.0, 1.0], [0.0, 0.0, float("inf"), 1.0]])
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        torch.testing.assert_close(cost, torch.cdist(boxes1, boxes2, p=1), equal_nan=True, rtol=0, atol=0)
+
+    def test_mismatched_dtype_pair_delegates_to_cdist(self) -> None:
+        """A float32/float64 pair takes the `boxes1.dtype is not boxes2.dtype` guard straight to `cdist`.
+
+        Broadcasting the subtraction ourselves would silently upcast one side; `cdist` instead rejects the pair
+        outright, so parity means raising the same error `cdist` raises, not returning a value.
+        """
+        boxes1 = _random_xyxy_boxes(3, seed=11)
+        boxes2 = _random_xyxy_boxes(2, seed=12).to(torch.float64)
+
+        with pytest.raises(RuntimeError, match="Float"):
+            pairwise_box_l1_cost(boxes1, boxes2)
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [pytest.param(torch.bfloat16, id="bfloat16"), pytest.param(torch.float16, id="float16")],
+    )
+    def test_reduces_narrow_float_inputs_in_float32(self, dtype: torch.dtype) -> None:
+        """Operands narrower than float32 are reduced in float32, matching what `torch.cdist` received.
+
+        `torch.cdist` refuses bfloat16/float16 outright and, under the autocast that the advertised BF16 training
+        configuration runs in, is handed both operands already promoted to float32. Broadcasting carries no such
+        promotion, so reducing in the input dtype would silently lose mantissa bits on the exact configuration this
+        function was written for.
+        """
+        boxes1 = _random_xyxy_boxes(6, seed=11).to(dtype)
+        boxes2 = _random_xyxy_boxes(4, seed=12).to(dtype)
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert cost.dtype is torch.float32
+        assert torch.equal(cost, torch.cdist(boxes1.float(), boxes2.float(), p=1))
+
+    @pytest.mark.parametrize(
+        "budget",
+        [pytest.param(2**31, id="single-shot"), pytest.param(64, id="chunked")],
+    )
+    def test_matches_cdist_under_no_grad(self, budget: int, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The no-grad reduction, which both matcher call sites take, still equals `torch.cdist`.
+
+        Absolute value is taken in place when no graph is being recorded, so this is the only branch
+        training ever runs and the one every other equality test here misses: they execute with grad
+        enabled, which keeps the out-of-place form.
+        """
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", budget)
+        boxes1 = _random_xyxy_boxes(2 * 17, seed=13).reshape(2, 17, 4)
+        boxes2 = _random_xyxy_boxes(2 * 23, seed=14).reshape(2, 23, 4)
+
+        with torch.no_grad():
+            cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert torch.equal(cost, torch.cdist(boxes1, boxes2, p=1))
+
+    def test_gradients_match_cdist(self) -> None:
+        """Gradients still match `torch.cdist`, so reducing in place under no-grad costs no autograd fidelity.
+
+        The in-place reduction is skipped whenever a graph is being recorded, because PyTorch would then save a copy of
+        the pre-`abs` values for backward and the memory saving would disappear. This pins the grad-enabled contract of
+        a public function, which the matcher's own no-grad calls never exercise.
+        """
+        boxes1 = _random_xyxy_boxes(12, seed=15).requires_grad_(True)
+        boxes2 = _random_xyxy_boxes(5, seed=16).requires_grad_(True)
+        boxes1_reference = boxes1.detach().clone().requires_grad_(True)
+        boxes2_reference = boxes2.detach().clone().requires_grad_(True)
+
+        pairwise_box_l1_cost(boxes1, boxes2).sum().backward()
+        torch.cdist(boxes1_reference, boxes2_reference, p=1).sum().backward()
+
+        torch.testing.assert_close(boxes1.grad, boxes1_reference.grad)
+        torch.testing.assert_close(boxes2.grad, boxes2_reference.grad)
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_matches_cdist_on_cuda_at_matcher_scale(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Equality has to hold on the device and at the shape that motivated the change.
+
+        `[5 layers x 8 images, 300 queries x 13 groups, targets]` is what RF-DETR Medium's compact path builds during
+        training. Self-consistency between this function's own chunked and single-shot branches on the same inputs is a
+        guaranteed invariant of the chunking loop and is asserted bit-for-bit; equality against `torch.cdist` is not
+        guaranteed bit-exact on unpinned CUDA hardware (self-hosted CI runner, arch not pinned in the workflow), where
+        kernel reduction order can differ across a runner or torch-version bump, so that leg is asserted with tolerance
+        instead. Computing both branches from the same random inputs is one logical act (a parity check), not two
+        independent scenarios.
+        """
+        boxes1 = torch.rand(40, 3900, 4, device="cuda")
+        boxes2 = torch.rand(40, 30, 4, device="cuda")
+
+        single_shot = pairwise_box_l1_cost(boxes1, boxes2)
+        monkeypatch.setattr(box_ops, "_L1_COST_ELEMENT_BUDGET", 6_300_000)  # forces chunk (10) < targets (30)
+        chunked = pairwise_box_l1_cost(boxes1, boxes2)
+
+        assert torch.equal(chunked, single_shot)
+        torch.testing.assert_close(single_shot, torch.cdist(boxes1, boxes2, p=1))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_matches_cdist_on_cuda_when_chunking_is_required_at_matcher_scale(self) -> None:
+        """The chunked branch, not just the single-shot one, has to hold on CUDA at matcher scale.
+
+        `test_matches_cdist_on_cuda_at_matcher_scale` uses the real matcher shape, but at the default budget its 30
+        targets all fit in one chunk (`chunk >= targets`), so it only ever exercises the single-shot branch.
+        `_L1_COST_ELEMENT_BUDGET // (40 * 3900 * 4) == 53`, so raising the target count past 53 forces the same real
+        shape through the chunking loop on CUDA.
+        """
+        boxes1 = torch.rand(40, 3900, 4, device="cuda")
+        boxes2 = torch.rand(40, 54, 4, device="cuda")
+
+        cost = pairwise_box_l1_cost(boxes1, boxes2)
+
+        torch.testing.assert_close(cost, torch.cdist(boxes1, boxes2, p=1))
