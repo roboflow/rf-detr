@@ -2000,6 +2000,227 @@ class TestBuildTrainerDDPFindUnusedParameters:
         assert captured["strategy"] == "auto"
 
 
+class TestBuildTrainerDDPStaticGraph:
+    """build_trainer() enables static_graph=True/gradient_as_bucket_view=True for strategy='ddp' on the configurations
+    that measurement covered (detection, segmentation, grad_accum_steps<=1), and excludes keypoint models and
+    grad_accum_steps>1, which were not exercised by that measurement."""
+
+    def test_ddp_detection_enables_static_graph(self, tmp_path: Path) -> None:
+        """Strategy='ddp' for detection-only enables static_graph and gradient_as_bucket_view."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(segmentation_head=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("static_graph") is True
+        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
+
+    def test_ddp_segmentation_enables_static_graph(self, tmp_path: Path) -> None:
+        """Strategy='ddp' + segmentation_head=True also enables static_graph.
+
+        segmentation_head.sparse_forward() is named in the find_unused_parameters comment as a source of conditionally-
+        unused parameters; an empirical probe (real RFDETRSegNano forward, real/empty-target batches) found the same
+        single always-unused parameter (backbone mask_token) as detection-only, not a segmentation-specific dynamic one,
+        so segmentation stays in scope here too.
+        """
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(segmentation_head=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("static_graph") is True
+        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
+
+    def test_auto_strategy_enables_static_graph(self, tmp_path: Path) -> None:
+        """Strategy='auto' + devices>1 enables static_graph through the same distributed_requested path."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="auto", devices=2)
+        mc = _mc(segmentation_head=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("static_graph") is True
+
+    def test_ddp_spawn_enables_static_graph(self, tmp_path: Path) -> None:
+        """strategy='ddp_spawn' also enables static_graph through the interactive-spawn DDPStrategy."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp_spawn")
+        mc = _mc(segmentation_head=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("static_graph") is True
+        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
+
+    def test_ddp_grad_accum_disables_static_graph(self, tmp_path: Path) -> None:
+        """grad_accum_steps>1 disables static_graph: not exercised by the throughput measurement, which used no gradient
+        accumulation (DDP's no_sync() across multiple backward calls interacts with static_graph's iteration-counted
+        structure-learning in a way this change does not claim to have verified)."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp", grad_accum_steps=2)
+        mc = _mc(segmentation_head=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+        assert strategy_obj._ddp_kwargs.get("static_graph") is False
+        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is False
+
+    def test_ddp_trainer_kwargs_accumulate_grad_batches_disables_static_graph(self, tmp_path: Path) -> None:
+        """A caller passing accumulate_grad_batches= directly (bypassing tc.grad_accum_steps) must also disable
+        static_graph.
+
+        Regression test: this exact path (build_trainer(..., accumulate_grad_batches=2), tc.grad_accum_steps left
+        at its default of 1) crashed a real 2-rank gloo DDP run with ``RuntimeError: expect_autograd_hooks_
+        INTERNAL ASSERT FAILED`` in ``reducer.cpp`` when static_graph was gated on tc.grad_accum_steps alone --
+        trainer_kwargs["accumulate_grad_batches"] overrides tc.grad_accum_steps later in this same function
+        (see the "accumulate_grad_batches" resolution below) and must be read the same way here.
+        """
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
+        assert tc.grad_accum_steps <= 1
+        mc = _mc(segmentation_head=False)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc, accumulate_grad_batches=2)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("static_graph") is False
+        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is False
+
+    def test_keypoint_ddp_disables_static_graph(self, tmp_path: Path) -> None:
+        """Keypoint models disable static_graph: their manual-optimization DDP path was not exercised by the throughput
+        measurement, which used only automatic-optimization detection/segmentation models."""
+        import unittest.mock as mock
+
+        from pytorch_lightning.strategies import DDPStrategy
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp")
+        mc = _mc(use_grouppose_keypoints=True)
+        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+            build_trainer(tc, mc)
+
+        strategy_obj = captured["strategy"]
+        assert isinstance(strategy_obj, DDPStrategy)
+        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
+        assert strategy_obj._ddp_kwargs.get("static_graph") is False
+        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is False
+
+
 class TestBuildTrainerEvalMode:
     """``include_training_callbacks=False`` builds a lean eval-only trainer (issue #1110).
 
