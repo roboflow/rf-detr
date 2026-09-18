@@ -99,8 +99,8 @@ def _package_importable(module_name: str) -> bool:
 class MultiScale(str, Enum):
     """Multi-scale training mode for ``TrainConfig.multi_scale``.
 
-    ``PER_BATCH`` draws one random scale per batch and applies it in ``training_step`` by interpolating the already
-    collated batch (the dataset resizes every sample to the largest scale). ``PER_SAMPLE`` draws a scale per sample
+    ``PER_BATCH`` draws one random scale per batch and applies it in ``RFDETRLightningModule.on_train_batch_start`` by
+    interpolating the already collated batch (the dataset resizes every sample to the largest scale).
     inside the dataset transforms and collate pads to the batch maximum. ``OFF`` trains at the fixed
     ``ModelConfig.resolution``. Booleans are accepted as input (``True`` is ``PER_BATCH``, the behaviour the old
     ``multi_scale=True`` default had; ``False`` is ``OFF``) but are never stored as such.

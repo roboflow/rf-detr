@@ -191,7 +191,7 @@ class TestPositionEmbeddingSineNoPaddingCache:
         one fixed square scale before collate, so the batch is flagged. ``RFDETRLightningModule.on_train_batch_start``
         then resizes the whole batch uniformly to a randomly chosen scale via the same two in-place ``F.interpolate``
         calls reproduced below, without touching ``no_padding``. Nearest-neighbour resampling of an all-False mask stays
-        all- False at any output size, so the training result must still match the unflagged path without retaining the
+        all-False at any output size, so the training result must still match the unflagged path without retaining the
         embedding.
         """
         images = [torch.rand(3, 12, 12) for _ in range(2)]
