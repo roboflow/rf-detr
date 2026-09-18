@@ -180,11 +180,11 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
     """Pairwise L1 distance between two sets of boxes.
 
     Equivalent to ``torch.cdist(boxes1, boxes2, p=1)`` for the box-shaped inputs the
-    matcher builds, and bit-identical to it on CPU and between this function's own
-    chunked and single-shot branches on every device, for every shape and dtype the
-    tests exercise. CUDA-vs-``cdist`` parity is exact in practice but is only tested
-    to a numerical tolerance, since kernel reduction order is not guaranteed identical
-    across CUDA runner/torch versions. That guarantee is scoped to an equal-dtype
+    matcher builds. In eager mode it is bit-identical to it on CPU and between this
+    function's own chunked and single-shot branches on every device, for every shape
+    and dtype the tests exercise. CUDA-vs-``cdist`` parity is exact in practice but is
+    only tested to a numerical tolerance, since kernel reduction order is not guaranteed
+    identical across CUDA runner/torch versions. That guarantee is scoped to an equal-dtype
     operand pair -- a mismatched pair delegates to ``torch.cdist`` itself -- with
     narrower-than-float32 operands reduced in float32, the form ``torch.cdist`` is
     handed under autocast and refuses outside one.
@@ -205,7 +205,9 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
 
     Under ``torch.compile``, this takes one broadcast reduction rather than the eager chunking
     loop. Inductor can fuse that expression without unrolling a target-dependent Python loop;
-    eager calls retain the bounded-memory chunked implementation below.
+    eager calls retain the bounded-memory chunked implementation below. That fused reduction is
+    verified against the eager result to a numerical tolerance (``assert_close``), not
+    bit-for-bit: its reduction order may differ from the eager one.
 
     Args:
         boxes1: Boxes of shape ``[*leading, queries, features]``.
