@@ -258,6 +258,8 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
         # bit-identical to the eager branches below (whose ``sum`` over four elements runs in that same
         # order). The feature axis is the box width, so specializing the graph on it costs nothing.
         difference = (boxes1.unsqueeze(-2) - boxes2.unsqueeze(-3)).abs()
+        if difference.shape[-1] == 0:
+            return difference.new_zeros(difference.shape[:-1])
         cost = difference[..., 0]
         for feature in range(1, difference.shape[-1]):
             cost = cost + difference[..., feature]
