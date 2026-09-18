@@ -365,6 +365,14 @@ class TestExportFormatParameter:
         Args:
             segmentation_head: Whether the mocked config reports a seg head.
             use_grouppose_keypoints: Whether the mocked config reports a keypoint head.
+
+        Returns:
+            An ``RFDETR`` built without ``__init__`` whose model and config are ``MagicMock`` stand-ins.
+
+        Examples:
+            >>> obj = TestExportFormatParameter._make_rfdetr(use_grouppose_keypoints=True)
+            >>> obj.model_config.use_grouppose_keypoints, obj.model_config.segmentation_head
+            (True, False)
         """
         from rfdetr.detr import RFDETR
 
