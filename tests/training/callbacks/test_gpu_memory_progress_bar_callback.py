@@ -115,7 +115,10 @@ class TestGPUMemoryTQDMProgressBar:
         ("device", "peak_bytes", "expected"),
         [
             pytest.param(torch.device("cuda", 0), 123 * 1024 * 1024, "123 MB", id="cuda:0"),
-            pytest.param(torch.device("cuda", 1), 2 * 1024 * 1024 * 1024, "2048 MB", id="cuda:1"),
+            pytest.param(torch.device("cuda", 1), 2 * 1024 * 1024 * 1024, "2.0 GB", id="cuda:1"),
+            pytest.param(torch.device("cuda", 0), 1000 * 1024 * 1024, "1000 MB", id="threshold"),
+            pytest.param(torch.device("cuda", 0), 1000 * 1024 * 1024 + 1, "1.0 GB", id="above-threshold"),
+            pytest.param(torch.device("cuda", 0), 1536 * 1024 * 1024, "1.5 GB", id="fractional-gb"),
             # Boundary cases: ``:.0f`` uses round-half-to-even, so an exact .5 MB reading rounds towards the even
             # neighbour (0.5 -> 0, 1.5 -> 2) while anything above the half rounds up as expected.
             pytest.param(torch.device("cuda", 0), 0, "0 MB", id="zero-bytes"),
@@ -127,7 +130,7 @@ class TestGPUMemoryTQDMProgressBar:
     def test_max_mem_present_on_active_cuda_device(
         self, monkeypatch: pytest.MonkeyPatch, device: torch.device, peak_bytes: int, expected: str
     ) -> None:
-        """An active CUDA device reports peak allocated memory as whole MB, space-separated from the unit."""
+        """Peak memory uses whole MB up to 1000 MB, then GB with one decimal."""
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda dev=None: peak_bytes)
@@ -159,26 +162,26 @@ class TestGPUMemoryTQDMProgressBar:
     @pytest.mark.parametrize(
         ("device", "free_bytes", "total_bytes", "expected"),
         [
-            pytest.param(torch.device("cuda", 0), 512 * 1024 * 1024, 8192 * 1024 * 1024, "512/8192 MB", id="cuda:0"),
-            pytest.param(torch.device("cuda", 1), 0, 24576 * 1024 * 1024, "0/24576 MB", id="cuda:1-full"),
+            pytest.param(torch.device("cuda", 0), 512 * 1024 * 1024, 8192 * 1024 * 1024, "512 MB/8.0 GB", id="cuda:0"),
+            pytest.param(torch.device("cuda", 1), 0, 24576 * 1024 * 1024, "0 MB/24.0 GB", id="cuda:1-full"),
             # Boundary cases mirroring test_max_mem_present_on_active_cuda_device: ``:.0f`` uses round-half-to-even,
             # so an exact .5 MB reading rounds towards the even neighbour. Applied to free_bytes; total_bytes is held
             # at a value with no rounding ambiguity of its own so only one boundary is exercised at a time.
             pytest.param(
-                torch.device("cuda", 0), 512 * 1024, 8192 * 1024 * 1024, "0/8192 MB", id="free-half-mb-rounds-to-even"
+                torch.device("cuda", 0), 512 * 1024, 8192 * 1024 * 1024, "0 MB/8.0 GB", id="free-half-mb-rounds-to-even"
             ),
             pytest.param(
                 torch.device("cuda", 0),
                 512 * 1024 + 1,
                 8192 * 1024 * 1024,
-                "1/8192 MB",
+                "1 MB/8.0 GB",
                 id="free-just-over-half-mb-rounds-up",
             ),
             pytest.param(
                 torch.device("cuda", 0),
                 1536 * 1024,
                 8192 * 1024 * 1024,
-                "2/8192 MB",
+                "2 MB/8.0 GB",
                 id="free-one-and-a-half-mb-rounds-to-even",
             ),
         ],
@@ -186,7 +189,7 @@ class TestGPUMemoryTQDMProgressBar:
     def test_free_mem_present_on_active_cuda_device(
         self, monkeypatch: pytest.MonkeyPatch, device: torch.device, free_bytes: int, total_bytes: int, expected: str
     ) -> None:
-        """An active CUDA device reports live free/total device memory as whole MB, formatted 'free/total MB'."""
+        """Live free/total memory selects MB or GB independently for each value."""
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
         monkeypatch.setattr(torch.cuda, "max_memory_allocated", lambda dev=None: 0)
@@ -230,7 +233,7 @@ class TestGPUMemoryTQDMProgressBar:
         first = bar.get_metrics(trainer, pl_module)["free_mem"]
         second = bar.get_metrics(trainer, pl_module)["free_mem"]
 
-        assert (first, second) == ("512/8192 MB", "256/8192 MB")
+        assert (first, second) == ("512 MB/8.0 GB", "256 MB/8.0 GB")
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +296,7 @@ class TestGPUMemoryRichProgressBar:
 
         metrics = bar.get_metrics(trainer, pl_module)
 
-        assert metrics["free_mem"] == "1024/8192 MB"
+        assert metrics["free_mem"] == "1.0 GB/8.0 GB"
         assert metrics["loss"] == pytest.approx(0.5)
         assert not isinstance(metrics["loss"], torch.Tensor)
 

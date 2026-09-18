@@ -1,5 +1,5 @@
 ---
-description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
+description: Export RF-DETR models to ONNX, TensorRT, TFLite, LiteRT, ExecuTorch, native CoreML and OpenVINO IR (FP32/FP16/INT8) for high-performance inference on GPUs, mobile, and edge devices.
 ---
 
 # Export RF-DETR Model
@@ -9,6 +9,7 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native
     - Export to ONNX for cross-platform inference with ONNX Runtime, OpenVINO, or TensorRT
     - Export to OpenVINO IR for optimized inference on CPU (x86, ARM), GPU (Intel integrated & discrete GPU) and AI accelerators (Intel NPU)
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
+    - Export to LiteRT (`.tflite`) straight from PyTorch with `litert-torch` — no ONNX or TensorFlow step — see [LiteRT Export](#litert-export)
     - TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)
     - INT8 quantization is dynamic-range and needs no calibration data
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
@@ -16,7 +17,7 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, ExecuTorch, native
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment — see [Native CoreML Export](#native-coreml-export-mlpackage)
     - Adding a format is an in-tree contribution — see [Exporter Blueprint](export-blueprint.md)
 
-RF-DETR supports exporting models to ONNX, TFLite, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
+RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
 ## Installation
 
@@ -31,6 +32,9 @@ pip install "rfdetr[openvino]"
 
 # TFLite export
 pip install "rfdetr[tflite]"
+
+# LiteRT export (.tflite straight from PyTorch via litert-torch)
+pip install "rfdetr[litert]"
 
 # ExecuTorch export (on-device inference: XNNPACK/CoreML/QNN)
 pip install "rfdetr[executorch]"
@@ -72,8 +76,8 @@ The `export()` method accepts several parameters to customize the export process
 | Parameter            | Default    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | -------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `output_dir`         | `"output"` | Directory where the exported model will be saved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `format`             | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), `"executorch"`, `"openvino"` or `"coreml"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `quantization`       | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `format`             | `"onnx"`   | Export format: `"onnx"`, `"tflite"`, `"tensorrt"` (alias: `"trt"`), `"executorch"`, `"openvino"`, `"coreml"` or `"litert"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `quantization`       | `None`     | TFLite quantization mode: `None`/`"fp32"`, `"fp16"`, or `"int8"`. Only used when `format="tflite"`; `format="litert"` accepts only `None`/`"fp32"` and raises `NotImplementedError` otherwise.                                                                                                                                                                                                                                                                                                                                                                                   |
 | `calibration_data`   | `None`     | Optional image directory, `.npy` file path, NumPy array, or `None`. Not consumed when building the generated `.tflite` models.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `max_images`         | `100`      | Maximum number of images to load from a `calibration_data` directory. Ignored for other calibration data formats.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `infer_dir`          | `None`     | Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -82,7 +86,7 @@ The `export()` method accepts several parameters to customize the export process
 | `verbose`            | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `shape`              | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                                                                                                                                                                                                                                                                                                                                  |
 | `batch_size`         | `1`        | Batch size for the exported model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime. Only supported for `format="onnx"` and `format="tflite"` — TensorRT, ExecuTorch, CoreML and OpenVINO bake a fixed batch size.                                                                                                                                                                                                                                                                                                                                        |
+| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the ONNX model accepts variable batch sizes at runtime. Only supported for `format="onnx"` and `format="tflite"` — TensorRT, ExecuTorch, CoreML, OpenVINO and LiteRT bake a fixed batch size.                                                                                                                                                                                                                                                                                                                                |
 | `patch_size`         | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `backend`            | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -537,6 +541,78 @@ The exported OpenVINO IR model produces the following outputs:
     - Output 1: Class logits `[batch, 300, num_classes]`
     - Output 2: Keypoints (if keypoint head is present)
 
+## LiteRT Export
+
+!!! warning "Experimental — Use with Caution"
+
+    LiteRT export is **experimental**. `litert-torch` is pre-1.0 and its converter changes between releases; the `[litert]` extra pins the range this route was validated on (0.9.4).
+
+    **Known limitations:**
+
+    - Float32 only: `quantization` other than `None` / `"fp32"` raises `NotImplementedError` on this route (use `format="tflite"` for its FP16/INT8 modes, or quantize the exported file with [ai-edge-quantizer](https://github.com/google-ai-edge/ai-edge-quantizer)).
+    - `dynamic_batch=True` is not supported: the `.tflite` bakes a fixed input shape, so export one file per batch size.
+    - Keypoint models are not supported on litert-torch 0.9.4: its converter rejects the rank-4 `batch_matmul` that the keypoint head's `nn.Linear` lowers to.
+    - The single exported graph includes the two-stage query selection (`TOPK_V2` / `GATHER_ND`), which the LiteRT GPU delegate has no kernels for, so the file runs on the CPU (XNNPACK) delegate. Running the detector on a phone GPU needs further graph rewrites and a two-graph split that this route does not do yet.
+
+LiteRT (formerly TensorFlow Lite) is Google's on-device runtime. `format="litert"` hands the PyTorch model to [litert-torch](https://github.com/google-ai-edge/litert-torch), which captures it with `torch.export` and lowers it to a `.tflite` file directly — no ONNX and no TensorFlow step, unlike the [TFLite export](#tflite-export) above, which converts ONNX → TensorFlow → TFLite with `onnx2tf`. Both routes produce a `.tflite` that the same `ai_edge_litert` interpreter runs; this one keeps PyTorch's NCHW layout and the deformable-attention sampling as litert-torch lowers it. On CPU the exported graphs track eager PyTorch closely. Measured with the pretrained Nano and Seg-Nano checkpoints on a real photo, the ten highest-confidence queries differ by at most about `1e-7` for boxes and `3e-5` for class logits and mask probabilities; across all 300 queries the maxima rise to about `6e-6` (boxes), `4e-4` (class logits) and `2e-3` (raw mask logits, about `3e-5` after sigmoid), because low-confidence proposals reorder slightly between backends. The `e2e_litert` test suite asserts looser bounds on the confident queries (boxes `1e-3`, logits `0.1`, mask probabilities `0.05`) as a regression gate; those bounds are not the measured precision.
+
+### Prerequisites
+
+```bash
+pip install "rfdetr[litert]"
+```
+
+### Basic LiteRT Export
+
+=== "Object Detection"
+
+    ```python
+    from rfdetr import RFDETRSmall
+
+    model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="litert", output_dir="output")
+    ```
+
+=== "Image Segmentation"
+
+    ```python
+    from rfdetr import RFDETRSegSmall
+
+    model = RFDETRSegSmall(pretrain_weights="<path/to/checkpoint.pth>")
+
+    model.export(format="litert", output_dir="output")
+    ```
+
+This writes one float32 file named after the model's variant, `output/<model-variant>.tflite` (for example `output/rfdetr-small.tflite`; `-backbone` is appended with `backbone_only=True`, and `output_name` overrides the stem). `shape=(H, W)` picks a custom resolution exactly as for the other formats.
+
+### LiteRT Inference Example
+
+The file has one input (NCHW float32, ImageNet-normalized like `predict()`) and positional outputs: boxes `[batch, 300, 4]` in normalized `cxcywh`, class logits `[batch, 300, num_classes]`, and — for segmentation models — mask logits as a third output. Output tensor names are litert-torch's own (`serving_default_output_<i>_output`), so match outputs by position, as for the CoreML and OpenVINO exports.
+
+```python
+import numpy as np
+import torchvision.transforms.functional as F
+from ai_edge_litert.interpreter import Interpreter
+from PIL import Image
+
+interpreter = Interpreter(model_path="output/rfdetr-small.tflite")
+interpreter.allocate_tensors()
+(input_detail,) = interpreter.get_input_details()
+_, _, height, width = input_detail["shape"]
+
+# Same preprocessing as predict(): antialias-free bilinear resize, then ImageNet normalization
+image = Image.open("image.jpg").convert("RGB")
+image_tensor = F.to_tensor(image)
+image_tensor = F.resize(image_tensor, [height, width], antialias=False)
+image_tensor = F.normalize(image_tensor, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+
+interpreter.set_tensor(input_detail["index"], image_tensor.unsqueeze(0).numpy())
+interpreter.invoke()
+boxes, logits = (interpreter.get_tensor(d["index"]) for d in interpreter.get_output_details()[:2])
+scores = 1 / (1 + np.exp(-logits))  # sigmoid; boxes are normalized cxcywh
+```
+
 ## ExecuTorch Export
 
 !!! warning "Experimental — Use with Caution"
@@ -720,7 +796,7 @@ model.export(format="coreml", coreml_precision="float16")
 
 !!! note
 
-    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation).
+    Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation; `dets, labels, keypoints` for keypoints).
 
 ### CoreML Inference Example
 
@@ -850,7 +926,7 @@ After exporting your model, you may want to:
 
 - Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
 
-- Deploy TFLite models on mobile/edge devices with TensorFlow Lite
+- Deploy TFLite and LiteRT `.tflite` models on mobile/edge devices with the LiteRT runtime
 
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 

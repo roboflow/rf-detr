@@ -16,7 +16,7 @@ import torch
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend, _UfcocoBackend
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -178,6 +178,24 @@ class TestSetup:
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
         assert isinstance(cb.map_metric._coco_backend, _HotCocoBackend)
+
+    @pytest.mark.parametrize("segmentation", [False, True])
+    def test_ufcoco_eval_backend_reaches_every_metric(self, segmentation: bool) -> None:
+        """The optional ufcoco backend must reach the validation, train-split and EMA metrics alike.
+
+        Same three call sites as ``test_eval_backend_reaches_every_metric``, asserted positively on the backend type so
+        that a call site falling back to the default would fail here rather than evaluate part of a run on hotcoco.
+        """
+        pytest.importorskip("ultrafast_pycocotools")
+        cb = COCOEvalCallback(segmentation=segmentation, eval_backend="ufcoco")
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        with patch.object(cb, "_get_ema_callback", return_value=MagicMock()):
+            cb._prepare_ema_metric(_make_trainer())
+
+        assert cb.map_metric_ema is not None, "EMA metric must exist or this asserts nothing"
+        for metric in (cb.map_metric, cb.map_metric_train, cb.map_metric_ema):
+            assert isinstance(metric._coco_backend, _UfcocoBackend)
+            assert metric._coco_backend.backend == "faster_coco_eval"
 
     def test_constructor_parameter_order_is_append_only(self) -> None:
         """New constructor parameters must be appended, never inserted among the existing ones.
@@ -397,6 +415,69 @@ class TestOnTestBatchEnd:
 class TestValidationBatchEndDeviceRouting:
     """Device split between the CPU-resident mAP metric state and the GPU-original F1/keypoint inputs."""
 
+    def test_xla_syncs_all_live_outputs_before_metric_host_reads(self) -> None:
+        """XLA evaluation must materialize the full live graph once before per-field CPU conversion."""
+        cb = COCOEvalCallback()
+        fake_xla = ModuleType("torch_xla")
+        fake_xla.sync = MagicMock()  # type: ignore[attr-defined]
+
+        with patch.dict(sys.modules, {"torch_xla": fake_xla}):
+            cb._sync_xla_metric_inputs(SimpleNamespace(device=torch.device("xla")))
+
+        fake_xla.sync.assert_called_once_with(wait=True)  # type: ignore[attr-defined]
+
+    def test_cpu_metric_inputs_do_not_import_or_sync_xla(self) -> None:
+        """The materialization barrier must remain an XLA-only behavior change."""
+        cb = COCOEvalCallback()
+
+        with patch.dict(sys.modules, {"torch_xla": None}):
+            cb._sync_xla_metric_inputs(SimpleNamespace(device=torch.device("cpu")))
+
+    @pytest.mark.xla
+    def test_sync_xla_metric_inputs_runs_against_real_torch_xla(self) -> None:
+        """Real PJRT execution: the fully-mocked ordering tests below stand in for ``torch_xla.sync``, so they cannot
+        catch a signature mismatch with the actual installed API.
+
+        This calls the real function against a real XLA device and confirms the graph is left in a readable state
+        afterward.
+        """
+        pytest.importorskip("torch_xla")
+        import torch_xla
+
+        device = torch_xla.device()
+        pl_module = SimpleNamespace(device=device)
+        tensor = torch.arange(4, dtype=torch.float32, device=device) * 2
+
+        COCOEvalCallback._sync_xla_metric_inputs(pl_module)
+
+        assert tensor.cpu().tolist() == [0.0, 2.0, 4.0, 6.0]
+
+    @pytest.mark.xla
+    @pytest.mark.parametrize("hook", ["on_validation_batch_end", "on_test_batch_end"])
+    def test_eval_hooks_sync_before_converting_predictions(self, hook: str) -> None:
+        """Validation and test must place the XLA barrier before BOTH host conversions it guards -- predictions AND
+        targets, since ``_convert_targets`` performs its own host read (``torch.stack(...).tolist()``)."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit" if hook.startswith("on_validation") else "test")
+        cb.map_metric = MagicMock(name="map_metric")
+        events = []
+        original_convert_preds = cb._convert_preds
+        original_convert_targets = cb._convert_targets
+        cb._sync_xla_metric_inputs = MagicMock(side_effect=lambda module: events.append("sync"))
+        cb._convert_preds = MagicMock(
+            side_effect=lambda preds: events.append("convert_preds") or original_convert_preds(preds)
+        )
+        cb._convert_targets = MagicMock(
+            side_effect=lambda targets, preds=None: (
+                events.append("convert_targets") or original_convert_targets(targets, preds)
+            )
+        )
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+
+        getattr(cb, hook)(_make_trainer(), _make_pl_module(), outputs, None, 0)
+
+        assert events == ["sync", "convert_preds", "convert_targets"]
+
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_build_matching_data_still_receives_cuda_tensors_while_map_metric_state_is_cpu(self) -> None:
@@ -471,6 +552,34 @@ class TestOnTrainBatchEnd:
         called_preds, called_targets = cb.map_metric_train.update.call_args.args
         assert called_preds[0].keys() == {"boxes", "scores", "labels"}
         assert called_targets[0].keys() == {"boxes", "labels"}
+
+    @pytest.mark.xla
+    def test_train_batch_end_syncs_before_converting_predictions(self) -> None:
+        """Optional train-split accumulation hits the same overlapping-graph-fragment risk as eval and needs the same
+        XLA barrier before BOTH host conversions it guards -- predictions AND targets."""
+        cb = COCOEvalCallback()
+        cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
+        cb.map_metric_train = MagicMock(name="map_metric_train")
+        module = _make_pl_module()
+        module.train_config = SimpleNamespace(compute_train_metrics=True)
+        module.device = torch.device("xla")
+        events = []
+        original_convert_preds = cb._convert_preds
+        original_convert_targets = cb._convert_targets
+        cb._sync_xla_metric_inputs = MagicMock(side_effect=lambda current: events.append("sync"))
+        cb._convert_preds = MagicMock(
+            side_effect=lambda preds: events.append("convert_preds") or original_convert_preds(preds)
+        )
+        cb._convert_targets = MagicMock(
+            side_effect=lambda targets, preds=None: (
+                events.append("convert_targets") or original_convert_targets(targets, preds)
+            )
+        )
+        outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
+
+        cb.on_train_batch_end(_make_trainer(), module, outputs, None, 0)
+
+        assert events == ["sync", "convert_preds", "convert_targets"]
 
     def test_train_metrics_do_not_use_test_hook(self) -> None:
         """Train mAP must be logged under train/* via the train epoch hook, not through test/* hooks."""
@@ -1650,6 +1759,61 @@ class TestValidationBatchEndEvalPolicy:
 
         ema_underlying.assert_called_once()
         cb.map_metric_ema.update.assert_called_once()
+
+    @pytest.mark.xla
+    def test_eval_base_model_syncs_each_forward_before_its_host_conversion(self) -> None:
+        """The opt-in base+EMA policy builds two lazy graphs, so the second materialization boundary must land after the
+        EMA forward and its postprocess -- not merely after the first host conversion, which a misplaced early second
+        sync would satisfy without ever materializing the EMA graph.
+
+        Also tracks
+        ``_convert_targets`` (its own host read) so a partial materialization ahead of the first barrier cannot
+        slip through unnoticed.
+        """
+        events = []
+        ema_underlying = MagicMock(
+            name="ema_underlying_model",
+            side_effect=lambda *args, **kwargs: events.append("ema_forward") or {"ema": True},
+        )
+        cb = COCOEvalCallback(eval_base_model=True)
+        trainer = _make_trainer(callbacks=[self._ema_callback_with_underlying(ema_underlying)])
+        module = _cpu_module()
+        module.postprocess = MagicMock(
+            name="postprocess",
+            side_effect=lambda *args, **kwargs: events.append("postprocess") or _detection_preds(0),
+        )
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        original_convert_preds = cb._convert_preds
+        original_convert_targets = cb._convert_targets
+        cb._sync_xla_metric_inputs = MagicMock(side_effect=lambda current: events.append("sync"))
+        cb._convert_preds = MagicMock(
+            side_effect=lambda preds: events.append("convert_preds") or original_convert_preds(preds)
+        )
+        cb._convert_targets = MagicMock(
+            side_effect=lambda targets, preds=None: (
+                events.append("convert_targets") or original_convert_targets(targets, preds)
+            )
+        )
+
+        cb.on_validation_batch_end(
+            trainer,
+            module,
+            {"results": _detection_preds(0), "targets": _detection_targets()},
+            (torch.zeros(1), None),
+            0,
+        )
+
+        assert events == [
+            "sync",
+            "convert_preds",
+            "convert_targets",
+            "ema_forward",
+            "postprocess",
+            "sync",
+            "convert_preds",
+        ]
 
     def test_routes_normalized_inputs_to_ema_track(self) -> None:
         """The used-EMA route must delegate normalized inputs only to the EMA adapter."""

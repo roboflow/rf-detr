@@ -80,7 +80,6 @@ def _make_train_config(tmp_path=None) -> TrainConfig:
         drop_path=0.0,
         multi_scale=False,
         expanded_scales=False,
-        do_random_resize_via_padding=False,
         grad_accum_steps=1,
         tensorboard=False,
     )

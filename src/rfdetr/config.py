@@ -22,11 +22,26 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 EncoderName: TypeAlias = Literal["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_registers_windowed_small"]
+#: Dataset layout selectable via ``TrainConfig.dataset_file``. The builder registry that resolves each name lives
+#: in ``rfdetr.datasets``; this alias is the single typed source of the accepted names.
+DatasetFile: TypeAlias = Literal["coco", "o365", "roboflow", "yolo", "webdataset"]
 PathLikeStr: TypeAlias = str | Path
+#: Mixed-precision autocast dtype; ``None`` disables autocast (full fp32).
+AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
+#: COCO evaluation backend selectable via ``TrainConfig.eval_backend``. The runtime registry that resolves each
+#: name lives in ``rfdetr.training.coco_map``; this alias is the single typed source of the accepted names.
+CocoEvalBackend: TypeAlias = Literal["hotcoco", "faster_coco_eval", "ufcoco"]
+#: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
+#: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
+_AMP_DTYPE_DEFAULT: AmpDtype = "auto"
 
 __all__ = [
+    "AmpDtype",
     "AugmentationBackend",
+    "CocoEvalBackend",
+    "DatasetFile",
     "ModelConfig",
+    "MultiScale",
     "RFDETRBaseConfig",
     "RFDETRLargeDeprecatedConfig",
     "RFDETRNanoConfig",
@@ -79,6 +94,39 @@ def _package_importable(module_name: str) -> bool:
         return True
     except ImportError:
         return False
+
+
+class MultiScale(str, Enum):
+    """Multi-scale training mode for ``TrainConfig.multi_scale``.
+
+    ``PER_BATCH`` draws one random scale per batch and applies it in ``RFDETRLightningModule.on_train_batch_start`` by
+    interpolating the already collated batch (the dataset resizes every sample to the largest scale). ``PER_SAMPLE``
+    draws a scale per sample inside the dataset transforms and collate pads to the batch maximum. ``OFF`` trains at the
+    fixed ``ModelConfig.resolution``. Booleans are accepted as input (``True`` is ``PER_BATCH``, the behaviour the old
+    ``multi_scale=True`` default had; ``False`` is ``OFF``) but are never stored as such.
+    """
+
+    OFF = "off"
+    PER_BATCH = "per-batch"
+    PER_SAMPLE = "per-sample"
+
+    @classmethod
+    def from_value(cls, value: "MultiScale | str | bool") -> "MultiScale":
+        """Normalize a member, its string value, or a legacy boolean to a member.
+
+        Examples:
+            >>> MultiScale.from_value(True)
+            <MultiScale.PER_BATCH: 'per-batch'>
+            >>> MultiScale.from_value(False)
+            <MultiScale.OFF: 'off'>
+            >>> MultiScale.from_value("per-sample")
+            <MultiScale.PER_SAMPLE: 'per-sample'>
+        """
+        if value is True:
+            return cls.PER_BATCH
+        if value is False:
+            return cls.OFF
+        return cls(value)
 
 
 class AugmentationBackend(str, Enum):
@@ -463,9 +511,20 @@ class ModelConfig(BaseConfig):
             convergence acceleration. ``num_queries * group_detr`` predictions are produced in
             training mode; ``num_queries`` in eval mode. ``num_queries`` must be divisible by
             ``group_detr``. Defaults to ``13``.
-        amp: Enable automatic mixed precision (bfloat16/float16). Defaults to ``True``.
+        amp: Deprecated, removal in v1.14: use ``TrainConfig.amp_dtype=None`` instead. Enable
+            automatic mixed precision (bfloat16/float16). Defaults to ``True``. An explicit
+            ``TrainConfig.amp_dtype`` always overrides this field; it is only consulted when
+            ``amp_dtype`` is left at its default and this field is set to ``False``.
         compile: Compile the model with ``torch.compile`` for faster throughput. Defaults to
             ``False``.
+        cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
+            graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
+            sizes it matches eager and ``compile`` is the better lever. Combined with
+            ``compile=True`` the replay is delegated to Inductor's CUDA graph trees, which
+            stacks both gains at small batch sizes and matches plain compilation at large
+            ones. With ``amp_dtype="fp8"`` and ``compile=False``, uses Transformer Engine's
+            FP8-aware capture instead, requiring fixed resolution and no gradient accumulation.
+            Combining FP8 with both flags stays compile-only. Defaults to ``False``.
         pretrain_weights: Path or URL to pretrained checkpoint. ``None`` trains from scratch.
         device: Target device string (e.g. ``"cuda"``, ``"cpu"``). Auto-detected if not set.
         gradient_checkpointing: Trade compute for memory by checkpointing activations. Defaults
@@ -490,6 +549,7 @@ class ModelConfig(BaseConfig):
     bbox_reparam: bool = True
     lite_refpoint_refine: bool = True
     layer_norm: bool = True
+    # Deprecated: use TrainConfig.amp_dtype=None instead (see _resolve_amp_dtype). Removal in v1.14.
     amp: bool = True
     num_channels: int = Field(default=3, ge=1)
     num_classes: int = 90
@@ -500,6 +560,7 @@ class ModelConfig(BaseConfig):
     group_detr: int = 13
     gradient_checkpointing: bool = False
     compile: bool = False
+    cuda_graphs: bool = False
     fused_optimizer: bool = True
     positional_encoding_size: int
     ia_bce_loss: bool = True
@@ -1065,15 +1126,15 @@ class TrainConfig(BaseConfig):
     keypoint_oks_sigmas: list[float] | None = None
     # "webdataset" streams pre-packed tar shards instead of loose image files; see
     # rfdetr.datasets.webdataset for the packer and the sizing contract it imposes on the loaders.
-    dataset_file: Literal["coco", "o365", "roboflow", "yolo", "webdataset"] = "roboflow"
+    dataset_file: DatasetFile = "roboflow"
     square_resize_div_64: bool = True
     dataset_dir: PathLikeStr | None
     output_dir: PathLikeStr = "output"
+    # See MultiScale: "per-batch" (default) / "per-sample" / "off"; True and False alias "per-batch" and "off".
     # XLA/TPU: every distinct (H, W) triggers a separate graph compilation. Set multi_scale=False
     # for a static shape (zero recompilations after the first batch) when training on TPU.
-    multi_scale: bool = True
+    multi_scale: MultiScale = MultiScale.PER_BATCH
     expanded_scales: bool = True
-    do_random_resize_via_padding: bool = False
     use_ema: bool = True
     ema_update_interval: int = 1
     # Validation-only: also evaluate the base model, on top of the model validation already forwards
@@ -1101,15 +1162,21 @@ class TrainConfig(BaseConfig):
     eval_ema_only: bool = False
     num_workers: int = 2
     weight_decay: float = 1e-4
-    amp_dtype: Literal["auto", "bf16", "fp16", "fp8"] = Field(
-        default="auto",
+    amp_dtype: AmpDtype = Field(
+        default=_AMP_DTYPE_DEFAULT,
         description=(
-            "Mixed-precision autocast dtype. "
-            "'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' forces bfloat16 (falls back to fp16 with a warning if unsupported). "
-            "'fp16' forces fp16. "
-            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU. "
-            "Non-FP8 choices have no effect when model_config.amp=False or when training on CPU."
+            "Mixed-precision training precision. Sole live authority for AMP enable+dtype; see "
+            "_resolve_amp_dtype for the deprecated ModelConfig.amp fold-in. "
+            "None disables autocast (full fp32). "
+            "On TPU, 'auto' and 'bf16' select XLA's bf16-true precision. "
+            "Elsewhere, 'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
+            "'bf16' selects bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "'fp16' selects fp16 on supported CUDA/MPS backends. "
+            "Explicit XLA uses full fp32 until CPU/GPU PJRT BF16 execution is verified. "
+            "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "
+            "an explicit 'fp8' is honored even if the deprecated ModelConfig.amp=False. "
+            "Any non-default value here always wins over the deprecated ModelConfig.amp. "
+            "The direct CPU accelerator always uses full fp32."
         ),
     )
     best_model_metric: Literal["map", "mar"] = Field(
@@ -1138,12 +1205,12 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
-    eval_backend: Literal["hotcoco", "faster_coco_eval"] = Field(
+    eval_backend: CocoEvalBackend = Field(
         default="hotcoco",
         description=(
-            "COCO evaluation backend used for validation and test mAP. Both ship with 'rfdetr[train]' and produce "
-            "identical metrics; 'hotcoco' is several times faster to compute. Set 'faster_coco_eval' to fall back "
-            "to the previous evaluator."
+            "COCO evaluation backend used for validation and test mAP. All three ship with 'rfdetr[train]' and "
+            "produce identical metrics; 'hotcoco' is several times faster to compute than 'faster_coco_eval', the "
+            "previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
@@ -1160,6 +1227,18 @@ class TrainConfig(BaseConfig):
     scale_jitter: bool = True
     augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"
     save_dataset_grids: bool = False
+
+    @field_validator("multi_scale", mode="before")
+    @classmethod
+    def _coerce_multi_scale(cls, v: Any) -> Any:
+        """Map the boolean spellings to members: ``True`` is ``"per-batch"`` (the old default), ``False`` is
+        ``"off"``."""
+        return MultiScale.from_value(v) if isinstance(v, bool) else v
+
+    @field_serializer("multi_scale")
+    def _serialize_multi_scale(self, value: MultiScale) -> str:
+        """Serialize the mode to its plain string value so ``model_dump`` stays JSON-safe."""
+        return value.value
 
     @field_validator("augmentation_backend", mode="before")
     @classmethod
@@ -1231,10 +1310,11 @@ class TrainConfig(BaseConfig):
         Mixed precision is a best-effort speed/memory optimisation, so an invalid request degrades to the auto-selected
         dtype rather than failing the whole training run.
         """
-        if value not in ("auto", "bf16", "fp16", "fp8"):
+        if value not in (None, "auto", "bf16", "fp16", "fp8"):
             # stacklevel=2 points into Pydantic internals; unavoidable with @field_validator in Pydantic v2.
             warnings.warn(
-                f"Unknown amp_dtype={value!r}; expected one of 'auto', 'bf16', 'fp16', 'fp8'. Falling back to 'auto'.",
+                f"Unknown amp_dtype={value!r}; expected None or one of 'auto', 'bf16', 'fp16', 'fp8'. "
+                "Falling back to 'auto'.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -1254,6 +1334,8 @@ class TrainConfig(BaseConfig):
     # num_nodes maps to PTL Trainer(num_nodes=...) for multi-machine training.
     # Single-machine DDP users should leave this at 1 (the default).
     num_nodes: int = 1
+    # Deprecated: no runtime consumer since the PTL migration — eval precision follows amp_dtype
+    # (see _warn_deprecated_fp16_eval). Removal in v1.14.
     fp16_eval: bool = False
     lr_scheduler: str | Callable[..., SchedulerType] = "step"
     lr_scheduler_kwargs: dict[str, Any] = Field(default_factory=dict)
@@ -1453,6 +1535,26 @@ class TrainConfig(BaseConfig):
                 "eval_ema_only is deprecated. New configurations evaluate only the selected model "
                 "(EMA when use_ema=True) by default; legacy configurations are migrated from this flag. "
                 "Set eval_base_model=True to also evaluate the base model.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_deprecated_fp16_eval(cls, data: Any) -> Any:
+        """Warn that ``fp16_eval`` is inert and superseded by ``amp_dtype``.
+
+        The flag has had no runtime consumer since the PTL migration, so it is warned about rather than migrated: a
+        config carrying it already trains and evaluates at the precision ``amp_dtype`` resolves to. A default ``False``
+        is skipped silently so reloading a dumped config (which always carries the field) never warns.
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("fp16_eval"):
+            warnings.warn(
+                "fp16_eval is deprecated and has no effect; evaluation precision follows amp_dtype. "
+                "Set amp_dtype='fp16' to evaluate in fp16.",
                 FutureWarning,
                 stacklevel=2,
             )
@@ -1709,3 +1811,52 @@ class KeypointTrainConfig(TrainConfig):
     keypoint_nll_loss_coef: float = 1.0
     smooth_alpha: float = 0.5
     skip_best_epochs: int = Field(default=10, ge=0)
+
+
+def _resolve_amp_dtype(
+    model_config: ModelConfig,
+    train_config: TrainConfig,
+    *,
+    warn_legacy: bool = True,
+) -> AmpDtype:
+    """Resolve the effective mixed-precision mode from the training and (deprecated) model settings.
+
+    ``TrainConfig.amp_dtype`` is the live authority. The deprecated ``ModelConfig.amp`` toggle is consulted only as a
+    fallback, so a caller that sets ``amp_dtype`` never has it silently overridden by a stale ``amp=False`` carried in
+    a model config.
+
+    "Set" means holding a non-default value, not ``model_fields_set`` membership: a config reloaded from
+    ``training_config.json`` carries every field explicitly, which would otherwise make the legacy toggle inert after a
+    single save/load round-trip.
+
+    Args:
+        model_config: Architecture configuration, read only for the deprecated ``amp`` toggle.
+        train_config: Training configuration holding the authoritative ``amp_dtype``.
+        warn_legacy: Emit the deprecation warning when the legacy toggle supplies the result.
+
+    Returns:
+        The effective ``amp_dtype``; ``None`` means run in full fp32.
+
+    Examples:
+        >>> from rfdetr.config import RFDETRNanoConfig, TrainConfig, _resolve_amp_dtype
+        >>> _resolve_amp_dtype(RFDETRNanoConfig(), TrainConfig(dataset_dir="data"))
+        'auto'
+        >>> _resolve_amp_dtype(RFDETRNanoConfig(), TrainConfig(dataset_dir="data", amp_dtype="bf16"))
+        'bf16'
+        >>> import warnings
+        >>> with warnings.catch_warnings():
+        ...     warnings.simplefilter("ignore", FutureWarning)
+        ...     _resolve_amp_dtype(RFDETRNanoConfig(amp=False), TrainConfig(dataset_dir="data")) is None
+        True
+    """
+    if train_config.amp_dtype != _AMP_DTYPE_DEFAULT:
+        return train_config.amp_dtype
+    if not model_config.amp:
+        if warn_legacy:
+            warnings.warn(
+                "ModelConfig.amp is deprecated; pass amp_dtype=None to the training config instead.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return None
+    return train_config.amp_dtype

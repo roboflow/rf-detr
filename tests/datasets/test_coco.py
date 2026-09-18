@@ -15,6 +15,7 @@ import types
 from pathlib import Path
 from typing import Dict, List
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -272,7 +273,6 @@ def _pipeline_args(dataset_dir: object, **overrides: object) -> types.SimpleName
         "segmentation_head": False,
         "multi_scale": False,
         "expanded_scales": False,
-        "do_random_resize_via_padding": False,
         "patch_size": 16,
         "num_windows": 4,
     }
@@ -407,7 +407,6 @@ class TestRoboflowCocoKeypointFormat:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             use_grouppose_keypoints=True,
@@ -508,7 +507,6 @@ class TestBuildO365RawGpuBackend:
             self.square_resize_div_64 = square_resize_div_64
             self.multi_scale = False
             self.expanded_scales = False
-            self.do_random_resize_via_padding = False
             self.patch_size = 16
             self.num_windows = 4
             self.dataset_dir = "/nonexistent/o365"
@@ -644,7 +642,6 @@ class TestBuildRoboflowFromCocoBackendResolution:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             aug_config=None,
@@ -713,7 +710,6 @@ class TestBuildRoboflowFromCocoBackendResolution:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             use_grouppose_keypoints=True,
@@ -774,7 +770,6 @@ class TestBuilderGpuPostprocess:
             square_resize_div_64=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             aug_config=None,
@@ -838,7 +833,6 @@ class TestKeypointFlipPairsNoneForwarding:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             use_grouppose_keypoints=False,
@@ -939,7 +933,6 @@ class TestKeypointFlipPairsNoneForwarding:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             use_grouppose_keypoints=True,
@@ -1000,7 +993,6 @@ class TestKeypointFlipPairsNoneForwarding:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             use_grouppose_keypoints=True,
@@ -1047,7 +1039,6 @@ def _make_coco_builder_args(tmp_path: Path, *, use_grouppose_keypoints: bool) ->
         segmentation_head=False,
         multi_scale=False,
         expanded_scales=False,
-        do_random_resize_via_padding=False,
         patch_size=16,
         num_windows=4,
         # Empty aug_config disables augmentation — these tests verify annotation routing, not aug.
@@ -1331,8 +1322,6 @@ class TestScaleJitter:
 
 def _make_gradient_image(width: int, height: int) -> Image.Image:
     """Build a deterministic RGB gradient image with real pixel content for interpolation comparisons."""
-    import numpy as np
-
     x = np.linspace(0, 255, width, dtype=np.uint8)
     y = np.linspace(0, 255, height, dtype=np.uint8)
     grid = np.broadcast_to(x, (height, width))
@@ -1565,7 +1554,6 @@ class TestCocoDetectionDraftDecode:
                 segmentation_head=False,
                 multi_scale=False,
                 expanded_scales=False,
-                do_random_resize_via_padding=False,
                 patch_size=16,
                 num_windows=4,
                 use_grouppose_keypoints=False,

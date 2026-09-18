@@ -13,6 +13,7 @@ from typing import Any
 
 from PIL import Image
 
+from rfdetr.config import MultiScale
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.utilities.logger import get_logger
 
@@ -30,7 +31,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     Object365 currently uses detection annotations only and does not consume
     ``segmentation_head``. Direct callers must provide either ``dataset_dir``
     or ``coco_path``, plus ``square_resize_div_64``, ``multi_scale``,
-    ``expanded_scales``, ``do_random_resize_via_padding``, ``patch_size``, and
+    ``expanded_scales``, ``patch_size``, and
     ``num_windows`` on ``args``. Optional ``scale_jitter`` and
     ``augmentation_backend`` values retain safe defaults.
 
@@ -58,9 +59,8 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     # These geometry values are model/config dependent, so direct calls must fail
     # instead of silently falling back to the transform factories' generic defaults.
     square_resize_div_64 = args.square_resize_div_64
-    multi_scale = args.multi_scale
+    multi_scale = MultiScale.from_value(args.multi_scale)
     expanded_scales = args.expanded_scales
-    do_random_resize_via_padding = args.do_random_resize_via_padding
     patch_size = args.patch_size
     num_windows = args.num_windows
     scale_jitter = getattr(args, "scale_jitter", True)
@@ -82,9 +82,9 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
             transforms=make_coco_transforms_square_div_64(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 scale_jitter=scale_jitter,
@@ -98,9 +98,9 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
             transforms=make_coco_transforms(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 scale_jitter=scale_jitter,

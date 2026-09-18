@@ -30,7 +30,7 @@ from typing import Any, cast
 
 import torch
 
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import ModelConfig, MultiScale, TrainConfig, _resolve_amp_dtype
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
 from rfdetr.training.module_model import _is_builtin_fused_adamw
@@ -566,8 +566,8 @@ def resolve_auto_batch_config(
 
     Args:
         model_context: Object with .device and .model (e.g. RFDETR.model from get_model()).
-        model_config: Architecture config (resolution, num_classes, amp, segmentation_head).
-        train_config: Training config (auto_batch_target_effective); batch_size should be "auto".
+        model_config: Architecture config (resolution, num_classes, segmentation_head).
+        train_config: Training config (auto_batch_target_effective, amp_dtype); batch_size should be "auto".
         safety_margin: Fraction of max batch to use (passed to probe_max_micro_batch).
         max_micro_batch: Upper bound on batch size to try (passed to probe_max_micro_batch).
 
@@ -582,9 +582,11 @@ def resolve_auto_batch_config(
         raise RuntimeError("batch_size='auto' requires a CUDA device for probing in v1.")
 
     # Use max multi-scale resolution when multi_scale is True so probe reflects worst-case.
-    multi_scale = getattr(train_config, "multi_scale", False)
-    do_random_resize = getattr(train_config, "do_random_resize_via_padding", False)
-    if multi_scale and not do_random_resize:
+    # Both "batch" and "sample" modes can hit the largest scale, so probe it for either.
+    # The probe is square; with square_resize_div_64=False the aspect-preserving resize lets the long side reach
+    # 1333 px and collate pads per axis, so a mixed portrait/landscape batch can exceed this probe's footprint.
+    multi_scale = MultiScale.from_value(getattr(train_config, "multi_scale", False))
+    if multi_scale is not MultiScale.OFF:
         expanded_scales = getattr(train_config, "expanded_scales", True)
         patch_size = getattr(model_config, "patch_size", 14)
         num_windows = getattr(model_config, "num_windows", 4)
@@ -630,8 +632,8 @@ def resolve_auto_batch_config(
     criterion, _ = build_criterion_from_config(model_config, train_config)
     criterion = criterion.to(device)
 
-    amp_enabled = bool(model_config.amp)
-    amp_dtype_str = getattr(train_config, "amp_dtype", "auto")
+    amp_dtype_str = _resolve_amp_dtype(model_config, train_config, warn_legacy=False)
+    amp_enabled = amp_dtype_str is not None
     if amp_enabled:
         if amp_dtype_str == "fp16":
             probe_autocast_dtype: torch.dtype | None = torch.float16

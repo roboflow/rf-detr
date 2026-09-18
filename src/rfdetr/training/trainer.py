@@ -27,7 +27,7 @@ try:
 except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
     _MultiProcessingLauncher = None  # type: ignore[assignment,misc]
 
-from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig
+from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig, _resolve_amp_dtype
 from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
@@ -487,14 +487,15 @@ def build_trainer(
 ) -> Trainer:
     """Assemble a PTL ``Trainer`` with the full RF-DETR callback and logger stack.
 
-    Resolves training precision from ``model_config.amp`` and device capability, guards EMA against sharded strategies,
-    wires conditional loggers, and applies promoted training knobs (sync_batchnorm, strategy).
+    Resolves training precision from ``train_config.amp_dtype`` and device capability, guards EMA against sharded
+    strategies, wires conditional loggers, and applies promoted training knobs (sync_batchnorm, strategy).
 
     Args:
-        train_config: Training hyperparameter configuration.
-        model_config: Architecture configuration. Used for precision resolution
-            (``model_config.amp``) and to guard against unsupported distributed
-            configurations for keypoint models.
+        train_config: Training hyperparameter configuration. ``amp_dtype`` is the authority for
+            precision resolution.
+        model_config: Architecture configuration. Read for the deprecated ``amp`` toggle (a fallback
+            only when ``amp_dtype`` is left at its default) and to guard against unsupported
+            distributed configurations for keypoint models.
         accelerator: PTL accelerator string (e.g. ``"auto"``, ``"cpu"``, ``"gpu"``).
             Defaults to ``None`` which reads from ``train_config.accelerator`` (itself defaulting to ``"auto"``). Pass
             ``"cpu"`` to override auto-detection (e.g. when the caller explicitly requests CPU training via
@@ -545,6 +546,10 @@ def build_trainer(
     # accelerator="auto" -- this repo's own default -- is covered too; see that helper's
     # docstring for why the strategy guard below needs this same resolution.
     xla_accelerator = _accelerator_resolves_to_xla(accelerator)
+    accelerator_name = str(accelerator).lower()
+    # Lightning reports XLA availability for its TPU accelerator, so auto retains the documented
+    # TPU behavior. Explicit ``xla`` can target CPU/GPU PJRT without equivalent BF16 evidence.
+    tpu_accelerator = accelerator_name == "tpu" or (accelerator_name == "auto" and xla_accelerator)
 
     # TF32 matmul for fp32 residual matmuls on Ampere+.  ``rfdetr.detr`` sets this at import
     # time for the python API path, but the Lightning CLI path (``rfdetr fit``) never imports
@@ -555,31 +560,36 @@ def build_trainer(
         _logger.debug("torch.set_float32_matmul_precision('high') failed", exc_info=True)
 
     # --- Precision resolution ---
+    # amp_dtype is the live authority; the deprecated model_config.amp only folds in when amp_dtype
+    # was left at its default (see _resolve_amp_dtype). Resolved once here rather than inside
+    # _resolve_precision, which is called more than once — the deprecation warning must fire once.
+    amp_dtype = _resolve_amp_dtype(model_config, tc)
+    if amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
+        # Reject before XLA plugin construction: CPU-only CI has no torch_xla, and the
+        # plugin's dependency error would otherwise mask this unsupported FP8 request.
+        raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
+
     def _resolve_precision() -> str:
-        if not model_config.amp:
-            if tc.amp_dtype == "fp8":
-                raise ValueError("amp_dtype='fp8' requires model_config.amp=True.")
-            if tc.amp_dtype != "auto":
-                warnings.warn(
-                    f"amp_dtype={tc.amp_dtype!r} has no effect when model_config.amp=False.",
-                    UserWarning,
-                    stacklevel=2,
-                )
+        if amp_dtype is None:
             return "32-true"
-        # Honor explicit accelerators and Lightning's XLA-first auto selection before probing global CUDA.
-        if tc.amp_dtype == "fp8" and (xla_accelerator or accelerator not in {"auto", "cuda", "gpu"}):
-            raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
+        if tpu_accelerator and amp_dtype in {"bf16", "auto"}:
+            # Real TPU hardware (the case this fix targets and is verified against, issue #1058)
+            # supports bf16 natively, so "auto" resolves to it the same way an explicit "bf16"
+            # request does, instead of falling through to the CUDA/MPS probes below and landing
+            # on the CPU-only "32-true" default. Explicit ``xla`` stays on the conservative
+            # path because CPU/GPU PJRT has no equivalent execution evidence.
+            return "bf16-true"
         # CPU accelerator: bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower
         # than fp32 due to missing native bfloat16 kernels — no benefit, high cost.
         if accelerator == "cpu":
             return "32-true"
         # ``train_config.amp_dtype`` (a train() kwarg) lets callers pin the autocast dtype (see issue #1132):
+        #   None   — disable autocast entirely (handled above);
         #   "auto" — bf16 on bf16-capable CUDA, fp16 otherwise (historical default);
         #   "fp16" — force "16-mixed" (e.g. deployment targets without bf16 support);
         #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported;
         #   "fp8" — use Lightning's Transformer Engine precision plugin.
         # Unrecognised values are coerced to "auto" (with a warning) by TrainConfig validation.
-        amp_dtype = tc.amp_dtype
         # Ampere+ GPUs support bf16-mixed which is scaler-free —
         # no GradScaler.scale/unscale/update overhead per optimizer step.
         # BF16 is safe for fine-tuning (pretrained weights loaded by default).
@@ -656,7 +666,7 @@ def build_trainer(
     devices = trainer_kwargs.get("devices", tc.devices)
     num_nodes = trainer_kwargs.get("num_nodes", tc.num_nodes)
     has_keypoints = bool(model_config.use_grouppose_keypoints)
-    if tc.amp_dtype == "fp8" and _is_sharded_strategy(strategy):
+    if amp_dtype == "fp8" and _is_sharded_strategy(strategy):
         raise ValueError(
             "amp_dtype='fp8' is not compatible with FSDP or DeepSpeed strategies because Lightning's "
             "Transformer Engine precision plugin cannot replace their strategy-owned precision plugin. "
@@ -754,11 +764,18 @@ def build_trainer(
                 "strategy='ddp' → DDPStrategy(find_unused_parameters=True).",
             )
     sharded = _is_sharded_strategy(strategy)
-    enable_ema = bool(tc.use_ema) and not sharded
+    enable_ema = bool(tc.use_ema) and not sharded and not xla_accelerator
     if tc.use_ema and sharded:
         warnings.warn(
             f"EMA disabled: RFDETREMACallback is not compatible with sharded strategies "
             f"(strategy={strategy!r}). Set use_ema=False to suppress this warning.",
+            UserWarning,
+            stacklevel=2,
+        )
+    elif include_training_callbacks and tc.use_ema and xla_accelerator:
+        warnings.warn(
+            "EMA disabled on XLA because per-step weight reads can corrupt subsequent optimizer updates. "
+            "Training will continue with the live model weights. Set use_ema=False to suppress this warning.",
             UserWarning,
             stacklevel=2,
         )
@@ -861,7 +878,13 @@ def build_trainer(
         elif not isinstance(plugins, (list, tuple)):
             plugins = [plugins]
         trainer_config.pop("precision", None)
-        xla_precision = _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
+        # CPU/GPU PJRT is an XLA strategy but lacks the TPU BF16 execution evidence required
+        # to translate generic mixed precision into a true-precision XLA plugin.
+        xla_precision = (
+            "32-true"
+            if not tpu_accelerator
+            else _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
+        )
         trainer_config["plugins"] = [*plugins, XLAPrecision(xla_precision)]
     trainer_config["strategy"] = strategy
     if manual_optimization:

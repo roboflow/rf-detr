@@ -7,6 +7,7 @@
 
 import warnings
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -140,6 +141,13 @@ class TestBuildTrainerCallbacks:
         trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._log_per_class_metrics is False
+
+    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco"])
+    def test_coco_eval_uses_eval_backend(self, tmp_path: Path, backend: str) -> None:
+        """COCOEvalCallback receives every eval_backend value TrainConfig accepts."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend=backend), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        assert coco_cb._eval_backend == backend
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""
@@ -578,7 +586,7 @@ class TestBuildTrainerPrecision:
 
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
     def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
-        """Accelerator='xla'/'tpu' sets an XLAPrecision('bf16-true') plugin, never precision=.
+        """An XLA accelerator uses XLAPrecision instead of a precision string.
 
         XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin and raises TypeError for standard
         precision strings like 'bf16-mixed'. ``XLAPrecision.__init__`` itself raises ``ModuleNotFoundError`` unless
@@ -604,13 +612,92 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
 
         assert "precision" not in captured
+        expected_precision = "bf16-true" if accelerator == "tpu" else "32-true"
+        mock_xla_precision_cls.assert_called_once_with(expected_precision)
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    @pytest.mark.parametrize("accelerator", ["tpu"])
+    @pytest.mark.parametrize("amp_dtype", ["bf16", "auto"])
+    def test_bf16_or_auto_on_tpu_uses_bf16_true(self, tmp_path: Path, accelerator: str, amp_dtype: str) -> None:
+        """Explicit BF16 and the default auto mode select TPU BF16 true precision.
+
+        'auto' matters here as much as the explicit case: it is the amp_dtype every caller gets by
+        just passing ``amp=True`` -- the exact recipe issue #1058 itself documents for TPU training
+        -- and without CUDA/MPS on the host it used to fall through to the CPU-only "32-true"
+        default, silently training in FP32 on TPU by default.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=False),
+            mock.patch("torch.backends.mps.is_available", return_value=False),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=False, amp_dtype=amp_dtype),
+                _mc(amp=True),
+                accelerator=accelerator,
+            )
+
+        assert "precision" not in captured
         mock_xla_precision_cls.assert_called_once_with("bf16-true")
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    def test_auto_on_available_tpu_uses_bf16_true(self, tmp_path: Path) -> None:
+        """Automatic accelerator selection retains TPU BF16 true precision."""
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True),
+            mock.patch("torch.cuda.is_available", return_value=False),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator="auto")
+
+        mock_xla_precision_cls.assert_called_once_with("bf16-true")
+        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+
+    def test_explicit_xla_bf16_stays_fp32_without_backend_evidence(self, tmp_path: Path) -> None:
+        """Explicit XLA never assumes GPU PJRT can execute BF16 true precision."""
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="bf16"), _mc(amp=True), accelerator="xla")
+
+        mock_xla_precision_cls.assert_called_once_with("32-true")
         assert captured["plugins"] == [mock_xla_precision_cls.return_value]
 
     @pytest.mark.parametrize(
         ("amp", "expected_precision"),
         [
-            pytest.param(True, "bf16-true", id="amp_enabled"),
+            pytest.param(True, "32-true", id="amp_enabled"),
             pytest.param(False, "32-true", id="amp_disabled"),
         ],
     )
@@ -769,8 +856,20 @@ class TestBuildTrainerAmpDtype:
     """
 
     @staticmethod
-    def _resolved_precision(tmp_path, *, cuda: bool, bf16: bool = False, mps: bool = False, amp_dtype: str = "auto"):
+    def _resolved_precision(
+        tmp_path,
+        *,
+        cuda: bool,
+        bf16: bool = False,
+        mps: bool = False,
+        amp_dtype: str | None = "auto",
+        amp: bool = True,
+    ):
         """Resolve the Lightning precision string for a mocked device capability and ``amp_dtype``.
+
+        The capability probes are mocked so the expected precision is a property of the config under test rather than of
+        whichever machine runs the suite — an unmocked call resolves to ``"16-mixed"`` on an MPS host and ``"32-true"``
+        on a CPU-only one.
 
         Args:
             tmp_path: pytest temporary directory fixture.
@@ -778,6 +877,7 @@ class TestBuildTrainerAmpDtype:
             bf16: Value returned by the mocked ``torch.cuda.is_bf16_supported``.
             mps: Value returned by the mocked ``torch.backends.mps.is_available``.
             amp_dtype: The ``TrainConfig.amp_dtype`` value under test.
+            amp: The deprecated ``ModelConfig.amp`` value under test.
 
         Returns:
             The ``precision`` string passed to the (mocked) ``Trainer``.
@@ -796,7 +896,7 @@ class TestBuildTrainerAmpDtype:
             mock.patch("torch.backends.mps.is_available", return_value=mps),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=amp_dtype), _mc(amp=True))
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype=amp_dtype), _mc(amp=amp))
         return captured["precision"]
 
     def test_amp_dtype_is_a_train_kwarg_not_dropped(self, tmp_path):
@@ -831,10 +931,33 @@ class TestBuildTrainerAmpDtype:
             precision = self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype)
         assert precision == "16-mixed"
 
-    def test_amp_false_overrides_amp_dtype(self, tmp_path):
-        """Amp=False wins over any amp_dtype: precision is '32-true'."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=False))
-        assert trainer.precision == "32-true"
+    def test_explicit_amp_dtype_overrides_deprecated_amp_false(self, tmp_path):
+        """An explicit amp_dtype wins over the deprecated amp flag: the stale amp=False is ignored.
+
+        Mocked onto a bf16-capable CUDA device, so the fp16 request is distinguishable both from the '32-true' the old
+        amp=False precedence produced and from the 'bf16-mixed' the hardware would otherwise select.
+        """
+        resolved = self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype="fp16", amp=False)
+        assert resolved == "16-mixed"
+
+    def test_deprecated_amp_false_applies_when_amp_dtype_is_default(self, tmp_path):
+        """Amp=False still disables AMP while amp_dtype is left at its default, and warns.
+
+        The mocked device is bf16-capable CUDA, which would resolve to 'bf16-mixed' on its own — so '32-true' can only
+        come from the legacy toggle still being honored.
+        """
+        with pytest.warns(FutureWarning, match="ModelConfig.amp is deprecated"):
+            resolved = self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype="auto", amp=False)
+        assert resolved == "32-true"
+
+    def test_amp_dtype_none_disables_amp(self, tmp_path):
+        """amp_dtype=None is the replacement for the deprecated amp=False and needs no model flag.
+
+        Mocked onto bf16-capable CUDA with amp left at its default True, so '32-true' is attributable to amp_dtype=None
+        alone rather than to absent hardware.
+        """
+        resolved = self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype=None, amp=True)
+        assert resolved == "32-true"
 
     def test_cpu_accelerator_ignores_amp_dtype(self, tmp_path):
         """Explicit accelerator='cpu' yields '32-true' regardless of amp_dtype."""
@@ -857,12 +980,14 @@ class TestBuildTrainerAmpDtype:
 
     @pytest.mark.parametrize("accelerator", ["cpu", "mps", "xla", "tpu"])
     def test_fp8_rejects_non_cuda_with_cuda_visible(self, tmp_path: Path, accelerator: str) -> None:
-        """Visible CUDA must not override an explicitly selected non-CUDA accelerator."""
+        """Reject FP8 before an explicitly selected XLA backend loads its precision plugin."""
         with (
             patch("torch.cuda.is_available", return_value=True),
+            patch("pytorch_lightning.plugins.XLAPrecision") as xla_precision,
             pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"),
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator=accelerator)
+        xla_precision.assert_not_called()
 
     def test_fp8_rejects_auto_resolving_to_xla(self, tmp_path: Path) -> None:
         """Lightning selects XLA before CUDA for auto; FP8 must honor that choice."""
@@ -873,10 +998,14 @@ class TestBuildTrainerAmpDtype:
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True), accelerator="auto")
 
-    def test_fp8_requires_amp_enabled(self, tmp_path):
-        """An explicit FP8 request must not be silently disabled by the model AMP flag."""
-        with pytest.raises(ValueError, match="amp_dtype='fp8' requires model_config.amp=True"):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=False))
+    def test_fp8_is_not_disabled_by_deprecated_amp_flag(self, tmp_path):
+        """An explicit FP8 request must not be silently disabled by the deprecated model AMP flag.
+
+        The request reaches the hardware capability checks instead of being turned off; on a machine without a
+        Transformer Engine GPU that surfaces as the capability error, never as '32-true'.
+        """
+        with pytest.raises(ValueError, match="FP8 training requires an NVIDIA CUDA GPU"):
+            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=False), accelerator="cpu")
 
     def test_fp8_rejects_deepspeed_strategy(self, tmp_path):
         """Lightning cannot combine its Transformer Engine precision plugin with DeepSpeed precision."""
@@ -941,7 +1070,6 @@ class TestBuildTrainerAmpDtype:
         "bad_value",
         [
             pytest.param("float8", id="string-float8"),
-            pytest.param(None, id="none"),
             pytest.param(42, id="int"),
             pytest.param(True, id="bool"),
         ],
@@ -1104,6 +1232,60 @@ class TestBuildTrainerEMAShardingGuard:
         trainer = build_trainer(_tc(tmp_path, use_ema=True), _mc())
         types = [type(cb) for cb in trainer.callbacks]
         assert RFDETREMACallback in types
+
+
+class TestBuildTrainerEMAXLAGuard:
+    """XLA training must disable EMA and its checkpoint/evaluation bookkeeping."""
+
+    def test_xla_disables_ema_and_uses_regular_checkpoint_track(self, tmp_path):
+        """XLA must omit EMA callbacks and metrics while keeping the regular-model path."""
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+            pytest.warns(UserWarning, match="EMA disabled on XLA"),
+        ):
+            build_trainer(
+                _tc(
+                    tmp_path,
+                    use_ema=True,
+                    eval_base_model=False,
+                ),
+                _mc(),
+                accelerator="xla",
+            )
+
+        callbacks = captured["callbacks"]
+        assert not any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
+        best_callback = next(callback for callback in callbacks if isinstance(callback, BestModelCallback))
+        assert best_callback._monitor_ema is None
+        assert best_callback._evaluates_base_model is True
+
+    def test_xla_evaluation_only_does_not_warn_about_training_ema(self, tmp_path):
+        """Evaluation-only trainers do not build EMA and must not emit the training warning."""
+        import unittest.mock as mock
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", return_value=MagicMock()),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            build_trainer(
+                _tc(tmp_path, use_ema=True),
+                _mc(),
+                accelerator="xla",
+                include_training_callbacks=False,
+            )
+
+        assert not any("EMA disabled on XLA" in str(warning.message) for warning in caught)
 
 
 class TestBuildTrainerLoggers:

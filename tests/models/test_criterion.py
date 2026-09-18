@@ -998,30 +998,12 @@ class TestMaskLossDenominatorStaysOnDevice:
         assert dice_spy.call_args.args[2] is num_boxes
         assert ce_spy.call_args.args[2] is num_boxes
 
-    def test_jit_signatures_declare_a_triple_typed_denominator(self) -> None:
-        """Pin the scripted signature itself.
-
-        TorchScript does not reject a Tensor passed for a ``float`` parameter -- it converts it inside the scripted
-        function, which is exactly the host read this change removes.  Asserting on the value alone would therefore pass
-        either way; the compiled schema is what actually distinguishes the two.  The signature accepts ``Union[Tensor,
-        float, int]`` rather than ``Tensor`` alone, because ``dice_loss``/``sigmoid_ce_loss`` are re-exported from
-        ``lwdetr.py`` as backward-compat symbols (``lwdetr.py``'s "Backward-compat re-exports" import block) -- an
-        external caller of the old ``float``-only signature must keep working, and ``int`` is included because
-        TorchScript's ``Union`` argument binding does not implicitly widen a Python ``int`` to ``float`` the way a
-        plain single-typed ``float`` parameter does (see ``test_int_denominator_matches_the_pre_fix_signature`` below).
-        """
-        assert "Union(Tensor, float, int) num_masks" in str(dice_loss_jit.schema)
-        assert "Union(Tensor, float, int) num_masks" in str(sigmoid_ce_loss_jit.schema)
-
     def test_int_denominator_matches_the_pre_fix_signature(self) -> None:
         """A bare Python ``int`` denominator must keep working, bit-for-bit against the pre-fix ``float``-only call.
 
-        Before this PR, ``dice_loss_jit``/``sigmoid_ce_loss_jit`` declared ``num_masks: float``; TorchScript's binding
-        for a single declared type widens a Python ``int`` to ``float`` implicitly, so ``dice_loss_jit(a, b, 5)``
-        worked. A naive ``Union[Tensor, float]`` widening does NOT inherit that implicit int->float widening --
-        TorchScript's ``Union`` argument binding requires an exact type match per member and rejects ``int`` outright
-        with a ``RuntimeError`` (verified against this schema before ``int`` was added to the ``Union``). ``int`` must
-        be its own explicit member of the ``Union`` for a bare-int caller to keep working.
+        Before the denominator was widened to ``Union[Tensor, float, int]``, ``dice_loss``/``sigmoid_ce_loss`` declared
+        ``num_masks: float`` and callers passed ``5`` or ``5.0`` interchangeably. Both spellings must keep producing the
+        identical result through the ``_jit`` aliases.
         """
         torch.manual_seed(0)
         inputs = torch.randn(2, 16)
@@ -1030,36 +1012,12 @@ class TestMaskLossDenominatorStaysOnDevice:
         assert torch.equal(dice_loss_jit(inputs, targets, 5), dice_loss_jit(inputs, targets, 5.0))
         assert torch.equal(sigmoid_ce_loss_jit(inputs, targets, 5), sigmoid_ce_loss_jit(inputs, targets, 5.0))
 
-    def test_jit_numpy_scalar_denominator_is_a_documented_incompatibility(self) -> None:
-        """The scripted wrappers reject a NumPy scalar, unlike the pre-fix ``float``-only signature.
-
-        Under the old single-typed ``float`` signature, TorchScript's binding called a generic Python-to-double coercion
-        that happened to also accept a NumPy scalar (or even a 0-d Tensor, silently reading it to the host). A ``Union``
-        argument requires TorchScript to pick exactly one member without ambiguity, so it uses a strict type check per
-        member instead of that generic coercion -- a NumPy scalar matches neither ``Tensor``, ``float``, nor ``int`` and
-        is rejected. This is an inherent TorchScript ``Union``-binding limitation, not a choice made by this fix, and no
-        caller inside this repository passes a NumPy scalar for this argument (production always converts through
-        ``torch.as_tensor`` in ``SetCriterion.forward``, keeping this off the real training path). External callers of
-        the ``_jit`` symbols must convert with ``float(...)`` first; the eager Python functions retain their ordinary
-        numeric behavior and are covered separately below.
-        """
-        np = pytest.importorskip("numpy")
-        torch.manual_seed(0)
-        inputs = torch.randn(2, 16)
-        targets = torch.randint(0, 2, (2, 16)).float()
-
-        with pytest.raises(RuntimeError):
-            dice_loss_jit(inputs, targets, np.float32(5.0))
-        with pytest.raises(RuntimeError):
-            sigmoid_ce_loss_jit(inputs, targets, np.float32(5.0))
-
     @pytest.mark.parametrize("denominator", [5.0, 5])
     def test_eager_denominator_branches_match_scripted_float_behavior(self, denominator: float | int) -> None:
-        """Cover eager float and int denominator branches with the legacy numeric result.
+        """Cover float and int denominators with the legacy numeric result.
 
-        The production path exercises the Tensor branch while Codecov reports the float and int branches separately.
-        Comparing with the float-only scripted call preserves the pre-fix numeric oracle without testing branch
-        internals.
+        The production path passes a Tensor denominator; a Python ``float`` or ``int`` caller (the historical re-
+        exported signature) must keep the pre-fix numeric oracle: dividing by the ``float`` value as given.
         """
         torch.manual_seed(0)
         inputs = torch.randn(2, 16)
@@ -1073,8 +1031,8 @@ class TestMaskLossDenominatorStaysOnDevice:
     def test_eager_functions_accept_numpy_scalar_denominators(self) -> None:
         """Keep the eager documentation accurate for NumPy scalar callers.
 
-        TorchScript restricts its Union binding, but directly calling the eager re-exports continues through Python's
-        ordinary tensor division and must not inherit that scripted-wrapper restriction.
+        The formerly scripted wrappers rejected NumPy scalars; the eager functions go through Python's ordinary tensor
+        division and must keep accepting them.
         """
         np = pytest.importorskip("numpy")
         torch.manual_seed(0)
@@ -1088,7 +1046,7 @@ class TestMaskLossDenominatorStaysOnDevice:
         )
 
     def test_jit_losses_accept_a_tensor_denominator(self) -> None:
-        """The scripted and eager forms agree when handed an on-device denominator."""
+        """The ``_jit`` aliases and the eager functions agree when handed an on-device denominator."""
         torch.manual_seed(0)
         inputs = torch.randn(2, 16)
         targets = torch.randint(0, 2, (2, 16)).float()

@@ -64,14 +64,14 @@ pip install uv
 uv sync --all-groups
 ```
 
-**Prerequisites:** Python >=3.10 (tested on 3.10-3.13)
+**Prerequisites:** Python >=3.10 (tested on 3.10-3.14)
 
 ### Dependency Information
 
 See `pyproject.toml` for complete dependency specifications:
 
 - **Core:** PyTorch, torchvision, transformers, supervision, pydantic, pyDeprecate
-- **Optional:** `[data]` (WebDataset streaming reader), `[train]` (minimal training loop dependencies, including both COCO evaluation backends selectable via `TrainConfig.eval_backend`)), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
+- **Optional:** `[data]` (WebDataset streaming reader), `[train]` (minimal training loop dependencies, including the three COCO evaluation backends selectable via `TrainConfig.eval_backend`), `[augment]` (custom Albumentations CPU augmentations and Kornia GPU augmentations), `[lora]` (LoRA fine-tuning), `[plus]` (Plus models), `[onnx]` (ONNX export), `[loggers]` (tensorboard, wandb, mlflow, clearml)
 - **Development:** `tests`, `docs`, `build` groups
 
 **Important version constraints:**
@@ -229,6 +229,8 @@ uv run twine check --strict dist/*
 - RFDETR wrappers: `self.model` is the model context returned by `get_model()`
 - Underlying PyTorch module: `self.model.model`
 - Segmentation models return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
+- Opt-in CUDA graph training is routed by `RFDETRModelModule` through the plain-object `CudaGraphTrainingRunner`; never replace the registered `self.model`, because optimizer, EMA, and checkpoint keys must keep their existing parameter ownership. The graph path is single-GPU detection only; BF16 captures per execution signature, and capture failures are fatal (never retry eagerly in the damaged CUDA context). With `compile=True` as well, replay is delegated to Inductor cudagraph trees (`triton.cudagraphs` compile option + `torch.compiler.cudagraph_mark_step_begin()` per `training_step`); `CudaGraphTrainingRunner` never wraps the `OptimizedModule`.
+- With `amp_dtype="fp8"`, `cuda_graphs=True`, and `compile=False`, pass the active Lightning precision-plugin recipe to the runner's optional Transformer Engine capture backend. Import the CUDA-only dependency lazily, require the FP8-aware API including cloned returned gradients, and keep one fixed execution signature with no accumulation and `square_resize_div_64=True`. Multi-scale, aspect-ratio resize, random-resize padding, distributed, segmentation/keypoints and gradient-checkpointing combinations stay eager with a warning. All three FP8/compile/graphs flags stay compile-only; do not nest capture runtimes. GPU numerical-parity coverage must accompany scope expansion.
 
 **Model Export:**
 
@@ -345,7 +347,7 @@ result = subprocess.run(
 
 GitHub Actions workflows in `.github/workflows/`:
 
-- **ci-tests-cpu.yml:** CPU tests across OS/Python versions
+- **ci-tests-cpu.yml:** CPU tests on Linux across Python 3.10-3.14, plus Windows and macOS on Python 3.10 and 3.13
 - **ci-tests-gpu.yml:** GPU-dependent tests
 - **ci-github-tests.yml:** Tests and doctests for the helper scripts under `.github/scripts/`, which the CPU/GPU suites never collect; their tests live in `.github/_tests/`
 - **ci-legacy-checkpoints.yml:** Backward-compatibility checkpoint-loading tests across historical rfdetr releases (advisory only — not a required check; a compat break does not block merge)

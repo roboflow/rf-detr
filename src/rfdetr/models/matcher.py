@@ -51,6 +51,21 @@ linear_sum_assignment = cast(_LinearSumAssignment, _linear_sum_assignment)
 # Large enough to dominate any real class/bbox/GIoU cost, finite so the solver stays well conditioned.
 _PADDED_TARGET_COST = 1.0e4
 
+#: Minimum number of cross-image class/bbox/GIoU entries the masks-present path must avoid before
+#: using the compact per-image route (:meth:`HungarianMatcher._compute_compact_detection_cost_matrix`).
+#: The avoided work is ``batch_size * num_queries * (sum(sizes) - max(sizes))``: the full path
+#: materializes ``sum(sizes)`` target columns for every image, while the compact path pads only to
+#: ``max(sizes)``. This captures target-count imbalance; a gate on compact-matrix size alone would
+#: route a batch where one image owns nearly every target even though almost no work is removed.
+#:
+#: Set to the smallest measured winning workload on an NVIDIA L4: real ``RFDETRSegNano`` with
+#: ``batch_size=8``, 1,300 training-time queries, and 10 targets/image avoids 728,000 entries and
+#: improves the steady-state forward+criterion+backward step by 7.98% (7.79-9.03% across 5 repeats).
+#: The measured batch-4 workload avoids only 156,000 entries and is neutral (-0.04%, -1.29% to
+#: +0.39%), so it stays on the established path. The route is CUDA-only because no other backend
+#: was benchmarked.
+_MASK_COMPACT_SAVED_ELEMENT_LIMIT = 728_000
+
 
 class _TargetSideSafety(NamedTuple):
     """A precomputed compact-path target-side safety result from
@@ -298,6 +313,87 @@ class HungarianMatcher(nn.Module):
             and not ("pred_keypoints" in outputs and "keypoints" in targets[0])
         )
 
+    @staticmethod
+    def _compact_mask_path_applicable(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
+        """Return whether the compact-class/bbox/GIoU hybrid could apply to a batch WITH mask targets.
+
+        Mirrors :meth:`_compact_path_applicable`'s routing precondition for the opposite case: a
+        batch that has mask targets instead of none. Still requires more than one image (the same
+        regression :meth:`_compact_path_applicable` already guards against applies here identically —
+        the compact route's fixed overhead cannot be justified at ``batch_size == 1``) and still
+        excludes keypoints, an untested combination with masks. Also excludes fixed-row target
+        padding (``"valid"`` in ``targets[0]``, from XLA's target padding, see ``pack_targets``):
+        that mechanism's per-column sentinel is verified only for the fully compact detection matrix
+        (:meth:`_compute_compact_detection_cost_matrix`'s own ``"valid"`` handling), and a mask cost
+        is not necessarily constant across queries for a padded (invalid) target column the way the
+        sentinel assumes, so the interaction is unverified — route those batches to the full
+        cartesian path instead, exactly as :meth:`_compact_path_applicable` already routes masks and
+        keypoints away from the pure-detection compact path for the same kind of reason.
+
+        >>> outputs = {"pred_logits": torch.zeros(2, 3, 4)}
+        >>> targets = [{"masks": torch.zeros(1, 8, 8)}, {"masks": torch.zeros(1, 8, 8)}]
+        >>> HungarianMatcher._compact_mask_path_applicable(outputs, targets)
+        True
+
+        Args:
+            outputs: Model outputs containing at least ``pred_logits``.
+            targets: Per-image target dicts.
+
+        Returns:
+            ``True`` only for a batch of more than one image, with mask targets, no keypoint
+            targets, and no fixed-row target padding.
+        """
+        return (
+            outputs["pred_logits"].shape[0] > 1
+            and "masks" in targets[0]
+            and not ("pred_keypoints" in outputs and "keypoints" in targets[0])
+            and "valid" not in targets[0]
+        )
+
+    @staticmethod
+    def _mask_compact_device_supported(outputs: dict[str, Any]) -> bool:
+        """Return whether the masks-present compact route is measured on this device.
+
+        >>> HungarianMatcher._mask_compact_device_supported({"pred_logits": torch.zeros(2, 3, 4)})
+        False
+
+        Args:
+            outputs: Model outputs containing ``pred_logits``.
+
+        Returns:
+            ``True`` for CUDA tensors; other backends retain the established full-cartesian path.
+        """
+        return bool(outputs["pred_logits"].is_cuda)
+
+    @staticmethod
+    def _mask_compact_worth_it(outputs: dict[str, Any], targets: list[dict[str, Any]]) -> bool:
+        """Return whether this masks-present batch is large enough for the compact route to pay off.
+
+        The compact route (``pad_sequence`` + gather + ``cdist``/vmapped GIoU,
+        :meth:`_compute_compact_detection_cost_matrix`) has a roughly constant per-call fixed cost.
+        Gate on the number of cross-image entries it avoids, not the compact matrix's own size: two
+        batches can have the same ``batch_size * num_queries * max(sizes)`` while one has balanced
+        target counts and the other has almost every target in one image, leaving little work to save.
+
+        >>> outputs = {"pred_logits": torch.zeros(2, 4, 5)}
+        >>> targets = [{"boxes": torch.zeros(1, 4)}, {"boxes": torch.zeros(1, 4)}]
+        >>> HungarianMatcher._mask_compact_worth_it(outputs, targets)
+        False
+
+        Args:
+            outputs: Model outputs containing at least ``pred_logits``.
+            targets: Per-image target dicts containing ``boxes``.
+
+        Returns:
+            ``True`` when the number of avoided class/bbox/GIoU entries reaches
+            :data:`_MASK_COMPACT_SAVED_ELEMENT_LIMIT`.
+        """
+        batch_size, num_queries = outputs["pred_logits"].shape[:2]
+        sizes = [len(target["boxes"]) for target in targets]
+        max_targets = max(sizes, default=0)
+        saved_elements = batch_size * num_queries * (sum(sizes) - max_targets)
+        return bool(saved_elements >= _MASK_COMPACT_SAVED_ELEMENT_LIMIT)
+
     @torch.no_grad()
     def _precompute_target_side_safety(
         self, outputs: dict[str, Any], targets: list[dict[str, Any]]
@@ -328,16 +424,22 @@ class HungarianMatcher(nn.Module):
             targets: The step's targets, unchanged across every :meth:`forward` call it feeds.
 
         Returns:
-            ``None`` when :meth:`_compact_path_applicable` rules the compact path out for this batch
-            entirely, since :meth:`forward` then never reaches the safety gate and sweeping the
-            targets would be pure overhead. Otherwise a :class:`_TargetSideSafety` to pass as
+            ``None`` when neither the detection-only compact path nor the CUDA masks-hybrid path can
+            run for this batch, since :meth:`forward` then never reaches the safety gate and sweeping
+            the targets would be pure overhead. Otherwise a :class:`_TargetSideSafety` to pass as
             :meth:`forward`'s ``target_side_safety`` argument. :meth:`forward` verifies the exact
             ``targets`` object (by identity) plus the dtype/device/``num_classes`` it was computed
             against still match the current call before trusting it, falling back to a fresh
             computation otherwise — reusing it never changes what :meth:`forward` returns, only how
             much redundant work it does to get there.
         """
-        if not self._compact_path_applicable(outputs, targets):
+        detection_compact_applicable = self._compact_path_applicable(outputs, targets)
+        mask_compact_applicable = (
+            self._mask_compact_device_supported(outputs)
+            and self._compact_mask_path_applicable(outputs, targets)
+            and self._mask_compact_worth_it(outputs, targets)
+        )
+        if not (detection_compact_applicable or mask_compact_applicable):
             return None
         pred_boxes = outputs["pred_boxes"]
         num_classes = outputs["pred_logits"].shape[-1]
@@ -682,6 +784,63 @@ class HungarianMatcher(nn.Module):
                 ]
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
+    def _compute_mask_costs(self, outputs: dict[str, Any], targets: list[dict[str, Any]]) -> tuple[Tensor, Tensor]:
+        """Compute pairwise mask BCE and Dice costs over the whole batch.
+
+        Shared by the full-cartesian ``masks_present`` path and the compact-hybrid path in
+        :meth:`forward`: both need the identical ``[batch_size * num_queries, total_targets]``
+        pairwise mask cost, sampled at the same randomly drawn ``point_coords`` (the predicted and
+        target mask samples must share one draw to be comparable pointwise).
+
+        Args:
+            outputs: Model outputs containing ``pred_masks`` — either a ``Tensor`` of raw mask
+                logits, or a dict of ``spatial_features``/``query_features``/``bias`` for the
+                projected mask head.
+            targets: Per-image target dicts containing ``masks``.
+
+        Returns:
+            ``(cost_mask_ce, cost_mask_dice)``, each of shape
+            ``[batch_size * num_queries, total_targets]``.
+        """
+        tgt_masks = torch.cat([target["masks"] for target in targets])
+
+        if isinstance(outputs["pred_masks"], Tensor):
+            out_masks = outputs["pred_masks"].flatten(0, 1)
+
+            num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
+
+            point_coords = torch.rand(1, num_points, 2, device=out_masks.device)
+            pred_masks_logits = point_sample(
+                out_masks.unsqueeze(1), point_coords.repeat(out_masks.shape[0], 1, 1), align_corners=False
+            ).squeeze(1)
+        else:
+            spatial_features = outputs["pred_masks"]["spatial_features"]
+            query_features = outputs["pred_masks"]["query_features"]
+            bias = outputs["pred_masks"]["bias"]
+
+            num_points = spatial_features.shape[-2] * spatial_features.shape[-1] // self.mask_point_sample_ratio
+            point_coords = torch.rand(1, num_points, 2, device=spatial_features.device)
+            pred_masks_logits = point_sample(
+                spatial_features, point_coords.repeat(spatial_features.shape[0], 1, 1), align_corners=False
+            )
+            pred_masks_logits = torch.einsum("bcp,bnc->bnp", pred_masks_logits, query_features) + bias
+            pred_masks_logits = pred_masks_logits.flatten(0, 1)
+
+        tgt_masks = tgt_masks.to(pred_masks_logits.dtype)
+        tgt_masks_flat = point_sample(
+            tgt_masks.unsqueeze(1),
+            point_coords.repeat(tgt_masks.shape[0], 1, 1),
+            align_corners=False,
+            mode="nearest",
+        ).squeeze(1)
+
+        # Binary cross-entropy with logits cost (mean over pixels), computed pairwise efficiently
+        cost_mask_ce = batch_sigmoid_ce_loss(pred_masks_logits, tgt_masks_flat)
+
+        # Dice loss cost (1 - dice coefficient)
+        cost_mask_dice = batch_dice_loss(pred_masks_logits, tgt_masks_flat)
+        return cost_mask_ce, cost_mask_dice
+
     @torch.no_grad()
     def forward(
         self,
@@ -719,6 +878,12 @@ class HungarianMatcher(nn.Module):
 
         masks_present = "masks" in targets[0]
         keypoints_present = "pred_keypoints" in outputs and "keypoints" in targets[0]
+        # Set by the masks-hybrid branch below when it draws the mask cost's random point sample so
+        # the full-cartesian fallback (reached when the combined cost turns out non-finite) reuses
+        # that exact draw instead of calling `_compute_mask_costs` a second time — see the fall-
+        # through comment in that branch for why a second draw would silently diverge from the
+        # single-draw behaviour the full path has always had for a masks-present batch.
+        precomputed_mask_costs: tuple[Tensor, Tensor] | None = None
         compact_eligible = self._compact_path_applicable(outputs, targets) and self._detection_inputs_are_safe(
             outputs, targets, target_side_safety
         )
@@ -744,6 +909,54 @@ class HungarianMatcher(nn.Module):
             # matrix's. Falling through keeps this exceptional branch byte-for-byte identical to
             # the pre-existing behaviour; it costs the redundant cross-image compute only on this
             # already-rare path.
+        elif (
+            self._mask_compact_device_supported(outputs)
+            and self._compact_mask_path_applicable(outputs, targets)
+            and self._mask_compact_worth_it(outputs, targets)
+            and self._detection_inputs_are_safe(outputs, targets, target_side_safety)
+        ):
+            # masks_present hybrid: class/bbox/GIoU through the same compact per-image route the
+            # detection-only path above uses (cheap here too — `_detection_inputs_are_safe` only
+            # sweeps boxes/labels, not masks, so it is exactly as valid a gate for this route's
+            # class/bbox/GIoU half), combined with the mask cost's own diagonal blocks extracted
+            # from its full cross-image matrix (mask costs are NOT compactable the same way — a
+            # prior attempt at compacting them regressed 15-94% because `pad_sequence`+batched
+            # `einsum` do not scale down to per-image mask-sized (`num_points`-wide) inputs the way
+            # `cdist`/gather do for 4-wide boxes and class logits).
+            sizes = [len(target["boxes"]) for target in targets]
+            compact_class_bbox_giou = self._compute_compact_detection_cost_matrix(outputs, targets)
+            cost_mask_ce, cost_mask_dice = self._compute_mask_costs(outputs, targets)
+            precomputed_mask_costs = (cost_mask_ce, cost_mask_dice)
+            weighted_mask_ce = (self.cost_mask_ce * cost_mask_ce).view(bs, num_queries, -1)
+            weighted_mask_dice = (self.cost_mask_dice * cost_mask_dice).view(bs, num_queries, -1)
+            target_offsets = [0]
+            for size in sizes:
+                target_offsets.append(target_offsets[-1] + size)
+            mask_ce_diagonal = torch.cat(
+                [weighted_mask_ce[index, :, target_offsets[index] : target_offsets[index + 1]] for index in range(bs)],
+                dim=-1,
+            )
+            mask_dice_diagonal = torch.cat(
+                [
+                    weighted_mask_dice[index, :, target_offsets[index] : target_offsets[index + 1]]
+                    for index in range(bs)
+                ],
+                dim=-1,
+            )
+            # Preserve the full path's left-associative addition order exactly: floating-point
+            # addition is not associative, and regrouping the mask terms can change a near-tied
+            # Hungarian assignment by one ULP.
+            combined_cost_matrix = compact_class_bbox_giou + mask_ce_diagonal
+            combined_cost_matrix = (combined_cost_matrix + mask_dice_diagonal).float()
+            if torch.isfinite(combined_cost_matrix).all():
+                if combined_cost_matrix.is_cuda:
+                    return _assignment.assign_many_bucketed([combined_cost_matrix], sizes, group_detr)[0]
+                return self._assign_compact_cost_matrix(combined_cost_matrix.cpu(), sizes, group_detr)
+            # Same trade-off as the detection-only compact path above: a non-finite combined cost
+            # (most likely from the mask side, which this branch's safety gate does not sweep)
+            # falls through to the full cartesian path below, which reuses this branch's own mask
+            # cost draw (`precomputed_mask_costs`, set above) rather than sanitizing this matrix in
+            # isolation or drawing a second, different random point sample.
 
         # We flatten to compute the cost matrices in a batch
         flat_pred_logits = outputs["pred_logits"].flatten(0, 1)
@@ -775,44 +988,15 @@ class HungarianMatcher(nn.Module):
         cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
 
         if masks_present:
-            tgt_masks = torch.cat([v["masks"] for v in targets])
-
-            if isinstance(outputs["pred_masks"], Tensor):
-                out_masks = outputs["pred_masks"].flatten(0, 1)
-
-                num_points = out_masks.shape[-2] * out_masks.shape[-1] // self.mask_point_sample_ratio
-
-                point_coords = torch.rand(1, num_points, 2, device=out_masks.device)
-                pred_masks_logits = point_sample(
-                    out_masks.unsqueeze(1), point_coords.repeat(out_masks.shape[0], 1, 1), align_corners=False
-                ).squeeze(1)
-            else:
-                spatial_features = outputs["pred_masks"]["spatial_features"]
-                query_features = outputs["pred_masks"]["query_features"]
-                bias = outputs["pred_masks"]["bias"]
-
-                num_points = spatial_features.shape[-2] * spatial_features.shape[-1] // self.mask_point_sample_ratio
-                point_coords = torch.rand(1, num_points, 2, device=spatial_features.device)
-                pred_masks_logits = point_sample(
-                    spatial_features, point_coords.repeat(spatial_features.shape[0], 1, 1), align_corners=False
-                )
-                # print(f"pred_masks_logits.shape: {pred_masks_logits.shape}")
-                pred_masks_logits = torch.einsum("bcp,bnc->bnp", pred_masks_logits, query_features) + bias
-                pred_masks_logits = pred_masks_logits.flatten(0, 1)
-
-            tgt_masks = tgt_masks.to(pred_masks_logits.dtype)
-            tgt_masks_flat = point_sample(
-                tgt_masks.unsqueeze(1),
-                point_coords.repeat(tgt_masks.shape[0], 1, 1),
-                align_corners=False,
-                mode="nearest",
-            ).squeeze(1)
-
-            # Binary cross-entropy with logits cost (mean over pixels), computed pairwise efficiently
-            cost_mask_ce = batch_sigmoid_ce_loss(pred_masks_logits, tgt_masks_flat)
-
-            # Dice loss cost (1 - dice coefficient)
-            cost_mask_dice = batch_dice_loss(pred_masks_logits, tgt_masks_flat)
+            # Reuse the masks-hybrid branch's own draw when this call reached the fallback because
+            # its combined cost was non-finite: `_compute_mask_costs` samples its point coordinates
+            # with `torch.rand`, so calling it again here would silently consume a second, different
+            # sample instead of preserving the single draw the full path has always made.
+            cost_mask_ce, cost_mask_dice = (
+                precomputed_mask_costs
+                if precomputed_mask_costs is not None
+                else self._compute_mask_costs(outputs, targets)
+            )
 
         if keypoints_present and tgt_keypoints is not None:
             target_areas = tgt_bbox[:, 2] * tgt_bbox[:, 3]

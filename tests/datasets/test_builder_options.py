@@ -8,13 +8,14 @@
 import types
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import ModelConfig, RFDETRSegSmallConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.config import DatasetFile, ModelConfig, RFDETRSegSmallConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.datasets import _DATASET_BUILDERS, build_dataset
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365_raw
 from rfdetr.datasets.yolo import build_roboflow_from_yolo
@@ -24,7 +25,6 @@ ALL_REQUIRED_PIPELINE_OPTIONS = (
     "segmentation_head",
     "multi_scale",
     "expanded_scales",
-    "do_random_resize_via_padding",
     "patch_size",
     "num_windows",
 )
@@ -46,7 +46,7 @@ def _training_namespace(model_config: ModelConfig, dataset_dir: str = "/fake/dat
     Examples:
         >>> namespace = _training_namespace(RFDETRSmallConfig())
         >>> (namespace.multi_scale, namespace.num_windows, namespace.square_resize_div_64)
-        (True, 2, True)
+        ('per-batch', 2, True)
     """
     return _namespace_from_configs(model_config, TrainConfig(dataset_dir=dataset_dir))
 
@@ -290,12 +290,16 @@ class TestConfigValuesReachTheTransformPipeline:
     @pytest.mark.parametrize(
         "namespace_option,configured_value,transform_option,expected_value",
         [
+            ("multi_scale", "per-batch", "multi_scale", True),
+            ("multi_scale", "per-sample", "multi_scale", True),
+            ("multi_scale", "off", "multi_scale", False),
             ("multi_scale", True, "multi_scale", True),
             ("multi_scale", False, "multi_scale", False),
             ("expanded_scales", True, "expanded_scales", True),
             ("expanded_scales", False, "expanded_scales", False),
-            ("do_random_resize_via_padding", True, "skip_random_resize", False),
-            ("do_random_resize_via_padding", False, "skip_random_resize", True),
+            ("multi_scale", "per-batch", "skip_random_resize", True),
+            ("multi_scale", "per-sample", "skip_random_resize", False),
+            ("multi_scale", True, "skip_random_resize", True),
             ("patch_size", 12, "patch_size", 12),
             ("num_windows", 3, "num_windows", 3),
         ],
@@ -305,7 +309,7 @@ class TestConfigValuesReachTheTransformPipeline:
         self,
         builder: BuilderCall,
         namespace_option: str,
-        configured_value: bool | int,
+        configured_value: bool | int | str,
         transform_option: str,
         expected_value: bool | int,
         square_resize_div_64: bool,
@@ -340,3 +344,30 @@ class TestConfigValuesReachTheTransformPipeline:
         """Every segmentation-capable builder must enable masks for a segmentation model."""
         captured = builder(_training_namespace(RFDETRSegSmallConfig()), resolution=512)
         assert captured["dataset_kwargs"]["include_masks"] is True
+
+
+class TestDatasetBuilderRegistry:
+    """``build_dataset`` dispatches through the registry keyed by ``TrainConfig.dataset_file``."""
+
+    def test_registry_matches_the_typed_dataset_file_names(self) -> None:
+        """Every ``DatasetFile`` literal has a builder and every builder has a literal."""
+        assert set(_DATASET_BUILDERS) == set(get_args(DatasetFile))
+
+    @pytest.mark.parametrize("dataset_file", list(get_args(DatasetFile)))
+    def test_build_dataset_calls_the_registered_builder(self, dataset_file: str) -> None:
+        """Each name routes to its registry entry with the call arguments forwarded unchanged."""
+        namespace = types.SimpleNamespace(dataset_file=dataset_file)
+        sentinel = MagicMock(name="dataset")
+        builder = MagicMock(return_value=sentinel)
+
+        with patch.dict(_DATASET_BUILDERS, {dataset_file: builder}):
+            assert build_dataset("train", namespace, 512) is sentinel
+
+        builder.assert_called_once_with("train", namespace, 512)
+
+    def test_build_dataset_rejects_unknown_dataset_file(self) -> None:
+        """An unregistered name raises and lists the accepted names."""
+        namespace = types.SimpleNamespace(dataset_file="parquet")
+
+        with pytest.raises(ValueError, match="parquet.*coco"):
+            build_dataset("train", namespace, 512)

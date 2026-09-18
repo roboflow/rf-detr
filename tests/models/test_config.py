@@ -20,6 +20,7 @@ from rfdetr.config import (
     AugmentationBackend,
     KeypointTrainConfig,
     ModelConfig,
+    MultiScale,
     PretrainWeightsCompatibilityWarning,
     RFDETRBaseConfig,
     RFDETRLargeConfig,
@@ -35,6 +36,7 @@ from rfdetr.config import (
     SegmentationTrainConfig,
     TrainConfig,
     _detect_device,
+    _resolve_amp_dtype,
 )
 
 
@@ -236,6 +238,40 @@ class TestTrainConfigRejectsUnknownKwargs:
         stub = SimpleNamespace(_train_config_class=TrainConfig)
         with pytest.raises(ValidationError, match=r"Unknown parameter\(s\): 'epoch'"):
             RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
+
+
+class TestTrainConfigMultiScale:
+    """`multi_scale` is a `MultiScale` enum; booleans are accepted as aliases and never stored."""
+
+    def test_default_is_batch(self, tmp_path) -> None:
+        """The default mode is the per-batch scale draw, matching the old `multi_scale=True` behaviour."""
+        assert TrainConfig(dataset_dir=str(tmp_path)).multi_scale is MultiScale.PER_BATCH
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            pytest.param(True, MultiScale.PER_BATCH, id="legacy-true"),
+            pytest.param(False, MultiScale.OFF, id="legacy-false"),
+            pytest.param("per-batch", MultiScale.PER_BATCH, id="per-batch"),
+            pytest.param("per-sample", MultiScale.PER_SAMPLE, id="per-sample"),
+            pytest.param("off", MultiScale.OFF, id="off"),
+            pytest.param(MultiScale.PER_SAMPLE, MultiScale.PER_SAMPLE, id="member"),
+        ],
+    )
+    def test_inputs_normalize_to_member(self, tmp_path, value, expected) -> None:
+        """Booleans, string values, and members all land on the matching enum member."""
+        assert TrainConfig(dataset_dir=str(tmp_path), multi_scale=value).multi_scale is expected
+
+    def test_model_dump_serializes_to_string(self, tmp_path) -> None:
+        """`model_dump` yields the plain string value so checkpoint hyperparameters stay JSON-safe."""
+        assert (
+            TrainConfig(dataset_dir=str(tmp_path), multi_scale="per-sample").model_dump()["multi_scale"] == "per-sample"
+        )
+
+    def test_unknown_mode_rejected(self, tmp_path) -> None:
+        """A string outside the enum is a validation error."""
+        with pytest.raises(ValidationError, match="multi_scale"):
+            TrainConfig(dataset_dir=str(tmp_path), multi_scale="image")
 
 
 class TestTrainConfigT42PromotedFields:
@@ -679,6 +715,80 @@ class TestTrainConfigT42PromotedFields:
         """eval_masks_head_resolution=True is accepted (opt-in, no cross-field constraint)."""
         tc = self._tc(tmp_path, eval_masks_head_resolution=True)
         assert tc.eval_masks_head_resolution is True
+
+
+class TestResolveAmpDtype:
+    """``amp_dtype`` is the live AMP authority; ``ModelConfig.amp`` is a deprecated fallback."""
+
+    def _tc(self, tmp_path: Path, **kwargs: object) -> TrainConfig:
+        """Build a minimal training configuration.
+
+        Examples:
+            >>> config = TestResolveAmpDtype()._tc(Path("/tmp"), amp_dtype=None)
+            >>> config.amp_dtype is None
+            True
+        """
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    def test_default_resolves_to_auto(self, tmp_path):
+        """Neither field touched: AMP stays on with the auto-selected dtype."""
+        assert _resolve_amp_dtype(RFDETRNanoConfig(), self._tc(tmp_path)) == "auto"
+
+    def test_explicit_none_disables_amp(self, tmp_path):
+        """amp_dtype=None is the supported way to train in full fp32."""
+        assert _resolve_amp_dtype(RFDETRNanoConfig(), self._tc(tmp_path, amp_dtype=None)) is None
+
+    def test_explicit_amp_dtype_outranks_deprecated_amp_false(self, tmp_path):
+        """A caller-set amp_dtype is never silently disabled by a stale amp=False."""
+        assert _resolve_amp_dtype(RFDETRNanoConfig(amp=False), self._tc(tmp_path, amp_dtype="bf16")) == "bf16"
+
+    def test_explicit_fp8_outranks_deprecated_amp_false(self, tmp_path):
+        """Fp8 is no exception to the precedence rule; hardware checks, not amp, gate it downstream."""
+        resolved = _resolve_amp_dtype(RFDETRNanoConfig(amp=False), self._tc(tmp_path, amp_dtype="fp8", batch_size=4))
+        assert resolved == "fp8"
+
+    def test_deprecated_amp_false_applies_when_amp_dtype_is_default(self, tmp_path):
+        """Legacy amp=False keeps working while amp_dtype is untouched."""
+        with pytest.warns(FutureWarning, match="ModelConfig.amp is deprecated"):
+            assert _resolve_amp_dtype(RFDETRNanoConfig(amp=False), self._tc(tmp_path)) is None
+
+    def test_deprecated_amp_false_survives_a_train_config_round_trip(self, tmp_path):
+        """A reloaded config carries amp_dtype explicitly; that must not silently void the legacy toggle."""
+        reloaded = TrainConfig(**self._tc(tmp_path).model_dump())
+        with pytest.warns(FutureWarning, match="ModelConfig.amp is deprecated"):
+            assert _resolve_amp_dtype(RFDETRNanoConfig(amp=False), reloaded) is None
+
+    def test_amp_true_does_not_warn(self, tmp_path):
+        """The default amp=True is not a deprecated usage and must stay silent."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            assert _resolve_amp_dtype(RFDETRNanoConfig(), self._tc(tmp_path)) == "auto"
+
+    def test_none_is_accepted_by_validation(self, tmp_path):
+        """None is a valid amp_dtype, not an unknown value coerced back to 'auto'."""
+        assert self._tc(tmp_path, amp_dtype=None).amp_dtype is None
+
+
+class TestDeprecatedFp16Eval:
+    """``fp16_eval`` is inert and superseded by ``amp_dtype``."""
+
+    def _tc(self, tmp_path, **kwargs):
+        defaults = dict(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+        defaults.update(kwargs)
+        return TrainConfig(**defaults)
+
+    def test_explicit_true_warns(self, tmp_path):
+        """Setting the flag surfaces that it does nothing rather than silently ignoring it."""
+        with pytest.warns(FutureWarning, match="fp16_eval is deprecated"):
+            self._tc(tmp_path, fp16_eval=True)
+
+    def test_default_does_not_warn(self, tmp_path):
+        """The untouched default must stay silent, including on a dumped-config reload."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            TrainConfig(**self._tc(tmp_path).model_dump())
 
 
 class TestTrainConfigLRScheduler:

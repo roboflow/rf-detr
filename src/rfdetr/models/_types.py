@@ -56,7 +56,6 @@ class BuilderArgs(Protocol):
     bbox_reparam: bool
     lite_refpoint_refine: bool
     layer_norm: bool
-    amp: bool
     num_classes: int
     pretrain_weights: str | None
     device: str

@@ -9,7 +9,7 @@
 RF-DETR is a real-time transformer architecture for object detection and instance segmentation. Built on DINOv2 vision transformer backbone with PyTorch.
 
 - **Project Type:** Python ML library (computer vision)
-- **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13)
+- **Python:** >=3.10 (3.10, 3.11, 3.12, 3.13, 3.14)
 - **License:** Apache 2.0 (Plus models under PML 1.0)
 
 > [!TIP]
@@ -37,6 +37,8 @@ uv build
 > Run `uv sync` after pulling changes to update dependencies.
 
 **Dependency extras:** `rfdetr[train]` is intentionally minimal and uses torchvision-native default augmentations. Custom Albumentations CPU configs and Kornia GPU augmentation both require `rfdetr[augment]`.
+
+**CUDA graph precision:** `cuda_graphs=True` routes BF16 capture through PyTorch and fixed-shape FP8 capture through Transformer Engine when `compile=False`. Keep the registered model unchanged. FP8 graphs require the active Lightning recipe, one GPU, detection, and no accumulation; see `AGENTS.md` for guards. Never wrap a compiled model with the eager capture runner.
 
 ## Code Quality
 
@@ -78,7 +80,7 @@ pre-commit run --all-files
 - ✅ Before PR: Final commit MUST have all tests passing
 - ✅ Before commit: Run `pre-commit run --all-files`
 
-**CI/CD:** See `.github/workflows/` for source of truth. Tests run on Python 3.10-3.13 across Ubuntu, Windows, macOS.
+**CI/CD:** See `.github/workflows/` for source of truth. Tests run on Python 3.10-3.14 on Ubuntu, and on Python 3.10 and 3.13 on Windows and macOS.
 
 ## Coding Standards
 

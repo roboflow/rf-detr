@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
+import copy
 import io
 from unittest.mock import Mock
 
@@ -13,6 +14,9 @@ import pytest
 import torch
 from torch import nn
 
+from rfdetr._namespace import _namespace_from_configs
+from rfdetr.config import RFDETRNanoConfig, TrainConfig
+from rfdetr.models.lwdetr import build_model
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
@@ -1533,6 +1537,521 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
         torch.testing.assert_close(new_gradient, reference_gradient, atol=1e-5, rtol=1e-4)
 
 
+def _build_two_stage_transformer_with_production_shaped_heads(
+    hidden_dim: int, num_queries: int, group_detr: int, num_classes: int, bbox_reparam: bool
+) -> Transformer:
+    """Build a two-stage ``Transformer`` whose group heads are the concrete types LWDETR constructs.
+
+    ``Transformer.__init__`` already builds ``enc_output``/``enc_output_norm`` as real
+    ``nn.Linear``/``nn.LayerNorm``. This additionally assigns real ``nn.Linear``/``MLP`` instances to
+    ``enc_out_class_embed``/``enc_out_bbox_embed`` (which start ``None`` and are set externally by
+    ``LWDETR`` in production), matching the layout ``Transformer._two_stage_batching_eligible`` requires
+    for the batched fast path.
+
+    Args:
+        hidden_dim: Model width.
+        num_queries: Queries selected per group.
+        group_detr: Number of independent groups.
+        num_classes: Class-head output width.
+        bbox_reparam: Whether the transformer uses the reparameterised box-delta path.
+
+    Returns:
+        A two-stage ``Transformer`` left in its default training mode.
+
+    Examples:
+        >>> t = _build_two_stage_transformer_with_production_shaped_heads(16, 3, 2, 5, False)
+        >>> t._two_stage_batching_eligible()
+        True
+    """
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=2,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=bbox_reparam,
+        group_detr=group_detr,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, num_classes) for _ in range(group_detr)])
+    transformer.enc_out_bbox_embed = nn.ModuleList(
+        [MLP(hidden_dim, hidden_dim, 4, num_layers=3) for _ in range(group_detr)]
+    )
+    return transformer
+
+
+def test_two_stage_batching_eligible_true_for_production_shaped_two_stage_modules() -> None:
+    """The batched fast path's eligibility guard must accept the exact layout LWDETR constructs."""
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=4, num_classes=5, bbox_reparam=False
+    )
+    assert transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_batching_eligible_true_for_real_build_model_rfdetr_nano() -> None:
+    """The fast path activates on RFDETRNano assembled through the real production constructor.
+
+    ``_build_two_stage_transformer_with_production_shaped_heads`` manually assigns the head types
+    ``LWDETR.__init__`` constructs; this test instead calls ``build_model()`` -- the same function
+    ``RFDETRNano`` uses -- so the eligibility guard is proven against the actual shipped wiring,
+    not a hand-built stand-in.
+    """
+    ns = _namespace_from_configs(
+        RFDETRNanoConfig(num_classes=80, pretrain_weights=None, device="cpu"), TrainConfig(dataset_dir="/tmp")
+    )
+    model = build_model(ns)
+    assert model.group_detr == 13
+    assert model.transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_batching_eligible_false_for_linear_subclass_in_enc_output() -> None:
+    """A subclassed nn.Linear must be rejected, not accepted via a permissive isinstance check.
+
+    The fast path only reads `.weight`/`.bias` directly and never calls the module itself, so a subclass with its own
+    overridden `forward` would have that override silently skipped if the guard let it through.
+    """
+
+    class _DoublingLinear(nn.Linear):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return super().forward(x) * 2
+
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    transformer.enc_output = nn.ModuleList([_DoublingLinear(16, 16) for _ in range(2)])
+    assert not transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_batching_eligible_false_for_bias_free_linear_in_enc_output() -> None:
+    """A bias=False nn.Linear must be rejected, not crash inside torch.stack over a None bias.
+
+    `_stack_linear_params` unconditionally stacks every module's `.bias`; without this guard a `None` bias would raise a
+    `TypeError` instead of falling back to the generic loop, which calls the module directly and tolerates a missing
+    bias.
+    """
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    transformer.enc_output = nn.ModuleList([nn.Linear(16, 16, bias=False) for _ in range(2)])
+    assert not transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_batching_eligible_false_for_affine_free_layer_norm() -> None:
+    """An elementwise_affine=False nn.LayerNorm must be rejected, not crash inside torch.stack over None.
+
+    `_two_stage_group_selection` unconditionally stacks every `enc_output_norm` module's `.weight` and `.bias`; both are
+    `None` when `elementwise_affine=False`, which would otherwise reach `torch.stack` instead of falling back to the
+    generic loop.
+    """
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    transformer.enc_output_norm = nn.ModuleList([nn.LayerNorm(16, elementwise_affine=False) for _ in range(2)])
+    assert not transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_batching_eligible_false_for_multi_axis_layer_norm() -> None:
+    """A multi-axis LayerNorm must use the generic path even when every group has the same shape."""
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    transformer.enc_output_norm = nn.ModuleList([nn.LayerNorm((20, 16)) for _ in range(2)])
+    assert not transformer._two_stage_batching_eligible()
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "group-count",
+        "layer-norm-eps",
+        "layer-norm-dtype",
+        "class-head-shape",
+        "class-head-dtype",
+        "bbox-depth",
+        "bbox-layer-shape",
+    ],
+)
+def test_two_stage_batching_eligible_false_for_heterogeneous_group_modules(mismatch: str) -> None:
+    """Groups that cannot share one stacked operation must fall back to their individual module calls."""
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+
+    if mismatch == "group-count":
+        transformer.enc_output = nn.ModuleList([transformer.enc_output[0]])
+    elif mismatch == "layer-norm-eps":
+        transformer.enc_output_norm[1].eps = 0.1
+    elif mismatch == "layer-norm-dtype":
+        transformer.enc_output_norm[1].double()
+    elif mismatch == "class-head-shape":
+        transformer.enc_out_class_embed[1] = nn.Linear(16, 6)
+    elif mismatch == "class-head-dtype":
+        transformer.enc_out_class_embed[1].double()
+    elif mismatch == "bbox-depth":
+        transformer.enc_out_bbox_embed[1] = MLP(16, 16, 4, num_layers=2)
+    else:
+        transformer.enc_out_bbox_embed[1] = MLP(16, 12, 4, num_layers=3)
+
+    assert not transformer._two_stage_batching_eligible()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "encoder-hook",
+        "norm-hook",
+        "class-hook",
+        "bbox-hook",
+        "bbox-layer-hook",
+        "instance-forward",
+        "compiled-child",
+        "global-hook",
+    ],
+)
+def test_two_stage_batching_eligible_false_when_module_call_semantics_are_observable(case: str) -> None:
+    """Hooks and per-instance call overrides must keep the generic module-calling path."""
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    handle = None
+    if case == "encoder-hook":
+        transformer.enc_output[0].register_forward_hook(Mock(return_value=None))
+    elif case == "norm-hook":
+        transformer.enc_output_norm[0].register_forward_pre_hook(Mock(return_value=None))
+    elif case == "class-hook":
+        transformer.enc_out_class_embed[0].register_full_backward_hook(Mock(return_value=None))
+    elif case == "bbox-hook":
+        transformer.enc_out_bbox_embed[0].register_full_backward_pre_hook(Mock(return_value=None))
+    elif case == "bbox-layer-hook":
+        transformer.enc_out_bbox_embed[0].layers[0].register_forward_hook(Mock(return_value=None))
+    elif case == "instance-forward":
+        transformer.enc_output[0].forward = Mock(side_effect=transformer.enc_output[0].forward)
+    elif case == "compiled-child":
+        transformer.enc_output[0]._compiled_call_impl = Mock()
+    else:
+        handle = nn.modules.module.register_module_forward_hook(Mock(return_value=None))
+
+    try:
+        assert not transformer._two_stage_batching_eligible()
+    finally:
+        if handle is not None:
+            handle.remove()
+
+
+def test_two_stage_forward_preserves_hooked_child_module_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The public forward route must execute child hooks through the generic fallback."""
+    hidden_dim, num_queries, group_detr = 16, 3, 2
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim, num_queries, group_detr, num_classes=5, bbox_reparam=False
+    )
+    hook = Mock(return_value=None)
+    transformer.enc_output[0].register_forward_hook(hook)
+    selection_mock = Mock(side_effect=transformer._two_stage_group_selection)
+    monkeypatch.setattr(transformer, "_two_stage_group_selection", selection_mock)
+
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    srcs = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(2, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    assert hook.call_count == 1
+    assert selection_mock.call_count == 0
+
+
+def test_two_stage_group_selection_dispatches_through_forward(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`Transformer.forward` must invoke the batched fast path exactly once when eligible."""
+    hidden_dim, num_queries, group_detr = 16, 3, 4
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim, num_queries, group_detr, num_classes=5, bbox_reparam=False
+    )
+    assert transformer._two_stage_batching_eligible()
+
+    selection_mock = Mock(side_effect=transformer._two_stage_group_selection)
+    monkeypatch.setattr(transformer, "_two_stage_group_selection", selection_mock)
+
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+    srcs = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(2, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    assert selection_mock.call_count == 1
+
+
+@pytest.mark.parametrize("bbox_reparam", [False, True])
+def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbox_reparam: bool) -> None:
+    """The batched fast path (group_detr>1) must reproduce the generic per-group loop's fp32 outputs and gradients.
+
+    Runs the SAME transformer twice from identical inputs: once through ``Transformer.forward``'s normal
+    routing (which takes the fast path because ``_two_stage_batching_eligible()`` is True here), and once
+    with that guard monkeypatched to force the generic loop. In fp32 every op the fast path uses (batched
+    matmul, one shared-then-affine LayerNorm, batched topk/gather) is a direct algebraic restatement of
+    the loop's own ops, so forward and backward both match to float32 rounding noise from the different
+    (batched vs. looped) reduction order, not a correctness gap. The test uses a tolerance rather than
+    ``torch.equal`` because larger GEMMs may choose a different accumulation order; see
+    ``Transformer._two_stage_group_selection`` for the mixed-precision limitation.
+    """
+    torch.manual_seed(0)
+    hidden_dim, num_queries, group_detr = 16, 5, 4
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+
+    srcs = [torch.randn(2, hidden_dim, ht, wd, requires_grad=True) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(2, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim, num_queries, group_detr, num_classes=7, bbox_reparam=bbox_reparam
+    )
+    assert transformer._two_stage_batching_eligible()
+
+    _, _, memory_fast, boxes_fast = transformer(
+        srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+    )
+    fast_loss = memory_fast.sum() + boxes_fast.sum()
+    # enc_out_class_embed is excluded: its output only ranks torch.topk's (non-differentiable)
+    # selection indices, so it structurally never receives a gradient from memory_ts/boxes_ts,
+    # in the loop and the batched path alike.
+    fast_modules = [*transformer.enc_output, *transformer.enc_output_norm, *transformer.enc_out_bbox_embed]
+    fast_parameters = [parameter for module in fast_modules for parameter in module.parameters()]
+    fast_gradients = torch.autograd.grad(fast_loss, [*srcs, *fast_parameters])
+
+    transformer_loop = copy.deepcopy(transformer)
+    transformer_loop._two_stage_batching_eligible = lambda: False
+    srcs_loop = [src.detach().clone().requires_grad_(True) for src in srcs]
+    _, _, memory_loop, boxes_loop = transformer_loop(
+        srcs_loop, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+    )
+    loop_loss = memory_loop.sum() + boxes_loop.sum()
+    loop_modules = [
+        *transformer_loop.enc_output,
+        *transformer_loop.enc_output_norm,
+        *transformer_loop.enc_out_bbox_embed,
+    ]
+    loop_parameters = [parameter for module in loop_modules for parameter in module.parameters()]
+    loop_gradients = torch.autograd.grad(loop_loss, [*srcs_loop, *loop_parameters])
+
+    # A batched GEMM can select a different accumulation order than separate calls, so compare
+    # within float32 tolerance rather than requiring bit-for-bit equality.
+    torch.testing.assert_close(memory_fast, memory_loop, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(boxes_fast, boxes_loop, atol=1e-4, rtol=1e-4)
+    for fast_gradient, loop_gradient in zip(fast_gradients, loop_gradients, strict=True):
+        torch.testing.assert_close(fast_gradient, loop_gradient, atol=1e-5, rtol=1e-4)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gradients() -> None:
+    """Under bf16 autocast the batched fast path must still produce finite outputs with gradients that reach every
+    group's own parameters -- not necessarily bit-identical to the generic loop.
+
+    ``Transformer._two_stage_group_selection`` documents that ``torch.baddbmm``'s batched-GEMM kernel can
+    accumulate in a different order than the loop's separate GEMM calls, so a near-tied ``torch.topk``
+    ranking can legitimately pick a different, equally valid query under bf16. A hard numeric-parity bound
+    would be flaky across GPU architectures and problem sizes depending on whether that specific run
+    happens to hit a tie, so this test instead pins the invariant that must ALWAYS hold regardless of
+    which tie-break wins: finite values and gradients reaching every parameter.
+    """
+    torch.manual_seed(0)
+    hidden_dim, num_queries, group_detr = 32, 20, 13
+    spatial_shapes_hw = [(16, 16), (8, 8)]  # matches num_feature_levels=2 in the shared builder
+    device = "cuda"
+
+    srcs = [torch.randn(2, hidden_dim, ht, wd, device=device, requires_grad=True) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(2, ht, wd, dtype=torch.bool, device=device) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(2, hidden_dim, ht, wd, device=device) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4, device=device)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim, device=device)
+
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim, num_queries, group_detr, num_classes=90, bbox_reparam=True
+    ).to(device)
+    assert transformer._two_stage_batching_eligible()
+
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        _, _, memory_ts, boxes_ts = transformer(
+            srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+        )
+        loss = memory_ts.float().sum() + boxes_ts.float().sum()
+
+    assert torch.isfinite(memory_ts).all()
+    assert torch.isfinite(boxes_ts).all()
+
+    # memory_ts/boxes_ts are the two-stage encoder outputs only (the decoder's own parameters correctly
+    # get no gradient from this loss), so only check the modules _two_stage_group_selection actually uses
+    # for a DIFFERENTIABLE output. enc_out_class_embed is excluded: its output only ranks torch.topk's
+    # (non-differentiable) selection indices, so it structurally never receives a gradient here.
+    two_stage_modules = [
+        *transformer.enc_output,
+        *transformer.enc_output_norm,
+        *transformer.enc_out_bbox_embed,
+    ]
+    named_parameters = [
+        (name, parameter)
+        for module in two_stage_modules
+        for name, parameter in module.named_parameters()
+        if parameter.requires_grad
+    ]
+    inputs = [*srcs, *[parameter for _, parameter in named_parameters]]
+    names = [f"srcs[{i}]" for i in range(len(srcs))] + [name for name, _ in named_parameters]
+    gradients = torch.autograd.grad(loss, inputs)
+    for name, gradient in zip(names, gradients, strict=True):
+        assert torch.isfinite(gradient).all(), f"{name} gradient has non-finite entries"
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_two_stage_group_selection_compiles_with_finite_gradients() -> None:
+    """The batched fast path must be compatible with torch.compile.
+
+    Unlike ONNX/TorchScript export (which always forces `group_detr=1` and never reaches this code), `module_model.py`
+    applies `torch.compile` directly to the training model, where `group_detr>1` and this new path are exactly what
+    training exercises. This asserts compile-time and run-time compatibility (finite outputs and gradients through a
+    compiled call, using the same `capture_scalar_outputs` config `module_model.py` itself sets before compiling) -- not
+    a timing claim; a local single-GPU smoke run is not a substitute for this project's separately reported L4 step-time
+    evidence.
+    """
+    torch._dynamo.reset()
+    torch.manual_seed(0)
+    hidden_dim, num_queries, group_detr = 16, 5, 4
+    spatial_shapes_hw = [(8, 8), (4, 4)]
+    device = "cuda"
+
+    srcs = [torch.randn(2, hidden_dim, ht, wd, device=device, requires_grad=True) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(2, ht, wd, dtype=torch.bool, device=device) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(2, hidden_dim, ht, wd, device=device) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4, device=device)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim, device=device)
+
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim, num_queries, group_detr, num_classes=7, bbox_reparam=True
+    ).to(device)
+    assert transformer._two_stage_batching_eligible()
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
+        compiled_transformer = torch.compile(transformer, dynamic=True)
+
+        _, _, memory_ts, boxes_ts = compiled_transformer(
+            srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+        )
+        loss = memory_ts.sum() + boxes_ts.sum()
+        parameters = [
+            parameter
+            for module in [*transformer.enc_output, *transformer.enc_output_norm, *transformer.enc_out_bbox_embed]
+            for parameter in module.parameters()
+        ]
+        gradients = torch.autograd.grad(loss, [*srcs, *parameters])
+
+    assert torch.isfinite(memory_ts).all()
+    assert torch.isfinite(boxes_ts).all()
+    for gradient in gradients:
+        assert torch.isfinite(gradient).all()
+
+
+def _build_two_stage_transformer_with_keypoints(
+    hidden_dim: int, num_queries: int, group_detr: int, num_classes: int, num_keypoints: int
+) -> Transformer:
+    """Build a decoder-free, two-stage ``Transformer`` with GroupPose keypoint heads enabled.
+
+    ``num_decoder_layers=0`` isolates the encoder-side computation this PR touches (
+    :meth:`Transformer._two_stage_group_selection` and the untouched per-group
+    ``enc_out_keypoint_embed`` loop that consumes its output) from the decoder's own keypoint
+    cross-attention plumbing, which this change does not modify.
+
+    Args:
+        hidden_dim: Model width.
+        num_queries: Queries selected per group.
+        group_detr: Number of independent groups.
+        num_classes: Class-head output width.
+        num_keypoints: Keypoints per instance.
+
+    Returns:
+        A decoder-free, two-stage, GroupPose-keypoint-enabled ``Transformer`` left in its default
+        training mode.
+
+    Examples:
+        >>> t = _build_two_stage_transformer_with_keypoints(16, 3, 2, 5, 4)
+        >>> t._two_stage_batching_eligible()
+        True
+    """
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=0,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=2,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=group_detr,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[num_keypoints],
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, num_classes) for _ in range(group_detr)])
+    transformer.enc_out_bbox_embed = nn.ModuleList(
+        [MLP(hidden_dim, hidden_dim, 4, num_layers=3) for _ in range(group_detr)]
+    )
+    return transformer
+
+
+def test_two_stage_group_selection_matches_generic_loop_for_grouppose_keypoint_config() -> None:
+    """The batched fast path must also match the generic loop for a GroupPose keypoint config.
+
+    ``_two_stage_batching_eligible`` only inspects ``enc_output``/``enc_output_norm``/
+    ``enc_out_class_embed``/``enc_out_bbox_embed`` -- the same concrete types ``LWDETR.__init__``
+    constructs regardless of ``use_grouppose_keypoints`` -- so the fast path also activates for
+    keypoint/pose models (``RFDETRKeypointPreviewConfig`` defaults to ``group_detr=13``, same as every
+    detection config). ``enc_kp_predictions`` is derived from the two-stage ``memory_ts``/``boxes_ts``
+    via ``keypoint_query_initializer_enc`` and the untouched per-group ``enc_out_keypoint_embed`` loop,
+    so a divergence in ``memory_ts``/``boxes_ts`` between the two paths could still surface here even
+    though it does not for a plain detection model.
+    """
+    torch.manual_seed(0)
+    hidden_dim, num_queries, group_detr, num_keypoints = 16, 5, 4, 3
+    spatial_shapes_hw = [(4, 4), (2, 2)]
+
+    srcs = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    masks = [torch.zeros(2, ht, wd, dtype=torch.bool) for ht, wd in spatial_shapes_hw]
+    pos_embeds = [torch.randn(2, hidden_dim, ht, wd) for ht, wd in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    transformer = _build_two_stage_transformer_with_keypoints(
+        hidden_dim, num_queries, group_detr, num_classes=7, num_keypoints=num_keypoints
+    )
+    assert transformer._two_stage_batching_eligible()
+
+    outputs_fast = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    transformer_loop = copy.deepcopy(transformer)
+    transformer_loop._two_stage_batching_eligible = lambda: False
+    outputs_loop = transformer_loop(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    # return_values layout with num_decoder_layers=0: (hs=None, references=None, memory_ts, boxes_ts,
+    # keypoint_hs=None, enc_kp_predictions, keypoint_memory_ts) -- see Transformer.forward's tail.
+    memory_fast, boxes_fast, enc_kp_fast = outputs_fast[2], outputs_fast[3], outputs_fast[5]
+    memory_loop, boxes_loop, enc_kp_loop = outputs_loop[2], outputs_loop[3], outputs_loop[5]
+
+    assert enc_kp_fast is not None and enc_kp_loop is not None
+    torch.testing.assert_close(memory_fast, memory_loop, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(boxes_fast, boxes_loop, atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(enc_kp_fast, enc_kp_loop, atol=1e-4, rtol=1e-4)
+
+
 def test_two_stage_topk_gather_selects_correct_rows_with_bbox_reparam(monkeypatch) -> None:
     """With bbox_reparam=True, the coordinate-delta reparameterisation path must still gather the exact selected rows
     via a stride-0 broadcast index, and boxes_ts must be returned un-sigmoided.
@@ -1914,3 +2433,90 @@ def test_two_stage_bbox_embed_only_runs_on_selected_rows_not_full_encoder_memory
             f"full sum(H*W)={total_hw} encoder positions (Transformer.forward two-stage top-k gather); "
             f"got input shape {tuple(shape)}"
         )
+
+
+def _make_cuda_graph_transformer_inputs(
+    spatial_shapes_hw: list[tuple[int, int]], batch_size: int = 2, hidden_dim: int = 16, num_queries: int = 3
+) -> tuple[Transformer, list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], torch.Tensor, torch.Tensor]:
+    """Build a small two-stage Transformer and matching forward inputs.
+
+    Examples:
+        >>> transformer, srcs, *_ = _make_cuda_graph_transformer_inputs([(2, 2)])
+        >>> len(srcs), transformer.num_feature_levels
+        (1, 1)
+    """
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=len(spatial_shapes_hw),
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 5)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+    srcs = [torch.randn(batch_size, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+    masks = [torch.zeros(batch_size, height, width, dtype=torch.bool) for height, width in spatial_shapes_hw]
+    pos_embeds = [torch.randn(batch_size, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries, 4)
+    query_feat = torch.randn(num_queries, hidden_dim)
+    return transformer, srcs, masks, pos_embeds, refpoint_embed, query_feat
+
+
+def test_cuda_graph_spatial_shapes_cache_reuses_tensor_per_device_and_resolution() -> None:
+    """Repeated capture warmups reuse the exact device shape tensor."""
+    transformer, srcs, masks, pos_embeds, refpoint_embed, query_feat = _make_cuda_graph_transformer_inputs(
+        [(4, 4), (2, 2)]
+    )
+    transformer.enable_cuda_graph_capture()
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+    assert transformer._cuda_graph_spatial_shapes is not None
+    assert len(transformer._cuda_graph_spatial_shapes) == 1
+    cached = next(iter(transformer._cuda_graph_spatial_shapes.values()))
+
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+    assert next(iter(transformer._cuda_graph_spatial_shapes.values())) is cached
+
+
+def test_cuda_graph_spatial_shapes_cache_keys_distinct_resolutions() -> None:
+    """Each multi-scale resolution gets its own static shape tensor."""
+    transformer, srcs, masks, pos_embeds, refpoint_embed, query_feat = _make_cuda_graph_transformer_inputs(
+        [(4, 4), (2, 2)]
+    )
+    transformer.enable_cuda_graph_capture()
+    transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+
+    _, srcs_b, masks_b, pos_embeds_b, _, _ = _make_cuda_graph_transformer_inputs([(6, 6), (3, 3)])
+    transformer(srcs_b, masks_b, pos_embeds_b, refpoint_embed, query_feat)
+
+    assert transformer._cuda_graph_spatial_shapes is not None
+    assert {key[1] for key in transformer._cuda_graph_spatial_shapes} == {
+        ((4, 4), (2, 2)),
+        ((6, 6), (3, 3)),
+    }
+
+
+def test_cuda_graph_spatial_shapes_cache_preserves_forward_values() -> None:
+    """The cache changes tensor construction, not model arithmetic."""
+    torch.manual_seed(7)
+    baseline, srcs, masks, pos_embeds, refpoint_embed, query_feat = _make_cuda_graph_transformer_inputs(
+        [(4, 4), (2, 2)]
+    )
+    baseline_output = baseline(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+
+    torch.manual_seed(7)
+    cached, *_ = _make_cuda_graph_transformer_inputs([(4, 4), (2, 2)])
+    cached.enable_cuda_graph_capture()
+    cached_output = cached(srcs, masks, pos_embeds, refpoint_embed, query_feat)
+
+    for expected, actual in zip(baseline_output, cached_output):
+        if expected is None:
+            assert actual is None
+        else:
+            assert torch.equal(actual, expected)

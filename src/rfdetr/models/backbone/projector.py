@@ -66,20 +66,23 @@ def get_norm(norm: str | Callable[[int], nn.Module] | None, out_channels: int) -
     return norm(out_channels)
 
 
+#: Activation module factory per name; each takes the ``inplace`` flag. ``None`` maps to identity.
+_ACTIVATIONS: dict[str | None, Callable[[bool], nn.Module]] = {
+    "silu": lambda inplace: nn.SiLU(inplace=inplace),
+    "relu": lambda inplace: nn.ReLU(inplace=inplace),
+    "LeakyReLU": lambda inplace: nn.LeakyReLU(0.1, inplace=inplace),
+    "leakyrelu": lambda inplace: nn.LeakyReLU(0.1, inplace=inplace),
+    "lrelu": lambda inplace: nn.LeakyReLU(0.1, inplace=inplace),
+    None: lambda inplace: nn.Identity(),
+}
+
+
 def get_activation(name: str | None, inplace: bool = False) -> nn.Module:
     """Get activation."""
-    module: nn.Module
-    if name == "silu":
-        module = nn.SiLU(inplace=inplace)
-    elif name == "relu":
-        module = nn.ReLU(inplace=inplace)
-    elif name in ["LeakyReLU", "leakyrelu", "lrelu"]:
-        module = nn.LeakyReLU(0.1, inplace=inplace)
-    elif name is None:
-        module = nn.Identity()
-    else:
-        raise AttributeError(f"Unsupported act type: {name}")
-    return module
+    try:
+        return _ACTIVATIONS[name](inplace)
+    except KeyError:
+        raise AttributeError(f"Unsupported act type: {name}") from None
 
 
 class ConvX(nn.Module):

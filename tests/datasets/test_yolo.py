@@ -118,7 +118,6 @@ class TestBuildRoboflowFromYoloAugConfig:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=None,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
         )
@@ -579,7 +578,6 @@ class TestYoloDetectionLazyMasks:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=False,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             aug_config={},
@@ -893,6 +891,32 @@ class TestYoloDetectionLazyMasks:
         assert target["boxes"].shape == (2, 4), f"Expected (2, 4), got {target['boxes'].shape}"
         assert set(target["labels"].tolist()) == {0, 1}
 
+    def test_lazy_getitem_jpeg_matches_pillow(self, tmp_path: Path) -> None:
+        """A JPEG sample decodes to the same uint8 RGB array Pillow produces, whichever decoder handled it."""
+        image_dir = tmp_path / "images"
+        label_dir = tmp_path / "labels"
+        image_dir.mkdir()
+        label_dir.mkdir()
+        image_path = image_dir / "sample.jpg"
+        noise = np.random.default_rng(0).integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+        Image.fromarray(noise).save(image_path, quality=90)
+        (label_dir / "sample.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text("names:\n  0: carton\n", encoding="utf-8")
+        with Image.open(image_path) as image:
+            expected = np.asarray(image.convert("RGB"))
+        dataset = YoloDetection(
+            img_folder=str(image_dir),
+            lb_folder=str(label_dir),
+            data_file=str(data_file),
+            transforms=None,
+        )
+
+        _, rgb_image, _ = dataset.sv_dataset[0]
+
+        assert rgb_image.dtype == np.uint8
+        np.testing.assert_array_equal(rgb_image, expected)
+
     def test_lazy_getitem_unreadable_image_raises_value_error(self, tmp_path: Path) -> None:
         """Lazy mask loading should raise ValueError when PIL cannot decode the image."""
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(tmp_path)
@@ -1129,7 +1153,6 @@ class TestBuildRoboflowFromYoloUltralytics:
             segmentation_head=False,
             multi_scale=False,
             expanded_scales=None,
-            do_random_resize_via_padding=False,
             patch_size=16,
             num_windows=4,
             augmentation_backend="cpu",

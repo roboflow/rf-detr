@@ -14,7 +14,6 @@ training module data.
 
 from __future__ import annotations
 
-import io
 import json
 import random
 from collections.abc import Callable, Iterator
@@ -29,6 +28,7 @@ import torch.utils.data
 from PIL import Image
 from torch.utils.data import DataLoader
 
+from rfdetr.config import MultiScale
 from rfdetr.datasets.coco import (
     ConvertCoco,
     draft_size_for_transforms,
@@ -36,6 +36,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
     scale_coco_annotation,
 )
+from rfdetr.datasets.io_utils import decode_image_bytes
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.webdataset.index import (
     IMAGE_EXTENSIONS,
@@ -174,8 +175,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
             loader — a local shuffle, not a global permutation.
         seed: Rank-independent base seed for shard order. The loader uses a dedicated generator so rank-local
             random draws cannot change the pre-split permutation; see :meth:`_epoch_seeds`.
-        draft_size: Smallest source extent the transform pipeline can consume without upscaling, passed to
-            ``PIL.Image.draft`` the same way :meth:`~rfdetr.datasets.coco.CocoDetection._decode_image` does, or
+        draft_size: Smallest source extent the transform pipeline can consume without upscaling, applied by
+            :func:`~rfdetr.datasets.io_utils.decode_image_bytes` the same way the loose-file loaders apply it, or
             ``None`` to decode at full resolution. See :func:`~rfdetr.datasets.coco.draft_size_for_transforms`
             for when a non-``None`` value is actually correct — only the train split, never a mask dataset.
     """
@@ -318,10 +319,11 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     def _decode(self, sample: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         """Turn one raw WebDataset sample into the ``(image, target)`` pair the transform pipeline expects.
 
-        Mirrors :meth:`~rfdetr.datasets.coco.CocoDetection._decode_image`'s ``PIL.Image.draft`` reduced-scale
-        decode when ``self._draft_size`` is set (train split only — see :func:`draft_size_for_transforms`), so
-        this reader reproduces the same decode work and, when a draft actually reduces the image, the same
-        annotation rescale the loose-file training path applies.
+        Decodes through :func:`~rfdetr.datasets.io_utils.decode_image_bytes`, the same entry point the loose-file
+        loaders use, so a shard member gets the same ``simplejpeg``-or-Pillow choice and the same power-of-two
+        reduced-scale decode when ``self._draft_size`` is set (train split only — see
+        :func:`draft_size_for_transforms`), plus the same annotation rescale when a draft actually reduces the
+        image.
 
         Args:
             sample: Raw sample dict keyed by member extension.
@@ -342,12 +344,8 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         if "json" not in sample:
             raise KeyError(f"WebDataset sample {sample.get('__key__', '?')} has no 'json' annotation sidecar.")
 
-        with Image.open(io.BytesIO(sample[extension])) as handle:
-            full_width, full_height = handle.width, handle.height
-            if self._draft_size is not None:
-                handle.draft("RGB", (self._draft_size, self._draft_size))
-            image = handle.convert("RGB")
-        x_scale, y_scale = image.width / full_width, image.height / full_height
+        pixels, (x_scale, y_scale) = decode_image_bytes(sample[extension], self._draft_size)
+        image = Image.fromarray(pixels)
         metadata = json.loads(sample["json"])
         annotations = metadata["annotations"]
         if (x_scale, y_scale) != (1.0, 1.0):
@@ -761,12 +759,13 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
     transform_factory = (
         make_coco_transforms_square_div_64 if getattr(args, "square_resize_div_64", False) else make_coco_transforms
     )
+    multi_scale = MultiScale.from_value(getattr(args, "multi_scale", False))
     transforms = transform_factory(
         image_set,
         resolution,
-        multi_scale=getattr(args, "multi_scale", False),
+        multi_scale=multi_scale is not MultiScale.OFF,
         expanded_scales=getattr(args, "expanded_scales", False),
-        skip_random_resize=not getattr(args, "do_random_resize_via_padding", False),
+        skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
         patch_size=getattr(args, "patch_size", 16),
         num_windows=getattr(args, "num_windows", 4),
         aug_config=aug_config,
@@ -805,7 +804,7 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
-        multi_scale=getattr(args, "multi_scale", False),
+        multi_scale=MultiScale.from_value(getattr(args, "multi_scale", False)) is not MultiScale.OFF,
         expanded_scales=getattr(args, "expanded_scales", False),
         patch_size=getattr(args, "patch_size", 16),
         num_windows=getattr(args, "num_windows", 4),
