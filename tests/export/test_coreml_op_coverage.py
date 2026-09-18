@@ -10,7 +10,8 @@ walk ``call_function`` nodes, and check each op kind against coremltools' Torch 
 ``unsupported_coreml_ops``, after the package-local patches in ``torch_ops.py``) before converting.
 
 Prefer registry patches over model call-site rewrites. After patches, every released size (detection + segmentation)
-must have no registry gaps; ``_KNOWN_NANO_UNSUPPORTED_KINDS`` stays empty unless a gap is accepted deliberately.
+plus the keypoint preview must have no registry gaps; ``_KNOWN_NANO_UNSUPPORTED_KINDS`` stays empty unless a gap is
+accepted deliberately.
 """
 
 from __future__ import annotations
@@ -242,14 +243,17 @@ class TestUnsupportedCoremlOps:
             pytest.param("RFDETRMedium", id="medium"),
             pytest.param("RFDETRLarge", id="large"),
             pytest.param("RFDETRSegNano", id="seg-nano"),
+            pytest.param("RFDETRKeypointPreview", id="keypoint-preview"),
         ],
     )
     def test_registry_clean_after_patches(self, model_cls_name: str) -> None:
-        """Each other released size (detection + one segmentation) must have no registry gaps after patches.
+        """Each other detection size, one segmentation size, and the keypoint preview must be registry-clean.
 
         Previously proven only for Nano-detection (see ``test_nano_registry_clean_after_patches`` above, which reuses
         the shared Nano fixture) — a flagged op kind on an untested size/variant could otherwise false-fail a valid
-        export with no evidence it is actually unclean.
+        export with no evidence it is actually unclean. The ``keypoint-preview`` param checks coremltools' stock
+        registry against the keypoint graph, not the package-local ``torch_ops`` patches: that graph never emits
+        ``alias``, ``__and__``, or ``bitwise_not``, so its clean result holds regardless of those patches.
         """
         import rfdetr
 

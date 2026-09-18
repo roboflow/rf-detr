@@ -44,7 +44,8 @@ from tests.export.conftest import (
 coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
 # FLOAT32 CoreML convert matches eager to ~1e-5 on boxes/logits; masks need a bit more
-# headroom (~8e-5 observed on SegNano). Bound stays well under structural-failure scale (>=1e-3).
+# headroom (~8e-5 observed on SegNano; keypoints ~1e-5 observed on KeypointPreview). Bound stays
+# well under structural-failure scale (>=1e-3).
 _COREML_MAX_ABS_DIFF = 1e-4
 
 
@@ -92,63 +93,65 @@ def _coreml_parity_diffs(
     return max_abs_output_diffs(eager_tensors, coreml_tensors, check_shape=True, names=output_names)
 
 
-def validate_detection_coreml_vs_pytorch(
+def _validate_coreml_vs_pytorch(
     mlpackage_path: Path,
     pytorch_model: torch.nn.Module,
     example_input: torch.Tensor,
+    *,
+    output_labels: tuple[str, ...],
 ) -> None:
-    """Compare CoreML detection outputs (boxes, logits) to eager export-mode PyTorch.
+    """Compare every CoreML output to eager export-mode PyTorch and assert parity within tolerance.
+
+    ``output_labels`` names the outputs the export is expected to yield, in order — ``("boxes", "logits")`` for
+    detection, plus ``"masks"`` or ``"keypoints"`` as the third slot for segmentation and keypoint heads. Masks and
+    keypoints share that slot and are both rank-4, so the count alone does not distinguish them; per-output shapes
+    are asserted by :func:`_coreml_parity_diffs` against eager.
 
     Args:
         mlpackage_path: Path to the exported ``.mlpackage``.
         pytorch_model: Export-mode PyTorch module on CPU.
         example_input: ``(N, C, H, W)`` tensor used for both forwards.
+        output_labels: Expected output names in export order; the count must match the exported outputs.
 
     Raises:
         AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
 
     Examples:
-        Requires a real exported ``.mlpackage`` and ``coremltools`` — not runnable standalone.
-        See ``TestCoreMLEndToEnd`` for real invocations.
+        Stub the CoreML comparison so the validator can run without a real export.
 
-        >>> callable(validate_detection_coreml_vs_pytorch)
-        True
+        >>> with mock.patch(
+        ...     f"{_validate_coreml_vs_pytorch.__module__}._coreml_parity_diffs",
+        ...     return_value=[0.0, 0.0],
+        ... ):
+        ...     _validate_coreml_vs_pytorch(
+        ...         Path("model.mlpackage"),
+        ...         torch.nn.Identity(),
+        ...         torch.zeros(1, 3, 1, 1),
+        ...         output_labels=("boxes", "logits"),
+        ...     )
+
+        A mismatched output count is reported against the expected labels.
+
+        >>> with mock.patch(
+        ...     f"{_validate_coreml_vs_pytorch.__module__}._coreml_parity_diffs",
+        ...     return_value=[0.0, 0.0],
+        ... ):
+        ...     _validate_coreml_vs_pytorch(
+        ...         Path("model.mlpackage"),
+        ...         torch.nn.Identity(),
+        ...         torch.zeros(1, 3, 1, 1),
+        ...         output_labels=("boxes", "logits", "masks"),
+        ...     )
+        Traceback (most recent call last):
+            ...
+        AssertionError: CoreML export must yield ('boxes', 'logits', 'masks'), got 2 outputs
+        ...
     """
     diffs = _coreml_parity_diffs(mlpackage_path, pytorch_model, example_input)
-    assert len(diffs) == 2, f"detection export must yield (boxes, logits), got {len(diffs)} outputs"
+    assert len(diffs) == len(output_labels), f"CoreML export must yield {output_labels}, got {len(diffs)} outputs"
+    per_output = ", ".join(f"{label}={diff}" for label, diff in zip(output_labels, diffs))
     assert max(diffs) < _COREML_MAX_ABS_DIFF, (
-        f"CoreML detection outputs diverge from PyTorch: max abs diff {max(diffs)} "
-        f"(boxes={diffs[0]}, logits={diffs[1]}, bound={_COREML_MAX_ABS_DIFF})"
-    )
-
-
-def validate_segmentation_coreml_vs_pytorch(
-    mlpackage_path: Path,
-    pytorch_model: torch.nn.Module,
-    example_input: torch.Tensor,
-) -> None:
-    """Compare CoreML segmentation outputs (boxes, logits, masks) to eager export-mode PyTorch.
-
-    Args:
-        mlpackage_path: Path to the exported ``.mlpackage``.
-        pytorch_model: Export-mode PyTorch segmentation module on CPU.
-        example_input: ``(N, C, H, W)`` tensor used for both forwards.
-
-    Raises:
-        AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
-
-    Examples:
-        Requires a real exported ``.mlpackage`` and ``coremltools`` — not runnable standalone.
-        See ``TestCoreMLEndToEnd`` for real invocations.
-
-        >>> callable(validate_segmentation_coreml_vs_pytorch)
-        True
-    """
-    diffs = _coreml_parity_diffs(mlpackage_path, pytorch_model, example_input)
-    assert len(diffs) == 3, f"segmentation export must yield (boxes, logits, masks), got {len(diffs)} outputs"
-    assert max(diffs) < _COREML_MAX_ABS_DIFF, (
-        f"CoreML segmentation outputs diverge from PyTorch: max abs diff {max(diffs)} "
-        f"(boxes={diffs[0]}, logits={diffs[1]}, masks={diffs[2]}, bound={_COREML_MAX_ABS_DIFF})"
+        f"CoreML outputs diverge from PyTorch: max abs diff {max(diffs)} ({per_output}, bound={_COREML_MAX_ABS_DIFF})"
     )
 
 
@@ -218,9 +221,9 @@ class TestExportCoremlValidation:
 class TestExportCoremlBareDefaultNaming:
     """``variant_name=None`` + ``output_name=None`` combined with a non-default ``compute_precision`` (fp16).
 
-    Real ``coremltools.convert``/``torch.export.export`` are mocked out so this stays a fast unit test — only the
-    naming path (``resolve_export_stem`` -> precision-suffix branch) is under test, not conversion correctness (that is
-    covered by ``TestCoreMLEndToEnd``, gated on a real ``coremltools`` install).
+    Real ``coremltools.convert``/``torch.export.export`` are mocked out so this stays a fast unit test — only the naming
+    path (``resolve_export_stem`` -> precision-suffix branch) is under test, not conversion correctness (that is covered
+    by ``TestCoreMLEndToEnd``, gated on a real ``coremltools`` install).
     """
 
     @coreml_only
@@ -357,11 +360,20 @@ class TestExportFormatParameter:
         self._mock_stack.close()
 
     @staticmethod
-    def _make_rfdetr(*, segmentation_head: bool = False) -> Any:
+    def _make_rfdetr(*, segmentation_head: bool = False, use_grouppose_keypoints: bool = False) -> Any:
         """Create a minimal RFDETR instance with mocked internals.
 
         Args:
             segmentation_head: Whether the mocked config reports a seg head.
+            use_grouppose_keypoints: Whether the mocked config reports a keypoint head.
+
+        Returns:
+            An ``RFDETR`` built without ``__init__`` whose model and config are ``MagicMock`` stand-ins.
+
+        Examples:
+            >>> obj = TestExportFormatParameter._make_rfdetr(use_grouppose_keypoints=True)
+            >>> obj.model_config.use_grouppose_keypoints, obj.model_config.segmentation_head
+            (True, False)
         """
         from rfdetr.detr import RFDETR
 
@@ -372,20 +384,21 @@ class TestExportFormatParameter:
         obj.model.model.to.return_value = obj.model.model
         obj.model_config = mock.MagicMock()
         obj.model_config.segmentation_head = segmentation_head
-        obj.model_config.use_grouppose_keypoints = False
+        obj.model_config.use_grouppose_keypoints = use_grouppose_keypoints
         obj.model_config.patch_size = 14
         obj.model_config.num_windows = 1
         obj.model_config.num_channels = 3
         return obj
 
-    @pytest.mark.parametrize(
-        "segmentation_head",
-        [pytest.param(False, id="detection"), pytest.param(True, id="segmentation")],
-    )
-    def test_coreml_format_dispatches_to_coreml_exporter_not_onnx(self, segmentation_head: bool) -> None:
-        """``format="coreml"`` must dispatch to ``CoreMLExporter`` (not the ONNX one) and warn (experimental), for both
-        detection and segmentation models."""
-        obj = self._make_rfdetr(segmentation_head=segmentation_head)
+    def test_coreml_format_dispatches_to_coreml_exporter_not_onnx(self) -> None:
+        """``format="coreml"`` must dispatch to ``CoreMLExporter`` (not the ONNX one) and warn (experimental).
+
+        Dispatch keys off ``format``, not off the head, so the default (detection) head stands for every task the format
+        supports — a per-head parametrization would assert the identical thing three times. The head-specific part — the
+        ``dets``/``labels``/``keypoints`` output contract — is asserted format-agnostically in
+        ``tests/export/test_prepare.py``, not here: ``CoreMLExporter._convert`` is mocked out in this class.
+        """
+        obj = self._make_rfdetr()
         with pytest.warns(UserWarning, match="experimental"):
             obj.export(format="coreml", output_dir=str(self._tmp_path / "out"))
         self._mock_coreml_convert.assert_called_once()
@@ -423,12 +436,15 @@ class TestExportFormatParameter:
 # ---------------------------------------------------------------------------
 
 
-# (model class name, validate function) — both share the same fixture setup shape (export once,
+# (model class name, expected output labels) — all share the same fixture setup shape (export once,
 # reuse for the mlpackage-written / structured-parity / supervision-image checks below), so the
 # fixture and its consuming tests are parametrized over this pair instead of duplicated per variant.
 _COREML_E2E_VARIANTS = [
-    ("RFDETRNano", validate_detection_coreml_vs_pytorch),
-    ("RFDETRSegNano", validate_segmentation_coreml_vs_pytorch),
+    pytest.param(("RFDETRNano", ("boxes", "logits")), id="detection"),
+    pytest.param(("RFDETRSegNano", ("boxes", "logits", "masks")), id="segmentation"),
+    # Keypoints are preview-only and therefore XLarge at resolution 576 — several times the work of the
+    # two Nano variants, which is why this variant is the slow one in the `e2e_coreml` job.
+    pytest.param(("RFDETRKeypointPreview", ("boxes", "logits", "keypoints")), id="keypoint"),
 ]
 
 # coremltools 9.0's MIL converter occasionally constant-folds a weights-only `linear` op via
@@ -449,7 +465,9 @@ _COREML_E2E_VARIANTS = [
 # Overriding to a verified-good seed via the repo's own `seed_all()` helper (not a raw
 # `torch.manual_seed` bypass) makes the export deterministic AND passing. Found by scanning
 # seed_all(0..12): seed=0 passed structured+real-image detection parity on 4/4 independent
-# fresh-process re-runs, plus segmentation. If this starts failing again (model architecture
+# fresh-process re-runs, plus segmentation. Keypoint (RFDETRKeypointPreview) was added without a
+# seed scan: seed=0 is backed by one manual run (max abs diff 9.54e-06 on Apple M3 Pro, coremltools
+# 9.0) plus passing CI macOS 3.11 and 3.13 jobs. If this starts failing again (model architecture
 # or coremltools upgrade changed the op graph), re-run the same small seed scan rather than
 # guessing — see tests/export/README or git history for the search script.
 _COREML_EXPORT_SEED = 0
@@ -467,11 +485,11 @@ def people_walking_image_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
         os.chdir(cwd)
 
 
-@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS, ids=["detection", "segmentation"])
+@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS)
 def coreml_export(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> tuple[Any, torch.Tensor, Path, Any]:
-    """Export RFDETRNano/RFDETRSegNano to a ``.mlpackage`` once per variant for e2e tests.
+) -> tuple[Any, torch.Tensor, Path, tuple[str, ...]]:
+    """Export RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview to a ``.mlpackage`` once per variant for e2e tests.
 
     Re-seeds to ``_COREML_EXPORT_SEED`` (a verified-good draw, see module-level comment) immediately before model
     construction, overriding the autouse ``reset_random_seeds`` fixture's default seed for this specific known-flaky
@@ -480,7 +498,7 @@ def coreml_export(
     import rfdetr
     from rfdetr.utilities.reproducibility import seed_all
 
-    model_cls_name, validate_fn = request.param
+    model_cls_name, output_labels = request.param
     model_cls = getattr(rfdetr, model_cls_name)
     out_dir = tmp_path_factory.mktemp(f"coreml_{model_cls_name.lower()}")
     seed_all(_COREML_EXPORT_SEED)
@@ -491,7 +509,7 @@ def coreml_export(
     model.export()
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
-    return model, example, Path(mlpackage_path), validate_fn
+    return model, example, Path(mlpackage_path), output_labels
 
 
 @pytest.fixture(scope="module")
@@ -521,7 +539,7 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
 class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
-    def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
+    def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]]) -> None:
         """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision."""
         _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
@@ -530,20 +548,22 @@ class TestCoreMLEndToEnd:
         assert mlpackage_path.stem.endswith("_fp32")
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
-    def test_outputs_match_pytorch_structured(self, coreml_export: tuple[Any, torch.Tensor, Path, Any]) -> None:
+    def test_outputs_match_pytorch_structured(
+        self, coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]]
+    ) -> None:
         """CoreML output matches eager on structured (gradient+checkerboard) input."""
-        model, example, mlpackage_path, validate_fn = coreml_export
-        validate_fn(mlpackage_path, model, example)
+        model, example, mlpackage_path, output_labels = coreml_export
+        _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
 
     def test_outputs_match_pytorch_supervision_image(
         self,
-        coreml_export: tuple[Any, torch.Tensor, Path, Any],
+        coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]],
         people_walking_image_path: Path,
     ) -> None:
         """CoreML output matches eager on ``ImageAssets.PEOPLE_WALKING``."""
-        model, structured, mlpackage_path, validate_fn = coreml_export
+        model, structured, mlpackage_path, output_labels = coreml_export
         example = _parity_input_from_image(people_walking_image_path, int(structured.shape[-1]))
-        validate_fn(mlpackage_path, model, example)
+        _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
 
     def test_backbone_outputs_match_pytorch_structured(
         self, coreml_backbone_export: tuple[torch.nn.Module, torch.Tensor, Path]
