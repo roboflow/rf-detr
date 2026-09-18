@@ -28,6 +28,7 @@ import torch.utils.data
 from PIL import Image
 from torch.utils.data import DataLoader
 
+from rfdetr.config import MultiScale
 from rfdetr.datasets.coco import (
     ConvertCoco,
     draft_size_for_transforms,
@@ -758,12 +759,13 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
     transform_factory = (
         make_coco_transforms_square_div_64 if getattr(args, "square_resize_div_64", False) else make_coco_transforms
     )
+    multi_scale = MultiScale.from_value(getattr(args, "multi_scale", False))
     transforms = transform_factory(
         image_set,
         resolution,
-        multi_scale=getattr(args, "multi_scale", False),
+        multi_scale=multi_scale is not MultiScale.OFF,
         expanded_scales=getattr(args, "expanded_scales", False),
-        skip_random_resize=not getattr(args, "do_random_resize_via_padding", False),
+        skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
         patch_size=getattr(args, "patch_size", 16),
         num_windows=getattr(args, "num_windows", 4),
         aug_config=aug_config,
@@ -802,7 +804,7 @@ def build_webdataset(image_set: str, args: Any, resolution: int) -> WebDatasetDe
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
-        multi_scale=getattr(args, "multi_scale", False),
+        multi_scale=MultiScale.from_value(getattr(args, "multi_scale", False)) is not MultiScale.OFF,
         expanded_scales=getattr(args, "expanded_scales", False),
         patch_size=getattr(args, "patch_size", 16),
         num_windows=getattr(args, "num_windows", 4),

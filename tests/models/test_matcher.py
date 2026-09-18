@@ -879,9 +879,9 @@ def _random_detection_batch(
 
 
 def _spy_on_full_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Record one entry per full-path cost build, by tagging the 2-D ``torch.cdist`` call only that path makes (the
-    compact path's ``cdist`` operands are 3-D) — lets a test tell "stayed on the compact path" apart from "built the
-    compact matrix, found it non-finite, and fell through to the full path".
+    """Record one entry per full-path cost build, by tagging the 2-D ``pairwise_box_l1_cost`` call only that path makes
+    (the compact path's operands are 3-D) — lets a test tell "stayed on the compact path" apart from "built the compact
+    matrix, found it non-finite, and fell through to the full path".
 
     Examples:
         >>> _spy_on_full_path(pytest.MonkeyPatch())  # doctest: +SKIP
@@ -889,14 +889,14 @@ def _spy_on_full_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         # Needs a live pytest.MonkeyPatch fixture torn down by a running test, not standalone.
     """
     calls: list[int] = []
-    original = torch.cdist
+    original = matcher_module.pairwise_box_l1_cost
 
     def spy(x1: torch.Tensor, x2: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
         if x1.dim() == 2:
             calls.append(1)
         return original(x1, x2, *args, **kwargs)
 
-    monkeypatch.setattr(torch, "cdist", spy)
+    monkeypatch.setattr(matcher_module, "pairwise_box_l1_cost", spy)
     return calls
 
 
@@ -3104,48 +3104,48 @@ class TestStackedCostConstruction:
             _assert_same_indices(stacked_indices, loop_indices)
 
     @pytest.mark.parametrize(
-        ("limit", "expected_cdist_calls"),
+        ("limit", "expected_cost_builds"),
         [
             pytest.param(10_000_000, 1, id="under-limit-stacks-once"),
             pytest.param(0, 2, id="over-limit-per-layer-loop"),
         ],
     )
     def test_element_limit_routes_between_stacked_and_per_layer(
-        self, monkeypatch: pytest.MonkeyPatch, limit: int, expected_cdist_calls: int
+        self, monkeypatch: pytest.MonkeyPatch, limit: int, expected_cost_builds: int
     ) -> None:
-        """The element limit decides between one stacked ``cdist`` and one ``cdist`` per layer.
+        """The element limit decides between one stacked ``pairwise_box_l1_cost`` call and one call per layer.
 
-        Counts 3-D ``torch.cdist`` calls inside ``_match_many``: the stacked pass issues exactly one for all layers, the
-        per-layer loop one per layer. Oversized batches must take the loop because stacking measured 0.79-1.03x on dense
-        compute-bound shapes (plan M2).
+        Counts 3-D ``pairwise_box_l1_cost`` calls inside ``_match_many``: the stacked pass issues exactly one for all
+        layers, the per-layer loop one per layer. Oversized batches must take the loop because stacking measured
+        0.79-1.03x on dense compute-bound shapes (plan M2).
         """
         matcher = HungarianMatcher()
         outputs, targets = _random_detection_batch(seed=613, sizes=[2, 3])
         layer2, _ = _random_detection_batch(seed=614, sizes=[2, 3])
         monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", limit)
         calls: list[int] = []
-        original = torch.cdist
+        original = matcher_module.pairwise_box_l1_cost
 
         def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
             calls.append(1)
             return original(x1, x2, *args, **kwargs)
 
-        monkeypatch.setattr(torch, "cdist", spy)
+        monkeypatch.setattr(matcher_module, "pairwise_box_l1_cost", spy)
 
         result = matcher._match_many([outputs, layer2], targets)
 
         assert result is not None
-        assert len(calls) == expected_cdist_calls
+        assert len(calls) == expected_cost_builds
 
     @pytest.mark.parametrize(
-        ("layer_count", "expected_cdist_calls"),
+        ("layer_count", "expected_cost_builds"),
         [
             pytest.param(5, 1, id="total-at-calibrated-limit-stacks-once"),
             pytest.param(6, 6, id="total-over-calibrated-limit-loops-per-layer"),
         ],
     )
     def test_element_limit_includes_layer_count(
-        self, monkeypatch: pytest.MonkeyPatch, layer_count: int, expected_cdist_calls: int
+        self, monkeypatch: pytest.MonkeyPatch, layer_count: int, expected_cost_builds: int
     ) -> None:
         """The stacked gate measures the full layer-folded padded matrix, not one layer.
 
@@ -3161,18 +3161,18 @@ class TestStackedCostConstruction:
             layers.append(layer)
         monkeypatch.setattr(matcher_module, "_STACKED_COST_ELEMENT_LIMIT", 1_000)
         calls: list[int] = []
-        original = torch.cdist
+        original = matcher_module.pairwise_box_l1_cost
 
         def spy(x1: torch.Tensor, x2: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
             calls.append(1)
             return original(x1, x2, *args, **kwargs)
 
-        monkeypatch.setattr(torch, "cdist", spy)
+        monkeypatch.setattr(matcher_module, "pairwise_box_l1_cost", spy)
 
         result = matcher._match_many(layers, targets)
 
         assert result is not None
-        assert len(calls) == expected_cdist_calls
+        assert len(calls) == expected_cost_builds
 
     def test_mismatched_query_counts_fall_back_to_per_layer(self) -> None:
         """Layers with different query counts cannot stack and must keep the per-layer loop.

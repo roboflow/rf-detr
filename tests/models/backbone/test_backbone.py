@@ -223,10 +223,9 @@ class TestBackboneLevelMask:
     def test_matches_unflagged_after_default_config_batch_uniform_resize(self) -> None:
         """The shortcut still agrees with the interpolation after the real default-training mutation.
 
-        The default training config (``square_resize_div_64=True``, ``multi_scale=True``,
-        ``do_random_resize_via_padding=False``) resizes every sample to one fixed square scale before collate, so
-        the batch is flagged. ``RFDETRLightningModule.on_train_batch_start`` then resizes the whole batch uniformly
-        to a randomly chosen scale in place, without touching ``no_padding`` (see
+        The default training config (``square_resize_div_64=True``, ``multi_scale="per-batch"``) resizes every sample to
+        one fixed square scale before collate, so the batch is flagged. ``RFDETRLightningModule.on_train_batch_start``
+        then resizes the whole batch uniformly to a randomly chosen scale in place, without touching ``no_padding`` (see
         ``tests/utilities/test_tensors.py::TestNestedTensorNoPadding::test_flag_survives_inplace_batch_uniform_resize``
         for the flag/mask invariant this relies on). The two consumers of the mask must still agree afterwards.
         """

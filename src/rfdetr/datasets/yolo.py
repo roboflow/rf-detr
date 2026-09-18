@@ -21,6 +21,7 @@ from numpy.typing import NDArray
 from PIL import Image, ImageDraw, UnidentifiedImageError
 from torchvision.datasets import VisionDataset
 
+from rfdetr.config import MultiScale
 from rfdetr.datasets._aug_utils import resolve_keypoint_flip_pairs
 from rfdetr.datasets._keypoint_schema import (
     YoloKeypointSchema,
@@ -1032,7 +1033,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             ``"test"``.
         args: Argument namespace. The following attributes are consumed:
             ``dataset_dir``, ``square_resize_div_64``, ``segmentation_head``,
-            ``multi_scale``, ``expanded_scales``, ``do_random_resize_via_padding``,
+            ``multi_scale``, ``expanded_scales``,
             ``patch_size``, and ``num_windows`` are required. ``aug_config``,
             ``scale_jitter``, keypoint fields, and ``augmentation_backend`` are
             optional and retain documented safe defaults.
@@ -1059,9 +1060,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     # Model-dependent pipeline options are mandatory for direct builder calls.
     square_resize_div_64 = args.square_resize_div_64
     include_masks = args.segmentation_head
-    multi_scale = args.multi_scale
+    multi_scale = MultiScale.from_value(args.multi_scale)
     expanded_scales = args.expanded_scales
-    do_random_resize_via_padding = args.do_random_resize_via_padding
     patch_size = args.patch_size
     num_windows = args.num_windows
     aug_config = getattr(args, "aug_config", None)
@@ -1088,9 +1088,9 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             transforms=make_coco_transforms_square_div_64(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,
@@ -1110,9 +1110,9 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
             transforms=make_coco_transforms(
                 image_set,
                 resolution,
-                multi_scale=multi_scale,
+                multi_scale=multi_scale is not MultiScale.OFF,
                 expanded_scales=expanded_scales,
-                skip_random_resize=not do_random_resize_via_padding,
+                skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
                 aug_config=aug_config,

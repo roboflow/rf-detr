@@ -26,6 +26,7 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import (
     ModelConfig,
+    MultiScale,
     TrainConfig,
     _is_managed_optimizer_name,
     _is_managed_scheduler_name,
@@ -658,8 +659,8 @@ class RFDETRModelModule(LightningModule):
         elif str(self.trainer.precision) == "transformer-engine":
             if not self.train_config.square_resize_div_64:
                 unsupported_reason = "FP8 capture requires square_resize_div_64=True"
-            elif self.train_config.multi_scale or self.train_config.do_random_resize_via_padding:
-                unsupported_reason = "FP8 capture requires multi_scale=False and do_random_resize_via_padding=False"
+            elif self.train_config.multi_scale is not MultiScale.OFF:
+                unsupported_reason = "FP8 capture requires multi_scale=False"
             elif int(getattr(self.trainer, "accumulate_grad_batches", self.train_config.grad_accum_steps)) != 1:
                 unsupported_reason = "FP8 capture does not support gradient accumulation"
         elif str(self.trainer.precision) not in {"bf16-mixed", "bf16-true"}:
@@ -697,7 +698,7 @@ class RFDETRModelModule(LightningModule):
         tc = self.train_config
         mc = self.model_config
 
-        if tc.multi_scale and not tc.do_random_resize_via_padding:
+        if tc.multi_scale is MultiScale.PER_BATCH:
             samples, _ = batch
             scales = compute_multi_scale_scales(mc.resolution, tc.expanded_scales, mc.patch_size, mc.num_windows)
             step = self.trainer.global_step

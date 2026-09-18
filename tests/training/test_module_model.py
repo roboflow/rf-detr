@@ -74,7 +74,6 @@ def _base_train_config(tmp_path=None, **overrides):
         drop_path=0.0,
         multi_scale=False,
         expanded_scales=False,
-        do_random_resize_via_padding=False,
         grad_accum_steps=1,
         tensorboard=False,
     )
@@ -274,7 +273,7 @@ class TestMultiScaleBatchStart:
 
     def _build_multi_scale_module(self, tmp_path, global_step):
         """Return a module configured for multi-scale with a stubbed trainer at the given global step."""
-        tc = _base_train_config(tmp_path, multi_scale=True, do_random_resize_via_padding=False)
+        tc = _base_train_config(tmp_path, multi_scale="per-batch")
         module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
         module.trainer = SimpleNamespace(global_step=global_step)
         return module
@@ -1026,13 +1025,8 @@ class TestOnTrainBatchStart:
         self,
         tmp_path,
         multi_scale=False,
-        do_random_resize_via_padding=False,
     ):
-        tc = _base_train_config(
-            tmp_path,
-            multi_scale=multi_scale,
-            do_random_resize_via_padding=do_random_resize_via_padding,
-        )
+        tc = _base_train_config(tmp_path, multi_scale=multi_scale)
         module, fake_model, _, _ = _build_module(train_config=tc)
 
         trainer = MagicMock()
@@ -1077,7 +1071,7 @@ class TestOnTrainBatchStart:
 
     def test_multi_scale_resize_mutates_nested_tensor(self, tmp_path):
         """Multi-scale training must resize the input tensor to a square resolution."""
-        module, _ = self._setup_module(tmp_path, multi_scale=True, do_random_resize_via_padding=False)
+        module, _ = self._setup_module(tmp_path, multi_scale="per-batch")
         module._trainer.global_step = 0
         samples, targets = _make_batch(batch_size=2, h=16, w=16)
 
@@ -1086,9 +1080,9 @@ class TestOnTrainBatchStart:
         new_h, new_w = samples.tensors.shape[2], samples.tensors.shape[3]
         assert new_h == new_w, "Multi-scale should produce square outputs"
 
-    def test_multi_scale_skipped_when_random_resize_via_padding(self, tmp_path):
-        """Padding-based resize takes precedence, so multi-scale must be a no-op."""
-        module, _ = self._setup_module(tmp_path, multi_scale=True, do_random_resize_via_padding=True)
+    def test_multi_scale_skipped_when_per_sample(self, tmp_path):
+        """Per-sample scaling happens in the dataset, so the batch-level resize must be a no-op."""
+        module, _ = self._setup_module(tmp_path, multi_scale="per-sample")
         samples, targets = _make_batch(batch_size=2, h=16, w=16)
         original_shape = samples.tensors.shape
 
@@ -3474,9 +3468,9 @@ class TestCudaGraphLifecycle:
     @pytest.mark.parametrize(
         ("train_overrides", "accumulation"),
         [
-            pytest.param({"multi_scale": True}, 1, id="multi-scale"),
+            pytest.param({"multi_scale": "per-batch"}, 1, id="per-batch-multi-scale"),
             pytest.param({"square_resize_div_64": False}, 1, id="aspect-ratio-resize"),
-            pytest.param({"do_random_resize_via_padding": True}, 1, id="random-padding"),
+            pytest.param({"multi_scale": "per-sample"}, 1, id="per-sample-multi-scale"),
             pytest.param({}, 2, id="trainer-overrides-accumulation"),
         ],
     )

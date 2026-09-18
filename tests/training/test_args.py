@@ -8,6 +8,7 @@
 import pytest
 
 from rfdetr._namespace import _namespace_from_configs
+from rfdetr.config import MultiScale
 
 
 class TestNamespaceFromConfigs:
@@ -92,7 +93,7 @@ class TestNamespaceFromConfigs:
         tc = base_train_config(multi_scale=True, expanded_scales=True, dataset_file="coco")
         args = _namespace_from_configs(base_model_config(), tc)
 
-        assert args.multi_scale is True
+        assert args.multi_scale == MultiScale.PER_BATCH  # model_dump serializes the mode to its string value
         assert args.expanded_scales is True
         assert args.dataset_file == "coco"
 
