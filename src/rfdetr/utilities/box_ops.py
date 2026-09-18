@@ -25,6 +25,8 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 from torchvision.ops.boxes import box_area
 
+from rfdetr.utilities.compiler import is_compiling
+
 
 def box_cxcywh_to_xyxy(x: Tensor) -> Tensor:
     x_c, y_c, w, h = x.unbind(-1)
@@ -244,7 +246,7 @@ def pairwise_box_l1_cost(boxes1: Tensor, boxes2: Tensor) -> Tensor:
         boxes1 = boxes1.float()
         boxes2 = boxes2.float()
 
-    if torch._dynamo.is_compiling():
+    if is_compiling():
         # A compiled graph can fuse this reduction without materializing the eager chunks. Keep it
         # ahead of Python shape arithmetic so dynamic target sizes never specialize the graph by chunk count.
         return (boxes1.unsqueeze(-2) - boxes2.unsqueeze(-3)).abs().sum(-1)

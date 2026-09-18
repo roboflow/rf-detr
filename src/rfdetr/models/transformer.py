@@ -29,6 +29,7 @@ from rfdetr.models._types import BuilderArgs
 from rfdetr.models.heads.keypoints import ConditionalQueryInitializer
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
+from rfdetr.utilities.compiler import is_compiling
 
 
 def _tracer_absent() -> bool:
@@ -41,19 +42,6 @@ def _tracer_absent() -> bool:
         Always ``False``.
     """
     return False
-
-
-def _is_compiling() -> bool:
-    """Return whether the current execution is inside a ``torch.compile`` graph.
-
-    PyTorch 2.3 added the public ``torch.compiler.is_compiling`` predicate. RF-DETR supports
-    PyTorch 2.2, where the equivalent Dynamo predicate remains the compatible fallback.
-
-    Returns:
-        Whether Dynamo is compiling the current code path.
-    """
-    is_compiling = getattr(torch.compiler, "is_compiling", None)
-    return is_compiling() if is_compiling is not None else torch._dynamo.is_compiling()
 
 
 def _safe_multinormalize(dim: int) -> int:
@@ -636,7 +624,7 @@ class Transformer(nn.Module):
             if spatial_shapes is None:
                 spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
                 self._cuda_graph_spatial_shapes[spatial_key] = spatial_shapes
-        elif getattr(torch.compiler, "is_exporting", _tracer_absent)() or _is_compiling():
+        elif getattr(torch.compiler, "is_exporting", _tracer_absent)() or is_compiling():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
