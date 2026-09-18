@@ -172,11 +172,15 @@ def validate_keypoint_coreml_vs_pytorch(
         AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
 
     Examples:
-        Requires a real exported ``.mlpackage`` and ``coremltools`` — not runnable standalone.
-        See ``TestCoreMLEndToEnd`` for real invocations.
+        Stub the CoreML comparison so the validator can run without a real export.
 
-        >>> callable(validate_keypoint_coreml_vs_pytorch)
-        True
+        >>> with mock.patch(
+        ...     f"{validate_keypoint_coreml_vs_pytorch.__module__}._coreml_parity_diffs",
+        ...     return_value=[0.0, 0.0, 0.0],
+        ... ):
+        ...     validate_keypoint_coreml_vs_pytorch(
+        ...         Path("model.mlpackage"), torch.nn.Identity(), torch.zeros(1, 3, 1, 1)
+        ...     )
     """
     diffs = _coreml_parity_diffs(mlpackage_path, pytorch_model, example_input)
     assert len(diffs) == 3, f"keypoint export must yield (boxes, logits, keypoints), got {len(diffs)} outputs"
