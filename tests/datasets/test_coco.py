@@ -15,6 +15,7 @@ import types
 from pathlib import Path
 from typing import Dict, List
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -1331,8 +1332,6 @@ class TestScaleJitter:
 
 def _make_gradient_image(width: int, height: int) -> Image.Image:
     """Build a deterministic RGB gradient image with real pixel content for interpolation comparisons."""
-    import numpy as np
-
     x = np.linspace(0, 255, width, dtype=np.uint8)
     y = np.linspace(0, 255, height, dtype=np.uint8)
     grid = np.broadcast_to(x, (height, width))

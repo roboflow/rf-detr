@@ -42,6 +42,7 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.io_utils import decode_image
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
@@ -566,14 +567,10 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         )
 
     def _decode_image(self, image_id: int) -> tuple[Image.Image, tuple[float, float]]:
-        """Decode one image, optionally letting the JPEG decoder downscale in the DCT domain.
+        """Decode one image through :func:`decode_image`, drafting when ``draft_size`` is set.
 
         Used instead of ``torchvision.datasets.CocoDetection._load_image``, which this class no longer calls, and
-        deliberately not named the same: it returns a decode scale alongside the image.  When ``draft_size`` is set,
-        ``PIL.Image.draft`` asks libjpeg for the cheapest power-of-two-reduced decode whose output is still at least
-        ``draft_size`` on both axes.  ``draft`` is a no-op for non-JPEG files and whenever no power-of-two reduction
-        keeps the image above the box, so no format check is needed.  This also closes the file handle, which the
-        torchvision implementation leaves to the garbage collector.
+        deliberately not named the same: it returns a decode scale alongside the image.
 
         Args:
             image_id: COCO image id.
@@ -582,12 +579,8 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
         """
         path = self.coco.loadImgs(image_id)[0]["file_name"]
-        with Image.open(Path(self.root) / path) as image:
-            full_width = image.width
-            full_height = image.height
-            if self._draft_size is not None:
-                image.draft("RGB", (self._draft_size, self._draft_size))
-            return image.convert("RGB"), (image.width / full_width, image.height / full_height)
+        pixels, scales = decode_image(Path(self.root) / path, self._draft_size)
+        return Image.fromarray(pixels), scales
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
         image_id = self.ids[idx]
