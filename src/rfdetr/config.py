@@ -30,7 +30,7 @@ PathLikeStr: TypeAlias = str | Path
 AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
 #: COCO evaluation backend selectable via ``TrainConfig.eval_backend``. The runtime registry that resolves each
 #: name lives in ``rfdetr.training.coco_map``; this alias is the single typed source of the accepted names.
-CocoEvalBackend: TypeAlias = Literal["hotcoco", "faster_coco_eval", "ufcoco"]
+CocoEvalBackend: TypeAlias = Literal["hotcoco", "faster_coco_eval", "ufcoco", "vernier"]
 #: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
 #: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
 _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
@@ -1211,9 +1211,9 @@ class TrainConfig(BaseConfig):
     eval_backend: CocoEvalBackend = Field(
         default="hotcoco",
         description=(
-            "COCO evaluation backend used for validation and test mAP. All three ship with 'rfdetr[train]' and "
-            "produce identical metrics; 'hotcoco' is several times faster to compute than 'faster_coco_eval', the "
-            "previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
+            "COCO evaluation backend used for validation and test mAP. All four ship with 'rfdetr[train]' and "
+            "produce identical metrics; 'hotcoco' is the default and 'vernier' computes fastest, both several times "
+            "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
