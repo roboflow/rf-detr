@@ -6,8 +6,8 @@
 
 """Tests for MLX inference backend (detection and segmentation).
 
-These tests require macOS with Apple Silicon and MLX installed.
-They are skipped on other platforms via the @requires_mlx decorator.
+These tests require macOS with Apple Silicon and MLX installed. They are skipped on other platforms via the
+@requires_mlx decorator.
 """
 
 from __future__ import annotations
@@ -320,9 +320,13 @@ class TestDetrMLXIntegration:
         with pytest.raises(RuntimeError, match="MLX is not available"):
             model.optimize_for_inference(backend="mlx")
 
-    @requires_mlx
-    def test_predict_mlx_returns_detections(self) -> None:
-        """Test that MLX predict returns sv.Detections for a dummy image."""
+    @pytest.fixture
+    def mlx_backed_model(self) -> Any:
+        """An RFDETR already switched to the MLX backend, with the MLX model itself mocked.
+
+        Builds the wrapper without downloading weights and stubs ``_mlx_model`` so ``_predict_mlx`` runs its real
+        preprocessing, batching, and ``Detections`` assembly against one canned postprocess result.
+        """
         from rfdetr.detr import RFDETR
 
         class _MockRFDETR(RFDETR):
@@ -330,9 +334,9 @@ class TestDetrMLXIntegration:
                 return None
 
             def get_model_config(self, **kwargs) -> SimpleNamespace:
-                return SimpleNamespace()
+                return SimpleNamespace(num_channels=3)
 
-            def get_model(self, config: SimpleNamespace) -> Any:
+            def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> Any:
                 mock = MagicMock()
                 mock.inference_model = None
                 mock.resolution = 384
@@ -340,13 +344,8 @@ class TestDetrMLXIntegration:
 
         model = _MockRFDETR()
 
-        # Set up a mock MLX model
         mock_mlx = MagicMock()
         mock_mlx.resolution = 384
-        mock_mlx.forward.return_value = {
-            "pred_logits": __import__("mlx.core", fromlist=["core"]).zeros((1, 300, 91)),
-            "pred_boxes": __import__("mlx.core", fromlist=["core"]).full((1, 300, 4), 0.5),
-        }
         mock_mlx.postprocess.return_value = [
             {
                 "scores": np.array([0.9, 0.1]),
@@ -358,13 +357,35 @@ class TestDetrMLXIntegration:
         model._mlx_model = mock_mlx
         model._inference_backend = "mlx"
         model._is_optimized_for_inference = True
+        return model
 
-        # Create a dummy image
+    @requires_mlx
+    def test_predict_mlx_returns_detections(self, mlx_backed_model: Any) -> None:
+        """A single image through the MLX backend returns a bare sv.Detections.
+
+        Guards the MLX path's result assembly: it previously referenced an unbound ``sv`` alias and raised ``NameError``
+        on every call, so no MLX prediction ever reached a caller.
+        """
         dummy_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
-        detections = model.predict(dummy_image, threshold=0.5)
+
+        detections = mlx_backed_model.predict(dummy_image, threshold=0.5)
 
         assert isinstance(detections, sv.Detections)
         assert detections.xyxy.shape[1] == 4
+
+    @requires_mlx
+    def test_predict_mlx_single_element_list_returns_list(self, mlx_backed_model: Any) -> None:
+        """A one-image list through the MLX backend returns a one-element list, not a bare object.
+
+        The return shape must follow the *input* type the way ``predict()`` does; the MLX path used to branch on the
+        result count instead, so a single-image list silently came back unwrapped and broke list-indexing callers.
+        """
+        dummy_image = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+
+        detections = mlx_backed_model.predict([dummy_image], threshold=0.5)
+
+        assert isinstance(detections, list)
+        assert len(detections) == 1
 
     @requires_mlx
     def test_optimize_for_inference_routes_seg_to_mlx_seg_model(self) -> None:
@@ -457,7 +478,7 @@ class TestConvertSegWeights:
 
     @requires_mlx
     def test_pwconv_key_remapping(self) -> None:
-        """pwconv1 is remapped to pwconv for each block."""
+        """Pwconv1 is remapped to pwconv for each block."""
         from rfdetr.mlx.convert_weights import convert_seg_weights
 
         state_dict = {
@@ -648,7 +669,7 @@ class TestMLXSegInferenceModel:
 
     @requires_mlx
     def test_seg_postprocess_output_keys(self) -> None:
-        """postprocess returns scores, labels, boxes, and masks for each image."""
+        """Postprocess returns scores, labels, boxes, and masks for each image."""
         import mlx.core as mx
 
         from rfdetr.mlx.inference import MLXSegInferenceModel
@@ -672,7 +693,7 @@ class TestMLXSegInferenceModel:
 
     @requires_mlx
     def test_seg_postprocess_mask_shape(self) -> None:
-        """postprocess resizes masks to original image dimensions."""
+        """Postprocess resizes masks to original image dimensions."""
         import mlx.core as mx
 
         from rfdetr.mlx.inference import MLXSegInferenceModel
@@ -694,7 +715,7 @@ class TestMLXSegInferenceModel:
 
     @requires_mlx
     def test_seg_postprocess_mask_values_in_range(self) -> None:
-        """postprocess applies sigmoid so masks are in [0, 1]."""
+        """Postprocess applies sigmoid so masks are in [0, 1]."""
         import mlx.core as mx
 
         from rfdetr.mlx.inference import MLXSegInferenceModel

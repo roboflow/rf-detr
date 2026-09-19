@@ -2886,11 +2886,13 @@ class RFDETR:
 
     def _predict_mlx(
         self,
-        images: Union[
-            str, Image.Image, np.ndarray, torch.Tensor, List[Union[str, np.ndarray, Image.Image, torch.Tensor]]
-        ],
+        images: str
+        | Image.Image
+        | np.ndarray[Any, Any]
+        | torch.Tensor
+        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
         threshold: float = 0.5,
-    ) -> Union[sv.Detections, List[sv.Detections]]:
+    ) -> Detections | list[Detections]:
         """Run inference through the MLX backend.
 
         Accepts the same input types as predict(). Preprocesses images on CPU
@@ -2901,11 +2903,20 @@ class RFDETR:
             threshold: Confidence threshold.
 
         Returns:
-            Detection results as sv.Detections.
+            A bare :class:`~supervision.Detections` for a single image, or a list of them for a
+            list/tuple input — including a list holding exactly one image, matching
+            :meth:`predict`.
         """
         import mlx.core as mx
 
-        if not isinstance(images, list):
+        # Module scope only imports Detections under TYPE_CHECKING, so bind it for real here --
+        # matching predict(), which does its own supervision import for the same reason.
+        from supervision import Detections
+
+        # Determine the return shape from the *input* type, not the runtime batch length, exactly as
+        # predict() does: a list/tuple always yields a list, even when it holds a single image.
+        single_input = not isinstance(images, (list, tuple))
+        if single_input:
             images = [images]
 
         orig_sizes = []
@@ -2959,7 +2970,7 @@ class RFDETR:
             if "masks" in result:
                 mask = (result["masks"][keep] > 0.5).astype(bool)
 
-            detections = sv.Detections(
+            detections = Detections(
                 xyxy=boxes.astype(np.float32),
                 confidence=scores.astype(np.float32),
                 class_id=labels.astype(np.intp),
@@ -2967,7 +2978,7 @@ class RFDETR:
             )
             detections_list.append(detections)
 
-        return detections_list if len(detections_list) > 1 else detections_list[0]
+        return detections_list[0] if single_input else detections_list
 
     def deploy_to_roboflow(
         self,

@@ -6,9 +6,8 @@
 
 """Compiled MLX inference pipeline for RF-DETR.
 
-Builds a FP16 compiled forward pass that includes GPU-side preprocessing
-(uint8 -> float16 + ImageNet normalization). Postprocessing converts MLX
-outputs to numpy arrays matching the PyTorch PostProcess output format.
+Builds a FP16 compiled forward pass that includes GPU-side preprocessing (uint8 -> float16 + ImageNet normalization).
+Postprocessing converts MLX outputs to numpy arrays matching the PyTorch PostProcess output format.
 """
 
 from __future__ import annotations
@@ -19,12 +18,13 @@ import mlx.core as mx
 import mlx.nn as nn
 import mlx.utils
 import numpy as np
+import scipy.ndimage
 
 from rfdetr.mlx.backbone import DINOv2Backbone, interpolate_pos_embed
 from rfdetr.mlx.convert_weights import convert_seg_weights, convert_state_dict
 from rfdetr.mlx.decoder import RFDETRDecoder
 from rfdetr.mlx.seg_head import SegHead, build_seg_head
-from rfdetr.util.logger import get_logger
+from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
@@ -471,7 +471,6 @@ class MLXSegInferenceModel:
             ``(num_select, orig_h, orig_w)`` and contains float32 sigmoid
             probabilities.
         """
-
         pred_logits, pred_boxes, mask_logits = outputs
         logits = np.clip(np.array(pred_logits, dtype=np.float32), -88.0, 88.0)
         boxes = np.array(pred_boxes, dtype=np.float32)
@@ -533,7 +532,6 @@ class MLXSegInferenceModel:
 
             zoom_h = orig_h / sel_masks_prob.shape[1]
             zoom_w = orig_w / sel_masks_prob.shape[2]
-            import scipy.ndimage
 
             resized_masks = scipy.ndimage.zoom(sel_masks_prob, (1, zoom_h, zoom_w), order=1).astype(np.float32)
 

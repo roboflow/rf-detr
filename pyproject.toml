@@ -206,9 +206,14 @@ visual = [
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+# Floor is 0.29.4, the first release carrying both CVE-2025-62609 (GHSA-j842-xgm4-wf88, wild-pointer deref in
+# load_gguf) and CVE-2025-62608 (GHSA-w6vg-jg77-2qg6, heap buffer overflow parsing .npy in load()); everything
+# <=0.29.3 is affected. scipy repeats mlx's darwin marker on purpose: its only callers are MLX-backend code paths
+# (backbone pos_embed interpolation and segmentation mask resize), so leaving it ungated made
+# `pip install rfdetr[mlx]` on Linux install scipy while the extra's actual payload (mlx) resolved to nothing.
 mlx = [
-    "mlx>=0.22.0; sys_platform == 'darwin'",
-    "scipy",
+    "mlx>=0.29.4; sys_platform == 'darwin'",
+    "scipy; sys_platform == 'darwin'",
 ]
 # XLA backend for TPU training AND hardware-free XLA validation on CPU/GPU PJRT.
 # torch_xla is built on top of torch (NOT mutually exclusive — it requires torch present) and its
