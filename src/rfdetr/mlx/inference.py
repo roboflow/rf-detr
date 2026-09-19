@@ -12,7 +12,7 @@ Postprocessing converts MLX outputs to numpy arrays matching the PyTorch PostPro
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -132,6 +132,7 @@ def _topk_to_results(
     boxes_i: np.ndarray,
     num_select: int,
     orig_size: Tuple[int, int],
+    threshold: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Select the top-scoring predictions for one image and map them to pixel xyxy boxes.
 
@@ -140,6 +141,9 @@ def _topk_to_results(
         boxes_i: (nQ, 4) normalised cxcywh boxes for the same image.
         num_select: Maximum number of predictions to keep, clamped to what is available.
         orig_size: (height, width) of the original image, used to scale boxes.
+        threshold: When given, drop predictions scoring at or below it. Uses the same strict
+            ``>`` comparison as the caller in ``detr.py``, so filtering here is equivalent to
+            filtering there — but lets the segmentation path skip work for discarded queries.
 
     Returns:
         Tuple of (scores, labels, boxes, query_indices). ``query_indices`` maps each kept
@@ -173,6 +177,10 @@ def _topk_to_results(
     cx, cy, w, h = sel_boxes[:, 0], sel_boxes[:, 1], sel_boxes[:, 2], sel_boxes[:, 3]
     xyxy = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=-1)
     xyxy = xyxy * np.array([orig_w, orig_h, orig_w, orig_h], dtype=np.float32)
+
+    if threshold is not None:
+        keep = scores > threshold
+        scores, labels, xyxy, topk_boxes_idx = scores[keep], labels[keep], xyxy[keep], topk_boxes_idx[keep]
 
     return scores, labels, xyxy, topk_boxes_idx
 
@@ -218,7 +226,10 @@ class MLXInferenceModel:
 
         self._compiled_forward = mx.compile(_forward)
 
-        # Warm up the compiled graph
+        # Warm up the compiled graph.
+        # Warms only batch size 1; mx.compile retraces once per distinct batch size seen at
+        # inference time (not per-call, MLX caches per-shape) — batch_size is not currently
+        # honored on the MLX path.
         dummy = mx.zeros((1, resolution, resolution, 3), dtype=mx.uint8)
         result = self._compiled_forward(dummy)
         mx.eval(result)
@@ -268,6 +279,7 @@ class MLXInferenceModel:
         self,
         outputs: Dict[str, mx.array],
         orig_sizes: List[Tuple[int, int]],
+        threshold: Optional[float] = None,
     ) -> List[Dict[str, np.ndarray]]:
         """Postprocess MLX outputs to match PyTorch PostProcess format.
 
@@ -275,6 +287,8 @@ class MLXInferenceModel:
             outputs: Dict with "pred_logits" (N, nQ, num_classes) and
                 "pred_boxes" (N, nQ, 4) in cxcywh format.
             orig_sizes: List of (height, width) for each image.
+            threshold: When given, keep only predictions scoring above it. Left unset,
+                every top-k prediction is returned and the caller filters.
 
         Returns:
             List of dicts with "scores", "labels", "boxes" as numpy arrays.
@@ -286,7 +300,9 @@ class MLXInferenceModel:
 
         results = []
         for i in range(logits.shape[0]):
-            scores, labels, xyxy, _query_idx = _topk_to_results(prob[i], boxes[i], self.num_select, orig_sizes[i])
+            scores, labels, xyxy, _query_idx = _topk_to_results(
+                prob[i], boxes[i], self.num_select, orig_sizes[i], threshold
+            )
             results.append({"scores": scores, "labels": labels, "boxes": xyxy})
 
         return results
@@ -359,7 +375,10 @@ class MLXSegInferenceModel:
 
         self._compiled_forward = mx.compile(_forward)
 
-        # Warm up the compiled graph
+        # Warm up the compiled graph.
+        # Warms only batch size 1; mx.compile retraces once per distinct batch size seen at
+        # inference time (not per-call, MLX caches per-shape) — batch_size is not currently
+        # honored on the MLX path.
         dummy = mx.zeros((1, resolution, resolution, 3), dtype=mx.uint8)
         logits, boxes, masks = self._compiled_forward(dummy)
         mx.eval(logits, boxes, masks)
@@ -417,6 +436,7 @@ class MLXSegInferenceModel:
         self,
         outputs: Tuple[mx.array, mx.array, mx.array],
         orig_sizes: List[Tuple[int, int]],
+        threshold: Optional[float] = None,
     ) -> List[Dict[str, np.ndarray]]:
         """Postprocess MLX outputs to supervision-compatible format.
 
@@ -424,12 +444,17 @@ class MLXSegInferenceModel:
             outputs: 3-tuple ``(pred_logits, pred_boxes, mask_logits)`` from
                 ``forward()``.
             orig_sizes: List of ``(height, width)`` for each image in the batch.
+            threshold: When given, keep only predictions scoring above it, and resize
+                only those masks. Masks are upsampled to full image resolution, so at
+                4K a 100-query batch materialises gigabytes for predictions the caller
+                is about to discard; passing the score threshold avoids that entirely.
 
         Returns:
             List of dicts with ``"scores"``, ``"labels"``, ``"boxes"`` and
             ``"masks"`` as numpy arrays.  ``"masks"`` has shape
-            ``(num_select, orig_h, orig_w)`` and contains float32 sigmoid
-            probabilities.
+            ``(num_kept, orig_h, orig_w)`` and contains float32 sigmoid
+            probabilities, where ``num_kept`` is ``num_select`` unless ``threshold``
+            filtered the batch further.
         """
         pred_logits, pred_boxes, mask_logits = outputs
         logits = np.clip(np.array(pred_logits, dtype=np.float32), -88.0, 88.0)
@@ -441,7 +466,9 @@ class MLXSegInferenceModel:
         results = []
         for i in range(logits.shape[0]):
             orig_h, orig_w = orig_sizes[i]
-            scores, labels, xyxy, query_idx = _topk_to_results(prob[i], boxes[i], self.num_select, orig_sizes[i])
+            scores, labels, xyxy, query_idx = _topk_to_results(
+                prob[i], boxes[i], self.num_select, orig_sizes[i], threshold
+            )
 
             if query_idx.size:
                 # Select and resize masks — bilinear upsample via scipy.ndimage.zoom (vectorised)

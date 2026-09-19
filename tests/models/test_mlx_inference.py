@@ -12,6 +12,7 @@ These tests require macOS with Apple Silicon and MLX installed. They are skipped
 
 from __future__ import annotations
 
+import io
 import sys
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -19,8 +20,10 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import requests
 import supervision as sv
 import torch
+from PIL import Image
 
 from rfdetr.mlx import is_mlx_available
 
@@ -128,6 +131,76 @@ class TestConvertWeights:
         assert "decoder.layers.0.self_attn.key_proj.weight" in decoder_weights
         assert "decoder.layers.0.self_attn.value_proj.weight" in decoder_weights
         assert decoder_weights["decoder.layers.0.self_attn.query_proj.weight"].shape == (d_model, d_model)
+
+    @requires_mlx
+    def test_convert_state_dict_fuses_backbone_qkv(self) -> None:
+        """The three HuggingFace attention projections collapse into one fused attn.qkv parameter.
+
+        The MLX backbone builds a single Linear(dim, 3 * dim) and inference.py loads backbone weights strictly, so a
+        leftover attn.q/k/v.* key would break model construction rather than any test that only checks output shapes.
+        """
+        from rfdetr.mlx.convert_weights import convert_state_dict
+
+        dim = 384
+        prefix = "backbone.0.encoder.encoder.encoder.layer.0.attention.attention"
+        state_dict = {
+            f"{prefix}.query.weight": torch.randn(dim, dim),
+            f"{prefix}.query.bias": torch.randn(dim),
+            f"{prefix}.key.weight": torch.randn(dim, dim),
+            f"{prefix}.key.bias": torch.randn(dim),
+            f"{prefix}.value.weight": torch.randn(dim, dim),
+            f"{prefix}.value.bias": torch.randn(dim),
+        }
+        backbone_weights, _ = convert_state_dict(state_dict)
+
+        assert backbone_weights["blocks.0.attn.qkv.weight"].shape == (3 * dim, dim)
+        assert backbone_weights["blocks.0.attn.qkv.bias"].shape == (3 * dim,)
+        assert "blocks.0.attn.q.weight" not in backbone_weights
+
+    @requires_mlx
+    def test_backbone_qkv_fusion_keeps_q_k_v_order(self) -> None:
+        """Fused rows stay in q, k, v order, so each projection lands where the module reads it.
+
+        A swapped k/v block loads cleanly and still yields plausible-looking detections, so only an explicit row-block
+        comparison catches the mistake.
+        """
+        from rfdetr.mlx.convert_weights import convert_state_dict
+
+        dim = 8
+        prefix = "backbone.0.encoder.encoder.encoder.layer.3.attention.attention"
+        query = torch.full((dim, dim), 1.0)
+        key = torch.full((dim, dim), 2.0)
+        value = torch.full((dim, dim), 3.0)
+        backbone_weights, _ = convert_state_dict(
+            {
+                f"{prefix}.query.weight": query,
+                f"{prefix}.key.weight": key,
+                f"{prefix}.value.weight": value,
+            }
+        )
+
+        fused = backbone_weights["blocks.3.attn.qkv.weight"]
+        np.testing.assert_array_equal(fused[:dim], query.numpy())
+        np.testing.assert_array_equal(fused[dim : 2 * dim], key.numpy())
+        np.testing.assert_array_equal(fused[2 * dim :], value.numpy())
+
+    @requires_mlx
+    def test_partial_backbone_qkv_raises(self) -> None:
+        """A layer offering only some of its q/k/v projections raises instead of emitting a short matrix.
+
+        Concatenating whatever happened to be present would produce a (2 * dim, dim) matrix that fails much later inside
+        load_weights, with nothing pointing back at the missing key.
+        """
+        from rfdetr.mlx.convert_weights import convert_state_dict
+
+        prefix = "backbone.0.encoder.encoder.encoder.layer.0.attention.attention"
+        state_dict = {
+            f"{prefix}.query.weight": torch.randn(384, 384),
+            f"{prefix}.key.weight": torch.randn(384, 384),
+        }
+
+        with pytest.raises(ValueError, match="value"):
+            convert_state_dict(state_dict)
 
 
 class TestBackbone:
@@ -291,6 +364,28 @@ class TestInferencePostprocess:
         # x2 = (0.5+0.1)*200 = 120, y2 = (0.5+0.1)*100 = 60
         np.testing.assert_allclose(boxes[0], [80.0, 40.0, 120.0, 60.0], atol=0.1)
 
+    @requires_mlx
+    def test_postprocess_threshold_drops_low_scores(self) -> None:
+        """A threshold keeps only the predictions scoring strictly above it."""
+        import mlx.core as mx
+
+        from rfdetr.mlx.inference import MLXInferenceModel
+
+        # Two of the six query/class slots are confident, the rest are far below.
+        logits = np.full((1, 3, 2), -20.0, dtype=np.float32)
+        logits[0, 0, 0] = 20.0
+        logits[0, 1, 1] = 20.0
+        outputs = {"pred_logits": mx.array(logits), "pred_boxes": mx.full((1, 3, 4), 0.5)}
+
+        model = object.__new__(MLXInferenceModel)
+        model.num_classes = 2
+        model.num_select = 6
+
+        results = model.postprocess(outputs, [(100, 100)], threshold=0.5)
+
+        assert results[0]["scores"].shape == (2,)
+        assert results[0]["boxes"].shape == (2, 4)
+
 
 class TestDetrMLXIntegration:
     """Tests for the RFDETR.optimize_for_inference(backend='mlx') integration."""
@@ -388,6 +483,37 @@ class TestDetrMLXIntegration:
 
         assert isinstance(detections, list)
         assert len(detections) == 1
+
+    @requires_mlx
+    def test_predict_mlx_url_fetch_is_bounded_by_a_timeout(self, mlx_backed_model: Any) -> None:
+        """Fetching an image URL for MLX inference passes an explicit request timeout.
+
+        Without one, a hung or very slow host blocks the calling thread forever; the PyTorch ``predict()`` path already
+        bounds the same fetch at 30 seconds.
+        """
+        buffer = io.BytesIO()
+        Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(buffer, format="PNG")
+        response = MagicMock()
+        response.content = buffer.getvalue()
+        url = "https://example.invalid/frame.png"
+
+        with patch("rfdetr.detr.requests.get", return_value=response) as mock_get:
+            mlx_backed_model.predict(url, threshold=0.5)
+
+        mock_get.assert_called_once_with(url, timeout=30)
+
+    @requires_mlx
+    def test_predict_mlx_url_fetch_raises_on_http_error(self, mlx_backed_model: Any) -> None:
+        """A failed image download surfaces the HTTP error instead of being decoded.
+
+        An error page's bytes are not an image, so skipping ``raise_for_status()`` used to turn a 404 or 500 into a
+        confusing PIL decode failure far from its real cause.
+        """
+        response = MagicMock()
+        response.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
+
+        with patch("rfdetr.detr.requests.get", return_value=response), pytest.raises(requests.HTTPError):
+            mlx_backed_model.predict("https://example.invalid/missing.png", threshold=0.5)
 
     @pytest.fixture
     def fake_mlx_inference_module(self) -> ModuleType:
@@ -761,3 +887,61 @@ class TestMLXSegInferenceModel:
 
         assert masks.min() >= 0.0
         assert masks.max() <= 1.0
+
+    @requires_mlx
+    def test_seg_postprocess_threshold_resizes_only_survivors(self) -> None:
+        """A threshold shrinks the returned mask stack to the predictions that clear it."""
+        import mlx.core as mx
+
+        from rfdetr.mlx.inference import MLXSegInferenceModel
+
+        # Two of the twelve query/class slots are confident, the rest are far below.
+        logits = np.full((1, 4, 3), -20.0, dtype=np.float32)
+        logits[0, 0, 0] = 20.0
+        logits[0, 1, 1] = 20.0
+        outputs = (mx.array(logits), mx.full((1, 4, 4), 0.5), mx.zeros((1, 4, 8, 8)))
+
+        model = object.__new__(MLXSegInferenceModel)
+        model.num_classes = 3
+        model.num_select = 12
+
+        results = model.postprocess(outputs, [(16, 24)], threshold=0.5)
+
+        assert results[0]["scores"].shape == (2,)
+        assert results[0]["masks"].shape == (2, 16, 24)
+
+    @requires_mlx
+    def test_seg_postprocess_threshold_none_keeps_every_mask(self) -> None:
+        """Omitting the threshold preserves the pre-existing unfiltered return shape."""
+        import mlx.core as mx
+
+        from rfdetr.mlx.inference import MLXSegInferenceModel
+
+        outputs = (mx.zeros((1, 4, 3)), mx.full((1, 4, 4), 0.5), mx.zeros((1, 4, 8, 8)))
+
+        model = object.__new__(MLXSegInferenceModel)
+        model.num_classes = 3
+        model.num_select = 12
+
+        results = model.postprocess(outputs, [(16, 24)])
+
+        assert results[0]["masks"].shape == (12, 16, 24)
+
+    @requires_mlx
+    def test_seg_postprocess_threshold_filtering_everything_returns_empty_masks(self) -> None:
+        """No survivor still yields an empty mask stack sized to the original image."""
+        import mlx.core as mx
+
+        from rfdetr.mlx.inference import MLXSegInferenceModel
+
+        # All-zero logits sigmoid to exactly 0.5, which a strict `> 0.5` rejects.
+        outputs = (mx.zeros((1, 4, 3)), mx.full((1, 4, 4), 0.5), mx.zeros((1, 4, 8, 8)))
+
+        model = object.__new__(MLXSegInferenceModel)
+        model.num_classes = 3
+        model.num_select = 12
+
+        results = model.postprocess(outputs, [(16, 24)], threshold=0.5)
+
+        assert results[0]["masks"].shape == (0, 16, 24)
+        assert results[0]["masks"].dtype == np.float32

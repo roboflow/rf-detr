@@ -66,16 +66,17 @@ class LayerScale(nn.Module):
 
 
 class Attention(nn.Module):
-    """Multi-head self-attention with separate Q/K/V projections."""
+    """Multi-head self-attention with a single fused Q/K/V projection."""
 
     def __init__(self, dim: int, num_heads: int = 6, qkv_bias: bool = True) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
-        self.q = nn.Linear(dim, dim, bias=qkv_bias)
-        self.k = nn.Linear(dim, dim, bias=qkv_bias)
-        self.v = nn.Linear(dim, dim, bias=qkv_bias)
+        # Fused QKV projection — perf benefit is unmeasured on real Apple Silicon hardware; verify with a
+        # before/after benchmark before citing as a speedup. The row blocks are ordered q, k, v; convert_weights
+        # concatenates the three separate HuggingFace projections in that order to fill this one matrix.
+        self.qkv = nn.Linear(dim, 3 * dim, bias=qkv_bias)
         self.out = nn.Linear(dim, dim)
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -91,9 +92,10 @@ class Attention(nn.Module):
         H = self.num_heads
         D = self.head_dim
 
-        q = self.q(x).reshape(N, L, H, D).transpose(0, 2, 1, 3)
-        k = self.k(x).reshape(N, L, H, D).transpose(0, 2, 1, 3)
-        v = self.v(x).reshape(N, L, H, D).transpose(0, 2, 1, 3)
+        proj_q, proj_k, proj_v = mx.split(self.qkv(x), 3, axis=-1)
+        q = proj_q.reshape(N, L, H, D).transpose(0, 2, 1, 3)
+        k = proj_k.reshape(N, L, H, D).transpose(0, 2, 1, 3)
+        v = proj_v.reshape(N, L, H, D).transpose(0, 2, 1, 3)
 
         out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(N, L, C)
@@ -116,8 +118,7 @@ class MLP(nn.Module):
 class Block(nn.Module):
     """Transformer block with layer scale.
 
-    Windowing is handled at the backbone level. Each block operates on
-    whatever sequence it receives.
+    Windowing is handled at the backbone level. Each block operates on whatever sequence it receives.
     """
 
     def __init__(

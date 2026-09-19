@@ -2920,8 +2920,10 @@ class RFDETR:
 
         for img in images:
             if isinstance(img, str):
-                if img.startswith("http"):
-                    img = requests.get(img, stream=True).raw
+                if urlparse(img).scheme in ("http", "https"):
+                    resp = requests.get(img, timeout=30)
+                    resp.raise_for_status()
+                    img = io.BytesIO(resp.content)
                 img = Image.open(img)
 
             if isinstance(img, torch.Tensor):
@@ -2948,7 +2950,7 @@ class RFDETR:
         outputs = self._mlx_model.forward(x)
 
         # Postprocess to numpy
-        results = self._mlx_model.postprocess(outputs, orig_sizes)
+        results = self._mlx_model.postprocess(outputs, orig_sizes, threshold=threshold)
 
         detections_list = []
         for result in results:

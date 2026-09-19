@@ -221,6 +221,9 @@ def gen_sineembed_for_position(pos_tensor: mx.array, dim: int = 128) -> mx.array
         (..., n_coords * dim) sinusoidal encoding.
     """
     scale = 2 * math.pi
+    # Deliberately fp32 — MLX promotes fp16*fp32->fp32 here anyway (verified empirically), and these feed a sine
+    # positional-encoding exponent / sub-pixel sampling grid where fp16 precision loss would be a real accuracy
+    # regression. Do not 'optimize' this to fp16.
     dim_t = mx.arange(dim, dtype=mx.float32)
     dim_t = 10000.0 ** (2.0 * (dim_t // 2) / dim)
 
@@ -606,6 +609,9 @@ class RFDETRDecoder(nn.Module):
         Returns:
             Tuple of (refpoint_embed_ts, memory_ts), each (N, num_queries, ...).
         """
+        # Deliberately fp32 — MLX promotes fp16*fp32->fp32 here anyway (verified empirically), and these feed a sine
+        # positional-encoding exponent / sub-pixel sampling grid where fp16 precision loss would be a real accuracy
+        # regression. Do not 'optimize' this to fp16.
         gy = mx.arange(H, dtype=mx.float32)
         gx = mx.arange(W, dtype=mx.float32)
         grid_y, grid_x = mx.meshgrid(gy, gx, indexing="ij")

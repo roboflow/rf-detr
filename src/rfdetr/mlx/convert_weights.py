@@ -43,6 +43,8 @@ _LAYER_SUBKEY_MAP = {
     "norm1.bias": "norm1.bias",
     "norm2.weight": "norm2.weight",
     "norm2.bias": "norm2.bias",
+    # attn.q/k/v.* are staging names, not MLX parameter paths — the backbone's Attention builds one fused
+    # `qkv` Linear, so convert_state_dict collects these three and concatenates them into attn.qkv.*.
     "attention.attention.query.weight": "attn.q.weight",
     "attention.attention.query.bias": "attn.q.bias",
     "attention.attention.key.weight": "attn.k.weight",
@@ -61,6 +63,15 @@ _LAYER_SUBKEY_MAP = {
 
 _LAYER_PATTERN = re.compile(r"^backbone\.0\.encoder\.encoder\.encoder\.layer\.(\d+)\.(.+)$")
 
+# Matches the staging keys emitted for the three HuggingFace attention projections, which are fused
+# into one `attn.qkv` parameter. Order is fixed at q, k, v — the same convention the decoder's
+# self_attn.in_proj_weight split in convert_state_dict unpacks.
+_BACKBONE_QKV_PATTERN = re.compile(r"^blocks\.(\d+)\.attn\.([qkv])\.(weight|bias)$")
+_QKV_ORDER = ("q", "k", "v")
+# Role letter -> HuggingFace projection name, so a missing-projection error names the key the
+# caller can actually search for in their checkpoint.
+_QKV_HF_NAMES = {"q": "query", "k": "key", "v": "value"}
+
 
 def _remap_backbone_key(key: str) -> Optional[str]:
     """Map a PyTorch backbone key to its MLX equivalent.
@@ -69,7 +80,8 @@ def _remap_backbone_key(key: str) -> Optional[str]:
         key: PyTorch state_dict key.
 
     Returns:
-        MLX parameter path, or None if the key should be skipped.
+        MLX parameter path, or None if the key should be skipped. Attention projections return the
+        ``attn.q/k/v.*`` staging names, which :func:`convert_state_dict` fuses into ``attn.qkv.*``.
     """
     for hf_prefix, mlx_prefix in _BACKBONE_PREFIX_MAP.items():
         if key == hf_prefix or key.startswith(hf_prefix + "."):
@@ -181,11 +193,16 @@ def convert_state_dict(
 
     Returns:
         Tuple of (backbone_weights, decoder_weights) as numpy arrays.
+
+    Raises:
+        ValueError: If a backbone layer supplies only some of its q/k/v projections, leaving the
+            fused ``attn.qkv`` parameter impossible to build.
     """
     backbone_weights: Dict[str, np.ndarray] = {}
     decoder_weights: Dict[str, np.ndarray] = {}
     decoder_in_proj: Dict[str, np.ndarray] = {}
     dropped: Dict[str, list] = {"backbone": [], "decoder": []}
+    backbone_qkv: Dict[Tuple[str, str], Dict[str, np.ndarray]] = {}
 
     for key, tensor in state_dict.items():
         arr = tensor.detach().cpu().float().numpy()
@@ -203,6 +220,14 @@ def convert_state_dict(
                 continue
             # Strip "backbone." prefix for loading into backbone module
             bare_key = mlx_key[len("backbone.") :] if mlx_key.startswith("backbone.") else mlx_key
+
+            # Hold the separate q/k/v projections back; they are fused after the scan completes.
+            qkv_match = _BACKBONE_QKV_PATTERN.match(bare_key)
+            if qkv_match is not None:
+                layer_idx, role, param_type = qkv_match.groups()
+                backbone_qkv.setdefault((layer_idx, param_type), {})[role] = arr
+                continue
+
             if arr.ndim == 4:
                 arr = _transpose_conv_weight(arr)
             backbone_weights[bare_key] = arr
@@ -231,6 +256,19 @@ def convert_state_dict(
                 dropped["decoder"].append(key)
                 continue
             decoder_weights[mlx_key] = arr
+
+    # Fuse the backbone's three separate q/k/v projections into one `attn.qkv` matrix. This is the
+    # mirror image of the decoder's in_proj split below and uses the same q, k, v row order; axis 0
+    # holds output features for both the (3*dim, dim) weight and the (3*dim,) bias.
+    for (layer_idx, param_type), parts in backbone_qkv.items():
+        missing = [_QKV_HF_NAMES[role] for role in _QKV_ORDER if role not in parts]
+        if missing:
+            raise ValueError(
+                f"backbone layer {layer_idx} is missing the {', '.join(missing)} projection "
+                f"{param_type} — cannot build the fused attn.qkv.{param_type}"
+            )
+        fused = np.concatenate([parts[role] for role in _QKV_ORDER], axis=0)
+        backbone_weights[f"blocks.{layer_idx}.attn.qkv.{param_type}"] = fused
 
     # Split self_attn in_proj_weight/bias into query/key/value projections
     for key, arr in decoder_in_proj.items():
