@@ -26,7 +26,7 @@ from rfdetr.models.transformer import (
     gen_encoder_output_proposals,
     gen_sineembed_for_position,
 )
-from rfdetr.utilities.tensors import _bilinear_grid_sample
+from rfdetr.utilities.tensors import NestedTensor, _bilinear_grid_sample
 
 
 @pytest.fixture(autouse=True)
@@ -1363,7 +1363,9 @@ def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkey
 
     monkeypatch.setattr(torch, "gather", _tracking_gather)
 
-    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+    _, _, memory_ts, boxes_ts, _ = transformer(
+        srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+    )
 
     # Every gather index used by the two-stage top-k selection (Transformer.forward two-stage top-k
     # gather) must still be a broadcast view produced by Tensor.expand: its broadcast dim keeps
@@ -1478,7 +1480,9 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
 
     monkeypatch.setattr(torch, "gather", _tracking_gather)
 
-    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+    _, _, memory_ts, boxes_ts, _ = transformer(
+        srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+    )
 
     # Two gather calls (refpoint, memory) per group -- the only torch.gather call sites in
     # Transformer.forward's two-stage top-k selection.
@@ -1606,6 +1610,62 @@ def test_two_stage_batching_eligible_true_for_real_build_model_rfdetr_nano() -> 
     model = build_model(ns)
     assert model.group_detr == 13
     assert model.transformer._two_stage_batching_eligible()
+
+
+def test_two_stage_group_selection_class_logits_reuse_matches_recomputed_loop() -> None:
+    """``LWDETR.forward``'s ``enc_outputs["pred_logits"]`` must match whether it comes from the batched path's gathered
+    ``class_logits_all`` (reused, no second forward) or the untouched per-group ``enc_out_class_embed`` recompute loop
+    it replaces on the eligible path.
+
+    ``enc_out_class_embed`` is a plain per-position ``nn.Linear``, so gathering its output at the
+    positions ``_two_stage_group_selection`` already selected is algebraically the same computation
+    the recompute loop performs on the same gathered hidden state -- this only differs in GEMM
+    accumulation order (stacked-groups batched matmul vs. one matmul per group), so results are
+    compared within float32 tolerance rather than bit-for-bit, matching this file's own established
+    convention for the sibling batched-vs-loop comparisons above.
+
+    Also proves ``enc_out_class_embed``'s parameters receive real gradient through this reused value
+    directly -- unlike the memory_ts/boxes_ts-only comparisons above, whose own docstrings note
+    ``enc_out_class_embed`` structurally never received gradient through that path -- and, following
+    this file's ``test_two_stage_group_selection_matches_generic_loop_forward_and_gradient`` convention
+    of comparing fast-vs-loop gradients rather than only asserting the fast path's own gradient is
+    non-vacuous, that those gradients match the recompute loop's within the same tolerance. A gather
+    that silently detached ``class_logits_all`` (or indexed the wrong positions in a way that happened
+    to still produce finite, nonzero, but wrong values) would still pass a same-path-only non-vacuity
+    check; comparing against the loop's independently computed gradient closes that gap.
+    """
+    torch.manual_seed(0)
+    ns = _namespace_from_configs(
+        RFDETRNanoConfig(num_classes=7, pretrain_weights=None, device="cpu"), TrainConfig(dataset_dir="/tmp")
+    )
+    model_fast = build_model(ns)
+    assert model_fast.transformer._two_stage_batching_eligible()
+    state = copy.deepcopy(model_fast.state_dict())
+
+    model_loop = build_model(ns)
+    model_loop.load_state_dict(state)
+    model_loop.transformer._two_stage_batching_eligible = lambda: False
+    assert not model_loop.transformer._two_stage_batching_eligible()
+
+    model_fast.train()
+    model_loop.train()
+
+    samples = NestedTensor(torch.randn(1, 3, 256, 256), torch.zeros(1, 256, 256, dtype=torch.bool))
+    out_fast = model_fast(samples)
+    out_loop = model_loop(samples)
+
+    torch.testing.assert_close(
+        out_fast["enc_outputs"]["pred_logits"], out_loop["enc_outputs"]["pred_logits"], atol=1e-4, rtol=1e-4
+    )
+
+    fast_class_embed_parameters = [p for m in model_fast.transformer.enc_out_class_embed for p in m.parameters()]
+    loop_class_embed_parameters = [p for m in model_loop.transformer.enc_out_class_embed for p in m.parameters()]
+    fast_gradients = torch.autograd.grad(out_fast["enc_outputs"]["pred_logits"].sum(), fast_class_embed_parameters)
+    loop_gradients = torch.autograd.grad(out_loop["enc_outputs"]["pred_logits"].sum(), loop_class_embed_parameters)
+    for fast_gradient, loop_gradient in zip(fast_gradients, loop_gradients, strict=True):
+        assert torch.isfinite(fast_gradient).all()
+        assert fast_gradient.abs().sum() > 0
+        torch.testing.assert_close(fast_gradient, loop_gradient, atol=1e-4, rtol=1e-4)
 
 
 def test_two_stage_batching_eligible_false_for_linear_subclass_in_enc_output() -> None:
@@ -1817,7 +1877,7 @@ def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbo
     )
     assert transformer._two_stage_batching_eligible()
 
-    _, _, memory_fast, boxes_fast = transformer(
+    _, _, memory_fast, boxes_fast, _ = transformer(
         srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
     )
     fast_loss = memory_fast.sum() + boxes_fast.sum()
@@ -1831,7 +1891,7 @@ def test_two_stage_group_selection_matches_generic_loop_forward_and_gradient(bbo
     transformer_loop = copy.deepcopy(transformer)
     transformer_loop._two_stage_batching_eligible = lambda: False
     srcs_loop = [src.detach().clone().requires_grad_(True) for src in srcs]
-    _, _, memory_loop, boxes_loop = transformer_loop(
+    _, _, memory_loop, boxes_loop, _ = transformer_loop(
         srcs_loop, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
     )
     loop_loss = memory_loop.sum() + boxes_loop.sum()
@@ -1881,22 +1941,28 @@ def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gra
     assert transformer._two_stage_batching_eligible()
 
     with torch.autocast("cuda", dtype=torch.bfloat16):
-        _, _, memory_ts, boxes_ts = transformer(
+        _, _, memory_ts, boxes_ts, cls_ts = transformer(
             srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
         )
-        loss = memory_ts.float().sum() + boxes_ts.float().sum()
+        loss = memory_ts.float().sum() + boxes_ts.float().sum() + cls_ts.float().sum()
 
     assert torch.isfinite(memory_ts).all()
     assert torch.isfinite(boxes_ts).all()
+    # cls_ts is enc_out_class_embed's output gathered by the batched path (module-level docstring
+    # above), the same value the class-logits-reuse mechanism forwards as enc_outputs["pred_logits"]
+    # instead of recomputing -- the mechanism this benchmark's BF16 training step actually exercises.
+    assert torch.isfinite(cls_ts).all()
 
-    # memory_ts/boxes_ts are the two-stage encoder outputs only (the decoder's own parameters correctly
-    # get no gradient from this loss), so only check the modules _two_stage_group_selection actually uses
-    # for a DIFFERENTIABLE output. enc_out_class_embed is excluded: its output only ranks torch.topk's
-    # (non-differentiable) selection indices, so it structurally never receives a gradient here.
+    # memory_ts/boxes_ts/cls_ts are the two-stage encoder outputs only (the decoder's own parameters
+    # correctly get no gradient from this loss), so only check the modules _two_stage_group_selection
+    # actually uses for a DIFFERENTIABLE output. Unlike the memory_ts/boxes_ts-only version of this
+    # test's loss, cls_ts is now included, so enc_out_class_embed's parameters are no longer excluded:
+    # this loss is the first one in this function to route gradient through the reused gather.
     two_stage_modules = [
         *transformer.enc_output,
         *transformer.enc_output_norm,
         *transformer.enc_out_bbox_embed,
+        *transformer.enc_out_class_embed,
     ]
     named_parameters = [
         (name, parameter)
@@ -1909,6 +1975,16 @@ def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gra
     gradients = torch.autograd.grad(loss, inputs)
     for name, gradient in zip(names, gradients, strict=True):
         assert torch.isfinite(gradient).all(), f"{name} gradient has non-finite entries"
+    class_embed_parameter_ids = {id(p) for m in transformer.enc_out_class_embed for p in m.parameters()}
+    class_embed_gradients = [
+        gradient
+        for (name, parameter), gradient in zip(named_parameters, gradients[len(srcs) :], strict=True)
+        if id(parameter) in class_embed_parameter_ids
+    ]
+    assert class_embed_gradients, "enc_out_class_embed contributed no parameters to this check"
+    assert any(gradient.abs().sum() > 0 for gradient in class_embed_gradients), (
+        "enc_out_class_embed must receive real gradient through the reused cls_ts under bf16 autocast"
+    )
 
 
 @pytest.mark.gpu
@@ -1942,7 +2018,7 @@ def test_two_stage_group_selection_compiles_with_finite_gradients() -> None:
     with torch._dynamo.config.patch(capture_scalar_outputs=True):
         compiled_transformer = torch.compile(transformer, dynamic=True)
 
-        _, _, memory_ts, boxes_ts = compiled_transformer(
+        _, _, memory_ts, boxes_ts, _ = compiled_transformer(
             srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
         )
         loss = memory_ts.sum() + boxes_ts.sum()
@@ -2104,7 +2180,9 @@ def test_two_stage_topk_gather_selects_correct_rows_with_bbox_reparam(monkeypatc
 
     monkeypatch.setattr(torch, "gather", _tracking_gather)
 
-    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+    _, _, memory_ts, boxes_ts, _ = transformer(
+        srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+    )
 
     assert gather_index_calls, "expected torch.gather to be called during the two-stage top-k selection"
     for index in gather_index_calls:
@@ -2177,7 +2255,9 @@ def test_two_stage_topk_gather_backward_routes_gradient_only_to_selected_rows() 
     transformer.enc_out_class_embed = nn.ModuleList([_FixedTopkScores(_make_out_of_order_scores(total_hw, picks))])
     transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
 
-    _, _, memory_ts, boxes_ts = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+    _, _, memory_ts, boxes_ts, _ = transformer(
+        srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+    )
     (memory_ts.sum() + boxes_ts.sum()).backward()
 
     assert all(src.grad is not None for src in srcs)

@@ -29,6 +29,7 @@ from rfdetr.models._types import BuilderArgs
 from rfdetr.models.heads.keypoints import ConditionalQueryInitializer
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
+from rfdetr.utilities.compiler import is_compiling
 
 
 def _tracer_absent() -> bool:
@@ -41,19 +42,6 @@ def _tracer_absent() -> bool:
         Always ``False``.
     """
     return False
-
-
-def _is_compiling() -> bool:
-    """Return whether the current execution is inside a ``torch.compile`` graph.
-
-    PyTorch 2.3 added the public ``torch.compiler.is_compiling`` predicate. RF-DETR supports
-    PyTorch 2.2, where the equivalent Dynamo predicate remains the compatible fallback.
-
-    Returns:
-        Whether Dynamo is compiling the current code path.
-    """
-    is_compiling = getattr(torch.compiler, "is_compiling", None)
-    return is_compiling() if is_compiling is not None else torch._dynamo.is_compiling()
 
 
 def _safe_multinormalize(dim: int) -> int:
@@ -460,7 +448,7 @@ class Transformer(nn.Module):
 
     def _two_stage_group_selection(
         self, output_memory: Tensor, output_proposals: Tensor, group_detr: int
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         """Run every ``group_detr`` group's two-stage top-k proposal selection in one batched pass.
 
         Replaces a Python loop that calls each group's own ``enc_output``/``enc_output_norm``/
@@ -488,9 +476,10 @@ class Transformer(nn.Module):
                 greater than 1 for every call site).
 
         Returns:
-            ``(refpoint_embed_ts, memory_ts, boxes_ts)``, matching the per-group loop's own
+            ``(refpoint_embed_ts, memory_ts, boxes_ts, cls_ts)``, matching the per-group loop's own
             ``torch.cat(parts, dim=1)`` outputs and query order (group 0's queries first, then group
-            1's, ...).
+            1's, ...). ``cls_ts`` is ``enc_out_class_embed``'s output at the same selected positions,
+            gathered from the ranking pass rather than recomputed by the caller.
         """
         assert self.enc_out_class_embed is not None
         assert self.enc_out_bbox_embed is not None
@@ -512,6 +501,14 @@ class Transformer(nn.Module):
         class_logits_all = _batched_group_linear(output_memory_all, class_weight, class_bias)
         # (group, bs, S) -> (group, bs, nq); torch.topk batches over every leading dim natively.
         topk_proposals_all = torch.topk(class_logits_all.max(-1)[0], topk, dim=-1)[1]
+
+        # enc_out_class_embed is a plain per-position Linear, so gathering its already-computed
+        # output at the same indices used below is exactly what re-running it on the gathered
+        # hidden state would produce (Linear(x)[idx] == Linear(x[idx])) -- reuse instead of the
+        # caller re-running enc_out_class_embed a second time on the gathered subset.
+        cls_logits_selected = torch.gather(
+            class_logits_all, 2, topk_proposals_all.unsqueeze(-1).expand(-1, -1, -1, class_logits_all.shape[-1])
+        )
 
         tgt_undetach_all = torch.gather(
             output_memory_all, 2, topk_proposals_all.unsqueeze(-1).expand(-1, -1, -1, self.d_model)
@@ -559,6 +556,7 @@ class Transformer(nn.Module):
             _merge_groups(refpoint_embed_all),
             _merge_groups(tgt_undetach_all),
             _merge_groups(refpoint_embed_all_undetach),
+            _merge_groups(cls_logits_selected),
         )
 
     def forward(
@@ -636,7 +634,7 @@ class Transformer(nn.Module):
             if spatial_shapes is None:
                 spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
                 self._cuda_graph_spatial_shapes[spatial_key] = spatial_shapes
-        elif getattr(torch.compiler, "is_exporting", _tracer_absent)() or _is_compiling():
+        elif getattr(torch.compiler, "is_exporting", _tracer_absent)() or is_compiling():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
@@ -659,6 +657,7 @@ class Transformer(nn.Module):
             # The dual-projector path uses the same MultiScaleProjector layout as memory above.
             cross_attn_memory = ca_flatten[0].contiguous() if len(ca_flatten) == 1 else torch.cat(ca_flatten, 1)
 
+        cls_ts = None
         if self.two_stage:
             assert self.enc_out_class_embed is not None
             assert self.enc_out_bbox_embed is not None
@@ -671,7 +670,7 @@ class Transformer(nn.Module):
                 # Stack each group's own weights to replace the per-group launches with one batched
                 # call per operation. The eligibility guard keeps custom or heterogeneous modules on
                 # the loop below. Eval/export use group_detr=1, so tracing never sees the batched path.
-                refpoint_embed_ts, memory_ts, boxes_ts = self._two_stage_group_selection(
+                refpoint_embed_ts, memory_ts, boxes_ts, cls_ts = self._two_stage_group_selection(
                     output_memory, output_proposals, group_detr
                 )
             else:
@@ -725,6 +724,11 @@ class Transformer(nn.Module):
                 # (bs, nq, d)
                 memory_ts = torch.cat(memory_ts_parts, dim=1)
                 boxes_ts = torch.cat(boxes_ts_parts, dim=1)
+                # This loop discards its own per-group class ranking scores after topk (same as the
+                # batched path above) instead of gathering them -- unlike the batched path, this rare
+                # fallback (custom/heterogeneous group modules, or group_detr==1) is left as is; the
+                # caller re-runs enc_out_class_embed for this case, same as before this change.
+                cls_ts = None
 
         enc_kp_predictions = None
         init_kp_ref_xy = None
@@ -867,6 +871,10 @@ class Transformer(nn.Module):
             return_values.append(keypoint_hs)
             return_values.append(enc_kp_predictions)
             return_values.append(keypoint_memory_ts if self.two_stage else None)
+
+        # Always last: callers that need it grab it by position ([-1] or an explicit slice), so this
+        # append must never move without updating every unpacking site (LWDETR.forward, forward_export).
+        return_values.append(cls_ts)
 
         return tuple(return_values)
 

@@ -6,6 +6,7 @@
 """Comprehensive unit tests for RFDETRModelModule (LightningModule wrapper)."""
 
 import logging
+import pickle
 import random
 import warnings
 from contextlib import nullcontext
@@ -20,12 +21,15 @@ from pytorch_lightning.core.optimizer import LightningOptimizer
 from torch import nn
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.models.criterion import SetCriterion
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
+from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 from rfdetr.training.callbacks.best_model import RFDETREarlyStopping
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.utilities.box_ops import pairwise_box_l1_cost
 from rfdetr.utilities.tensors import NestedTensor
 
 from .helpers import _fake_postprocess as _helpers_fake_postprocess
@@ -580,26 +584,165 @@ class TestInit:
             _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
 
+    def test_compile_tolerates_criterion_without_matcher(self, tmp_path: Path) -> None:
+        """A criterion that exposes no ``matcher`` attribute must not break compiled construction.
+
+        ``_FakeCriterion`` is what the GPU compile regressions inject; reading ``self.criterion.matcher`` unguarded
+        raised ``AttributeError`` there before the ``getattr`` probe.
+        """
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(_FakeCriterion(), _fake_postprocess()),
+            ),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as compiler,
+        ):
+            module = RFDETRModelModule(_base_model_config(compile=True), _base_train_config(tmp_path))
+
+        assert module._compile_active is True
+        compiler.assert_called_once()
+
+    @pytest.mark.parametrize("compile_enabled", [False, True])
+    def test_matcher_l1_compilation_follows_model_flag(self, tmp_path: Path, compile_enabled: bool) -> None:
+        """Compile only the real matcher's tensor cost, without changing other matcher instances."""
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+        model = _fake_model()
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace(coalesce_tiling_analysis=True))),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=model),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+            patch.object(HungarianMatcher, "enable_compiled_l1_cost", autospec=True) as enabler,
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda value, **_: value) as compiler,
+        ):
+            module = RFDETRModelModule(
+                _base_model_config(compile=compile_enabled, cuda_graphs=True), _base_train_config(tmp_path)
+            )
+
+        assert module.criterion.matcher is matcher
+        assert type(matcher).forward is HungarianMatcher.forward
+        if not compile_enabled:
+            enabler.assert_not_called()
+            compiler.assert_not_called()
+            return
+        # Construction compiles only the model; the matcher's cost compiles lazily on its first use, from the
+        # same Inductor options the model got (the matcher itself forces CUDA graph replay off on top of them).
+        compiler.assert_called_once()
+        assert compiler.call_args.args == (model,)
+        model_options = compiler.call_args.kwargs["options"]
+        assert model_options == {"triton.coalesce_tiling_analysis": False, "triton.cudagraphs": True}
+        enabler.assert_called_once_with(matcher, model_options)
+
+    def test_compiled_matcher_stays_picklable_for_spawn_launchers(self, tmp_path: Path) -> None:
+        """The module's matcher pickles before and after its compiled cost is built in this process.
+
+        ``ddp_spawn``/``ddp_notebook`` pickle the trainer -- criterion and matcher included -- into every worker. The
+        ``torch.compile`` double returns a local closure, which ``pickle`` rejects (negative control below), so this
+        passes only when the matcher stores the compile request and builds the callable lazily per process.
+        """
+
+        def unpicklable_compile(fn, **_):
+            def compiled(*args):
+                return fn(*args)
+
+            return compiled
+
+        with pytest.raises((pickle.PicklingError, AttributeError)):
+            pickle.dumps(unpicklable_compile(pairwise_box_l1_cost))
+
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
+        # The double is live during construction too: an eager compile in __init__ would already leave the
+        # unpicklable closure on the matcher and fail the first pickle below.
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+            patch(
+                "rfdetr.training.module_model.torch.compile",
+                side_effect=lambda value, **_: unpicklable_compile(value) if value is pairwise_box_l1_cost else value,
+            ),
+        ):
+            module = RFDETRModelModule(_base_model_config(compile=True), _base_train_config(tmp_path))
+
+        torch.manual_seed(0)
+        outputs = {"pred_logits": torch.randn(2, 4, 5), "pred_boxes": torch.rand(2, 4, 4) * 0.4 + 0.3}
+        targets = [
+            {"labels": torch.tensor([1, 3]), "boxes": torch.rand(2, 4) * 0.4 + 0.3},
+            {"labels": torch.tensor([0]), "boxes": torch.rand(1, 4) * 0.4 + 0.3},
+        ]
+        expected = HungarianMatcher()(outputs, targets)
+
+        # Pickled before any use: the spawn launcher's moment.
+        spawned_matcher = pickle.loads(pickle.dumps(module.criterion.matcher))
+        with patch("rfdetr.training.module_model.torch.compile", side_effect=unpicklable_compile) as compiler:
+            actual = module.criterion.matcher(outputs, targets)
+            spawned = spawned_matcher(outputs, targets)
+        assert compiler.call_count == 2, "each process builds its own compiled callable on first use"
+        for (actual_i, actual_j), (expected_i, expected_j) in zip((*actual, *spawned), (*expected, *expected)):
+            assert torch.equal(actual_i, expected_i)
+            assert torch.equal(actual_j, expected_j)
+
+        # Pickled after use: the compiled callable is a per-process cache, never state.
+        pickle.dumps(module.criterion.matcher)
+
     @pytest.mark.parametrize("knob_supported", [True, False])
     def test_coalesce_tiling_knob_passed_only_when_torch_exposes_it(self, knob_supported, tmp_path):
         """The Inductor workaround reaches torch.compile only on a torch whose config exposes the knob.
 
         Older torch versions have no ``triton.coalesce_tiling_analysis``; passing it there raises
         ``RuntimeError("Unexpected optimization option ...")`` from ``_TorchCompileInductorWrapper.apply_options``.
-        Compilation must still proceed in both cases.
+        Compilation must still proceed in both cases, and the matcher's compile request must carry the same knob
+        decision as the model's.
         """
         triton_config = SimpleNamespace(coalesce_tiling_analysis=True) if knob_supported else SimpleNamespace()
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False)
+        matcher = HungarianMatcher()
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=matcher,
+            weight_dict={"loss_ce": 1.0, "loss_bbox": 5.0, "loss_giou": 2.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+        )
         with (
             patch("rfdetr.config.DEVICE", "cuda"),
             patch("torch._inductor.config", SimpleNamespace(triton=triton_config)),
+            patch("rfdetr.training.module_model.build_model_from_config", return_value=_fake_model()),
+            patch(
+                "rfdetr.training.module_model.build_criterion_from_config",
+                return_value=(criterion, _fake_postprocess()),
+            ),
+            patch.object(HungarianMatcher, "enable_compiled_l1_cost", autospec=True) as enabler,
             patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
         ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+            RFDETRModelModule(mc, tc)
 
-        expected = {"triton.coalesce_tiling_analysis": False} if knob_supported else None
-        assert mock_compile.call_args.kwargs["options"] == expected
+        expected = {"triton.coalesce_tiling_analysis": False} if knob_supported else {}
+        assert mock_compile.call_args.kwargs["options"] == (expected or None)
+        enabler.assert_called_once_with(matcher, expected)
 
     def test_coalesce_tiling_knob_leaves_process_global_config_untouched(self, tmp_path):
         """The workaround must not disable coalesce tiling for unrelated compilations in the same process."""
