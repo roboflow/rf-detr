@@ -167,18 +167,8 @@ coreml = [
     # src/rfdetr/export/_coreml/torch_ops.py, op_coverage.py for the private-API surface this pin
     # guards — coremltools._TORCH_OPS_REGISTRY internals can rename across minors).
     "coremltools>=8.0,<10.0",
-    # torch>=2.12 sharply raises the rate of a CoreML/eager numeric-parity divergence on real-image
-    # input (coremltools 9.0): bisected 2026-07-28 on RFDETRNano with random-init weights —
-    # torch<2.12 failed ~1/6 repeat runs, torch>=2.12.0 failed ~6/7 (up to ~1.0 abs diff on raw
-    # query outputs; tests/export/test_coreml_export.py::TestCoreMLEndToEnd::
-    # test_outputs_match_pytorch_supervision_image[detection]). Same decomposed op set both sides —
-    # looks like a coremltools MIL lowering regression exposed by torch 2.12's export graph, not a
-    # missing/renamed op. This pin reduces the failure rate, it does not eliminate it — the
-    # underlying instability (random/untrained-weight activations pushing some op toward
-    # overflow/nan during MIL conversion; see the divide-by-zero/overflow RuntimeWarnings logged
-    # during convert) is present at some low rate on torch<2.12 too. Raise this cap once the root
-    # cause is understood/fixed upstream; don't treat it as a guaranteed-deterministic fix.
-    "torch<2.12",
+    # No torch cap: the parity failures once blamed on torch>=2.12 were two-stage topk near-tie
+    # flips, not a coremltools numeric bug (see tests/export/test_coreml_export.py).
 ]
 openvino = [
     # Calendar-versioned (year.minor.patch); cap at next major to guard convert_model/save_model/Core,
@@ -318,13 +308,7 @@ override-dependencies = [
     "ml-dtypes; python_version < '3.12' or python_version >= '3.13'",
 ]
 
-# coreml (torch<2.12, see coreml extra comment) and executorch (torch>=2.12.0a0) are likewise
-# unsatisfiable together -- no CI job combines them either, same fork rationale.
 conflicts = [
-    [
-        { extra = "coreml" },
-        { extra = "executorch" },
-    ],
     # executorch and tflite extras are unsatisfiable together; declare a conflict so `uv lock` / `uv sync --all-groups` can fork.
     [
         { extra = "executorch" },
@@ -340,19 +324,11 @@ conflicts = [
     # share an environment with configurations that require older Torch releases.
     [
         { group = "typing" },
-        { extra = "coreml" },
-    ],
-    [
-        { group = "typing" },
         { extra = "executorch" },
     ],
     [
         { group = "typing" },
         { extra = "xla" },
-    ],
-    [
-        { group = "ci-executorch-pin" },
-        { extra = "coreml" },
     ],
     [
         { group = "ci-executorch-pin" },

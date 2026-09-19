@@ -30,10 +30,12 @@ import torch
 from PIL import Image
 from supervision.assets import ImageAssets, download_assets
 
+import rfdetr
 from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.exporter import CoreMLConfig, CoreMLExporter, _check_coremltools_available
 from rfdetr.export.prepare import ExportGraph
+from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import (
     _parity_input_from_image,
     _structured_parity_input,
@@ -447,30 +449,77 @@ _COREML_E2E_VARIANTS = [
     pytest.param(("RFDETRKeypointPreview", ("boxes", "logits", "keypoints")), id="keypoint"),
 ]
 
-# coremltools 9.0's MIL converter occasionally constant-folds a weights-only `linear` op via
-# `np.matmul` at conversion time (coremltools/converters/mil/mil/ops/defs/iOS15/linear.py
-# value_inference) and, on some untrained-weight draws, that fold overflows ("divide by zero
-# encountered in matmul" / "invalid value encountered in matmul"), embedding a bad constant in
-# the exported .mlpackage. This is a coremltools bug, not something RF-DETR's export code
-# controls (see src/rfdetr/export/_coreml/exporter.py and the torch<2.12 pin in pyproject.toml,
-# which reduces but does not eliminate the underlying instability).
-#
-# tests/conftest.py's autouse `reset_random_seeds` fixture already calls `seed_all(seed=7)`
-# before every test, so weight init here is NOT actually random across runs/reruns — it is
-# deterministic per seed. `@pytest.mark.flaky` reruns do NOT help: pytest-rerunfailures only
-# re-runs fixtures that *failed setup*, and this failure happens in the test body, so a rerun
-# reseeds to the exact same seed=7 and reproduces the identical (bad) export every time —
-# confirmed empirically (5/5 identical failures across 3 separate rerun-enabled runs). The
-# repo's default seed=7 happens to be one of the bad draws for RFDETRNano detection parity.
-# Overriding to a verified-good seed via the repo's own `seed_all()` helper (not a raw
-# `torch.manual_seed` bypass) makes the export deterministic AND passing. Found by scanning
-# seed_all(0..12): seed=0 passed structured+real-image detection parity on 4/4 independent
-# fresh-process re-runs, plus segmentation. Keypoint (RFDETRKeypointPreview) was added without a
-# seed scan: seed=0 is backed by one manual run (max abs diff 9.54e-06 on Apple M3 Pro, coremltools
-# 9.0) plus passing CI macOS 3.11 and 3.13 jobs. If this starts failing again (model architecture
-# or coremltools upgrade changed the op graph), re-run the same small seed scan rather than
-# guessing — see tests/export/README or git history for the search script.
+# Raw-tensor parity on a two-stage detector is only well defined when the encoder's `torch.topk` ranking has
+# no near-ties. Untrained weights put the ranking scores of neighbouring encoder tokens ~1e-6 apart across the
+# default 300 selected queries, which is the size of legitimate fp32 rounding differences between eager and the
+# CoreML CPU runtime. A near-tied pair then swaps places, two reference points trade queries while `query_feat`
+# stays positional, and self-attention spreads that into every logit (0.5-1.5 abs diff). Which pairs flip moves
+# with the seed, the input, the torch version, the compute unit and even runtime kernel fusion, which is what made
+# this suite look flaky (and what the former `torch<2.12` pin on the `coreml` extra was wrongly attributed to).
+# The top of the ranking is sparse, though. Measured on Apple M3 Pro with coremltools 9.0 over Nano, SegNano and
+# KeypointPreview, seeds 0/3/7, both parity inputs and torch 2.11/2.12/2.14 (54 cases): CoreML moves a ranking
+# score by at most 1e-5, while the smallest gap among the top 6 scores is 3.1e-4. Exporting 5 queries therefore
+# keeps every output under the tight raw bound, and `_assert_well_conditioned` re-checks that precondition on
+# every run instead of trusting it (weight init differs across torch versions, so the margins do too).
+#: Queries the e2e parity exports select, small enough that their two-stage ranking is well separated.
+_COREML_E2E_NUM_QUERIES = 5
+#: Minimum eager gap between neighbouring top-ranked scores: 5x the worst swap (two scores drifting 1e-5 apart).
+_MIN_TWO_STAGE_RANK_MARGIN = 1e-4
+#: Seed the module-scoped e2e fixtures set themselves: they run before the autouse per-test ``reset_random_seeds``.
 _COREML_EXPORT_SEED = 0
+
+
+def _two_stage_rank_margin(model: torch.nn.Module, example_input: torch.Tensor) -> float:
+    """Return the smallest gap between neighbouring scores that decide the model's two-stage ``torch.topk``.
+
+    Only the top ``k + 1`` scores matter: a swap among them reorders the selected queries or changes which
+    ones are selected, and a swap below them changes nothing.
+
+    Args:
+        model: Export-mode module whose forward makes exactly one ``torch.topk`` call over its last dimension.
+        example_input: ``(N, C, H, W)`` input; every image in the batch is measured.
+
+    Returns:
+        The smallest gap between neighbouring scores among the top ``k + 1`` of any image.
+
+    Raises:
+        AssertionError: If the forward does not call ``torch.topk`` exactly once.
+
+    Examples:
+        >>> _two_stage_rank_margin(_TopkRanker(2), torch.tensor([[1.0, 0.5, 0.25, 0.0]]))
+        0.25
+    """
+    with mock.patch("torch.topk", wraps=torch.topk) as topk, torch.no_grad():
+        model(example_input.clone())
+    assert topk.call_count == 1, f"expected one two-stage torch.topk call, got {topk.call_count}"
+    scores, k = topk.call_args.args[:2]
+    top = scores.sort(dim=-1, descending=True).values[..., : k + 1]
+    return float((top[..., :-1] - top[..., 1:]).min())
+
+
+def _assert_well_conditioned(model: torch.nn.Module, example_input: torch.Tensor) -> None:
+    """Fail with an explicit precondition message when the input's two-stage ranking has a near-tie.
+
+    Args:
+        model: Export-mode module whose forward makes exactly one ``torch.topk`` call.
+        example_input: ``(N, C, H, W)`` parity input.
+
+    Raises:
+        AssertionError: If the ranking margin is below ``_MIN_TWO_STAGE_RANK_MARGIN``.
+
+    Examples:
+        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[1.0, 0.0]]))
+        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[0.5, 0.5]]))
+        Traceback (most recent call last):
+            ...
+        AssertionError: parity input is ill-conditioned: ...
+    """
+    margin = _two_stage_rank_margin(model, example_input)
+    assert margin >= _MIN_TWO_STAGE_RANK_MARGIN, (
+        f"parity input is ill-conditioned: two-stage topk scores are only {margin:.2e} apart "
+        f"(< {_MIN_TWO_STAGE_RANK_MARGIN}), so fp32 rounding can swap selected queries and raw outputs cannot "
+        "match; lower _COREML_E2E_NUM_QUERIES or change the parity input rather than loosening the parity bound"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -491,18 +540,14 @@ def coreml_export(
 ) -> tuple[Any, torch.Tensor, Path, tuple[str, ...]]:
     """Export RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview to a ``.mlpackage`` once per variant for e2e tests.
 
-    Re-seeds to ``_COREML_EXPORT_SEED`` (a verified-good draw, see module-level comment) immediately before model
-    construction, overriding the autouse ``reset_random_seeds`` fixture's default seed for this specific known-flaky
-    export.
+    Exports ``_COREML_E2E_NUM_QUERIES`` queries so the two-stage ranking is well separated (see the module-level
+    comment), and reseeds itself because it runs before the autouse per-test seed reset.
     """
-    import rfdetr
-    from rfdetr.utilities.reproducibility import seed_all
-
     model_cls_name, output_labels = request.param
     model_cls = getattr(rfdetr, model_cls_name)
     out_dir = tmp_path_factory.mktemp(f"coreml_{model_cls_name.lower()}")
     seed_all(_COREML_EXPORT_SEED)
-    detector = model_cls(pretrain_weights=None)
+    detector = model_cls(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
     mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
@@ -519,9 +564,6 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     Uses the public ``backbone_only=True`` route so the CoreML runtime executes the same list-valued ``_BackboneExport``
     graph that users receive, rather than a mocked converter dispatch.
     """
-    import rfdetr
-    from rfdetr.utilities.reproducibility import seed_all
-
     out_dir = tmp_path_factory.mktemp("coreml_backbone")
     seed_all(_COREML_EXPORT_SEED)
     detector = rfdetr.RFDETRNano(pretrain_weights=None)
@@ -531,6 +573,27 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
     return reference_model, example, Path(mlpackage_path)
+
+
+@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS)
+def coreml_default_queries_export(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[torch.nn.Module, torch.Tensor, Path, tuple[str, ...]]:
+    """Export each e2e variant with its shipped query count, which ``coreml_export`` trades for a separated ranking.
+
+    Those counts differ per variant (300 for detection, 100 for segmentation and keypoints), and the mask and keypoint
+    output shapes follow them, so every shipped graph is converted and run rather than only the detection one.
+    """
+    model_cls_name, output_labels = request.param
+    out_dir = tmp_path_factory.mktemp(f"coreml_default_queries_{model_cls_name.lower()}")
+    seed_all(_COREML_EXPORT_SEED)
+    detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None)
+    mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
+    model = detector.model.model.to("cpu").eval()
+    model.export()
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
+    return model, example, Path(mlpackage_path), output_labels
 
 
 @coreml_only
@@ -553,6 +616,7 @@ class TestCoreMLEndToEnd:
     ) -> None:
         """CoreML output matches eager on structured (gradient+checkerboard) input."""
         model, example, mlpackage_path, output_labels = coreml_export
+        _assert_well_conditioned(model, example)
         _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
 
     def test_outputs_match_pytorch_supervision_image(
@@ -563,6 +627,7 @@ class TestCoreMLEndToEnd:
         """CoreML output matches eager on ``ImageAssets.PEOPLE_WALKING``."""
         model, structured, mlpackage_path, output_labels = coreml_export
         example = _parity_input_from_image(people_walking_image_path, int(structured.shape[-1]))
+        _assert_well_conditioned(model, example)
         _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
 
     def test_backbone_outputs_match_pytorch_structured(
@@ -575,6 +640,22 @@ class TestCoreMLEndToEnd:
         assert max(diffs) < _COREML_MAX_ABS_DIFF, (
             f"CoreML backbone outputs diverge from PyTorch: max abs diff {max(diffs)} (bound={_COREML_MAX_ABS_DIFF})"
         )
+
+    def test_default_query_count_runs_with_eager_shapes(
+        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, tuple[str, ...]]
+    ) -> None:
+        """The shipped-query-count export must run on CoreML with eager's output count, shapes and finite values.
+
+        Values are deliberately not bounded here. At the shipped query count the untrained two-stage ranking always has
+        near-ties, so a legitimate fp32 swap can move every output, and no value comparison is both tight and stable
+        (post-processed scores drift up to ~1e-3 on a swap). The graph is the same op for op as the 5-query
+        ``coreml_export`` one, which carries the strict 1e-4 value parity; this test covers what differs: the shipped
+        shapes.
+        """
+        model, example, mlpackage_path, output_labels = coreml_default_queries_export
+        diffs = _coreml_parity_diffs(mlpackage_path, model, example)
+        assert len(diffs) == len(output_labels), f"CoreML export must yield {output_labels}, got {len(diffs)} outputs"
+        assert all(np.isfinite(diffs)), f"CoreML produced non-finite outputs: max abs diffs {diffs}"
 
 
 class TestCoreMLParityInputHelpers:
@@ -597,3 +678,74 @@ class TestCoreMLParityInputHelpers:
         tensor = _parity_input_from_image(image_path, 64)
         assert tensor.shape == (1, 3, 64, 64)
         assert torch.isfinite(tensor).all()
+
+
+class _TopkRanker(torch.nn.Module):
+    """Stand-in for a two-stage ranker: one ``torch.topk`` over the last dimension per configured ``k``.
+
+    Examples:
+        >>> _TopkRanker(1)(torch.tensor([[0.25, 0.75]])).tolist()
+        [[0.75]]
+        >>> _TopkRanker()(torch.tensor([[0.25]])).tolist()
+        [[0.25]]
+    """
+
+    def __init__(self, *ks: int) -> None:
+        super().__init__()
+        self.ks = ks
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run ``torch.topk`` once per configured ``k`` and return the last result (``x`` when none)."""
+        out = x
+        for k in self.ks:
+            out = torch.topk(x, k, dim=-1).values
+        return out
+
+
+class TestTwoStageRankMargin:
+    """``_two_stage_rank_margin`` must measure exactly the gaps that decide the two-stage selection."""
+
+    @pytest.mark.parametrize(
+        ("scores", "k", "expected"),
+        [
+            pytest.param([[0.9, 0.5, 0.49, 0.1]], 2, 0.01, id="gap-at-selection-boundary-counts"),
+            pytest.param([[0.9, 0.5, 0.1, 0.1]], 1, 0.4, id="tie-below-boundary-ignored"),
+            pytest.param([[0.1, 0.9, 0.5]], 1, 0.4, id="input-order-irrelevant"),
+            pytest.param([[0.7, 0.7, 0.1]], 1, 0.0, id="exact-tie-inside-selection"),
+            pytest.param([[0.9, 0.1], [0.5, 0.5]], 1, 0.0, id="tie-in-second-image"),
+        ],
+    )
+    def test_margin(self, scores: list[list[float]], k: int, expected: float) -> None:
+        """The margin is the smallest neighbouring gap among the top ``k + 1`` scores of any image."""
+        assert _two_stage_rank_margin(_TopkRanker(k), torch.tensor(scores)) == pytest.approx(expected, abs=1e-6)
+
+    @pytest.mark.parametrize("ks", [pytest.param((), id="no-topk"), pytest.param((1, 1), id="two-topk")])
+    def test_rejects_forward_without_exactly_one_topk(self, ks: tuple[int, ...]) -> None:
+        """Measuring the wrong ranking would silently vouch for parity, so any other call count must fail."""
+        with pytest.raises(AssertionError, match="expected one two-stage torch.topk call"):
+            _two_stage_rank_margin(_TopkRanker(*ks), torch.tensor([[0.9, 0.1]]))
+
+    def test_restores_torch_topk(self) -> None:
+        """The spy must not leak: ``torch.topk`` is the original function after a measurement."""
+        original = torch.topk
+        _two_stage_rank_margin(_TopkRanker(1), torch.tensor([[0.9, 0.1]]))
+        assert torch.topk is original
+
+
+class TestE2EParityPrecondition:
+    """The e2e query count must leave every exported variant's two-stage ranking well separated.
+
+    Needs no ``coremltools``, so a model or initialisation change that breaks the precondition is caught by the regular
+    CPU suite instead of first surfacing as a CoreML parity failure on the macOS-only ``e2e_coreml`` job.
+    """
+
+    @pytest.mark.parametrize("variant", _COREML_E2E_VARIANTS)
+    def test_structured_input_is_well_conditioned(self, variant: tuple[str, tuple[str, ...]]) -> None:
+        """Seeded exactly like ``coreml_export``, the structured parity input must pass the margin check."""
+        model_cls_name, _ = variant
+        seed_all(_COREML_EXPORT_SEED)
+        detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
+        model = detector.model.model.to("cpu").eval()
+        model.export()
+        resolution = int(detector.model.resolution)
+        _assert_well_conditioned(model, _structured_parity_input(1, 3, resolution, resolution))
