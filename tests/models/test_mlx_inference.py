@@ -54,6 +54,17 @@ class TestIsMLXAvailable:
         # When mlx is not importable, should return False regardless of platform
         assert check() is False
 
+    @requires_mlx
+    def test_returns_false_on_intel_mac(self) -> None:
+        """Test that an Intel Mac with an importable mlx wheel is reported unavailable.
+
+        MLX runs on Metal, so only Apple Silicon is supported. An x86_64 macOS host can still have an importable ``mlx``
+        package, and without the architecture gate it would advertise availability and fail later inside the backend
+        switch.
+        """
+        with patch("rfdetr.mlx.platform.machine", return_value="x86_64"):
+            assert is_mlx_available() is False
+
 
 class TestConvertWeights:
     """Tests for weight conversion from PyTorch to MLX format."""
@@ -620,6 +631,8 @@ class TestConvertSegWeights:
         from rfdetr.mlx.convert_weights import convert_seg_weights
 
         state_dict = {
+            # A block key is required: convert_seg_weights rejects a head with no blocks.<i>.* weights.
+            "segmentation_head.blocks.0.norm.weight": torch.zeros(256),
             "segmentation_head.query_features_block.layers.0.weight": torch.zeros(1024, 256),
             "segmentation_head.query_features_block.layers.2.weight": torch.zeros(256, 1024),
         }
@@ -640,6 +653,21 @@ class TestConvertSegWeights:
         }
         _, num_blocks = convert_seg_weights(state_dict)
         assert num_blocks == 4  # max index 3 + 1
+
+    @requires_mlx
+    def test_missing_block_keys_raise(self) -> None:
+        """A segmentation head whose key scan finds no blocks.<i> entries raises instead of defaulting.
+
+        Every real segmentation head carries blocks.<i>.* weights, so an empty scan means the remapping above it broke.
+        Quietly returning a plausible 4 would build a head of the wrong depth and only surface much later as a confusing
+        weight-shape mismatch.
+        """
+        from rfdetr.mlx.convert_weights import convert_seg_weights
+
+        state_dict = {"segmentation_head.query_features_block.layers.0.weight": torch.zeros(1024, 256)}
+
+        with pytest.raises(ValueError, match="blocks"):
+            convert_seg_weights(state_dict)
 
     @requires_mlx
     def test_conv_weight_transposed(self) -> None:

@@ -20,6 +20,7 @@ Usage::
 
 from __future__ import annotations
 
+import platform
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,17 +30,18 @@ if TYPE_CHECKING:
 def is_mlx_available() -> bool:
     """Check whether MLX is available on this system.
 
+    MLX is Metal-backed, so it only runs on Apple Silicon: an Intel Mac can import an
+    ``mlx`` wheel yet has no supported device, hence the explicit architecture check.
+
     Returns:
-        True if running on macOS with MLX installed, False otherwise.
+        True if running on macOS with Apple Silicon (arm64) and MLX installed, False otherwise.
     """
     try:
-        import platform
-
         import mlx.core  # noqa: F401
-
-        return platform.system() == "Darwin"
     except ImportError:
         return False
+
+    return platform.system() == "Darwin" and platform.machine() == "arm64"
 
 
 def build_mlx_inference(

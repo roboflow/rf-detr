@@ -329,6 +329,10 @@ def convert_seg_weights(
 
     Returns:
         Tuple of (seg_weights dict with bare MLX keys as numpy arrays, num_blocks).
+
+    Raises:
+        ValueError: If no ``blocks.<i>`` keys were found, which means the scan or the remapping
+            above it failed rather than that the head genuinely has no refinement blocks.
     """
     seg_weights: Dict[str, np.ndarray] = {}
     block_indices: set = set()
@@ -345,11 +349,18 @@ def convert_seg_weights(
             arr = _transpose_conv_weight(arr)
         seg_weights[mlx_bare] = arr
 
-    num_blocks = max(block_indices) + 1 if block_indices else 4
     if not seg_weights:
         logger.warning(
             "No segmentation_head.* keys found in the state dict; the MLX segmentation head has no weights to load."
         )
+        num_blocks = 4
+    elif not block_indices:
+        raise ValueError(
+            f"convert_seg_weights found no 'blocks.<i>' keys among {len(seg_weights)} segmentation_head.* "
+            "entries — segmentation head weight conversion failed"
+        )
+    else:
+        num_blocks = max(block_indices) + 1
     return seg_weights, num_blocks
 
 

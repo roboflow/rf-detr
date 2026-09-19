@@ -146,6 +146,41 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return widened.div_(scale)
 
 
+def _open_image_source(source: str) -> Image.Image:
+    """Open an image given as a local path or an ``http(s)`` URL.
+
+    Shared by the PyTorch and MLX prediction paths so the network policy stays in one place: a
+    fetch is bounded by a timeout, and its status is checked before any byte reaches the decoder,
+    so a stalled host cannot hang the caller and an error page is never mistaken for an image.
+    Anything without an ``http``/``https`` scheme is treated as a path, which keeps a local file
+    whose name merely starts with ``http`` from being sent to the network.
+
+    Args:
+        source: Filesystem path or ``http(s)`` URL of the image.
+
+    Returns:
+        The opened image, in whatever colour mode the file declares. As with
+        :func:`PIL.Image.open`, pixel data is read lazily.
+
+    Raises:
+        requests.HTTPError: If a URL responds with a 4xx or 5xx status.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     path = Path(tmp_dir) / "swatch.png"
+        ...     Image.new("RGB", (4, 2)).save(path)
+        ...     _open_image_source(str(path)).size
+        (4, 2)
+    """
+    if urlparse(source).scheme in ("http", "https"):
+        resp = requests.get(source, timeout=30)
+        resp.raise_for_status()
+        return Image.open(io.BytesIO(resp.content))
+    return Image.open(source)
+
+
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
@@ -2441,6 +2476,8 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
+            NotImplementedError: If ``shape`` is passed while the model was optimized with ``backend="mlx"``;
+                the MLX pipeline resizes to the model's fixed square resolution internally.
         """
         if self._inference_backend == "mlx":
             if shape is not None:
@@ -2503,11 +2540,7 @@ class RFDETR:
         for img_input in images:
             img: Any = img_input
             if isinstance(img, str):
-                if urlparse(img).scheme in ("http", "https"):
-                    resp = requests.get(img, timeout=30)
-                    resp.raise_for_status()
-                    img = io.BytesIO(resp.content)
-                img = Image.open(img)
+                img = _open_image_source(img)
 
             range_known_valid = False
             deferred_widen = False
@@ -2920,11 +2953,7 @@ class RFDETR:
 
         for img in images:
             if isinstance(img, str):
-                if urlparse(img).scheme in ("http", "https"):
-                    resp = requests.get(img, timeout=30)
-                    resp.raise_for_status()
-                    img = io.BytesIO(resp.content)
-                img = Image.open(img)
+                img = _open_image_source(img)
 
             if isinstance(img, torch.Tensor):
                 # Convert CHW float [0,1] tensor to HWC uint8
