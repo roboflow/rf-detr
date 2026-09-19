@@ -127,9 +127,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.11 not 3.10 for this job specifically: chosen alongside the coreml extra's former torch<2.12
-        # pin and not revisited since that pin was removed — other CI jobs keep testing 3.10 as the floor.
-        python-version: ["3.11", "3.13"]
+        # 3.10 (floor) and 3.13 bracket the supported range, as in the other integration jobs; the
+        # coreml extra resolves coremltools 9.0 wheels on both.
+        python-version: ["3.10", "3.13"]
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
