@@ -658,6 +658,39 @@ class TestSegHead:
         mx.eval(out)
         assert out.shape == (1, 100, 78, 78)
 
+    @requires_mlx
+    def test_build_seg_head_raises_on_missing_weight(self) -> None:
+        """A parameter left without weights aborts the build instead of staying random."""
+        import mlx.utils
+
+        from rfdetr.mlx.seg_head import SegHead, build_seg_head
+
+        ref_head = SegHead(num_blocks=2)
+        raw = dict(mlx.utils.tree_flatten(ref_head.parameters()))
+        seg_weights = {k: np.array(v, dtype=np.float32) for k, v in raw.items()}
+        seg_weights.pop("query_features_proj.weight")
+
+        with pytest.raises(RuntimeError, match="query_features_proj.weight"):
+            build_seg_head(seg_weights, num_blocks=2)
+
+    @requires_mlx
+    def test_build_seg_head_warns_on_unmatched_weight(self) -> None:
+        """A supplied key matching no parameter is reported but does not abort the build."""
+        import mlx.utils
+
+        from rfdetr.mlx.seg_head import SegHead, build_seg_head
+
+        ref_head = SegHead(num_blocks=2)
+        raw = dict(mlx.utils.tree_flatten(ref_head.parameters()))
+        seg_weights = {k: np.array(v, dtype=np.float32) for k, v in raw.items()}
+        seg_weights["blocks.0.nonexistent.weight"] = np.zeros((4,), dtype=np.float32)
+
+        with patch("rfdetr.mlx.convert_weights.logger") as mock_logger:
+            built = build_seg_head(seg_weights, num_blocks=2)
+
+        assert built is not None
+        assert "blocks.0.nonexistent.weight" in mock_logger.warning.call_args[0][0]
+
 
 class TestMLXSegInferenceModel:
     """Tests for MLXSegInferenceModel construction and postprocessing."""

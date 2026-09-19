@@ -6,9 +6,8 @@
 
 """Convert PyTorch RF-DETR weights to MLX format.
 
-Handles the key remapping between PyTorch HuggingFace-style naming and
-the flat MLX module naming, plus Conv2d weight transposition
-(PyTorch [out,in,kH,kW] -> MLX [out,kH,kW,in]).
+Handles the key remapping between PyTorch HuggingFace-style naming and the flat MLX module naming, plus Conv2d weight
+transposition (PyTorch [out,in,kH,kW] -> MLX [out,kH,kW,in]).
 """
 
 from __future__ import annotations
@@ -19,7 +18,13 @@ from typing import TYPE_CHECKING, Dict, Optional, Tuple
 if TYPE_CHECKING:
     import torch
 
+import mlx.nn as nn
+import mlx.utils
 import numpy as np
+
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 # ============================================================
 # Backbone key mapping (HuggingFace DINOv2 -> MLX)
@@ -180,6 +185,7 @@ def convert_state_dict(
     backbone_weights: Dict[str, np.ndarray] = {}
     decoder_weights: Dict[str, np.ndarray] = {}
     decoder_in_proj: Dict[str, np.ndarray] = {}
+    dropped: Dict[str, list] = {"backbone": [], "decoder": []}
 
     for key, tensor in state_dict.items():
         arr = tensor.detach().cpu().float().numpy()
@@ -193,6 +199,7 @@ def convert_state_dict(
         elif "backbone" in key:
             mlx_key = _remap_backbone_key(key)
             if mlx_key is None:
+                dropped["backbone"].append(key)
                 continue
             # Strip "backbone." prefix for loading into backbone module
             bare_key = mlx_key[len("backbone.") :] if mlx_key.startswith("backbone.") else mlx_key
@@ -205,6 +212,7 @@ def convert_state_dict(
             remapped = "decoder." + _remap_decoder_key(key)
             mlx_key = _map_decoder_weight_key(remapped)
             if mlx_key is None:
+                dropped["decoder"].append(key)
                 continue
 
             # Track in_proj_weight/bias for later splitting
@@ -220,6 +228,7 @@ def convert_state_dict(
             # Top-level keys (class_embed, bbox_embed, query_feat, refpoint_embed)
             mlx_key = _map_decoder_weight_key(key)
             if mlx_key is None:
+                dropped["decoder"].append(key)
                 continue
             decoder_weights[mlx_key] = arr
 
@@ -240,6 +249,11 @@ def convert_state_dict(
             for i, name in enumerate(names):
                 mlx_key = f"decoder.layers.{layer_idx}.self_attn.{name}"
                 decoder_weights[mlx_key] = arr[i * d : (i + 1) * d]
+
+    for group, keys in dropped.items():
+        if keys:
+            logger.info(f"convert_state_dict: dropped {len(keys)} unmapped {group} key(s)")
+            logger.debug(f"convert_state_dict: dropped {group} keys: {_format_keys(sorted(keys))}")
 
     return backbone_weights, decoder_weights
 
@@ -294,4 +308,60 @@ def convert_seg_weights(
         seg_weights[mlx_bare] = arr
 
     num_blocks = max(block_indices) + 1 if block_indices else 4
+    if not seg_weights:
+        logger.warning(
+            "No segmentation_head.* keys found in the state dict; the MLX segmentation head has no weights to load."
+        )
     return seg_weights, num_blocks
+
+
+# ============================================================
+# Post-load audit
+# ============================================================
+
+
+def _format_keys(keys: list, limit: int = 10) -> str:
+    """Render a bounded, comma-separated preview of parameter keys.
+
+    Args:
+        keys: Sorted parameter paths to display.
+        limit: Maximum number of keys to spell out before summarising the remainder.
+
+    Returns:
+        Comma-separated keys, with a trailing count when the list was truncated.
+    """
+    preview = ", ".join(keys[:limit])
+    return preview if len(keys) <= limit else f"{preview}, ... (+{len(keys) - limit} more)"
+
+
+def audit_loaded_weights(module: nn.Module, weights: Dict[str, np.ndarray], module_name: str) -> None:
+    """Verify that a ``strict=False`` weight load actually populated every parameter.
+
+    ``load_weights(..., strict=False)`` silently tolerates both directions of mismatch. A
+    parameter left unmatched keeps its random initialisation and produces confidently wrong
+    predictions, so it raises; a supplied key matching no parameter only wastes data, so it warns.
+
+    Args:
+        module: MLX module the weights were loaded into.
+        weights: The same mapping that was handed to ``load_weights``.
+        module_name: Human-readable module name used in the messages.
+
+    Raises:
+        RuntimeError: If any module parameter received no corresponding weight.
+    """
+    param_keys = {key for key, _ in mlx.utils.tree_flatten(module.parameters())}
+    supplied_keys = set(weights)
+
+    missing = sorted(param_keys - supplied_keys)
+    if missing:
+        raise RuntimeError(
+            f"{module_name}: {len(missing)} of {len(param_keys)} parameters received no weights and would keep "
+            f"their random initialisation: {_format_keys(missing)}"
+        )
+
+    extra = sorted(supplied_keys - param_keys)
+    if extra:
+        logger.warning(
+            f"{module_name}: {len(extra)} supplied weight(s) matched no parameter and were dropped: "
+            f"{_format_keys(extra)}"
+        )

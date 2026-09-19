@@ -23,6 +23,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
+from rfdetr.mlx.convert_weights import audit_loaded_weights
+
 
 def _bilinear_upsample(x: mx.array, target_h: int, target_w: int) -> mx.array:
     """Bilinear upsample matching PyTorch ``F.interpolate(align_corners=False)``.
@@ -70,7 +72,9 @@ class DepthwiseConvBlock(nn.Module):
     def __init__(self, dim: int = 256) -> None:
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)
-        self.norm = nn.LayerNorm(dim)
+        # eps mirrors the PyTorch reference (models/heads/segmentation.py DepthwiseConvBlock), which
+        # overrides the 1e-5 default here. MLPBlock.norm_in below keeps the default on both sides.
+        self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.pwconv = nn.Linear(dim, dim)
 
     def __call__(self, x: mx.array) -> mx.array:
@@ -186,4 +190,5 @@ def build_seg_head(seg_weights: Dict[str, np.ndarray], num_blocks: int = 4) -> S
     """
     seg_head = SegHead(num_blocks=num_blocks)
     seg_head.load_weights([(k, mx.array(v)) for k, v in seg_weights.items()], strict=False)
+    audit_loaded_weights(seg_head, seg_weights, "MLX segmentation head")
     return seg_head

@@ -21,7 +21,7 @@ import numpy as np
 import scipy.ndimage
 
 from rfdetr.mlx.backbone import DINOv2Backbone, interpolate_pos_embed
-from rfdetr.mlx.convert_weights import convert_seg_weights, convert_state_dict
+from rfdetr.mlx.convert_weights import audit_loaded_weights, convert_seg_weights, convert_state_dict
 from rfdetr.mlx.decoder import RFDETRDecoder
 from rfdetr.mlx.seg_head import SegHead, build_seg_head
 from rfdetr.utilities.logger import get_logger
@@ -112,8 +112,12 @@ def _build_backbone_decoder(
             logger.info(f"Interpolating pos_embed: {pos.shape} -> target {target_patches} patches")
             backbone_weights["pos_embed"] = interpolate_pos_embed(pos, target_patches)
 
+    # The backbone mapping is exhaustive, so a strict load is the check. The decoder mapping
+    # is not (PyTorch fuses q/k/v that MLX keeps separate), so it loads leniently and is
+    # audited explicitly instead — otherwise an unmatched parameter stays randomly initialised.
     backbone.load_weights([(k, mx.array(v)) for k, v in backbone_weights.items()])
     decoder.load_weights([(k, mx.array(v)) for k, v in decoder_weights.items()], strict=False)
+    audit_loaded_weights(decoder, decoder_weights, "MLX decoder")
 
     logger.info(f"Loaded {len(backbone_weights)} backbone + {len(decoder_weights)} decoder weights")
 
