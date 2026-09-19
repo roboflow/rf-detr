@@ -4,7 +4,10 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import traceback
+import warnings
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -980,14 +983,18 @@ def _assert_same_indices(
 ) -> None:
     """Assert two per-image ``(query_indices, target_indices)`` assignments are element-for-element equal.
 
+    Indices are compared on the host. The pairs come back on whichever device solved them, so the
+    cross-backend parity checks hand a CUDA-solved assignment and its SciPy-solved reference to this
+    helper; ``torch.equal`` rejects tensors on different devices before comparing their values.
+
     Examples:
         >>> pair = [(torch.tensor([0]), torch.tensor([0]))]
         >>> _assert_same_indices(pair, [(torch.tensor([0]), torch.tensor([0]))])
     """
     assert len(actual) == len(expected)
     for image_idx, ((act_q, act_t), (exp_q, exp_t)) in enumerate(zip(actual, expected)):
-        assert torch.equal(act_q, exp_q), f"query indices diverged for image {image_idx}"
-        assert torch.equal(act_t, exp_t), f"target indices diverged for image {image_idx}"
+        assert torch.equal(act_q.cpu(), exp_q.cpu()), f"query indices diverged for image {image_idx}"
+        assert torch.equal(act_t.cpu(), exp_t.cpu()), f"target indices diverged for image {image_idx}"
 
 
 def _total_assignment_cost(
@@ -1019,7 +1026,9 @@ def _total_assignment_cost(
     target_offset = 0
     total = 0.0
     for (query_indices, target_indices), target in zip(indices, cpu_targets):
-        total += float(cost_matrix[query_indices, target_indices + target_offset].sum())
+        # The cost matrix is deliberately on the host while the indices follow the solving device,
+        # so a CUDA assignment has to be brought back before it can score against it.
+        total += float(cost_matrix[query_indices.cpu(), target_indices.cpu() + target_offset].sum())
         target_offset += len(target["boxes"])
     return total
 
@@ -1542,7 +1551,8 @@ def _total_masks_present_assignment_cost(
     target_offset = 0
     total = 0.0
     for (query_indices, target_indices), target in zip(indices, cpu_targets):
-        total += float(cost_matrix[query_indices, target_indices + target_offset].sum())
+        # As in `_total_assignment_cost`: host cost matrix, device-following indices.
+        total += float(cost_matrix[query_indices.cpu(), target_indices.cpu() + target_offset].sum())
         target_offset += len(target["boxes"])
     return total
 
@@ -1928,7 +1938,7 @@ class TestMasksHybridPathOnCUDA:
         torch.manual_seed(700)
         actual = matcher(outputs, targets)
         assert calls == [1], "test is only meaningful if the hybrid route actually ran"
-        assert all(query.device.type == "cpu" for query, _ in actual), "assignment indices must return on CPU"
+        assert all(query.is_cuda for query, _ in actual), "assignment indices must stay on the solving device"
         _assert_assignment_lengths(actual, num_queries=12, sizes=[2, 4, 1])
 
         monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
@@ -1946,9 +1956,9 @@ class TestMasksHybridPathOnCUDA:
         torch.manual_seed(701)
         expected_cost = _total_masks_present_assignment_cost(matcher, outputs, targets, expected)
         assert actual_cost == pytest.approx(expected_cost)
-        for image_idx, ((actual_q, actual_t), (expected_q, expected_t)) in enumerate(zip(actual, expected)):
-            assert torch.equal(actual_q, expected_q), f"query indices diverged for image {image_idx}"
-            assert torch.equal(actual_t, expected_t), f"target indices diverged for image {image_idx}"
+        # The hybrid route solves on the device and the forced fallback solves on the host through
+        # SciPy, so the two assignments come back on different devices; the helper compares values.
+        _assert_same_indices(actual, expected)
 
 
 class TestMasksHybridDeviceRouting:
@@ -2173,7 +2183,7 @@ class TestCompactPathOnCUDA:
         calls = _spy_on_compact_path(monkeypatch)
         actual = matcher(outputs, targets)
         assert calls == [1]
-        assert all(query.device.type == "cpu" for query, _ in actual), "assignment indices must return on CPU"
+        assert all(query.is_cuda for query, _ in actual), "assignment indices must stay on the solving device"
         _assert_assignment_lengths(actual, num_queries=6, sizes=[2, 4, 1])
 
         monkeypatch.setattr(HungarianMatcher, "_detection_inputs_are_safe", staticmethod(lambda o, t, s=None: False))
@@ -3356,6 +3366,25 @@ class TestGpuAssignmentBucketing:
         with pytest.raises(ValueError, match="must be divisible by group_detr"):
             _assignment.assign_many_bucketed([cost_matrix], [2, 2], group_detr=2)
 
+    @pytest.mark.parametrize("sizes", [[2, 3], [0, 0]])
+    def test_indices_come_back_on_the_cost_matrix_device(self, sizes: list[int]) -> None:
+        """Index pairs are returned on the device that solved them, for populated and empty batches alike.
+
+        The criterion indexes prediction and target tensors with these pairs, so a host round trip here is undone by an
+        implicit transfer at every one of those gathers. The all-empty batch is included because it short-circuits
+        before the solver and used to hardcode a CPU tensor, which would have handed the criterion host indices for a
+        device batch.
+        """
+        cost_matrices = [torch.rand(6, max(1, sum(sizes)))]
+
+        actual = _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr=1)
+
+        assert all(
+            rows.device == cost_matrices[0].device and cols.device == cost_matrices[0].device
+            for layer in actual
+            for rows, cols in layer
+        )
+
 
 class TestGpuAssignmentPreservesEstablishedAssignments:
     """Routing the solve through the dependency must not change any assignment the matcher already produced.
@@ -3450,3 +3479,68 @@ class TestGpuAssignmentOnCUDA:
         assert expected is not None
         for actual_indices, expected_indices in zip(actual, expected):
             _assert_same_indices(actual_indices, expected_indices)
+
+    def test_indices_stay_on_cuda(self) -> None:
+        """A CUDA solve hands back CUDA index pairs.
+
+        This is the point of solving on the device: the criterion indexes CUDA prediction and target tensors
+        with these pairs, and host indices would make each of those gathers copy them back.
+        """
+        matcher = HungarianMatcher()
+        layers = []
+        targets: list[dict[str, torch.Tensor]] = []
+        for seed in (920, 921, 922):
+            layer, layer_targets = _random_detection_batch(seed=seed, sizes=[2, 3])
+            layers.append({key: value.cuda() for key, value in layer.items()})
+            targets = layer_targets
+        cuda_targets = [{key: value.cuda() for key, value in target.items()} for target in targets]
+
+        actual = matcher._match_many(layers, cuda_targets)
+
+        assert actual is not None
+        assert all(rows.is_cuda and cols.is_cuda for layer_indices in actual for rows, cols in layer_indices)
+
+    def test_unpacking_the_solve_does_not_synchronize(self) -> None:
+        """``_assignment`` contributes no host synchronization while turning a solve into index pairs.
+
+        Dropping the padded columns with a boolean mask needs the kept count on the host, and building the per-problem
+        size tensor directly on the device copies from pageable memory; both stall the host mid-step and neither is
+        visible in a throughput number. ``set_sync_debug_mode`` makes them observable, so this pins the property rather
+        than the timing. Synchronizations raised inside ``torch_linear_assignment`` are the dependency's own and are
+        deliberately not asserted on.
+        """
+        cost_matrices = [torch.rand(24, 10, device="cuda") for _ in range(3)]
+        sizes = [3, 5, 2]
+        _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr=2)  # warm the solver's own setup
+
+        offenders: list[str] = []
+
+        def record(message: Warning | str, *_args: object, **_kwargs: object) -> None:
+            """Flag a synchronization warning when the innermost frame is the assignment module.
+
+            Only the innermost frame identifies the caller: this module also sits on the stack of the
+            dependency's own synchronizing operations, so matching any frame would flag those too. The
+            warnings machinery itself is skipped -- it is ``warnings.py`` up to Python 3.13 and
+            ``_py_warnings.py`` from 3.14, and missing the second name silently attributes every
+            warning to the machinery and makes this assertion vacuous.
+            """
+            if "synchron" not in str(message).lower():
+                return
+            frames = [
+                frame
+                for frame in traceback.extract_stack()
+                if "warnings" not in Path(frame.filename).name and not frame.filename.endswith("test_matcher.py")
+            ]
+            if frames and frames[-1].filename.endswith("_assignment.py"):
+                offenders.append(f"{frames[-1].filename}:{frames[-1].lineno} in {frames[-1].name}")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.showwarning = record  # type: ignore[assignment]
+            torch.cuda.set_sync_debug_mode("warn")
+            try:
+                _assignment.assign_many_bucketed(cost_matrices, sizes, group_detr=2)
+            finally:
+                torch.cuda.set_sync_debug_mode("default")
+
+        assert offenders == []

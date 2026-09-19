@@ -20,13 +20,16 @@ Two properties of the dependency drive the design, both measured on an L4 at RF-
 * **The convenience wrapper has data-dependent device operations.** ``assignment_to_indices``
   reads a CUDA bool in an ``if``, calls ``.item()``, and runs ``nonzero``/``masked_select``.
   Those operations can stall the host. Since the match count is known analytically, this module
-  converts assignments to index pairs with shape-static ops and transfers both index tensors
-  together.
+  converts assignments to index pairs with shape-static ops, and drops the padded columns by a
+  stable sort whose read positions follow from the target counts the caller already passed, so no
+  step of the unpack depends on a value only the device knows.
 
-Retained benchmarks characterize elapsed time but do not preserve a per-operation trace that
-proves a synchronization count. This module therefore makes no exact synchronization claim; the
-call structure keeps a whole step together because the solver's throughput depends on its batch
-size.
+Retained benchmarks characterize elapsed time but do not preserve a per-operation trace, so the
+call structure is justified by the solver's throughput scaling rather than by a timing claim: it
+keeps a whole step together because the solver's throughput depends on its batch size. What this
+module *does* claim about synchronization is asserted directly instead of benchmarked --
+``TestGpuAssignmentOnCUDA::test_unpacking_the_solve_does_not_synchronize`` runs the unpack under
+``torch.cuda.set_sync_debug_mode`` and fails if any synchronizing operation is attributable here.
 
 Backend selection is deliberately *not* re-implemented here: the dependency owns that policy (its
 Triton CUDA kernel on Linux NVIDIA compute capability >= 8.0 with Torch >= 2.4, SciPy on everything
@@ -48,20 +51,22 @@ from torch import Tensor
 
 
 def _solve_to_indices(stacked: Tensor, num_matches: int) -> tuple[Tensor, Tensor]:
-    """Solve a uniform batch of problems and return host-side index pairs.
+    """Solve a uniform batch of problems and return index pairs on the solver's device.
 
     Converts the solver's per-row assignment into ``(rows, cols)`` with shape-static operations:
     ``num_matches`` is known by construction, and a stable descending sort of the matched mask
-    lists the matched rows in ascending order. The two index tensors transfer together. This helper
-    does not claim whether that transfer, ``nonzero``, or solver internals synchronize because no
-    per-operation trace is retained.
+    lists the matched rows in ascending order.
+
+    The pairs stay on the device the solver returned them on. Every consumer uses them to index the
+    criterion's prediction and target tensors, so moving them to the host trades one transfer for an
+    implicit host-to-device copy at each of those gathers.
 
     Args:
         stacked: ``[num_problems, group_width, targets]`` costs, all problems the same shape.
         num_matches: Matches per problem, ``min(group_width, targets)``.
 
     Returns:
-        ``(rows, cols)``, each a host ``[num_problems, num_matches]`` int64 tensor.
+        ``(rows, cols)``, each a ``[num_problems, num_matches]`` int64 tensor on ``stacked``'s device.
 
     Examples:
         >>> import torch
@@ -79,9 +84,7 @@ def _solve_to_indices(stacked: Tensor, num_matches: int) -> tuple[Tensor, Tensor
     order = torch.argsort(matched.to(torch.int8), dim=1, descending=True, stable=True)
     rows = order[:, :num_matches]
     cols = assignment.gather(1, rows)
-    # The single device-to-host transfer for the whole step.
-    pair = torch.stack((rows, cols)).cpu()
-    return pair[0], pair[1]
+    return rows, cols
 
 
 def _stack_padded(
@@ -131,13 +134,45 @@ def _stack_padded(
     return stacked.reshape(-1, group_width, max_size)
 
 
+def _real_pair_positions(
+    sizes: list[int], num_layers: int, group_detr: int, num_matches: int, device: torch.device
+) -> Tensor:
+    """Flat positions of the real (non-padded) pairs once each problem's padded columns are last.
+
+    Built from ``sizes`` rather than from the solved columns, so it costs no device read: problem
+    ``p`` contributes its first ``sizes[image(p)]`` slots of the ``num_matches``-wide row.
+
+    Args:
+        sizes: Each image's real target count, in batch order.
+        num_layers: Number of cost matrices solved in the same batched call.
+        group_detr: Number of query groups.
+        num_matches: Matches per problem, the width of one problem's index row.
+        device: Device to place the index on.
+
+    Returns:
+        A 1-D int64 index into the flattened ``[num_problems, num_matches]`` pairs.
+
+    Examples:
+        >>> import torch
+        >>> _real_pair_positions([1, 2], num_layers=1, group_detr=1, num_matches=2, device=torch.device("cpu"))
+        tensor([0, 2, 3])
+    """
+    per_problem = torch.tensor(
+        [size for _ in range(num_layers) for size in sizes for _ in range(group_detr)], dtype=torch.int64
+    )
+    # Built on the host and moved once: `nonzero` here reads host data, so it cannot stall the
+    # device the way the equivalent mask over the solved columns would.
+    within_size = torch.arange(num_matches, dtype=torch.int64).unsqueeze(0) < per_problem.unsqueeze(1)
+    return within_size.reshape(-1).nonzero(as_tuple=True)[0].to(device=device, non_blocking=True)
+
+
 def _assign_padded(
     cost_matrices: list[Tensor],
     sizes: list[int],
     group_width: int,
     group_detr: int,
 ) -> list[list[tuple[Tensor, Tensor]]]:
-    """Solve every layer in one batched call, then drop the padded columns on the host.
+    """Solve every layer in one batched call, then drop the padded columns.
 
     Args:
         cost_matrices: One compact cost matrix per layer, all sharing ``group_width``.
@@ -146,7 +181,8 @@ def _assign_padded(
         group_detr: Number of query groups.
 
     Returns:
-        One list per layer of per-image ``(row_indices, col_indices)`` CPU int64 tensor pairs.
+        One list per layer of per-image ``(row_indices, col_indices)`` int64 tensor pairs, on the
+        same device as ``cost_matrices``.
 
     Examples:
         >>> import torch
@@ -158,16 +194,29 @@ def _assign_padded(
     stacked = _stack_padded(cost_matrices, sizes, group_width, group_detr, max_size)
     rows, cols = _solve_to_indices(stacked, min(group_width, max_size))
 
-    # Everything below is host-side and stays vectorized: a per-problem Python loop here costs
-    # more than the solve it is unpacking, since there is one problem per layer, image and group.
-    size_per_problem = torch.tensor(sizes, dtype=cols.dtype).repeat_interleave(group_detr).repeat(len(cost_matrices))
+    # Dropping the padded columns with a boolean mask would need the kept count on the host, which
+    # synchronizes on CUDA. Sorting instead does not: a *stable* sort on the padded flag moves every
+    # padded column to the end of its problem while leaving the real ones in ascending row order --
+    # the order boolean indexing produced -- and the positions to read are then a function of
+    # `sizes` alone, which is already known here.
+    size_per_problem = (
+        # Built on the host and transferred once: constructing a CUDA tensor straight from a Python
+        # list copies from pageable memory and blocks, which is the stall this function exists to
+        # avoid.
+        torch.tensor(sizes, dtype=cols.dtype)
+        .repeat_interleave(group_detr)
+        .repeat(len(cost_matrices))
+        .to(device=cols.device, non_blocking=True)
+    )
     # Padded columns sit at or above their image's real target count.
-    keep = cols < size_per_problem.unsqueeze(1)
-    group_offset = torch.arange(rows.shape[0], dtype=rows.dtype) % group_detr * group_width
-    # Problems are ordered layer, then image, then group, and boolean indexing preserves that
-    # order, so each image's groups come out already concatenated in ascending group order.
-    kept_rows = (rows + group_offset.unsqueeze(1))[keep]
-    kept_cols = cols[keep]
+    padded = (cols >= size_per_problem.unsqueeze(1)).to(torch.int8)
+    real_first = torch.argsort(padded, dim=1, stable=True)
+    group_offset = torch.arange(rows.shape[0], dtype=rows.dtype, device=rows.device) % group_detr * group_width
+    # Problems are ordered layer, then image, then group, so reading them in this order hands back
+    # each image's groups already concatenated in ascending group order.
+    real_positions = _real_pair_positions(sizes, len(cost_matrices), group_detr, cols.shape[1], cols.device)
+    kept_rows = (rows + group_offset.unsqueeze(1)).gather(1, real_first).reshape(-1).index_select(0, real_positions)
+    kept_cols = cols.gather(1, real_first).reshape(-1).index_select(0, real_positions)
 
     per_image = [group_detr * size for _ in cost_matrices for size in sizes]
     row_chunks = torch.split(kept_rows, per_image)
@@ -200,7 +249,8 @@ def _assign_bucketed_by_size(
         group_detr: Number of query groups.
 
     Returns:
-        One list per layer of per-image ``(row_indices, col_indices)`` CPU int64 tensor pairs.
+        One list per layer of per-image ``(row_indices, col_indices)`` int64 tensor pairs, on the
+        same device as ``cost_matrices``.
 
     Examples:
         >>> import torch
@@ -280,8 +330,10 @@ def assign_many_bucketed(
 
     Returns:
         One list per layer (``cost_matrices`` order) of per-image ``(row_indices, col_indices)``
-        CPU int64 tensor pairs, group-concatenated exactly like
-        ``HungarianMatcher._assign_compact_cost_matrix``.
+        int64 tensor pairs on the solved device, group-concatenated exactly like
+        ``HungarianMatcher._assign_compact_cost_matrix``. CUDA inputs yield CUDA indices: the
+        criterion indexes device tensors with them, so a host round trip here would be undone at
+        every one of those gathers.
 
     Raises:
         ValueError: If ``num_queries`` is not evenly divisible by ``group_detr``.
@@ -306,7 +358,7 @@ def assign_many_bucketed(
 
     max_size = max(sizes)
     if max_size == 0:
-        empty = torch.empty(0, dtype=torch.int64)
+        empty = torch.empty(0, dtype=torch.int64, device=cost_matrices[0].device)
         return [[(empty, empty) for _ in sizes] for _ in cost_matrices]
 
     # Padding needs one shared group width, and needs `min(group_width, targets)` to still equal
