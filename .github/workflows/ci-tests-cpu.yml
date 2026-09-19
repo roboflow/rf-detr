@@ -54,19 +54,28 @@ jobs:
       - name: 🚀 Install Packages
         timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip').
-        # [coreml] added on macOS only (coremltools is a macOS-only dependency).
+        # [coreml] and [mlx] added on macOS only (coremltools is macOS-only; mlx's own
+        # dependency is additionally gated on sys_platform == 'darwin' in pyproject.toml,
+        # so this is a no-op extra if this job's macOS runner is ever not Apple Silicon).
         run: |
           # The data extra installs webdataset for the streaming half of tests/datasets/test_webdataset_io.py behind
           # importorskip; without it those tests silently skip and only the packer stays covered.
           EXTRAS="train,augment,cli,visual,data"
           if [ "${{ runner.os }}" = "macOS" ]; then
-            EXTRAS="$EXTRAS,coreml"
+            EXTRAS="$EXTRAS,coreml,mlx"
           fi
           uv pip install -e ".[$EXTRAS]" --group tests
 
       - name: 🧪 Run the Test
         # `scripts/` holds no test modules; it is listed so pytest-doctestplus collects the doctests in
         # repository maintenance scripts, which `pyproject.toml` alone cannot reach because paths are explicit here.
+        # `mlx`-marked tests are NOT excluded here: on non-macOS runners the [mlx] extra
+        # isn't installed, so they hit the @requires_mlx skip exactly as before this
+        # change (and the one non-@requires_mlx test in that module, which asserts
+        # backend="mlx" raises when MLX is unavailable, keeps running here on
+        # Linux/Windows). The dedicated macOS-only step below re-runs the file with MLX
+        # actually installed so its @requires_mlx tests execute for real instead of
+        # skipping; the small duplication on macOS (a few seconds) is intentional.
         run: |
           uv run --no-sync pytest src/ tests/ scripts/ \
             -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" \
@@ -75,6 +84,14 @@ jobs:
             --cov=rfdetr --cov-report=xml \
             --timeout=420 \
             --durations=50
+
+      - name: 🍎 Run the MLX Tests
+        # GitHub-hosted `macos-latest` runners are Apple Silicon (arm64) as of the
+        # macos-14/macos-latest images, so MLX is genuinely installable and runnable here
+        # rather than hitting the @requires_mlx skip that applies on every other runner.
+        if: runner.os == 'macOS'
+        run: |
+          uv run --no-sync pytest src/ tests/ -m mlx --timeout=240 --durations=50
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5

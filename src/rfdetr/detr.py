@@ -146,6 +146,41 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return widened.div_(scale)
 
 
+def _open_image_source(source: str) -> Image.Image:
+    """Open an image given as a local path or an ``http(s)`` URL.
+
+    Shared by the PyTorch and MLX prediction paths so the network policy stays in one place: a
+    fetch is bounded by a timeout, and its status is checked before any byte reaches the decoder,
+    so a stalled host cannot hang the caller and an error page is never mistaken for an image.
+    Anything without an ``http``/``https`` scheme is treated as a path, which keeps a local file
+    whose name merely starts with ``http`` from being sent to the network.
+
+    Args:
+        source: Filesystem path or ``http(s)`` URL of the image.
+
+    Returns:
+        The opened image, in whatever colour mode the file declares. As with
+        :func:`PIL.Image.open`, pixel data is read lazily.
+
+    Raises:
+        requests.HTTPError: If a URL responds with a 4xx or 5xx status.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as tmp_dir:
+        ...     path = Path(tmp_dir) / "swatch.png"
+        ...     Image.new("RGB", (4, 2)).save(path)
+        ...     _open_image_source(str(path)).size
+        (4, 2)
+    """
+    if urlparse(source).scheme in ("http", "https"):
+        resp = requests.get(source, timeout=30)
+        resp.raise_for_status()
+        return Image.open(io.BytesIO(resp.content))
+    return Image.open(source)
+
+
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
 _VARIANT_EXPORTS = (
     "RFDETRBase",
@@ -512,6 +547,8 @@ class RFDETR:
         self._optimized_dtype: torch.dtype | None = None
         self._optimized_inplace = False
         self._has_been_trained = False
+        self._inference_backend: Literal["pytorch", "mlx"] | None = None
+        self._mlx_model: Any | None = None
 
     def maybe_download_pretrain_weights(self) -> None:
         """Download pre-trained weights if they are not already downloaded.
@@ -1302,6 +1339,7 @@ class RFDETR:
         batch_size: int = 1,
         dtype: torch.dtype | str = torch.float32,
         *,
+        backend: Literal["pytorch", "mlx"] = "pytorch",
         inplace: bool = False,
         compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
@@ -1333,6 +1371,10 @@ class RFDETR:
                 ``torch.float32``. When ``dtype`` differs from the model's current dtype, ``to()`` transiently
                 allocates both old and new parameter tensors simultaneously; peak memory during optimization is
                 approximately 1.5× the model weight size rather than 1×.
+            backend: Inference backend. ``"pytorch"`` (default) uses the JIT-traced/compiled PyTorch path
+                described by ``compile``, ``batch_size``, ``dtype``, and ``compile_backend`` above.
+                ``"mlx"`` runs native inference on Apple Silicon (macOS only) and ignores ``compile``,
+                ``batch_size``, and ``dtype`` — the MLX model always runs in float16.
             inplace: If ``True``, optimize ``model.model`` directly instead of deep-copying it. This is a destructive,
                 inference-only path because ``export()`` mutates the module and dtype casting mutates its parameters.
                 Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
@@ -1416,6 +1458,17 @@ class RFDETR:
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
 
+        if backend == "mlx":
+            from rfdetr.mlx import build_mlx_inference
+
+            self._mlx_model = build_mlx_inference(self.model_config, self.model)
+            self._is_optimized_for_inference = True
+            self._inference_backend = "mlx"
+            self._optimized_resolution = self.model.resolution
+            return
+
+        self._inference_backend = "pytorch"
+
         if self.model.model is None:
             raise RuntimeError(
                 "Cannot optimize: the base model has been cleared by a previous inplace optimization. "
@@ -1483,6 +1536,7 @@ class RFDETR:
         batch_size: int = 1,
         dtype: torch.dtype | str = torch.float32,
         *,
+        backend: Literal["pytorch", "mlx"] = "pytorch",
         inplace: bool = False,
         compile_backend: Literal["torchscript", "inductor"] = "torchscript",
     ) -> None:
@@ -1496,6 +1550,7 @@ class RFDETR:
             compile: See :meth:`inference`.
             batch_size: See :meth:`inference`.
             dtype: See :meth:`inference`.
+            backend: See :meth:`inference`.
             inplace: See :meth:`inference`.
             compile_backend: See :meth:`inference`.
         """
@@ -1555,6 +1610,8 @@ class RFDETR:
         self._optimized_has_been_compiled = False
         self._optimized_batch_size = None
         self._optimized_resolution = None
+        self._inference_backend = None
+        self._mlx_model = None
         self._optimized_dtype = None
         self._optimized_inplace = False
 
@@ -2419,7 +2476,16 @@ class RFDETR:
                 if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
                 either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
                 num_windows``, or if ``patch_size`` is not a positive integer.
+            NotImplementedError: If ``shape`` is passed while the model was optimized with ``backend="mlx"``;
+                the MLX pipeline resizes to the model's fixed square resolution internally.
         """
+        if self._inference_backend == "mlx":
+            if shape is not None:
+                raise NotImplementedError(
+                    "'shape' is not supported with backend='mlx'. "
+                    "Resize the input image before calling predict() instead."
+                )
+            return self._predict_mlx(images, threshold)
         from supervision import Detections, KeyPoints
 
         patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
@@ -2474,11 +2540,7 @@ class RFDETR:
         for img_input in images:
             img: Any = img_input
             if isinstance(img, str):
-                if urlparse(img).scheme in ("http", "https"):
-                    resp = requests.get(img, timeout=30)
-                    resp.raise_for_status()
-                    img = io.BytesIO(resp.content)
-                img = Image.open(img)
+                img = _open_image_source(img)
 
             range_known_valid = False
             deferred_widen = False
@@ -2849,6 +2911,100 @@ class RFDETR:
                 predictions_list.append(detections)
 
         return predictions_list[0] if single_input else predictions_list
+
+    def _predict_mlx(
+        self,
+        images: str
+        | Image.Image
+        | np.ndarray[Any, Any]
+        | torch.Tensor
+        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
+        threshold: float = 0.5,
+    ) -> Detections | list[Detections]:
+        """Run inference through the MLX backend.
+
+        Accepts the same input types as predict(). Preprocesses images on CPU
+        (load + resize), then passes uint8 arrays to the compiled MLX pipeline.
+
+        Args:
+            images: Single image or list of images.
+            threshold: Confidence threshold.
+
+        Returns:
+            A bare :class:`~supervision.Detections` for a single image, or a list of them for a
+            list/tuple input — including a list holding exactly one image, matching
+            :meth:`predict`.
+        """
+        import mlx.core as mx
+
+        # Module scope only imports Detections under TYPE_CHECKING, so bind it for real here --
+        # matching predict(), which does its own supervision import for the same reason.
+        from supervision import Detections
+
+        # Determine the return shape from the *input* type, not the runtime batch length, exactly as
+        # predict() does: a list/tuple always yields a list, even when it holds a single image.
+        single_input = not isinstance(images, (list, tuple))
+        if single_input:
+            images = [images]
+
+        orig_sizes = []
+        uint8_arrays = []
+        resolution = self._mlx_model.resolution
+
+        for img in images:
+            if isinstance(img, str):
+                img = _open_image_source(img)
+
+            if isinstance(img, torch.Tensor):
+                # Convert CHW float [0,1] tensor to HWC uint8
+                img = (img.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+            elif isinstance(img, Image.Image):
+                img = np.array(img)
+
+            if img.ndim == 2:
+                img = np.stack([img] * 3, axis=-1)
+            elif img.shape[2] == 4:
+                img = img[:, :, :3]
+
+            orig_sizes.append((img.shape[0], img.shape[1]))
+
+            # Resize to model resolution using PIL (fast CPU resize)
+            pil_img = Image.fromarray(img)
+            pil_img = pil_img.resize((resolution, resolution), Image.BILINEAR)
+            uint8_arrays.append(np.array(pil_img))
+
+        # Stack into batch and run MLX inference
+        batch = np.stack(uint8_arrays)
+        x = mx.array(batch)
+        outputs = self._mlx_model.forward(x)
+
+        # Postprocess to numpy
+        results = self._mlx_model.postprocess(outputs, orig_sizes, threshold=threshold)
+
+        detections_list = []
+        for result in results:
+            scores = result["scores"]
+            labels = result["labels"]
+            boxes = result["boxes"]
+
+            keep = scores > threshold
+            scores = scores[keep]
+            labels = labels[keep]
+            boxes = boxes[keep]
+
+            mask = None
+            if "masks" in result:
+                mask = (result["masks"][keep] > 0.5).astype(bool)
+
+            detections = Detections(
+                xyxy=boxes.astype(np.float32),
+                confidence=scores.astype(np.float32),
+                class_id=labels.astype(np.intp),
+                mask=mask,
+            )
+            detections_list.append(detections)
+
+        return detections_list[0] if single_input else detections_list
 
     def deploy_to_roboflow(
         self,
