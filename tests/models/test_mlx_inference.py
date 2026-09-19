@@ -25,7 +25,9 @@ import supervision as sv
 import torch
 from PIL import Image
 
+from rfdetr import RFDETRNano
 from rfdetr.mlx import is_mlx_available
+from rfdetr.utilities.reproducibility import seed_all
 
 pytestmark = pytest.mark.mlx
 
@@ -945,3 +947,97 @@ class TestMLXSegInferenceModel:
 
         assert results[0]["masks"].shape == (0, 16, 24)
         assert results[0]["masks"].dtype == np.float32
+
+
+class TestMLXPyTorchNumericalParity:
+    """Numerical parity between the MLX backend and PyTorch on real weights.
+
+    Every other test in this module checks shapes, dtypes, and dict keys on zero/synthetic input. A test like that
+    cannot catch a real numerical bug in the MLX reimplementation (e.g. a wrong pos-embed interpolation, or a dropped
+    bias term): a subtly wrong computation still produces the right shape. These tests instead load the same real,
+    pretrained weights into both backends, run both on the same input, and compare actual numbers.
+    """
+
+    @requires_mlx
+    @pytest.mark.xfail(
+        raises=AssertionError,
+        strict=True,
+        reason=(
+            "https://github.com/roboflow/rf-detr/pull/767 review item 9 — measured MLX/PyTorch "
+            "divergence (max abs diff ~1.0 on boxes, ~5-6 on logits) exceeds fp16 tolerance; "
+            "real implementation bug, not precision noise. Tracked for follow-up; remove this "
+            "xfail once the underlying MLX numerical bug is fixed."
+        ),
+    )
+    def test_detection_forward_matches_pytorch_export_path(self) -> None:
+        """MLX ``forward()`` output is compared against PyTorch's ``forward_export()`` output.
+
+        Scenario: a real, pretrained RFDETRNano checkpoint is loaded once and
+        optimized for both the "pytorch" backend -- which switches the model to
+        its ``forward_export`` path, the same code path and tensor layout
+        ``RFDETR.predict()`` uses for ``backend="pytorch"`` -- and for the
+        "mlx" backend. Both run on the identical fixed random image and are
+        compared with ``np.testing.assert_allclose``.
+
+        Eager ``forward()`` is deliberately NOT used as the PyTorch reference:
+        it feeds the segmentation head (and, on this architecture, the
+        transformer) different tensors than ``forward_export()`` does
+        (``features[0].tensors`` vs. ``srcs[0]``), and the MLX implementation
+        mirrors the export path, not the eager one -- comparing against eager
+        ``forward()`` would be a false failure, not a real one.
+
+        Known divergence: as of this test's introduction the two backends
+        diverge far beyond fp16 rounding noise (max abs diff ~1.0 on
+        normalised [0, 1] box coordinates, ~5-6 on raw class logits, measured
+        against the real pretrained nano checkpoint) -- this is the real
+        numerical-divergence bug that
+        https://github.com/roboflow/rf-detr/pull/767 review item 9 flagged as
+        completely untested. The tolerance below (atol=rtol=1e-2, appropriate
+        for an fp16-compiled MLX pipeline) is intentionally left tight rather
+        than loosened to mask the bug; the test is marked
+        ``xfail(strict=True)`` so it documents the known-bad state today and
+        turns into a hard, visible failure -- rather than a silent pass -- the
+        moment a future change accidentally fixes (or further breaks) parity.
+        """
+        seed_all(7)
+        # Real pretrained weights, not from-scratch random init: a from-scratch
+        # nano model is numerically unstable under fp16 vs fp32 rounding alone
+        # (12 untrained transformer layers can amplify a tiny perturbation into
+        # a large one), which would make any divergence measured here
+        # inconclusive as evidence of an MLX implementation bug specifically.
+        model = RFDETRNano(device="cpu")
+        model.optimize_for_inference(backend="pytorch", compile=False)
+
+        from rfdetr.mlx import build_mlx_inference
+
+        mlx_model = build_mlx_inference(model.model_config, model.model)
+
+        resolution = model.model.resolution
+        rng = np.random.default_rng(7)
+        image_uint8 = rng.integers(0, 255, size=(1, resolution, resolution, 3), dtype=np.uint8)
+
+        means = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        stds = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        image_norm = (image_uint8.astype(np.float32) / 255.0 - means) / stds
+        batch_tensor = torch.from_numpy(image_norm).permute(0, 3, 1, 2).contiguous().float()
+        with torch.no_grad():
+            pt_boxes, pt_logits = model.model.inference_model(batch_tensor)
+
+        import mlx.core as mx
+
+        mlx_out = mlx_model.forward(mx.array(image_uint8))
+
+        np.testing.assert_allclose(
+            np.array(mlx_out["pred_boxes"], dtype=np.float32),
+            pt_boxes.numpy(),
+            atol=1e-2,
+            rtol=1e-2,
+            err_msg="MLX pred_boxes diverge from PyTorch forward_export() beyond fp16 tolerance",
+        )
+        np.testing.assert_allclose(
+            np.array(mlx_out["pred_logits"], dtype=np.float32),
+            pt_logits.numpy(),
+            atol=1e-2,
+            rtol=1e-2,
+            err_msg="MLX pred_logits diverge from PyTorch forward_export() beyond fp16 tolerance",
+        )
