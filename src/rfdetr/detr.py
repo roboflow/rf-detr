@@ -1424,14 +1424,9 @@ class RFDETR:
         self.remove_optimized_model()
 
         if backend == "mlx":
-            if getattr(self.model_config, "segmentation_head", False):
-                from rfdetr.mlx import build_mlx_seg_inference
+            from rfdetr.mlx import build_mlx_inference
 
-                self._mlx_model = build_mlx_seg_inference(self.model_config, self.model)
-            else:
-                from rfdetr.mlx import build_mlx_inference
-
-                self._mlx_model = build_mlx_inference(self.model_config, self.model)
+            self._mlx_model = build_mlx_inference(self.model_config, self.model)
             self._is_optimized_for_inference = True
             self._inference_backend = "mlx"
             self._optimized_resolution = self.model.resolution

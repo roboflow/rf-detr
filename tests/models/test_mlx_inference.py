@@ -13,7 +13,7 @@ These tests require macOS with Apple Silicon and MLX installed. They are skipped
 from __future__ import annotations
 
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -295,11 +295,13 @@ class TestInferencePostprocess:
 class TestDetrMLXIntegration:
     """Tests for the RFDETR.optimize_for_inference(backend='mlx') integration."""
 
-    def test_optimize_for_inference_raises_without_mlx(self) -> None:
-        """Test that MLX backend raises clearly when MLX is not available."""
-        if is_mlx_available():
-            pytest.skip("MLX is available, cannot test unavailability error")
+    @patch.dict(sys.modules, {"mlx.core": None, "mlx": None})
+    def test_inference_raises_without_mlx(self) -> None:
+        """Asking for the MLX backend without MLX installed fails with an actionable message.
 
+        Hiding MLX from the import system stands in for a non-Apple-Silicon host, so this runs everywhere rather than
+        only where the backend is unavailable.
+        """
         from rfdetr.detr import RFDETR
 
         # Create a mock RFDETR that doesn't download weights
@@ -308,9 +310,9 @@ class TestDetrMLXIntegration:
                 return None
 
             def get_model_config(self, **kwargs) -> SimpleNamespace:
-                return SimpleNamespace()
+                return SimpleNamespace(num_channels=3)
 
-            def get_model(self, config: SimpleNamespace) -> Any:
+            def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> Any:
                 mock = MagicMock()
                 mock.inference_model = None
                 mock.resolution = 384
@@ -318,7 +320,7 @@ class TestDetrMLXIntegration:
 
         model = _MockRFDETR()
         with pytest.raises(RuntimeError, match="MLX is not available"):
-            model.optimize_for_inference(backend="mlx")
+            model.inference(backend="mlx")
 
     @pytest.fixture
     def mlx_backed_model(self) -> Any:
@@ -387,69 +389,62 @@ class TestDetrMLXIntegration:
         assert isinstance(detections, list)
         assert len(detections) == 1
 
-    @requires_mlx
-    def test_optimize_for_inference_routes_seg_to_mlx_seg_model(self) -> None:
-        """Test that segmentation models route to MLXSegInferenceModel, not MLXInferenceModel."""
-        from unittest.mock import patch
+    @pytest.fixture
+    def fake_mlx_inference_module(self) -> ModuleType:
+        """A stand-in ``rfdetr.mlx.inference`` module exposing both MLX model classes as mocks.
 
+        Lets the routing tests observe which class ``build_mlx_inference`` selects without importing the real MLX
+        implementation or converting any weights.
+        """
+        module = ModuleType("rfdetr.mlx.inference")
+        module.MLXInferenceModel = MagicMock(name="MLXInferenceModel")  # type: ignore[attr-defined]
+        module.MLXSegInferenceModel = MagicMock(name="MLXSegInferenceModel")  # type: ignore[attr-defined]
+        return module
+
+    @requires_mlx
+    @pytest.mark.parametrize(
+        ("segmentation_head", "expected", "other"),
+        [
+            pytest.param(True, "MLXSegInferenceModel", "MLXInferenceModel", id="seg-config"),
+            pytest.param(False, "MLXInferenceModel", "MLXSegInferenceModel", id="detection-config"),
+        ],
+    )
+    def test_inference_routes_config_to_matching_mlx_model(
+        self,
+        fake_mlx_inference_module: ModuleType,
+        segmentation_head: bool,
+        expected: str,
+        other: str,
+    ) -> None:
+        """The MLX backend builds the model class matching the config's segmentation head.
+
+        ``inference(backend="mlx")`` delegates the whole choice to the single ``build_mlx_inference`` entry point, so
+        this drives the real dispatch rather than a per-task builder that detr.py used to pick itself.
+        """
         from rfdetr.detr import RFDETR
 
-        class _MockSegRFDETR(RFDETR):
+        class _MockRFDETR(RFDETR):
             def maybe_download_pretrain_weights(self) -> None:
                 return None
 
             def get_model_config(self, **kwargs) -> SimpleNamespace:
-                return SimpleNamespace(segmentation_head=True)
+                return SimpleNamespace(num_channels=3, segmentation_head=segmentation_head)
 
-            def get_model(self, config: SimpleNamespace) -> Any:
-                mock = MagicMock()
-                mock.inference_model = None
-                mock.resolution = 312
-                return mock
-
-        model = _MockSegRFDETR()
-
-        with (
-            patch("rfdetr.mlx.build_mlx_seg_inference") as mock_seg,
-            patch("rfdetr.mlx.build_mlx_inference") as mock_det,
-        ):
-            mock_seg.return_value = MagicMock()
-            model.optimize_for_inference(backend="mlx")
-
-        mock_seg.assert_called_once()
-        mock_det.assert_not_called()
-
-    @requires_mlx
-    def test_optimize_for_inference_routes_det_to_mlx_inference_model(self) -> None:
-        """Test that detection models route to MLXInferenceModel, not MLXSegInferenceModel."""
-        from unittest.mock import patch
-
-        from rfdetr.detr import RFDETR
-
-        class _MockDetRFDETR(RFDETR):
-            def maybe_download_pretrain_weights(self) -> None:
-                return None
-
-            def get_model_config(self, **kwargs) -> SimpleNamespace:
-                return SimpleNamespace(segmentation_head=False)
-
-            def get_model(self, config: SimpleNamespace) -> Any:
+            def get_model(self, config: SimpleNamespace, *, trust_checkpoint: bool = False) -> Any:
                 mock = MagicMock()
                 mock.inference_model = None
                 mock.resolution = 384
                 return mock
 
-        model = _MockDetRFDETR()
+        model = _MockRFDETR()
 
-        with (
-            patch("rfdetr.mlx.build_mlx_inference") as mock_det,
-            patch("rfdetr.mlx.build_mlx_seg_inference") as mock_seg,
-        ):
-            mock_det.return_value = MagicMock()
-            model.optimize_for_inference(backend="mlx")
+        with patch.dict(sys.modules, {"rfdetr.mlx.inference": fake_mlx_inference_module}):
+            model.inference(backend="mlx")
 
-        mock_det.assert_called_once()
-        mock_seg.assert_not_called()
+        getattr(fake_mlx_inference_module, expected).from_pytorch.assert_called_once_with(
+            model.model_config, model.model
+        )
+        getattr(fake_mlx_inference_module, other).from_pytorch.assert_not_called()
 
 
 class TestConvertSegWeights:

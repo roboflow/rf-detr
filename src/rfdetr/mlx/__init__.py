@@ -45,18 +45,26 @@ def is_mlx_available() -> bool:
 def build_mlx_inference(
     model_config: object,
     pytorch_model: object,
-) -> "MLXInferenceModel":
+) -> "MLXInferenceModel | MLXSegInferenceModel":
     """Build a compiled MLX inference model from a PyTorch RF-DETR model.
 
-    Converts PyTorch weights to MLX format, builds the MLX model graph,
-    casts to FP16, and compiles the full forward pass for Metal execution.
+    Converts PyTorch weights (including the segmentation head, for seg models) to MLX
+    format, builds the MLX model graph, casts to FP16, and compiles the full forward
+    pass for Metal execution.
+
+    This is the single entry point for every task: the MLX class matching the
+    configuration is selected here, so callers never branch on the config themselves.
 
     Args:
-        model_config: RF-DETR model configuration (e.g., RFDETRNanoConfig).
+        model_config: RF-DETR model configuration (e.g., RFDETRNanoConfig or
+            RFDETRSegNanoConfig). A truthy ``segmentation_head`` attribute selects the
+            segmentation model.
         pytorch_model: The rfdetr.main.Model instance with loaded weights.
 
     Returns:
-        Compiled MLX inference model ready for predict() calls.
+        Compiled MLX inference model ready for predict() calls — an
+        ``MLXSegInferenceModel`` for segmentation configs, otherwise an
+        ``MLXInferenceModel``.
 
     Raises:
         RuntimeError: If MLX is not available on this system.
@@ -66,36 +74,7 @@ def build_mlx_inference(
             "MLX is not available. MLX requires macOS on Apple Silicon. Install with: pip install 'rfdetr[mlx]'"
         )
 
-    from rfdetr.mlx.inference import MLXInferenceModel
+    from rfdetr.mlx.inference import MLXInferenceModel, MLXSegInferenceModel
 
-    return MLXInferenceModel.from_pytorch(model_config, pytorch_model)
-
-
-def build_mlx_seg_inference(
-    model_config: object,
-    pytorch_model: object,
-) -> "MLXSegInferenceModel":
-    """Build a compiled MLX segmentation inference model from a PyTorch RF-DETR seg model.
-
-    Converts PyTorch weights (backbone, decoder, and segmentation head) to MLX
-    format, builds the MLX model graph, casts to FP16, and compiles the full
-    forward pass for Metal execution.
-
-    Args:
-        model_config: RF-DETR segmentation model configuration (e.g., RFDETRSegNanoConfig).
-        pytorch_model: The rfdetr.main.Model instance with loaded weights.
-
-    Returns:
-        Compiled MLX segmentation inference model ready for predict() calls.
-
-    Raises:
-        RuntimeError: If MLX is not available on this system.
-    """
-    if not is_mlx_available():
-        raise RuntimeError(
-            "MLX is not available. MLX requires macOS on Apple Silicon. Install with: pip install 'rfdetr[mlx]'"
-        )
-
-    from rfdetr.mlx.inference import MLXSegInferenceModel
-
-    return MLXSegInferenceModel.from_pytorch(model_config, pytorch_model)
+    model_cls = MLXSegInferenceModel if getattr(model_config, "segmentation_head", False) else MLXInferenceModel
+    return model_cls.from_pytorch(model_config, pytorch_model)

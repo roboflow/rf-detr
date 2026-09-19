@@ -12,7 +12,7 @@ Postprocessing converts MLX outputs to numpy arrays matching the PyTorch PostPro
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -33,6 +33,144 @@ _ENCODER_CONFIGS = {
     "dinov2_windowed_small": {"embed_dim": 384, "num_heads": 6, "depth": 12},
     "dinov2_windowed_base": {"embed_dim": 768, "num_heads": 12, "depth": 12},
 }
+
+
+def _build_backbone_decoder(
+    model_config: object,
+    state_dict: Dict[str, Any],
+    default_queries: int,
+    default_select: int,
+) -> Tuple[DINOv2Backbone, RFDETRDecoder, int, int]:
+    """Build and weight-load the backbone and decoder shared by both MLX model variants.
+
+    Detection and segmentation differ only in their query/select defaults, so those are
+    supplied by the caller rather than assumed here.
+
+    Args:
+        model_config: RF-DETR model configuration instance.
+        state_dict: PyTorch ``model.model.state_dict()`` holding the source weights.
+        default_queries: Fallback used when the config declares no ``num_queries``.
+        default_select: Fallback used when the config declares no ``num_select``.
+
+    Returns:
+        Tuple of (backbone, decoder, num_queries, num_select), FP16-cast and weight-loaded.
+
+    Raises:
+        ValueError: If the configured encoder is not supported by the MLX backend.
+    """
+    encoder_name = model_config.encoder
+    if encoder_name not in _ENCODER_CONFIGS:
+        raise ValueError(
+            f"Unsupported encoder '{encoder_name}' for MLX backend. Supported: {list(_ENCODER_CONFIGS.keys())}"
+        )
+
+    enc_cfg = _ENCODER_CONFIGS[encoder_name]
+    embed_dim = enc_cfg["embed_dim"]
+    resolution = model_config.resolution
+    num_queries = getattr(model_config, "num_queries", default_queries)
+    num_select = getattr(model_config, "num_select", default_select)
+
+    # Convert 1-indexed out_feature_indexes to 0-indexed
+    feature_indices = [idx - 1 for idx in model_config.out_feature_indexes]
+
+    logger.info(
+        f"Building MLX model: {encoder_name}, patch_size={model_config.patch_size}, "
+        f"num_windows={model_config.num_windows}, resolution={resolution}, "
+        f"dec_layers={model_config.dec_layers}, hidden_dim={model_config.hidden_dim}"
+    )
+
+    backbone = DINOv2Backbone(
+        img_size=resolution,
+        patch_size=model_config.patch_size,
+        embed_dim=embed_dim,
+        depth=enc_cfg["depth"],
+        num_heads=enc_cfg["num_heads"],
+        num_windows=model_config.num_windows,
+        feature_indices=feature_indices,
+    )
+
+    decoder = RFDETRDecoder(
+        d_model=model_config.hidden_dim,
+        sa_nhead=model_config.sa_nheads,
+        ca_nhead=model_config.ca_nheads,
+        ca_npoints=model_config.dec_n_points,
+        num_layers=model_config.dec_layers,
+        num_queries=num_queries,
+        num_classes=model_config.num_classes + 1,  # +1 for background
+        embed_dim=embed_dim,
+        num_features=len(feature_indices),
+        group_detr=model_config.group_detr,
+    )
+
+    backbone_weights, decoder_weights = convert_state_dict(state_dict)
+
+    # Interpolate positional embedding if resolution differs
+    if "pos_embed" in backbone_weights:
+        target_patches = backbone.patch_embed.num_patches
+        pos = backbone_weights["pos_embed"]
+        if pos.shape[1] != 1 + target_patches:
+            logger.info(f"Interpolating pos_embed: {pos.shape} -> target {target_patches} patches")
+            backbone_weights["pos_embed"] = interpolate_pos_embed(pos, target_patches)
+
+    backbone.load_weights([(k, mx.array(v)) for k, v in backbone_weights.items()])
+    decoder.load_weights([(k, mx.array(v)) for k, v in decoder_weights.items()], strict=False)
+
+    logger.info(f"Loaded {len(backbone_weights)} backbone + {len(decoder_weights)} decoder weights")
+
+    _cast_to_fp16(backbone)
+    _cast_to_fp16(decoder)
+
+    return backbone, decoder, num_queries, num_select
+
+
+def _topk_to_results(
+    prob_i: np.ndarray,
+    boxes_i: np.ndarray,
+    num_select: int,
+    orig_size: Tuple[int, int],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Select the top-scoring predictions for one image and map them to pixel xyxy boxes.
+
+    Args:
+        prob_i: (nQ, num_classes) per-query class probabilities for a single image.
+        boxes_i: (nQ, 4) normalised cxcywh boxes for the same image.
+        num_select: Maximum number of predictions to keep, clamped to what is available.
+        orig_size: (height, width) of the original image, used to scale boxes.
+
+    Returns:
+        Tuple of (scores, labels, boxes, query_indices). ``query_indices`` maps each kept
+        prediction back to its decoder query, which the segmentation path uses to gather masks.
+    """
+    orig_h, orig_w = orig_size
+    flat = prob_i.reshape(-1)
+    num_select = min(num_select, flat.shape[0])
+
+    if num_select == 0:
+        return (
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+            np.empty((0, 4), dtype=np.float32),
+            np.empty((0,), dtype=np.int64),
+        )
+
+    topk_idx = np.argpartition(-flat, num_select - 1)[:num_select]
+    topk_values = flat[topk_idx]
+
+    sort_order = np.argsort(-topk_values)
+    topk_idx = topk_idx[sort_order]
+    scores = topk_values[sort_order]
+
+    # Map flat indices to query and class indices
+    topk_boxes_idx = topk_idx // prob_i.shape[1]
+    labels = topk_idx % prob_i.shape[1]
+
+    # Convert cxcywh -> xyxy
+    sel_boxes = boxes_i[topk_boxes_idx]
+    cx, cy, w, h = sel_boxes[:, 0], sel_boxes[:, 1], sel_boxes[:, 2], sel_boxes[:, 3]
+    xyxy = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=-1)
+    xyxy = xyxy * np.array([orig_w, orig_h, orig_w, orig_h], dtype=np.float32)
+
+    return scores, labels, xyxy, topk_boxes_idx
 
 
 class MLXInferenceModel:
@@ -96,83 +234,18 @@ class MLXInferenceModel:
 
         Returns:
             Compiled MLX inference model.
+
+        Raises:
+            ValueError: If the encoder name is not recognised.
         """
-        encoder_name = model_config.encoder
-        if encoder_name not in _ENCODER_CONFIGS:
-            raise ValueError(
-                f"Unsupported encoder '{encoder_name}' for MLX backend. Supported: {list(_ENCODER_CONFIGS.keys())}"
-            )
-
-        enc_cfg = _ENCODER_CONFIGS[encoder_name]
-        embed_dim = enc_cfg["embed_dim"]
-        num_heads = enc_cfg["num_heads"]
-        depth = enc_cfg["depth"]
-
-        patch_size = model_config.patch_size
-        num_windows = model_config.num_windows
-        resolution = model_config.resolution
-        hidden_dim = model_config.hidden_dim
-        sa_nheads = model_config.sa_nheads
-        ca_nheads = model_config.ca_nheads
-        dec_n_points = model_config.dec_n_points
-        dec_layers = model_config.dec_layers
+        backbone, decoder, _num_queries, num_select = _build_backbone_decoder(
+            model_config,
+            pytorch_model.model.state_dict(),
+            default_queries=300,
+            default_select=300,
+        )
         num_classes = model_config.num_classes + 1  # +1 for background
-        num_queries = getattr(model_config, "num_queries", 300)
-        num_select = getattr(model_config, "num_select", 300)
-        group_detr = model_config.group_detr
-
-        # Convert 1-indexed out_feature_indexes to 0-indexed
-        feature_indices = [idx - 1 for idx in model_config.out_feature_indexes]
-
-        logger.info(
-            f"Building MLX model: {encoder_name}, patch_size={patch_size}, "
-            f"num_windows={num_windows}, resolution={resolution}, "
-            f"dec_layers={dec_layers}, hidden_dim={hidden_dim}"
-        )
-
-        backbone = DINOv2Backbone(
-            img_size=resolution,
-            patch_size=patch_size,
-            embed_dim=embed_dim,
-            depth=depth,
-            num_heads=num_heads,
-            num_windows=num_windows,
-            feature_indices=feature_indices,
-        )
-
-        decoder = RFDETRDecoder(
-            d_model=hidden_dim,
-            sa_nhead=sa_nheads,
-            ca_nhead=ca_nheads,
-            ca_npoints=dec_n_points,
-            num_layers=dec_layers,
-            num_queries=num_queries,
-            num_classes=num_classes,
-            embed_dim=embed_dim,
-            num_features=len(feature_indices),
-            group_detr=group_detr,
-        )
-
-        state_dict = pytorch_model.model.state_dict()
-        backbone_weights, decoder_weights = convert_state_dict(state_dict)
-
-        # Interpolate positional embedding if resolution differs
-        if "pos_embed" in backbone_weights:
-            target_patches = backbone.patch_embed.num_patches
-            pos = backbone_weights["pos_embed"]
-            if pos.shape[1] != 1 + target_patches:
-                logger.info(f"Interpolating pos_embed: {pos.shape} -> target {target_patches} patches")
-                backbone_weights["pos_embed"] = interpolate_pos_embed(pos, target_patches)
-
-        backbone.load_weights([(k, mx.array(v)) for k, v in backbone_weights.items()])
-        decoder.load_weights([(k, mx.array(v)) for k, v in decoder_weights.items()], strict=False)
-
-        logger.info(f"Loaded {len(backbone_weights)} backbone + {len(decoder_weights)} decoder weights")
-
-        _cast_to_fp16(backbone)
-        _cast_to_fp16(decoder)
-
-        return cls(backbone, decoder, resolution, num_classes, num_select)
+        return cls(backbone, decoder, model_config.resolution, num_classes, num_select)
 
     def forward(self, x_uint8: mx.array) -> Dict[str, mx.array]:
         """Run compiled forward pass.
@@ -207,59 +280,10 @@ class MLXInferenceModel:
 
         prob = 1.0 / (1.0 + np.exp(-logits))
 
-        batch_size = logits.shape[0]
         results = []
-
-        for i in range(batch_size):
-            prob_i = prob[i]  # (nQ, num_classes)
-            boxes_i = boxes[i]  # (nQ, 4) cxcywh
-
-            # Flatten and select top-K
-            flat = prob_i.reshape(-1)
-            num_select = min(self.num_select, flat.shape[0])
-
-            if num_select == 0:
-                # No elements to select; append empty result for this image.
-                results.append(
-                    {
-                        "scores": np.empty((0,), dtype=np.float32),
-                        "labels": np.empty((0,), dtype=np.int64),
-                        "boxes": np.empty((0, 4), dtype=np.float32),
-                    }
-                )
-                continue
-
-            topk_idx = np.argpartition(-flat, num_select - 1)[:num_select]
-            topk_values = flat[topk_idx]
-
-            sort_order = np.argsort(-topk_values)
-            topk_idx = topk_idx[sort_order]
-            scores = topk_values[sort_order]
-
-            # Map flat indices to query and class indices
-            topk_boxes_idx = topk_idx // prob_i.shape[1]
-            labels = topk_idx % prob_i.shape[1]
-
-            # Convert cxcywh -> xyxy
-            sel_boxes = boxes_i[topk_boxes_idx]
-            cx, cy, w, h = sel_boxes[:, 0], sel_boxes[:, 1], sel_boxes[:, 2], sel_boxes[:, 3]
-            x1 = cx - w / 2
-            y1 = cy - h / 2
-            x2 = cx + w / 2
-            y2 = cy + h / 2
-            xyxy = np.stack([x1, y1, x2, y2], axis=-1)
-
-            orig_h, orig_w = orig_sizes[i]
-            scale = np.array([orig_w, orig_h, orig_w, orig_h], dtype=np.float32)
-            xyxy = xyxy * scale
-
-            results.append(
-                {
-                    "scores": scores,
-                    "labels": labels,
-                    "boxes": xyxy,
-                }
-            )
+        for i in range(logits.shape[0]):
+            scores, labels, xyxy, _query_idx = _topk_to_results(prob[i], boxes[i], self.num_select, orig_sizes[i])
+            results.append({"scores": scores, "labels": labels, "boxes": xyxy})
 
         return results
 
@@ -355,90 +379,22 @@ class MLXSegInferenceModel:
         Raises:
             ValueError: If the encoder name is not recognised.
         """
-        encoder_name = model_config.encoder
-        if encoder_name not in _ENCODER_CONFIGS:
-            raise ValueError(
-                f"Unsupported encoder '{encoder_name}' for MLX backend. Supported: {list(_ENCODER_CONFIGS.keys())}"
-            )
-
-        enc_cfg = _ENCODER_CONFIGS[encoder_name]
-        embed_dim = enc_cfg["embed_dim"]
-        num_heads = enc_cfg["num_heads"]
-        depth = enc_cfg["depth"]
-
-        patch_size = model_config.patch_size
-        num_windows = model_config.num_windows
-        resolution = model_config.resolution
-        hidden_dim = model_config.hidden_dim
-        sa_nheads = model_config.sa_nheads
-        ca_nheads = model_config.ca_nheads
-        dec_n_points = model_config.dec_n_points
-        dec_layers = model_config.dec_layers
-        num_classes = model_config.num_classes + 1  # +1 for background
-        num_queries = getattr(model_config, "num_queries", 100)
-        num_select = getattr(model_config, "num_select", 100)
-        group_detr = model_config.group_detr
-        downsample_ratio = getattr(model_config, "mask_downsample_ratio", 4)
-
-        # Convert 1-indexed out_feature_indexes to 0-indexed
-        feature_indices = [idx - 1 for idx in model_config.out_feature_indexes]
-
-        logger.info(
-            f"Building MLX seg model: {encoder_name}, patch_size={patch_size}, "
-            f"num_windows={num_windows}, resolution={resolution}, "
-            f"dec_layers={dec_layers}, hidden_dim={hidden_dim}"
-        )
-
-        backbone = DINOv2Backbone(
-            img_size=resolution,
-            patch_size=patch_size,
-            embed_dim=embed_dim,
-            depth=depth,
-            num_heads=num_heads,
-            num_windows=num_windows,
-            feature_indices=feature_indices,
-        )
-
-        decoder = RFDETRDecoder(
-            d_model=hidden_dim,
-            sa_nhead=sa_nheads,
-            ca_nhead=ca_nheads,
-            ca_npoints=dec_n_points,
-            num_layers=dec_layers,
-            num_queries=num_queries,
-            num_classes=num_classes,
-            embed_dim=embed_dim,
-            num_features=len(feature_indices),
-            group_detr=group_detr,
-        )
-
         state_dict = pytorch_model.model.state_dict()
-        backbone_weights, decoder_weights = convert_state_dict(state_dict)
-        seg_weights, num_blocks = convert_seg_weights(state_dict)
-
-        # Interpolate positional embedding if resolution differs
-        if "pos_embed" in backbone_weights:
-            target_patches = backbone.patch_embed.num_patches
-            pos = backbone_weights["pos_embed"]
-            if pos.shape[1] != 1 + target_patches:
-                logger.info(f"Interpolating pos_embed: {pos.shape} -> target {target_patches} patches")
-                backbone_weights["pos_embed"] = interpolate_pos_embed(pos, target_patches)
-
-        backbone.load_weights([(k, mx.array(v)) for k, v in backbone_weights.items()])
-        decoder.load_weights([(k, mx.array(v)) for k, v in decoder_weights.items()], strict=False)
-
-        seg_head = build_seg_head(seg_weights, num_blocks)
-
-        logger.info(
-            f"Loaded {len(backbone_weights)} backbone + {len(decoder_weights)} decoder + "
-            f"{len(seg_weights)} seg_head weights ({num_blocks} blocks)"
+        backbone, decoder, _num_queries, num_select = _build_backbone_decoder(
+            model_config,
+            state_dict,
+            default_queries=100,
+            default_select=100,
         )
 
-        _cast_to_fp16(backbone)
-        _cast_to_fp16(decoder)
+        seg_weights, num_blocks = convert_seg_weights(state_dict)
+        seg_head = build_seg_head(seg_weights, num_blocks)
+        logger.info(f"Loaded {len(seg_weights)} seg_head weights ({num_blocks} blocks)")
         _cast_to_fp16(seg_head)
 
-        return cls(backbone, decoder, seg_head, resolution, num_classes, downsample_ratio, num_select)
+        num_classes = model_config.num_classes + 1  # +1 for background
+        downsample_ratio = getattr(model_config, "mask_downsample_ratio", 4)
+        return cls(backbone, decoder, seg_head, model_config.resolution, num_classes, downsample_ratio, num_select)
 
     def forward(self, x_uint8: mx.array) -> Tuple[mx.array, mx.array, mx.array]:
         """Run compiled forward pass.
@@ -478,70 +434,21 @@ class MLXSegInferenceModel:
 
         prob = 1.0 / (1.0 + np.exp(-logits))
 
-        batch_size = logits.shape[0]
         results = []
-
-        for i in range(batch_size):
-            prob_i = prob[i]  # (nQ, num_classes)
-            boxes_i = boxes[i]  # (nQ, 4) cxcywh
-            masks_i = masks_np[i]  # (nQ, H_mask, W_mask)
-
+        for i in range(logits.shape[0]):
             orig_h, orig_w = orig_sizes[i]
+            scores, labels, xyxy, query_idx = _topk_to_results(prob[i], boxes[i], self.num_select, orig_sizes[i])
 
-            # Flatten and select top-K
-            flat = prob_i.reshape(-1)
-            num_select = min(self.num_select, flat.shape[0])
+            if query_idx.size:
+                # Select and resize masks — bilinear upsample via scipy.ndimage.zoom (vectorised)
+                sel_masks_logits = np.clip(masks_np[i][query_idx], -88.0, 88.0)
+                sel_masks_prob = 1.0 / (1.0 + np.exp(-sel_masks_logits))  # sigmoid
+                zoom_h = orig_h / sel_masks_prob.shape[1]
+                zoom_w = orig_w / sel_masks_prob.shape[2]
+                resized_masks = scipy.ndimage.zoom(sel_masks_prob, (1, zoom_h, zoom_w), order=1).astype(np.float32)
+            else:
+                resized_masks = np.empty((0, orig_h, orig_w), dtype=np.float32)
 
-            if num_select == 0:
-                results.append(
-                    {
-                        "scores": np.empty((0,), dtype=np.float32),
-                        "labels": np.empty((0,), dtype=np.int64),
-                        "boxes": np.empty((0, 4), dtype=np.float32),
-                        "masks": np.empty((0, orig_h, orig_w), dtype=np.float32),
-                    }
-                )
-                continue
-
-            topk_idx = np.argpartition(-flat, num_select - 1)[:num_select]
-            topk_values = flat[topk_idx]
-
-            sort_order = np.argsort(-topk_values)
-            topk_idx = topk_idx[sort_order]
-            scores = topk_values[sort_order]
-
-            # Map flat indices to query and class indices
-            topk_boxes_idx = topk_idx // prob_i.shape[1]
-            labels = topk_idx % prob_i.shape[1]
-
-            # Convert cxcywh -> xyxy
-            sel_boxes = boxes_i[topk_boxes_idx]
-            cx, cy, w, h = sel_boxes[:, 0], sel_boxes[:, 1], sel_boxes[:, 2], sel_boxes[:, 3]
-            x1 = cx - w / 2
-            y1 = cy - h / 2
-            x2 = cx + w / 2
-            y2 = cy + h / 2
-            xyxy = np.stack([x1, y1, x2, y2], axis=-1)
-            scale = np.array([orig_w, orig_h, orig_w, orig_h], dtype=np.float32)
-            xyxy = xyxy * scale
-
-            # Select and resize masks — bilinear upsample via scipy.ndimage.zoom (vectorised)
-            sel_masks_logits = masks_i[topk_boxes_idx]  # (num_select, H_mask, W_mask)
-            sel_masks_logits = np.clip(sel_masks_logits, -88.0, 88.0)
-            sel_masks_prob = 1.0 / (1.0 + np.exp(-sel_masks_logits))  # sigmoid
-
-            zoom_h = orig_h / sel_masks_prob.shape[1]
-            zoom_w = orig_w / sel_masks_prob.shape[2]
-
-            resized_masks = scipy.ndimage.zoom(sel_masks_prob, (1, zoom_h, zoom_w), order=1).astype(np.float32)
-
-            results.append(
-                {
-                    "scores": scores,
-                    "labels": labels,
-                    "boxes": xyxy,
-                    "masks": resized_masks,
-                }
-            )
+            results.append({"scores": scores, "labels": labels, "boxes": xyxy, "masks": resized_masks})
 
         return results
