@@ -16,7 +16,7 @@ Scope:
     evaluation, and terminal rendering remain callback concerns.
 Usage:
     Import :class:`OnePassCocoMeanAveragePrecision` only from RF-DETR training code. Construct it with one of the
-    backends registered in ``_BACKENDS`` (``hotcoco`` by default, ``faster_coco_eval`` or ``ufcoco``) and
+    backends registered in ``_BACKENDS`` (``hotcoco`` by default, ``faster_coco_eval``, ``ufcoco`` or ``vernier``) and
     ``sync_on_compute=False``; call ``update`` for each batch, explicitly call ``merge_distributed_state`` at
     rank-symmetric callback sites, then call ``compute``.
 Outputs:
@@ -99,14 +99,19 @@ _BACKEND_KEYWORD_PARAMS: dict[str, tuple[str, ...]] = {
 # newly-required parameter upstream would make that call fail at compute() time instead of at construction.
 _EVALUATOR_ZERO_ARG_METHODS = ("evaluate", "accumulate", "summarize")
 _VAR_PARAM_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+# Parity mode every vernier grid runs in; see `_vernier_results` for why it is "corrected" and not "strict".
+# Named rather than inlined so a test can drive the same path in both modes, and fail when a vernier release
+# starts correcting something that reaches it. Production must stay on "corrected".
+_VERNIER_PARITY_MODE: Literal["strict", "corrected"] = "corrected"
 
 
 def _import_optional_backend(module_name: str, backend_value: str, pip_name: str | None = None) -> Any:
     """Import one of the optional COCO evaluation backend packages.
 
-    Both ``hotcoco`` and ``ultrafast_pycocotools`` are required members of the ``train`` extra (see pyproject.toml),
-    so a missing import here always means the extra itself was never installed, not that one specific backend was
-    left out. Shared by :func:`_hotcoco` and :func:`_ufcoco` so the two backends report a missing extra identically.
+    ``hotcoco``, ``ultrafast_pycocotools`` and ``vernier`` are required members of the ``train`` extra (see
+    pyproject.toml), so a missing import here always means the extra itself was never installed, not that one specific
+    backend was left out. Shared by :func:`_hotcoco`, :func:`_ufcoco` and :func:`_vernier` so the backends report a
+    missing extra identically.
     Uses the ``__import__`` builtin rather than :func:`importlib.import_module`: the latter bypasses a
     ``patch("builtins.__import__", ...)`` mock, which the missing-dependency regression tests rely on.
 
@@ -219,6 +224,11 @@ class _PackageCocoBackend(CocoBackend):
 class _HotCocoBackend(_PackageCocoBackend):
     """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``."""
 
+    # hotcoco never reaches `_get_coco_datasets`: it builds its index in the constructor, so this adapter always
+    # assembles the COCO-format dictionaries itself on that path. Guarding a call a backend does not make would
+    # block its users over an upstream rename that cannot affect them.
+    unused_backend_methods = ("_get_coco_datasets",)
+
     def _package(self) -> Any:
         """Import and return ``hotcoco``."""
         return _hotcoco()
@@ -322,14 +332,49 @@ class _FasterCocoEvalBackend(CocoBackend):
         super().__init__("faster_coco_eval")
 
 
+def _vernier() -> Any:
+    """Import the optional ``vernier`` backend package.
+
+    Returns:
+        The imported ``vernier`` module.
+
+    Raises:
+        ImportError: If the optional dependency is not installed.
+    """
+    return _import_optional_backend("vernier", "vernier")
+
+
+class _VernierBackend(_FasterCocoEvalBackend):
+    """TorchMetrics' ``faster_coco_eval`` backend, marking a metric that evaluates on ``vernier``'s native API.
+
+    vernier takes both ground truth and detections as arrays, so
+    :meth:`OnePassCocoMeanAveragePrecision._vernier_results` bypasses the COCO dataset and evaluator surfaces
+    entirely; only the parent's statistics helper and RLE mask utilities are used.
+    """
+
+    # vernier evaluates on its own API, reaching neither the COCO dataset and evaluator surfaces nor
+    # `_get_coco_format`: one statistics helper is all of TorchMetrics it calls.
+    unused_backend_methods = ("_get_coco_datasets", "_get_coco_format")
+    uses_coco_evaluator = False
+    # vernier needs a box on every annotation, so it cannot evaluate a mask-only run.
+    requires_bbox = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Import eagerly for the same reason `_PackageCocoBackend` does: the contract check that runs next would
+        # otherwise let a missing package surface only at the first `compute()`.
+        _vernier()
+
+
 #: Registry of every COCO evaluation backend the adapter accepts: `TrainConfig.eval_backend` value -> class of the
 #: backend object the metric evaluates with. Adding a backend is one entry here plus its `CocoEvalBackend` member in
 #: `rfdetr.config`; the constructor never branches on the name. `pycocotools` is excluded deliberately: it is an order
-#: of magnitude slower and RF-DETR never installs it. All three ship with `rfdetr[train]`.
+#: of magnitude slower and RF-DETR never installs it. All four ship with `rfdetr[train]`.
 _BACKENDS: dict[CocoEvalBackend, Callable[[], CocoBackend]] = {
     "faster_coco_eval": _FasterCocoEvalBackend,
     "hotcoco": _HotCocoBackend,
     "ufcoco": _UfcocoBackend,
+    "vernier": _VernierBackend,
 }
 
 
@@ -351,8 +396,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         extended_summary: Must remain ``False`` so large evaluator arrays do not escape computation.
         average: Must remain ``"macro"`` because RF-DETR logs class-level metrics.
         backend: COCO evaluation backend. ``"hotcoco"`` is the default; ``"faster_coco_eval"`` selects the previous
-            evaluator and ``"ufcoco"`` selects ultrafast-pycocotools. All three ship with ``rfdetr[train]`` and
-            return identical metrics.
+            evaluator, ``"ufcoco"`` selects ultrafast-pycocotools and ``"vernier"`` selects vernier. All four ship
+            with ``rfdetr[train]`` and return identical metrics.
         kwargs: TorchMetrics configuration. ``sync_on_compute`` defaults to and must remain ``False`` because the
             callback invokes :meth:`merge_distributed_state` explicitly at rank-symmetric sites.
 
@@ -392,14 +437,18 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             class_metrics=class_metrics,
             extended_summary=False,
             average=average,
-            # TorchMetrics resolves its COCO modules from a closed backend-name enum that has no hotcoco or ufcoco
-            # member, so the supported name is what upstream sees and the backend object is replaced from the
+            # TorchMetrics resolves its COCO modules from a closed backend-name enum that has no hotcoco, ufcoco or
+            # vernier member, so the supported name is what upstream sees and the backend object is replaced from the
             # registry afterwards.
             backend="faster_coco_eval",
             sync_on_compute=False,
             **kwargs,
         )
         self._coco_backend = _BACKENDS[backend]()
+        # Rejected in the constructor rather than at compute(), which would discard a whole validation epoch.
+        # Declared on the backend that imposes it, so the registry keeps its promise about the name.
+        if getattr(self._coco_backend, "requires_bbox", False) and "bbox" not in self.iou_type:
+            raise ValueError(f"backend={backend!r} requires 'bbox' among the IoU types; it needs a box per annotation")
         self._validate_private_contract()
 
     @property
@@ -457,6 +506,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         """
         classes = self._observed_classes()
         logger.debug("Computing one-pass COCO metrics for %d classes and IoU types %s.", len(classes), self.iou_type)
+        if isinstance(self._coco_backend, _VernierBackend):
+            return {**self._vernier_results(classes), "classes": torch.tensor(classes, dtype=torch.int32)}
         coco_preds, coco_target, prediction_dataset = self._coco_datasets(classes)
 
         result: dict[str, Tensor] = {}
@@ -465,14 +516,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             if len(self.iou_type) > 1:
                 coco_preds = self._prediction_dataset_for_iou_type(coco_preds, prediction_dataset, iou_type)
             if len(coco_preds.imgs) == 0 or len(coco_target.imgs) == 0:
-                result.update(
-                    self._coco_backend._coco_stats_to_tensor_dict(
-                        12 * [-1.0], prefix=prefix, max_detection_thresholds=self.max_detection_thresholds
-                    )
-                )
-                # Divergence from stock TorchMetrics (module docstring's Outputs section): stock omits
-                # *_per_class keys on this empty-images branch, but the callback always expects them.
-                result.update(self._per_class_sentinels(prefix, classes))
+                result.update(self._empty_iou_type_results(prefix, classes))
                 continue
 
             evaluator_factory = cast(Callable[..., Any], self._coco_backend.cocoeval)
@@ -502,10 +546,199 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                     coco_eval.stats, prefix=prefix, max_detection_thresholds=self.max_detection_thresholds
                 )
             )
-            result.update(self._reduce_per_class(coco_eval, prefix, classes))
+            result.update(self._reduce_per_class(getattr(coco_eval, "eval", None), prefix, classes))
 
         result["classes"] = torch.tensor(classes, dtype=torch.int32)
         return result
+
+    def _vernier_results(self, classes: list[int]) -> dict[str, Tensor]:
+        """Return aggregate and compact per-class metrics from vernier's native evaluator, one grid per IoU type.
+
+        Both sides go over as arrays, so neither builds the per-annotation dictionaries that dominate ``compute()``
+        at validation scale, and a two-IoU-type run parses its ground truth once rather than once per grid. The
+        evaluated datasets stay the ones the other backends see: TorchMetrics' COCO format, detection areas
+        following its per-IoU-type switch.
+
+        The ``corrected`` parity mode of :data:`_VERNIER_PARITY_MODE` reads ``map`` at the largest ``maxDets`` as
+        the other backends do, where ``strict`` reports pycocotools' ``-1`` whenever 100 is not among the limits --
+        which at RF-DETR's default ``eval_max_dets`` it is not. ``retain_meta`` and ``retain_iou`` stay at their
+        default ``False``: nothing here reads that metadata, and at validation scale it is millions of allocations.
+
+        Args:
+            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+
+        Returns:
+            TorchMetrics-compatible aggregate metrics and per-class AP/AR vectors, without ``classes``.
+        """
+        instance = _vernier().instance
+        ground_truth = self._vernier_ground_truth(classes) if self.groundtruth_labels else None
+        result: dict[str, Tensor] = {}
+        for iou_type in self.iou_type:
+            prefix = "" if len(self.iou_type) == 1 else f"{iou_type}_"
+            if ground_truth is None:
+                result.update(self._empty_iou_type_results(prefix, classes))
+                continue
+            evaluate_grid = instance.evaluate_bbox_grid if iou_type == "bbox" else instance.evaluate_segm_grid
+            grid = evaluate_grid(
+                ground_truth,
+                self._vernier_detections(iou_type),
+                parity_mode=_VERNIER_PARITY_MODE,
+                max_dets_per_image=self.max_detection_thresholds[-1],
+                use_cats=True,
+                iou_thresholds=self.iou_thresholds,
+                recall_thresholds=self.rec_thresholds,
+                num_threads=torch.get_num_threads(),
+                dt_area="bbox" if iou_type == "bbox" else "mask",
+            )
+            accumulated = grid.accumulate(self.max_detection_thresholds)
+            result.update(
+                self._coco_backend._coco_stats_to_tensor_dict(
+                    accumulated.summarize().stats, prefix=prefix, max_detection_thresholds=self.max_detection_thresholds
+                )
+            )
+            # Each access materializes a fresh array across the FFI, and `_reduce_per_class` discards both
+            # unless `class_metrics` is on, which by default it is not.
+            evaluation = None
+            if self.class_metrics:
+                evaluation = {"precision": accumulated.precision, "recall": accumulated.recall}
+            result.update(self._reduce_per_class(evaluation, prefix, classes))
+        return result
+
+    def _vernier_ground_truth(self, classes: list[int]) -> Any:
+        """Return the stored ground truth as a vernier ``CocoDataset`` built from columns, with no JSON in between.
+
+        This is the document TorchMetrics' ``_get_coco_format`` produces, without one Python dictionary per
+        annotation: ``CocoDataset.from_arrays`` converges on the same constructor the JSON loader ends at, so the
+        dataset is identical rather than equivalent, which
+        ``test_vernier_columnar_ground_truth_is_the_same_document`` pins by ``dataset_hash``.
+
+        The columns reproduce those semantics vectorized. Four rules are easy to get wrong:
+
+        * *every* image gets an entry, even with no annotations -- upstream skips one only when it has neither masks
+          nor boxes -- and annotation IDs start at 1, since COCOeval results are wrong from 0;
+        * ``area`` falls back per element (hence :func:`torch.where`), to the mask's area or the box's as upstream's
+          switch on the whole ``iou_type`` dictates;
+        * ``iscrowd`` stays ``int64``: vernier reads any non-zero value as a crowd, and ``uint8`` would wrap 256 to 0
+          and evaluate that annotation as a normal one;
+        * image sizes resolve as :func:`vernier.adapters.with_mask_image_sizes` resolves them -- the image's own
+          first mask, else the size its detections carry, else the ``0x0`` nothing reads.
+
+        Args:
+            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+
+        Returns:
+            The ground truth as a parsed ``vernier.CocoDataset`` handle.
+        """
+        counts = torch.tensor([len(image_labels) for image_labels in self.groundtruth_labels])
+        n_images = len(self.groundtruth_labels)
+        total = int(counts.sum())
+
+        if total:
+            boxes = torch.cat(self.groundtruth_box).double()
+            labels = torch.cat(self.groundtruth_labels).long()
+        else:
+            boxes = torch.zeros((0, 4), dtype=torch.float64)
+            labels = torch.zeros((0,), dtype=torch.int64)
+
+        # Upstream falls back to a computed area only where the supplied one is not positive, element by element.
+        masked = "segm" in self.iou_type
+        rles: list[dict[str, Any]] | None = None
+        if masked:
+            rles = [{"size": size, "counts": rle} for image in self.groundtruth_mask for size, rle in image]
+            mask_utils = cast(Any, self._coco_backend.mask_utils)
+            computed = torch.from_numpy(np.asarray(mask_utils.area(rles), dtype=np.float64))
+        else:
+            computed = boxes[:, 2] * boxes[:, 3]
+        # `update()` appends to both for every label it appends, defaulting to zeros, so neither can be absent here.
+        supplied = torch.cat(self.groundtruth_area).double()
+        area = torch.where(supplied > 0, supplied, computed)
+        crowds = torch.cat(self.groundtruth_crowds).to(torch.int64)
+
+        if masked:
+            detection_sizes = self._vernier_detection_image_sizes()
+            sizes = np.array(
+                [
+                    image_masks[0][0] if len(image_masks) > 0 else detection_sizes.get(image_id, (0, 0))
+                    for image_id, image_masks in enumerate(self.groundtruth_mask)
+                ],
+                dtype=np.int64,
+            )
+        else:
+            sizes = np.zeros((n_images, 2), dtype=np.int64)
+
+        images = {
+            "id": np.arange(n_images, dtype=np.int64),
+            "height": sizes[:, 0].copy(),
+            "width": sizes[:, 1].copy(),
+        }
+        annotations: dict[str, Any] = {
+            "id": torch.arange(1, total + 1, dtype=torch.int64).numpy(),
+            "image_id": torch.repeat_interleave(torch.arange(n_images, dtype=torch.int64), counts).numpy(),
+            "category_id": labels.numpy(),
+            "bbox": boxes.contiguous().numpy(),
+            "area": area.numpy(),
+            "iscrowd": crowds.numpy(),
+        }
+        if masked:
+            annotations["segmentation"] = rles
+        categories = [{"id": int(label), "name": str(int(label))} for label in classes]
+        return _vernier().instance.CocoDataset.from_arrays(images, annotations, categories)
+
+    def _vernier_detection_image_sizes(self) -> dict[int, tuple[int, int]]:
+        """Return the image sizes the *detection* side knows, for the images the ground truth cannot size.
+
+        vernier checks every detection RLE against its image's size, so the first detection mask on an image is the
+        only size consistent with the masks about to be evaluated on it. An image with neither a ground-truth nor a
+        detected mask is absent here and sized ``0x0``: nothing reads it.
+
+        Returns:
+            ``{image_id: (height, width)}`` over the images with at least one detected mask.
+        """
+        return {
+            image_id: tuple(image_masks[0][0])
+            for image_id, image_masks in enumerate(self.detection_mask)
+            if len(image_masks) > 0
+        }
+
+    def _vernier_detections(self, iou_type: str) -> Any:
+        """Return the stored detections on the fastest vernier ingest route that can express them.
+
+        vernier takes detections three ways and the fastest differs per IoU type. ``bbox`` takes the ``(N, 7)``
+        matrix, the only route that hands the whole state over without a Python object per detection; what it
+        cannot express is exactly what this pass does not use -- a segmentation, an explicit annotation ``id``, a
+        supplied ``area`` (the grid derives it, ``dt_area="bbox"``).
+
+        ``segm`` takes the columnar route, per-image slices of once-converted columns: the only route that carries
+        a mask *and* keeps the arrays whole. The third, a list of COCO result dicts, costs more per-detection
+        Python than the whole rest of the ingest.
+
+        Args:
+            iou_type: The IoU type the detections are evaluated under.
+
+        Returns:
+            The ``(N, 7)`` detection matrix under ``bbox``, or one ``vernier.instance.Detections`` mapping per image
+            under ``segm``.
+
+        Raises:
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
+        """
+        if iou_type == "bbox":
+            return self._detection_results_array()
+        self._validate_detection_scores()
+        boxes = torch.cat(self.detection_box).double().numpy()
+        scores = torch.cat(self.detection_scores).double().numpy()
+        labels = torch.cat(self.detection_labels).long().numpy()
+        bounds = np.cumsum([0, *(len(image_scores) for image_scores in self.detection_scores)])
+        return [
+            {
+                "image_id": image_id,
+                "boxes": boxes[start:end],
+                "scores": scores[start:end],
+                "labels": labels[start:end],
+                "rles": [{"size": size, "counts": counts} for size, counts in self.detection_mask[image_id]],
+            }
+            for image_id, (start, end) in enumerate(zip(bounds, bounds[1:]))
+        ]
 
     def _coco_datasets(self, classes: list[int]) -> tuple[Any, Any, dict[str, Any] | None]:
         """Return the COCO prediction and target datasets, hoisting prediction scores out of the annotation loop.
@@ -619,11 +852,15 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         )
 
     def _detection_results_array(self) -> np.ndarray[Any, Any]:
-        """Return stored detections as the array COCO's ``loadRes`` accepts.
+        """Return stored detections as the array COCO's ``loadRes`` accepts, which is also vernier's ``(N, 7)``.
 
         Columns are ``[image_id, x, y, width, height, score, category_id]``, in stored-state order so that
         equal-scoring detections keep the tie order the annotation-dict path produced. Boxes need no conversion:
         TorchMetrics already converted them to COCO's ``xywh`` when ``update()`` stored them.
+
+        ``torch.cat(..., dim=1)`` writes the seven columns into one C-contiguous float64 buffer, which vernier's
+        matrix route requires of the caller rather than copying silently. The ID columns ride as float64; vernier
+        checks them back to exact integers, safe from ``int64`` state below 2^53.
 
         Returns:
             One row for each stored detection.
@@ -786,12 +1023,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         missing_states = sorted(expected_states - installed_states)
         stale_states = sorted(installed_states - expected_states)
         backend = getattr(self, "_coco_backend", None)
-        backend_methods = tuple(_BACKEND_METHOD_PARAMS)
-        if isinstance(backend, _HotCocoBackend):
-            # hotcoco never reaches `_get_coco_datasets`: it builds its index in the constructor, so this adapter
-            # always assembles the COCO-format dictionaries itself on that path. Guarding a call this backend does
-            # not make would block hotcoco users over an upstream rename that cannot affect them.
-            backend_methods = tuple(name for name in backend_methods if name != "_get_coco_datasets")
+        # Which surfaces to check is the backend's own declaration, read against the module constant so a contract
+        # change reaches every backend that did not opt out of it.
+        unused = getattr(backend, "unused_backend_methods", ())
+        backend_methods = tuple(name for name in _BACKEND_METHOD_PARAMS if name not in unused)
+        evaluator_methods = _EVALUATOR_ZERO_ARG_METHODS if getattr(backend, "uses_coco_evaluator", True) else ()
         missing_methods = (
             ["_coco_backend"]
             if backend is None
@@ -801,31 +1037,32 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         mismatched_signatures = (
             self._mismatched_backend_signatures(backend, present_backend_methods) if present_backend_methods else []
         )
-        try:
-            # `_coco_datasets` calls the `coco` dataset factory directly, so a rename upstream must fail here
-            # rather than at compute() time.
-            evaluator_type = backend.cocoeval if backend is not None else None
-            coco_factory = backend.coco if backend is not None else None
-        except (AttributeError, TypeError, ImportError):
-            # `CocoBackend.cocoeval` lazily imports the backend package (e.g. `faster_coco_eval`) and
-            # raises `ModuleNotFoundError` (an `ImportError`) when it is absent; without catching it
-            # here that exception propagates raw instead of the actionable RuntimeError below.
-            evaluator_type = coco_factory = None
-        if backend is not None and not callable(coco_factory):
-            missing_methods = [*missing_methods, "coco"]
-        missing_evaluator_methods = (
-            ["cocoeval"]
-            if evaluator_type is None
-            else [name for name in _EVALUATOR_ZERO_ARG_METHODS if not callable(getattr(evaluator_type, name, None))]
-        )
-        present_evaluator_methods = [
-            name for name in _EVALUATOR_ZERO_ARG_METHODS if name not in missing_evaluator_methods
-        ]
-        mismatched_evaluator_signatures = (
-            self._evaluator_methods_now_requiring_args(evaluator_type, present_evaluator_methods)
-            if present_evaluator_methods
-            else []
-        )
+        evaluator_type = None
+        missing_evaluator_methods: list[str] = []
+        mismatched_evaluator_signatures: list[str] = []
+        if backend is not None and evaluator_methods:
+            try:
+                # `_coco_datasets` calls the `coco` dataset factory directly, so a rename upstream must fail here
+                # rather than at compute() time. A backend that calls no evaluator method reaches neither.
+                evaluator_type, coco_factory = backend.cocoeval, backend.coco
+            except (AttributeError, TypeError, ImportError):
+                # `CocoBackend.cocoeval` lazily imports the backend package (e.g. `faster_coco_eval`) and
+                # raises `ModuleNotFoundError` (an `ImportError`) when it is absent; without catching it
+                # here that exception propagates raw instead of the actionable RuntimeError below.
+                evaluator_type = coco_factory = None
+            if not callable(coco_factory):
+                missing_methods = [*missing_methods, "coco"]
+            missing_evaluator_methods = (
+                ["cocoeval"]
+                if evaluator_type is None
+                else [name for name in evaluator_methods if not callable(getattr(evaluator_type, name, None))]
+            )
+            present_evaluator_methods = [name for name in evaluator_methods if name not in missing_evaluator_methods]
+            mismatched_evaluator_signatures = (
+                self._evaluator_methods_now_requiring_args(evaluator_type, present_evaluator_methods)
+                if present_evaluator_methods
+                else []
+            )
         if not (
             missing_states
             or stale_states
@@ -863,11 +1100,28 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             f"{prefix}mar_{self.max_detection_thresholds[-1]}_per_class": values.clone(),
         }
 
-    def _reduce_per_class(self, coco_eval: Any, prefix: str, classes: list[int]) -> dict[str, Tensor]:
-        """Reduce COCO evaluator precision and recall arrays to TorchMetrics-compatible class vectors."""
+    def _empty_iou_type_results(self, prefix: str, classes: list[int]) -> dict[str, Tensor]:
+        """Return every metric key for an IoU type with no images to evaluate, all at COCO's ``-1``.
+
+        Args:
+            prefix: Key prefix for this IoU type, empty when only one is evaluated.
+            classes: Sorted class IDs observed in predictions or targets.
+
+        Returns:
+            The aggregate sentinels upstream emits, plus the per-class ones it omits -- a divergence from stock
+            TorchMetrics (module docstring's Outputs section), which the callback relies on.
+        """
+        return {
+            **self._coco_backend._coco_stats_to_tensor_dict(
+                12 * [-1.0], prefix=prefix, max_detection_thresholds=self.max_detection_thresholds
+            ),
+            **self._per_class_sentinels(prefix, classes),
+        }
+
+    def _reduce_per_class(self, evaluation: Any, prefix: str, classes: list[int]) -> dict[str, Tensor]:
+        """Reduce precision and recall arrays to TorchMetrics-compatible per-class vectors."""
         if not self.class_metrics:
             return self._per_class_sentinels(prefix, classes)
-        evaluation = getattr(coco_eval, "eval", None)
         if not isinstance(evaluation, dict) or "precision" not in evaluation or "recall" not in evaluation:
             message = (
                 "OnePassCocoMeanAveragePrecision requires COCO evaluator eval['precision'] and eval['recall'] arrays "
