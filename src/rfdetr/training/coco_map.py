@@ -395,8 +395,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         class_metrics: Whether to return per-class AP and AR.
         extended_summary: Must remain ``False`` so large evaluator arrays do not escape computation.
         average: Must remain ``"macro"`` because RF-DETR logs class-level metrics.
-        backend: COCO evaluation backend. ``"hotcoco"`` is the default; ``"faster_coco_eval"`` selects the previous
-            evaluator, ``"ufcoco"`` selects ultrafast-pycocotools and ``"vernier"`` selects vernier. All four ship
+        backend: COCO evaluation backend. ``"vernier"`` is the default; ``"faster_coco_eval"`` selects the previous
+            evaluator, ``"ufcoco"`` selects ultrafast-pycocotools and ``"hotcoco"`` selects hotcoco. All four ship
             with ``rfdetr[train]`` and return identical metrics.
         kwargs: TorchMetrics configuration. ``sync_on_compute`` defaults to and must remain ``False`` because the
             callback invokes :meth:`merge_distributed_state` explicitly at rank-symmetric sites.
@@ -554,10 +554,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
     def _vernier_results(self, classes: list[int]) -> dict[str, Tensor]:
         """Return aggregate and compact per-class metrics from vernier's native evaluator, one grid per IoU type.
 
-        Both sides go over as arrays, so neither builds the per-annotation dictionaries that dominate ``compute()``
-        at validation scale, and a two-IoU-type run parses its ground truth once rather than once per grid. The
-        evaluated datasets stay the ones the other backends see: TorchMetrics' COCO format, detection areas
-        following its per-IoU-type switch.
+        Both sides go over as arrays for boxes, labels and scores, so neither builds a Python dict per annotation
+        for those fields the way ``compute()`` does at validation scale, and a two-IoU-type run parses its ground
+        truth once rather than once per grid. Under ``segm`` each mask still carries one RLE dictionary per
+        annotation, since that is how vernier's API takes them. The evaluated datasets stay the ones the other
+        backends see: TorchMetrics' COCO format, detection areas following its per-IoU-type switch.
 
         The ``corrected`` parity mode of :data:`_VERNIER_PARITY_MODE` reads ``map`` at the largest ``maxDets`` as
         the other backends do, where ``strict`` reports pycocotools' ``-1`` whenever 100 is not among the limits --
