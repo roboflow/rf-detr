@@ -193,6 +193,13 @@ def _build_partitioner(backend: str) -> list[Any]:
             from executorch.backends.apple.coreml.partition.coreml_partitioner import CoreMLPartitioner
         except ImportError as exc:
             raise ImportError(_COREML_HINT) from exc
+        # No compile specs on purpose. Passing ExecuTorch's own
+        # CoreMLBackend.generate_compile_specs(compute_precision=FLOAT16, minimum_deployment_target=iOS16) was
+        # measured to be worse than the partitioner's own defaults on a pretrained RFDETRNano (Apple M3 Pro,
+        # macOS 27.0, COCO val2017, all 5000 images): 48.05 -> 45.06 mAP and 14.0 -> 18.4 ms p50. The default
+        # path already runs the delegate in fp16 and already reaches the Neural Engine (verified from the
+        # `com.apple.ane` unified log); the explicit specs additionally cast the weights, which is what costs
+        # the accuracy. Compute units are chosen by whoever loads the .pte, not baked in here.
         return [CoreMLPartitioner()]
     # QNN uses _lower_qnn instead of this function; this raise is reached only if a new
     # backend is added to _VALID_BACKENDS without a corresponding branch above.
