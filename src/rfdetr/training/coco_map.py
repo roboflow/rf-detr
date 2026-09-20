@@ -635,7 +635,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         total = int(counts.sum())
 
         if total:
-            boxes = torch.cat(self.groundtruth_box).double()
+            # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
+            # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
+            # another image. `.reshape(-1, 4)` is a no-op on an already-`(N, 4)` tensor and turns a `(1, 0)` one
+            # back into `(0, 4)` before the concatenation.
+            boxes = torch.cat([image_boxes.reshape(-1, 4) for image_boxes in self.groundtruth_box]).double()
             raw_labels = torch.cat(self.groundtruth_labels)
             self._validate_integral_labels(raw_labels)
             labels = raw_labels.long()
@@ -728,7 +732,10 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         if iou_type == "bbox":
             return self._detection_results_array()
         self._validate_detection_scores()
-        boxes = torch.cat(self.detection_box).double().numpy()
+        # Same `(1, 0)`-vs-`(N, 4)` empty-tensor mismatch `_detection_results_array` guards against; `bounds`
+        # below is sliced from `detection_scores`, which `_fix_empty_tensors` never touches, so only the
+        # concatenation itself needs the reshape here.
+        boxes = torch.cat([image_boxes.reshape(-1, 4) for image_boxes in self.detection_box]).double().numpy()
         scores = torch.cat(self.detection_scores).double().numpy()
         raw_labels = torch.cat(self.detection_labels)
         self._validate_integral_labels(raw_labels)
@@ -874,8 +881,14 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             ValueError: If stored detection scores are not one-dimensional floating-point tensors.
         """
         self._validate_detection_scores()
-        boxes = torch.cat(self.detection_box).double()
-        detections_per_image = torch.tensor([len(image_boxes) for image_boxes in self.detection_box])
+        # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
+        # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
+        # another image, and whose `len()` would otherwise miscount that image as holding one detection instead
+        # of zero. `.reshape(-1, 4)` is a no-op on an already-`(N, 4)` tensor and turns a `(1, 0)` one back into
+        # `(0, 4)`, so both the concatenation and the per-image counts below read the same corrected shape.
+        reshaped_boxes = [image_boxes.reshape(-1, 4) for image_boxes in self.detection_box]
+        boxes = torch.cat(reshaped_boxes).double()
+        detections_per_image = torch.tensor([len(image_boxes) for image_boxes in reshaped_boxes])
         image_ids = torch.repeat_interleave(torch.arange(len(detections_per_image)), detections_per_image)
         columns = (
             image_ids.double().unsqueeze(1),

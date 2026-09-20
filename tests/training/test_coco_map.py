@@ -1186,6 +1186,104 @@ def test_vernier_accepts_whole_valued_float_labels() -> None:
     assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
 
 
+def test_vernier_handles_one_dimensional_empty_boxes() -> None:
+    """A 1-D empty box tensor on one image must not crash concatenation against another image's real boxes.
+
+    TorchMetrics' ``_fix_empty_tensors`` reshapes a 1-D empty box tensor to ``(1, 0)`` rather than ``(0, 4)`` to avoid a
+    DDP all-reduce hang (``torchmetrics.detection.helpers``). Concatenating that ``(1, 0)`` tensor against a ``(N, 4)``
+    tensor from another image in the same batch fails on the mismatched second dimension unless each per-image tensor is
+    reshaped to ``(-1, 4)`` first, for both the ground truth and the ``(N, 7)`` detection matrix ``bbox`` uses.
+    """
+    _require_backend("vernier")
+    metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
+    metric.update(
+        [
+            {"boxes": torch.empty(0), "scores": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)},
+            {
+                "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([3]),
+            },
+        ],
+        [
+            {"boxes": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)},
+            {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])},
+        ],
+    )
+
+    result = metric.compute()
+
+    assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
+
+
+def test_vernier_handles_one_dimensional_empty_boxes_under_segmentation() -> None:
+    """A 1-D empty box tensor on one image must not crash the columnar detection route ``segm`` uses.
+
+    ``_vernier_detections`` takes the columnar route under ``segm`` instead of the ``(N, 7)`` matrix ``bbox`` uses, with
+    its own ``torch.cat`` over ``detection_box`` that needs the same ``(-1, 4)`` reshape guard.
+    """
+    _require_backend("vernier")
+    metric = OnePassCocoMeanAveragePrecision(backend="vernier", iou_type=("bbox", "segm"), sync_on_compute=False)
+    mask = torch.zeros((1, 4, 4), dtype=torch.bool)
+    mask[0, :2, :2] = True
+    empty_mask = torch.zeros((0, 4, 4), dtype=torch.bool)
+    metric.update(
+        [
+            {
+                "boxes": torch.empty(0),
+                "scores": torch.empty(0),
+                "labels": torch.empty(0, dtype=torch.long),
+                "masks": empty_mask,
+            },
+            {
+                "boxes": torch.tensor([[0.0, 0.0, 2.0, 2.0]]),
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([3]),
+                "masks": mask,
+            },
+        ],
+        [
+            {"boxes": torch.empty(0), "labels": torch.empty(0, dtype=torch.long), "masks": empty_mask},
+            {"boxes": torch.tensor([[0.0, 0.0, 2.0, 2.0]]), "labels": torch.tensor([3]), "masks": mask},
+        ],
+    )
+
+    result = metric.compute()
+
+    assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
+
+
+def test_vernier_ground_truth_handles_one_dimensional_empty_boxes() -> None:
+    """A one-dimensional empty ground-truth box tensor must not crash concatenation against another image's boxes.
+
+    TorchMetrics' ``_fix_empty_tensors`` (``torchmetrics.detection.helpers``) reshapes an empty ``torch.tensor([])``
+    box tensor to ``(1, 0)`` rather than ``(0, 4)``, to avoid a DDP all-reduce hang. ``_vernier_ground_truth``
+    concatenates every image's ground-truth boxes into one tensor, so a ``(1, 0)`` entry next to a real image's
+    ``(N, 4)`` entry fails on the mismatched second dimension unless each per-image tensor is reshaped to
+    ``(-1, 4)`` first.
+    """
+    _require_backend("vernier")
+    metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
+    metric.update(
+        [
+            {"boxes": torch.empty(0, 4), "scores": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)},
+            {
+                "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([3]),
+            },
+        ],
+        [
+            {"boxes": torch.tensor([]), "labels": torch.empty(0, dtype=torch.long)},
+            {"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])},
+        ],
+    )
+
+    result = metric.compute()
+
+    assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
+
+
 @pytest.mark.parametrize("iou_type", ["bbox", pytest.param(("bbox", "segm"), id="both")])
 @pytest.mark.parametrize("max_dets", [100, 500])
 def test_vernier_matches_faster_coco_eval_across_updates_and_reuse(iou_type: Any, max_dets: int) -> None:
