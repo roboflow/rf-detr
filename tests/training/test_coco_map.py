@@ -1268,8 +1268,6 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
     metric.update(predictions, targets)
     classes = sorted({int(label) for target in metric.groundtruth_labels for label in target.tolist()})
 
-    from rfdetr.training.coco_map import _vernier
-
     adapters = _vernier().adapters
     reference = metric._coco_backend._get_coco_format(
         labels=metric.groundtruth_labels,
