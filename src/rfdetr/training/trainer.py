@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -211,6 +212,41 @@ def _accelerator_resolves_to_xla(accelerator: str | None) -> bool:
     from pytorch_lightning.accelerators import XLAAccelerator
 
     return XLAAccelerator.is_available()
+
+
+def _xla_resolves_to_single_device(devices: int | str | Sequence[int], num_nodes: int = 1) -> bool:
+    """Return whether an XLA/TPU run provably executes on exactly one device.
+
+    :func:`_requests_multiple_devices` answers the neighbouring question for CUDA and cannot be
+    reused here: its ``"auto"``/``-1`` branch delegates to
+    :func:`_accelerator_has_multiple_auto_devices`, which only ever counts CUDA devices and reports
+    ``False`` for ``"xla"``/``"tpu"``. An ``"auto"`` request on a multi-chip TPU host would then read
+    as single-device, which is the one case the EMA guard must keep disabled.
+
+    ``num_nodes > 1`` is never one device: a single device per host across several hosts is still a
+    multi-replica run, and that topology has no runtime validation here.
+
+    Any ``int | str`` value (the forms ``TrainConfig.devices`` takes) that cannot be proven to be
+    exactly one device answers ``False``, so an unrecognised value keeps the conservative
+    multi-device behaviour instead of enabling EMA on a host this has not been validated on. A
+    device-index sequence such as the ``devices=[N]`` that ``RFDETR.train(device="xla:N")`` forwards
+    is outside the count forms validated on one chip and answers ``False`` too, rather than raising.
+    """
+    if num_nodes > 1 or not isinstance(devices, (int, str)):
+        return False
+    if isinstance(devices, int):
+        if devices != -1:
+            return devices == 1
+    else:
+        devices_name = devices.strip().lower()
+        if devices_name.isdigit():
+            return int(devices_name) == 1
+        if devices_name not in ("auto", "-1"):
+            return False
+
+    from pytorch_lightning.accelerators import XLAAccelerator
+
+    return XLAAccelerator.auto_device_count() == 1
 
 
 def _requests_multiple_devices(devices: int | str, accelerator: str | None = None) -> bool:
@@ -801,7 +837,8 @@ def build_trainer(
                 _static_graph_eligible,
             )
     sharded = _is_sharded_strategy(strategy)
-    enable_ema = bool(tc.use_ema) and not sharded and not xla_accelerator
+    xla_multi_device = xla_accelerator and not _xla_resolves_to_single_device(devices, num_nodes)
+    enable_ema = bool(tc.use_ema) and not sharded and not xla_multi_device
     if tc.use_ema and sharded:
         warnings.warn(
             f"EMA disabled: RFDETREMACallback is not compatible with sharded strategies "
@@ -809,10 +846,11 @@ def build_trainer(
             UserWarning,
             stacklevel=2,
         )
-    elif include_training_callbacks and tc.use_ema and xla_accelerator:
+    elif include_training_callbacks and tc.use_ema and xla_multi_device:
         warnings.warn(
-            "EMA disabled on XLA because per-step weight reads can corrupt subsequent optimizer updates. "
-            "Training will continue with the live model weights. Set use_ema=False to suppress this warning.",
+            "EMA disabled on multi-device XLA because per-step weight reads can corrupt subsequent "
+            "optimizer updates there. One-device XLA keeps EMA. Training will continue with the live "
+            "model weights. Set use_ema=False to suppress this warning.",
             UserWarning,
             stacklevel=2,
         )
