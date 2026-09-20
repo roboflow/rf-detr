@@ -196,7 +196,22 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
         yield
 
 
-class _PackageCocoBackend(CocoBackend):
+class _RfdetrCocoBackend(CocoBackend):
+    """Typed capability-flag defaults every RF-DETR COCO backend shares.
+
+    :meth:`OnePassCocoMeanAveragePrecision._validate_private_contract` and its constructor read three capability
+    flags off the active backend -- :attr:`requires_bbox`, :attr:`unused_backend_methods`,
+    :attr:`uses_coco_evaluator` -- and previously did so through ``getattr(backend, name, default)`` at each call
+    site, repeating the same default three times with no typed declaration anywhere a backend could see. Declaring
+    them here as typed class attributes gives every backend the same shared default and one place to override it.
+    """
+
+    requires_bbox: bool = False
+    unused_backend_methods: tuple[str, ...] = ()
+    uses_coco_evaluator: bool = True
+
+
+class _PackageCocoBackend(_RfdetrCocoBackend):
     """TorchMetrics COCO backend whose surfaces come from an optional package outside TorchMetrics' backend enum.
 
     TorchMetrics resolves its COCO, evaluator and mask modules from a closed backend-name enum, so the parent is
@@ -338,11 +353,11 @@ class _UfcocoBackend(_PackageCocoBackend):
         return _UFCOCO_MASK_TOOLS
 
 
-class _FasterCocoEvalBackend(CocoBackend):
+class _FasterCocoEvalBackend(_RfdetrCocoBackend):
     """TorchMetrics' own ``faster_coco_eval`` backend, the one :class:`MeanAveragePrecision` builds itself.
 
-    Nothing is overridden: the class exists so the registry holds one backend class per name and the metric builds
-    every backend the same way.
+    Nothing is overridden beyond the shared capability-flag defaults: the class exists so the registry holds one
+    backend class per name and the metric builds every backend the same way.
     """
 
     def __init__(self) -> None:
@@ -361,12 +376,15 @@ def _vernier() -> Any:
     return _import_optional_backend("vernier", "vernier")
 
 
-class _VernierBackend(_FasterCocoEvalBackend):
-    """TorchMetrics' ``faster_coco_eval`` backend, marking a metric that evaluates on ``vernier``'s native API.
+class _VernierBackend(_RfdetrCocoBackend):
+    """TorchMetrics COCO backend built with the ``faster_coco_eval`` name, evaluating on ``vernier``'s native API.
 
     vernier takes both ground truth and detections as arrays, so
     :meth:`OnePassCocoMeanAveragePrecision._vernier_results` bypasses the COCO dataset and evaluator surfaces
-    entirely; only the parent's statistics helper and RLE mask utilities are used.
+    entirely; only the parent's statistics helper and RLE mask utilities are used. It inherits
+    :class:`_RfdetrCocoBackend` directly rather than :class:`_FasterCocoEvalBackend`: the two share only that
+    constructor argument, and subclassing the sibling backend it happens to resemble instead of the common base
+    both descend from is not a real is-a relationship.
     """
 
     # vernier evaluates on its own API, reaching neither the COCO dataset and evaluator surfaces nor
@@ -377,7 +395,11 @@ class _VernierBackend(_FasterCocoEvalBackend):
     requires_bbox = True
 
     def __init__(self) -> None:
-        super().__init__()
+        # TorchMetrics resolves its COCO modules from a closed backend-name enum with no `vernier` member, the
+        # same reason `OnePassCocoMeanAveragePrecision.__init__` builds every backend under the supported
+        # `faster_coco_eval` name (see its constructor comment) -- named explicitly here rather than borrowed
+        # from `_FasterCocoEvalBackend.__init__` now that this class no longer inherits it.
+        super().__init__("faster_coco_eval")
         # Import eagerly for the same reason `_PackageCocoBackend` does: the contract check that runs next would
         # otherwise let a missing package surface only at the first `compute()`.
         _vernier()
@@ -387,7 +409,7 @@ class _VernierBackend(_FasterCocoEvalBackend):
 #: backend object the metric evaluates with. Adding a backend is one entry here plus its `CocoEvalBackend` member in
 #: `rfdetr.config`; the constructor never branches on the name. `pycocotools` is excluded deliberately: it is an order
 #: of magnitude slower and RF-DETR never installs it. All four ship with `rfdetr[train]`.
-_BACKENDS: dict[CocoEvalBackend, Callable[[], CocoBackend]] = {
+_BACKENDS: dict[CocoEvalBackend, Callable[[], _RfdetrCocoBackend]] = {
     "faster_coco_eval": _FasterCocoEvalBackend,
     "hotcoco": _HotCocoBackend,
     "ufcoco": _UfcocoBackend,
@@ -464,7 +486,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         self._coco_backend = _BACKENDS[backend]()
         # Rejected in the constructor rather than at compute(), which would discard a whole validation epoch.
         # Declared on the backend that imposes it, so the registry keeps its promise about the name.
-        if getattr(self._coco_backend, "requires_bbox", False) and "bbox" not in self.iou_type:
+        if self._coco_backend.requires_bbox and "bbox" not in self.iou_type:
             raise ValueError(f"backend={backend!r} requires 'bbox' among the IoU types; it needs a box per annotation")
         self._validate_private_contract()
 
@@ -1112,12 +1134,14 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         expected_states = set(_MAP_STATE_ATTRS)
         missing_states = sorted(expected_states - installed_states)
         stale_states = sorted(installed_states - expected_states)
-        backend = getattr(self, "_coco_backend", None)
-        # Which surfaces to check is the backend's own declaration, read against the module constant so a contract
-        # change reaches every backend that did not opt out of it.
-        unused = getattr(backend, "unused_backend_methods", ())
+        backend: _RfdetrCocoBackend | None = getattr(self, "_coco_backend", None)
+        # Which surfaces to check is the backend's own typed declaration (`_RfdetrCocoBackend`), read against the
+        # module constant so a contract change reaches every backend that did not opt out of it. `backend` itself
+        # can still be absent -- guarded rather than defaulted through the flags below -- when `_coco_backend`
+        # was never assigned.
+        unused = backend.unused_backend_methods if backend is not None else ()
         backend_methods = tuple(name for name in _BACKEND_METHOD_PARAMS if name not in unused)
-        evaluator_methods = _EVALUATOR_ZERO_ARG_METHODS if getattr(backend, "uses_coco_evaluator", True) else ()
+        evaluator_methods = _EVALUATOR_ZERO_ARG_METHODS if backend is None or backend.uses_coco_evaluator else ()
         missing_methods = (
             ["_coco_backend"]
             if backend is None
