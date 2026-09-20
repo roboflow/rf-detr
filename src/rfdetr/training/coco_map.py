@@ -573,16 +573,17 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         """
         instance = _vernier().instance
         ground_truth = self._vernier_ground_truth(classes) if self.groundtruth_labels else None
+        detection_columns = self._vernier_detection_columns() if ground_truth is not None else None
         result: dict[str, Tensor] = {}
         for iou_type in self.iou_type:
             prefix = "" if len(self.iou_type) == 1 else f"{iou_type}_"
-            if ground_truth is None:
+            if ground_truth is None or detection_columns is None:
                 result.update(self._empty_iou_type_results(prefix, classes))
                 continue
             evaluate_grid = instance.evaluate_bbox_grid if iou_type == "bbox" else instance.evaluate_segm_grid
             grid = evaluate_grid(
                 ground_truth,
-                self._vernier_detections(iou_type),
+                self._vernier_detections(iou_type, *detection_columns),
                 parity_mode=_VERNIER_PARITY_MODE,
                 max_dets_per_image=self.max_detection_thresholds[-1],
                 use_cats=True,
@@ -707,7 +708,45 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             if len(image_masks) > 0
         }
 
-    def _vernier_detections(self, iou_type: str) -> Any:
+    def _vernier_detection_columns(
+        self,
+    ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+        """Return every stored detection's boxes, scores and labels as one set of arrays, converted once.
+
+        Both ingest routes :meth:`_vernier_detections` takes -- the ``(N, 7)`` matrix ``bbox`` needs and the
+        per-image columnar slices ``segm`` needs -- read the same validated, concatenated arrays, so a
+        two-IoU-type evaluation converts each stored tensor once instead of once per IoU type.
+
+        Returns:
+            Boxes, scores and class labels concatenated in stored-state order across every detection, and each
+            image's ``[start, end)`` row bounds into them (``n_images + 1`` entries).
+
+        Raises:
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors, or any label
+                is floating-point with a non-integral value.
+        """
+        self._validate_detection_scores()
+        # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
+        # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
+        # another image. `.reshape(-1, 4)` is a no-op on an already-`(N, 4)` tensor and turns a `(1, 0)` one
+        # back into `(0, 4)` before the concatenation; `bounds` below is sliced from `detection_scores`, which
+        # `_fix_empty_tensors` never touches, so it needs no such reshape.
+        boxes = torch.cat([image_boxes.reshape(-1, 4) for image_boxes in self.detection_box]).double().numpy()
+        scores = torch.cat(self.detection_scores).double().numpy()
+        raw_labels = torch.cat(self.detection_labels)
+        self._validate_integral_labels(raw_labels)
+        labels = raw_labels.long().numpy()
+        bounds = np.cumsum([0, *(len(image_scores) for image_scores in self.detection_scores)])
+        return boxes, scores, labels, bounds
+
+    def _vernier_detections(
+        self,
+        iou_type: str,
+        boxes: np.ndarray[Any, Any],
+        scores: np.ndarray[Any, Any],
+        labels: np.ndarray[Any, Any],
+        bounds: np.ndarray[Any, Any],
+    ) -> Any:
         """Return the stored detections on the fastest vernier ingest route that can express them.
 
         vernier takes detections three ways and the fastest differs per IoU type. ``bbox`` takes the ``(N, 7)``
@@ -715,32 +754,28 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         cannot express is exactly what this pass does not use -- a segmentation, an explicit annotation ``id``, a
         supplied ``area`` (the grid derives it, ``dt_area="bbox"``).
 
-        ``segm`` takes the columnar route, per-image slices of once-converted columns: the only route that carries
-        a mask *and* keeps the arrays whole. The third, a list of COCO result dicts, costs more per-detection
-        Python than the whole rest of the ingest.
+        ``segm`` takes the columnar route, per-image slices of the same once-converted columns: the only route
+        that carries a mask *and* keeps the arrays whole. The third, a list of COCO result dicts, costs more
+        per-detection Python than the whole rest of the ingest.
 
         Args:
             iou_type: The IoU type the detections are evaluated under.
+            boxes: Every detection's box, from :meth:`_vernier_detection_columns`.
+            scores: Every detection's score, from :meth:`_vernier_detection_columns`.
+            labels: Every detection's class label, from :meth:`_vernier_detection_columns`.
+            bounds: Each image's ``[start, end)`` row bounds into the arrays above, from
+                :meth:`_vernier_detection_columns`.
 
         Returns:
             The ``(N, 7)`` detection matrix under ``bbox``, or one ``vernier.instance.Detections`` mapping per image
             under ``segm``.
-
-        Raises:
-            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
         """
         if iou_type == "bbox":
-            return self._detection_results_array()
-        self._validate_detection_scores()
-        # Same `(1, 0)`-vs-`(N, 4)` empty-tensor mismatch `_detection_results_array` guards against; `bounds`
-        # below is sliced from `detection_scores`, which `_fix_empty_tensors` never touches, so only the
-        # concatenation itself needs the reshape here.
-        boxes = torch.cat([image_boxes.reshape(-1, 4) for image_boxes in self.detection_box]).double().numpy()
-        scores = torch.cat(self.detection_scores).double().numpy()
-        raw_labels = torch.cat(self.detection_labels)
-        self._validate_integral_labels(raw_labels)
-        labels = raw_labels.long().numpy()
-        bounds = np.cumsum([0, *(len(image_scores) for image_scores in self.detection_scores)])
+            # `column_stack` lays the seven columns -- image_id, x, y, width, height, score, category_id -- into
+            # one fresh, C-contiguous float64 buffer, matching `_detection_results_array`'s matrix layout, which
+            # vernier's matrix route requires of the caller rather than copying silently.
+            image_ids = np.repeat(np.arange(len(bounds) - 1), np.diff(bounds))
+            return np.column_stack([image_ids, boxes, scores, labels]).astype(np.float64)
         return [
             {
                 "image_id": image_id,
