@@ -1124,7 +1124,7 @@ def test_vernier_matches_faster_coco_eval_across_updates_and_reuse(iou_type: Any
     a fixture carrying everything those datasets encode, at ``eval_max_dets`` both at and above pycocotools' 100.
     """
     _require_backend("vernier")
-    predictions, targets = TestUfcocoArraysMatchPycocotools._metric_inputs()
+    predictions, targets = _metric_inputs()
     kwargs: dict[str, Any] = {
         "iou_type": iou_type,
         "class_metrics": True,
@@ -1357,7 +1357,7 @@ def test_vernier_parity_modes_differ_only_on_the_aggregate_at_a_non_default_max_
     the version bump. Widen the allowed-to-differ set deliberately -- never by loosening the comparison.
     """
     _require_backend("vernier")
-    predictions, targets = TestUfcocoArraysMatchPycocotools._metric_inputs()
+    predictions, targets = _metric_inputs()
     kwargs: dict[str, Any] = {
         "backend": "vernier",
         "iou_type": iou_type,
@@ -1390,6 +1390,59 @@ def test_vernier_parity_modes_differ_only_on_the_aggregate_at_a_non_default_max_
         assert float(corrected[key]) > 0.0
 
 
+def _metric_inputs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return tied predictions, a crowd target, and images missing predictions or targets.
+
+    Examples:
+        >>> predictions, targets = _metric_inputs()
+        >>> len(predictions), len(targets)
+        (3, 3)
+    """
+    boxes = torch.tensor([[1.0, 2.0, 11.0, 12.0], [1.0, 2.0, 11.0, 12.0], [20.0, 20.0, 25.0, 25.0]])
+    masks = torch.zeros((3, 32, 32), dtype=torch.bool)
+    masks[:2, 2:12, 1:11] = True
+    masks[2, 20:25, 20:25] = True
+    predictions = [
+        {
+            "boxes": boxes,
+            "masks": masks,
+            "labels": torch.tensor([3, 3, 17]),
+            "scores": torch.tensor([0.8, 0.8, 0.4]),
+        },
+        {
+            "boxes": boxes[:0],
+            "masks": masks[:0],
+            "labels": torch.empty(0, dtype=torch.long),
+            "scores": torch.empty(0),
+        },
+        {"boxes": boxes[:1], "masks": masks[:1], "labels": torch.tensor([29]), "scores": torch.tensor([0.5])},
+    ]
+    targets = [
+        {
+            "boxes": boxes[[0, 2]],
+            "masks": masks[[0, 2]],
+            "labels": torch.tensor([3, 17]),
+            "iscrowd": torch.tensor([0, 1]),
+            "area": torch.tensor([100.0, 25.0]),
+        },
+        {
+            "boxes": boxes[:1],
+            "masks": masks[:1],
+            "labels": torch.tensor([3]),
+            "iscrowd": torch.tensor([0]),
+            "area": torch.tensor([100.0]),
+        },
+        {
+            "boxes": boxes[:0],
+            "masks": masks[:0],
+            "labels": torch.empty(0, dtype=torch.long),
+            "iscrowd": torch.empty(0, dtype=torch.long),
+            "area": torch.empty(0),
+        },
+    ]
+    return predictions, targets
+
+
 class TestUfcocoArraysMatchPycocotools:
     """The evaluator arrays the per-class reduction reads must be byte-identical to pycocotools' on the same datasets.
 
@@ -1397,59 +1450,6 @@ class TestUfcocoArraysMatchPycocotools:
     adapter's own datasets, and checks the float64 precision, recall and score arrays the per-class AP/AR reduction is
     computed from. pycocotools is the reference ufcoco reproduces, and ``rfdetr[train]`` installs it.
     """
-
-    @staticmethod
-    def _metric_inputs() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Return tied predictions, a crowd target, and images missing predictions or targets.
-
-        Examples:
-            >>> predictions, targets = TestUfcocoArraysMatchPycocotools._metric_inputs()
-            >>> len(predictions), len(targets)
-            (3, 3)
-        """
-        boxes = torch.tensor([[1.0, 2.0, 11.0, 12.0], [1.0, 2.0, 11.0, 12.0], [20.0, 20.0, 25.0, 25.0]])
-        masks = torch.zeros((3, 32, 32), dtype=torch.bool)
-        masks[:2, 2:12, 1:11] = True
-        masks[2, 20:25, 20:25] = True
-        predictions = [
-            {
-                "boxes": boxes,
-                "masks": masks,
-                "labels": torch.tensor([3, 3, 17]),
-                "scores": torch.tensor([0.8, 0.8, 0.4]),
-            },
-            {
-                "boxes": boxes[:0],
-                "masks": masks[:0],
-                "labels": torch.empty(0, dtype=torch.long),
-                "scores": torch.empty(0),
-            },
-            {"boxes": boxes[:1], "masks": masks[:1], "labels": torch.tensor([29]), "scores": torch.tensor([0.5])},
-        ]
-        targets = [
-            {
-                "boxes": boxes[[0, 2]],
-                "masks": masks[[0, 2]],
-                "labels": torch.tensor([3, 17]),
-                "iscrowd": torch.tensor([0, 1]),
-                "area": torch.tensor([100.0, 25.0]),
-            },
-            {
-                "boxes": boxes[:1],
-                "masks": masks[:1],
-                "labels": torch.tensor([3]),
-                "iscrowd": torch.tensor([0]),
-                "area": torch.tensor([100.0]),
-            },
-            {
-                "boxes": boxes[:0],
-                "masks": masks[:0],
-                "labels": torch.empty(0, dtype=torch.long),
-                "iscrowd": torch.empty(0, dtype=torch.long),
-                "area": torch.empty(0),
-            },
-        ]
-        return predictions, targets
 
     @pytest.mark.parametrize("iou_type", ["bbox", "segm", pytest.param(("bbox", "segm"), id="both")])
     @pytest.mark.parametrize("max_dets", [100, 500])
@@ -1459,7 +1459,7 @@ class TestUfcocoArraysMatchPycocotools:
         _require_backend("ufcoco")
         pycocotools_coco = pytest.importorskip("pycocotools.coco").COCO
         pycocotools_cocoeval = pytest.importorskip("pycocotools.cocoeval").COCOeval
-        predictions, targets = self._metric_inputs()
+        predictions, targets = _metric_inputs()
         thresholds = [1, 10, max_dets]
         reference = OnePassCocoMeanAveragePrecision(
             backend="faster_coco_eval", iou_type=iou_type, class_metrics=True, max_detection_thresholds=thresholds
