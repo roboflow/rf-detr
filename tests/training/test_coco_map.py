@@ -29,6 +29,7 @@ from rfdetr.training.coco_map import (
     _ufcoco,
     _UfcocoBackend,
     _vernier,
+    _vernier_thread_budget,
     _VernierBackend,
 )
 
@@ -1107,6 +1108,32 @@ def test_vernier_backend_survives_pickling() -> None:
     assert isinstance(restored._coco_backend, _VernierBackend)
 
 
+@pytest.mark.parametrize(
+    "local_world_size,expected",
+    [
+        pytest.param(None, 4, id="unset-uses-the-whole-pool"),
+        pytest.param("2", 2, id="divides-evenly-among-local-ranks"),
+        pytest.param("8", 1, id="oversized-world-size-clamps-to-one"),
+    ],
+)
+def test_vernier_thread_budget_divides_by_local_world_size(
+    monkeypatch: pytest.MonkeyPatch, local_world_size: str | None, expected: int
+) -> None:
+    """The per-rank thread budget divides the process-wide pool by ``LOCAL_WORLD_SIZE``, never below one.
+
+    Every DDP rank sharing one node sees ``torch.get_num_threads()`` report the same process-wide count; handing vernier
+    that whole budget on every rank oversubscribes the node's CPUs by a factor of ``LOCAL_WORLD_SIZE`` unless it is
+    divided among the ranks running on that node, floored at one thread.
+    """
+    monkeypatch.setattr(torch, "get_num_threads", lambda: 4)
+    if local_world_size is None:
+        monkeypatch.delenv("LOCAL_WORLD_SIZE", raising=False)
+    else:
+        monkeypatch.setenv("LOCAL_WORLD_SIZE", local_world_size)
+
+    assert _vernier_thread_budget() == expected
+
+
 def test_vernier_rejects_mask_only_evaluation() -> None:
     """Mask-only evaluation must fail at construction, before an epoch of state is accumulated and discarded."""
     _require_backend("vernier")
@@ -1256,11 +1283,10 @@ def test_vernier_handles_one_dimensional_empty_boxes_under_segmentation() -> Non
 def test_vernier_ground_truth_handles_one_dimensional_empty_boxes() -> None:
     """A one-dimensional empty ground-truth box tensor must not crash concatenation against another image's boxes.
 
-    TorchMetrics' ``_fix_empty_tensors`` (``torchmetrics.detection.helpers``) reshapes an empty ``torch.tensor([])``
-    box tensor to ``(1, 0)`` rather than ``(0, 4)``, to avoid a DDP all-reduce hang. ``_vernier_ground_truth``
-    concatenates every image's ground-truth boxes into one tensor, so a ``(1, 0)`` entry next to a real image's
-    ``(N, 4)`` entry fails on the mismatched second dimension unless each per-image tensor is reshaped to
-    ``(-1, 4)`` first.
+    TorchMetrics' ``_fix_empty_tensors`` (``torchmetrics.detection.helpers``) reshapes an empty ``torch.tensor([])`` box
+    tensor to ``(1, 0)`` rather than ``(0, 4)``, to avoid a DDP all-reduce hang. ``_vernier_ground_truth`` concatenates
+    every image's ground-truth boxes into one tensor, so a ``(1, 0)`` entry next to a real image's ``(N, 4)`` entry
+    fails on the mismatched second dimension unless each per-image tensor is reshaped to ``(-1, 4)`` first.
     """
     _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)

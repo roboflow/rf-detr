@@ -40,6 +40,7 @@ import contextlib
 import functools
 import inspect
 import io
+import os
 import warnings
 from collections.abc import Callable, Iterator
 from typing import Any, Literal, cast
@@ -103,6 +104,22 @@ _VAR_PARAM_KINDS = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYW
 # Named rather than inlined so a test can drive the same path in both modes, and fail when a vernier release
 # starts correcting something that reaches it. Production must stay on "corrected".
 _VERNIER_PARITY_MODE: Literal["strict", "corrected"] = "corrected"
+
+
+def _vernier_thread_budget() -> int:
+    """Return the CPU thread budget one DDP-local vernier evaluation should use.
+
+    ``torch.get_num_threads()`` reports the process-wide intra-op thread pool, sized for one process per node.
+    Under DDP with multiple ranks sharing a node, handing vernier that same budget on every rank oversubscribes
+    the node's CPUs by a factor of ``LOCAL_WORLD_SIZE``; dividing it by the local rank count keeps each rank's
+    evaluation within its fair share of the node.
+
+    Returns:
+        At least one thread, even when ``LOCAL_WORLD_SIZE`` is unset, zero, or larger than the reported thread
+        count.
+    """
+    local_world_size = max(1, int(os.environ.get("LOCAL_WORLD_SIZE", "1")))
+    return max(1, torch.get_num_threads() // local_world_size)
 
 
 def _import_optional_backend(module_name: str, backend_value: str, pip_name: str | None = None) -> Any:
@@ -589,7 +606,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 use_cats=True,
                 iou_thresholds=self.iou_thresholds,
                 recall_thresholds=self.rec_thresholds,
-                num_threads=torch.get_num_threads(),
+                num_threads=_vernier_thread_budget(),
                 dt_area="bbox" if iou_type == "bbox" else "mask",
             )
             accumulated = grid.accumulate(self.max_detection_thresholds)
