@@ -16,7 +16,7 @@ import torch
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
-from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend, _UfcocoBackend, _VernierBackend
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _UfcocoBackend, _VernierBackend
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -129,7 +129,7 @@ class TestSetup:
 
         The name is the one torchmetrics resolves its COCO helpers from, not the evaluator RF-DETR ends up
         running: the hotcoco adapter constructs the parent with ``"faster_coco_eval"`` and replaces the resolved
-        modules afterwards, so this pins the enum member alone. ``test_eval_backend_defaults_to_hotcoco`` covers
+        modules afterwards, so this pins the enum member alone. ``test_eval_backend_defaults_to_vernier`` covers
         which evaluator actually runs.
         """
         cb = COCOEvalCallback(segmentation=False)
@@ -171,13 +171,13 @@ class TestSetup:
 
         assert cb.map_metric_ema is not None, "EMA metric must exist or this asserts nothing"
         for metric in (cb.map_metric, cb.map_metric_train, cb.map_metric_ema):
-            assert not isinstance(metric._coco_backend, _HotCocoBackend)
+            assert not isinstance(metric._coco_backend, _VernierBackend)
 
-    def test_eval_backend_defaults_to_hotcoco(self) -> None:
-        """Omitting the backend must select hotcoco, which is what makes evaluation fast by default."""
+    def test_eval_backend_defaults_to_vernier(self) -> None:
+        """Omitting the backend must select vernier, which is what makes evaluation fast by default."""
         cb = COCOEvalCallback()
         cb.setup(_make_trainer(), _make_pl_module(), stage="fit")
-        assert isinstance(cb.map_metric._coco_backend, _HotCocoBackend)
+        assert isinstance(cb.map_metric._coco_backend, _VernierBackend)
 
     @pytest.mark.parametrize("segmentation", [False, True])
     @pytest.mark.parametrize(
@@ -193,7 +193,7 @@ class TestSetup:
         """The ufcoco and vernier backends must reach the validation, train-split and EMA metrics alike.
 
         Same three call sites as ``test_eval_backend_reaches_every_metric``, asserted positively on the backend type so
-        that a call site falling back to the default would fail here rather than evaluate part of a run on hotcoco.
+        that a call site falling back to the default would fail here rather than evaluate part of a run on vernier.
         """
         pytest.importorskip(package)
         cb = COCOEvalCallback(segmentation=segmentation, eval_backend=eval_backend)

@@ -1209,10 +1209,10 @@ class TrainConfig(BaseConfig):
     eval_interval: int = 1
     log_per_class_metrics: bool = False
     eval_backend: CocoEvalBackend = Field(
-        default="hotcoco",
+        default="vernier",
         description=(
             "COCO evaluation backend used for validation and test mAP. All four ship with 'rfdetr[train]' and "
-            "produce identical metrics; 'hotcoco' is the default and 'vernier' computes fastest, both several times "
+            "produce identical metrics; 'vernier' is the default and computes fastest, both several times "
             "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
         ),
     )

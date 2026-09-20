@@ -147,7 +147,7 @@ class COCOEvalCallback(Callback):
             ``validation_step`` forwards the base model and this callback runs the second, EMA
             forward pass, so both models are evaluated from independent predictions.
         eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`.
-            ``"hotcoco"`` is the default, ``"vernier"`` computes fastest, ``"faster_coco_eval"`` is the previous
+            ``"vernier"`` is the default and computes fastest, ``"faster_coco_eval"`` is the previous
             evaluator and ``"ufcoco"`` selects ultrafast-pycocotools; all four ship with ``rfdetr[train]`` and return
             identical metrics.
             Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
@@ -164,7 +164,7 @@ class COCOEvalCallback(Callback):
         in_notebook: bool | None = None,
         eval_ema_only: bool | None = None,
         eval_base_model: bool | None = None,
-        eval_backend: CocoEvalBackend = "hotcoco",
+        eval_backend: CocoEvalBackend = "vernier",
     ) -> None:
         super().__init__()
         self._max_dets = max_dets
