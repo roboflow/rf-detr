@@ -1297,6 +1297,32 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
     )
 
 
+def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> None:
+    """The ground-truth builder must keep ``iscrowd`` at its stored width, not through a column that wraps it.
+
+    ``_vernier_ground_truth`` builds its columns directly from tensors rather than through JSON, so
+    ``test_vernier_columnar_ground_truth_is_the_same_document`` cannot cover a value like 256: vernier's own JSON
+    parser rejects anything but 0/1 for ``iscrowd``, so the reference side of that test would raise first. Comparing
+    the built dataset's ``dataset_hash`` against one built with no crowd annotation at all catches the same defect
+    without JSON in the loop -- a ``uint8`` column would wrap 256 back to 0 and make the two datasets identical.
+    """
+    _require_backend("vernier")
+
+    def ground_truth(crowd_value: int) -> Any:
+        predictions, targets = _vernier_gt_state(1, crowd_value=crowd_value)
+        metric = OnePassCocoMeanAveragePrecision(
+            backend="vernier", box_format="xyxy", iou_type="bbox", class_metrics=True
+        )
+        metric.update(predictions, targets)
+        classes = sorted({int(label) for target in metric.groundtruth_labels for label in target.tolist()})
+        return metric._vernier_ground_truth(classes)
+
+    wide_crowd, no_crowd = ground_truth(256), ground_truth(0)
+
+    assert wide_crowd.dataset_hash != no_crowd.dataset_hash
+    assert wide_crowd.num_annotations == no_crowd.num_annotations
+
+
 def test_vernier_columnar_route_keeps_crowd_flags_wider_than_uint8() -> None:
     """A crowd flag must reach vernier at its stored width, not through a column that wraps it.
 
