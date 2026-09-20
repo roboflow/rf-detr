@@ -636,7 +636,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
         if total:
             boxes = torch.cat(self.groundtruth_box).double()
-            labels = torch.cat(self.groundtruth_labels).long()
+            raw_labels = torch.cat(self.groundtruth_labels)
+            self._validate_integral_labels(raw_labels)
+            labels = raw_labels.long()
         else:
             boxes = torch.zeros((0, 4), dtype=torch.float64)
             labels = torch.zeros((0,), dtype=torch.int64)
@@ -728,7 +730,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         self._validate_detection_scores()
         boxes = torch.cat(self.detection_box).double().numpy()
         scores = torch.cat(self.detection_scores).double().numpy()
-        labels = torch.cat(self.detection_labels).long().numpy()
+        raw_labels = torch.cat(self.detection_labels)
+        self._validate_integral_labels(raw_labels)
+        labels = raw_labels.long().numpy()
         bounds = np.cumsum([0, *(len(image_scores) for image_scores in self.detection_scores)])
         return [
             {
@@ -901,6 +905,26 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 raise ValueError(
                     f"Invalid input score of sample {image_id} (expected floating point, got {image_scores.dtype})"
                 )
+
+    @staticmethod
+    def _validate_integral_labels(labels: Tensor) -> None:
+        """Reject fractional class labels before a ``.long()`` cast that would otherwise silently truncate them.
+
+        Only a floating-point tensor is checked: an integer dtype cannot hold a fractional value, and
+        :meth:`Tensor.floor` is undefined for it. An empty floating-point tensor passes through untouched, since
+        :func:`torch.equal` on two empty tensors of the same shape is ``True``.
+
+        Args:
+            labels: The whole label tensor gathered across every image, still in its original dtype.
+
+        Raises:
+            ValueError: If ``labels`` is floating-point and holds a non-integral value.
+        """
+        if torch.is_floating_point(labels) and not torch.equal(labels, labels.floor()):
+            raise ValueError(
+                "OnePassCocoMeanAveragePrecision requires integral class labels for vernier, got fractional "
+                f"values in dtype {labels.dtype}"
+            )
 
     def _build_coco(self, dataset: dict[str, Any]) -> Any:
         """Return an indexed backend COCO dataset for a TorchMetrics COCO-format dictionary.

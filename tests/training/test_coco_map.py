@@ -1115,6 +1115,77 @@ def test_vernier_rejects_mask_only_evaluation() -> None:
         OnePassCocoMeanAveragePrecision(backend="vernier", iou_type="segm", sync_on_compute=False)
 
 
+def test_vernier_rejects_fractional_ground_truth_labels() -> None:
+    """A fractional ground-truth class label must be rejected instead of silently truncated by ``.long()``.
+
+    ``_vernier_ground_truth`` casts the whole gathered label tensor to ``int64`` in one shot rather than per annotation,
+    so a fractional value (a caller bug, or a mismatched label/box zip) has to be caught before that cast instead of
+    becoming a wrong class silently. Ground truth is built before any per-IoU-type evaluation runs, so this exercises
+    the check on its own, ahead of vernier's own native validation of detections.
+    """
+    _require_backend("vernier")
+    metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
+    metric.update(
+        [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "scores": torch.tensor([0.9]), "labels": torch.tensor([3])}],
+        [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3.5])}],
+    )
+
+    with pytest.raises(ValueError, match="integral class labels"):
+        metric.compute()
+
+
+def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> None:
+    """A fractional detection class label under ``segm`` must be rejected instead of truncated by ``.long()``.
+
+    The columnar detection route ``_vernier_detections`` takes only under ``segm`` casts labels with ``.long()``, unlike
+    the ``(N, 7)`` matrix route ``bbox`` takes, whose ``float64`` labels stay uncast until vernier's own
+    ``evaluate_bbox_grid`` validates them. Evaluating ``segm`` before ``bbox`` reaches this adapter's own check before
+    that native validation would otherwise short-circuit the test.
+    """
+    _require_backend("vernier")
+    metric = OnePassCocoMeanAveragePrecision(backend="vernier", iou_type=("segm", "bbox"), sync_on_compute=False)
+    mask = torch.zeros((1, 4, 4), dtype=torch.bool)
+    mask[0, :2, :2] = True
+    metric.update(
+        [
+            {
+                "boxes": torch.tensor([[0.0, 0.0, 2.0, 2.0]]),
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([3.5]),
+                "masks": mask,
+            }
+        ],
+        [{"boxes": torch.tensor([[0.0, 0.0, 2.0, 2.0]]), "labels": torch.tensor([3]), "masks": mask}],
+    )
+
+    with pytest.raises(ValueError, match="integral class labels"):
+        metric.compute()
+
+
+def test_vernier_accepts_whole_valued_float_labels() -> None:
+    """A whole-valued floating-point label must be accepted, matching the equivalent integer label.
+
+    Only a fractional value is a truncation risk; rejecting every floating-point label outright would also reject an
+    empty ``float32`` label tensor, which carries no values to truncate.
+    """
+    _require_backend("vernier")
+    metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
+    metric.update(
+        [
+            {
+                "boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]),
+                "scores": torch.tensor([0.9]),
+                "labels": torch.tensor([3.0]),
+            }
+        ],
+        [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3.0])}],
+    )
+
+    result = metric.compute()
+
+    assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
+
+
 @pytest.mark.parametrize("iou_type", ["bbox", pytest.param(("bbox", "segm"), id="both")])
 @pytest.mark.parametrize("max_dets", [100, 500])
 def test_vernier_matches_faster_coco_eval_across_updates_and_reuse(iou_type: Any, max_dets: int) -> None:
