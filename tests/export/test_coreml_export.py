@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -157,21 +159,56 @@ def _validate_coreml_vs_pytorch(
     )
 
 
-def _mil_op_types(spec: Any) -> set[str]:
-    """Return the distinct MIL operation types in *spec*'s active ``main`` block, nested blocks included.
+def _mil_op_counts(spec: Any) -> Counter[str]:
+    """Return per-type MIL operation counts in *spec*'s active ``main`` block, nested blocks included.
 
-    Distinct types rather than a multiset: constant folding legitimately collapses a different number of
-    ``const``/``reshape`` nodes at different tensor sizes, while a type appearing on one side only is a lowering
-    route the other side never exercised. ``cond``/``while_loop`` carry their body in ``Operation.blocks``, so a
-    top-level-only walk would silently stop reporting once such an op appears.
+    A multiset rather than a set of types: type membership alone cannot see a shape-driven lowering route that
+    reuses an op type both graphs already contain but emits far more of it. ``cond``/``while_loop`` carry their
+    body in ``Operation.blocks``, so a top-level-only walk would silently stop reporting once such an op appears.
 
     Args:
         spec: A CoreML ``Model`` protobuf (``coremltools.utils.load_spec``) holding an ``mlProgram``.
 
     Returns:
-        Every ``Operation.type`` reachable from the ``main`` function's active block specialization. Empty when
-        *spec* holds no ``mlProgram``: protobuf message maps default-construct on lookup rather than raising, so
-        callers must treat an empty result as "traversal found nothing", not as "the graphs agree".
+        A count of every ``Operation.type`` reachable from the ``main`` function's active block specialization.
+        Empty when *spec* holds no ``mlProgram``: protobuf message maps default-construct on lookup rather than
+        raising, so callers must treat an empty result as "traversal found nothing", not as "the graphs agree".
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> def op(type_, *blocks):
+        ...     return SimpleNamespace(type=type_, blocks=list(blocks))
+        >>> main = SimpleNamespace(
+        ...     opset="CoreML8",
+        ...     block_specializations={
+        ...         "CoreML8": SimpleNamespace(
+        ...             operations=[op("const"), op("const"), op("cond", SimpleNamespace(operations=[op("linear")]))]
+        ...         ),
+        ...         "CoreML7": SimpleNamespace(operations=[op("matmul")]),
+        ...     },
+        ... )
+        >>> sorted(_mil_op_counts(SimpleNamespace(mlProgram=SimpleNamespace(functions={"main": main}))).items())
+        [('cond', 1), ('const', 2), ('linear', 1)]
+    """
+    main = spec.mlProgram.functions["main"]
+    counts: Counter[str] = Counter()
+    pending = list(main.block_specializations[main.opset].operations)
+    while pending:
+        operation = pending.pop()
+        counts[operation.type] += 1
+        pending.extend(nested_op for block in operation.blocks for nested_op in block.operations)
+    return counts
+
+
+def _mil_op_types(spec: Any) -> set[str]:
+    """Return the distinct MIL operation types in *spec*'s active ``main`` block, nested blocks included.
+
+    Args:
+        spec: A CoreML ``Model`` protobuf (``coremltools.utils.load_spec``) holding an ``mlProgram``.
+
+    Returns:
+        Every ``Operation.type`` reachable from the ``main`` function's active block specialization (see
+        :func:`_mil_op_counts` for the traversal and the empty-result caveat).
 
     Examples:
         >>> from types import SimpleNamespace
@@ -189,14 +226,47 @@ def _mil_op_types(spec: Any) -> set[str]:
         >>> sorted(_mil_op_types(SimpleNamespace(mlProgram=SimpleNamespace(functions={"main": main}))))
         ['cond', 'const', 'linear']
     """
-    main = spec.mlProgram.functions["main"]
-    op_types: set[str] = set()
-    pending = list(main.block_specializations[main.opset].operations)
-    while pending:
-        operation = pending.pop()
-        op_types.add(operation.type)
-        pending.extend(nested_op for block in operation.blocks for nested_op in block.operations)
-    return op_types
+    return set(_mil_op_counts(spec))
+
+
+#: Max per-op-type count the shipped-query graph may exceed the value-checked (5-query) graph by before
+#: ``test_default_query_count_lowers_through_no_unchecked_operation`` flags it. Ordinary constant folding at the
+#: larger shipped shape can trim a handful of ``const``/``reshape`` nodes relative to the smaller checked shape;
+#: this value is a conservative starting point, not an empirical measurement like ``_MIN_TWO_STAGE_RANK_MARGIN`` --
+#: widen it if it proves noisy, narrow it if a real regression sneaks in under it.
+_MIL_OP_COUNT_TOLERANCE = 2
+
+
+def _mil_op_count_regressions(
+    shipped: Counter[str], checked: Counter[str], *, tolerance: int
+) -> dict[str, tuple[int, int]]:
+    """Return MIL op types where *shipped* exceeds *checked* by more than *tolerance* occurrences.
+
+    One-directional by design: an op type *shipped* reaches far more than *checked* (including one *checked*
+    never reaches at all, i.e. a checked count of 0) is the gap worth flagging; the reverse -- a node folded away
+    only at the larger shipped shape -- is benign, same rationale as :func:`_mil_op_types`.
+
+    Args:
+        shipped: Op-type counts from the shipped-query-count graph.
+        checked: Op-type counts from the value-checked (5-query) graph.
+        tolerance: Maximum benign per-type count difference before a type is reported.
+
+    Returns:
+        ``{op_type: (shipped_count, checked_count)}`` for every regression found; empty when none.
+
+    Examples:
+        >>> _mil_op_count_regressions(
+        ...     Counter(const=5, slice_by_index=3), Counter(const=4, slice_by_index=0), tolerance=2
+        ... )
+        {'slice_by_index': (3, 0)}
+        >>> _mil_op_count_regressions(Counter(const=5), Counter(const=4), tolerance=2)
+        {}
+    """
+    return {
+        op_type: (shipped_count, checked[op_type])
+        for op_type, shipped_count in shipped.items()
+        if shipped_count - checked[op_type] > tolerance
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +595,8 @@ def _two_stage_rank_margin(model: torch.nn.Module, example_input: torch.Tensor) 
         The smallest gap between neighbouring scores among the top ``k + 1`` of any image.
 
     Raises:
-        AssertionError: If the forward does not call ``torch.topk`` exactly once.
+        AssertionError: If the forward does not call ``torch.topk`` exactly once, or if the call does not rank
+            along the scores tensor's last axis (the margin below is only meaningful there).
 
     Examples:
         >>> _two_stage_rank_margin(_TopkRanker(2), torch.tensor([[1.0, 0.5, 0.25, 0.0]]))
@@ -539,6 +610,13 @@ def _two_stage_rank_margin(model: torch.nn.Module, example_input: torch.Tensor) 
         f"args={topk.call_args.args!r} kwargs={topk.call_args.kwargs!r}"
     )
     scores, k = topk.call_args.args[:2]
+    # `dim` may arrive as a third positional arg or (as the production call site does, a keyword on a
+    # 2-D tensor) as a kwarg; either way, the margin below is only meaningful when it targets the last axis.
+    dim = topk.call_args.kwargs.get("dim", topk.call_args.args[2] if len(topk.call_args.args) > 2 else -1)
+    assert dim % scores.ndim == scores.ndim - 1, (
+        "expected the two-stage torch.topk call to rank along the scores tensor's last axis, got "
+        f"dim={dim!r} for a {scores.ndim}-D scores tensor"
+    )
     top = scores.sort(dim=-1, descending=True).values[..., : k + 1]
     return float((top[..., :-1] - top[..., 1:]).min())
 
@@ -726,31 +804,34 @@ class TestCoreMLEndToEnd:
     def test_default_query_count_lowers_through_no_unchecked_operation(
         self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]
     ) -> None:
-        """The shipped-query graph must reach no MIL operation the value-checked 5-query graph does not.
+        """The shipped-query graph must reach no MIL operation, nor far more of one, than the checked graph does.
 
         Deliberately a *structural* guard, not a numerical one, and it does not make the 5-query parity stand in for
         the shipped graph: the historical CoreML parity failures this suite was rewritten around happened with an
-        identical op set on both sides, so op types cannot discriminate drift. What it does catch is the shipped
-        shapes taking a lowering route the strict 1e-4 assertions never execute — a shape-driven fold that leaves,
-        say, a live ``slice_by_index`` chain at 300 queries where 5 queries folded to a bare ``const``.
+        identical op set on both sides, so bare op-type membership cannot discriminate drift on its own. Op *counts*
+        (within ``_MIL_OP_COUNT_TOLERANCE``, since constant folding legitimately trims a handful of `const`/`reshape`
+        nodes between shapes) additionally catch the shipped shapes reusing a familiar op type far more heavily —
+        say, a live ``slice_by_index`` chain at 300 queries where 5 queries folded most of it away to ``const``.
 
-        One-directional on purpose: an op the shipped graph reaches and the checked one does not is the gap; the
-        reverse (a node fused away only at the larger shape) is benign and must not turn the macOS-only parity job
-        red. Types rather than counts, for the same reason.
+        One-directional on purpose: an op type the shipped graph reaches far more of (including one the checked
+        graph never reaches at all) is the gap; the reverse (a node fused away only at the larger shape) is benign
+        and must not turn the macOS-only parity job red.
         """
         import coremltools as ct
 
         _, _, mlpackage_path, few_queries_path, _ = coreml_default_queries_export
 
-        shipped_ops = _mil_op_types(ct.utils.load_spec(str(mlpackage_path)))
-        few_queries_ops = _mil_op_types(ct.utils.load_spec(str(few_queries_path)))
+        shipped_counts = _mil_op_counts(ct.utils.load_spec(str(mlpackage_path)))
+        few_queries_counts = _mil_op_counts(ct.utils.load_spec(str(few_queries_path)))
 
         # Protobuf message maps default-construct on lookup, so a spec this traversal does not understand yields
-        # an empty set on both sides and the subset check below would pass while inspecting nothing.
-        assert shipped_ops, f"no MIL operations found in {mlpackage_path.name}: the spec traversal is wrong"
-        assert shipped_ops <= few_queries_ops, (
-            f"shipped-query graph reaches operations the {_COREML_E2E_NUM_QUERIES}-query parity graph never "
-            f"executes: {sorted(shipped_ops - few_queries_ops)}"
+        # an empty count on both sides and the regression check below would pass while inspecting nothing.
+        assert shipped_counts, f"no MIL operations found in {mlpackage_path.name}: the spec traversal is wrong"
+        regressions = _mil_op_count_regressions(shipped_counts, few_queries_counts, tolerance=_MIL_OP_COUNT_TOLERANCE)
+        assert not regressions, (
+            f"shipped-query graph reaches these MIL ops far more than the {_COREML_E2E_NUM_QUERIES}-query parity "
+            f"graph does, beyond the folding tolerance of {_MIL_OP_COUNT_TOLERANCE} -- {{op: (shipped, checked)}}: "
+            f"{regressions}"
         )
 
 
@@ -801,6 +882,26 @@ class _TopkRanker(torch.nn.Module):
         return out
 
 
+class _RaisingRanker(torch.nn.Module):
+    """Stand-in ranker whose forward calls ``torch.topk`` once, then always raises.
+
+    Covers the restore-on-exception path of the ``mock.patch("torch.topk", ...)`` spy in
+    :func:`_two_stage_rank_margin`: a model that blows up mid-forward, after its one ranking call, must not
+    leave ``torch.topk`` patched for every test that runs after it.
+
+    Examples:
+        >>> _RaisingRanker()(torch.tensor([[0.9, 0.1]]))
+        Traceback (most recent call last):
+            ...
+        RuntimeError: boom
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Call ``torch.topk`` once, then unconditionally raise ``RuntimeError("boom")``."""
+        torch.topk(x, 1, dim=-1)
+        raise RuntimeError("boom")
+
+
 class TestTwoStageRankMargin:
     """``_two_stage_rank_margin`` must measure exactly the gaps that decide the two-stage selection."""
 
@@ -812,6 +913,13 @@ class TestTwoStageRankMargin:
             pytest.param([[0.1, 0.9, 0.5]], 1, 0.4, id="input-order-irrelevant"),
             pytest.param([[0.7, 0.7, 0.1]], 1, 0.0, id="exact-tie-inside-selection"),
             pytest.param([[0.9, 0.1], [0.5, 0.5]], 1, 0.0, id="tie-in-second-image"),
+            pytest.param([[0.9, 0.9, 0.9, 0.1]], 2, 0.0, id="three-way-tie-at-selection-boundary"),
+            pytest.param(
+                [[0.9, 0.5, 0.1], [0.9, 0.85, 0.1], [0.9, 0.6, 0.1]],
+                1,
+                0.05,
+                id="min-gap-in-middle-image-of-three",
+            ),
         ],
     )
     def test_margin(self, scores: list[list[float]], k: int, expected: float) -> None:
@@ -824,11 +932,75 @@ class TestTwoStageRankMargin:
         with pytest.raises(AssertionError, match="expected one two-stage torch.topk call"):
             _two_stage_rank_margin(_TopkRanker(*ks), torch.tensor([[0.9, 0.1]]))
 
+    def test_raises_on_k_equal_zero(self) -> None:
+        """``k=0`` leaves no neighbouring pair to diff, so torch's own empty-tensor reduction error surfaces raw.
+
+        Documents actual behaviour rather than a documented contract: ``_two_stage_rank_margin`` has no ``k=0``
+        guard, so a caller hits ``Tensor.min()`` on an empty tensor instead of an actionable assertion.
+        """
+        with pytest.raises(RuntimeError, match=r"numel\(\) == 0"):
+            _two_stage_rank_margin(_TopkRanker(0), torch.tensor([[0.9, 0.1]]))
+
     def test_restores_torch_topk(self) -> None:
         """The spy must not leak: ``torch.topk`` is the original function after a measurement."""
         original = torch.topk
         _two_stage_rank_margin(_TopkRanker(1), torch.tensor([[0.9, 0.1]]))
         assert torch.topk is original
+
+    def test_restores_torch_topk_after_forward_raises(self) -> None:
+        """The spy must not leak even when the model's forward raises after its one ``torch.topk`` call."""
+        original = torch.topk
+        with pytest.raises(RuntimeError, match="boom"):
+            _two_stage_rank_margin(_RaisingRanker(), torch.tensor([[0.9, 0.1]]))
+        assert torch.topk is original
+
+
+class _ProtoMapDouble(dict):
+    """Minimal double for a protobuf message-map: reads default-construct a missing key instead of raising.
+
+    Protobuf map fields (e.g. ``ModelSpecification.mlProgram.functions``, ``Function.block_specializations``)
+    return a fresh default-constructed message on ``some_map[missing_key]`` rather than raising ``KeyError`` --
+    exactly the semantics :func:`_mil_op_types`'s docstring documents, and a plain ``dict`` (raises ``KeyError``)
+    or ``SimpleNamespace`` (no ``__getitem__`` at all) cannot reproduce.
+
+    Args:
+        default_factory: Builds (and caches, matching protobuf's own auto-vivify-on-read behaviour) the value
+            returned for a key not already present.
+
+    Examples:
+        >>> m = _ProtoMapDouble(lambda: "default")
+        >>> m["missing"]
+        'default'
+        >>> m["missing"] is m["missing"]
+        True
+    """
+
+    def __init__(self, default_factory: Any) -> None:
+        super().__init__()
+        self._default_factory = default_factory
+
+    def __missing__(self, key: str) -> Any:
+        """Default-construct, cache, and return the value for *key* instead of raising ``KeyError``."""
+        value = self._default_factory()
+        self[key] = value
+        return value
+
+
+class TestMilOpTypesMalformedSpec:
+    """``_mil_op_types`` must not raise on a spec whose ``"main"`` function is entirely absent."""
+
+    def test_returns_empty_set_on_default_constructed_main(self) -> None:
+        """A spec with no ``"main"`` entry in ``functions`` must traverse to the empty set, never raise.
+
+        Mirrors real protobuf behaviour end to end: ``functions["main"]`` default-constructs an empty
+        ``Function`` (``opset=""``), and that function's ``block_specializations[""]`` in turn default-constructs
+        an empty operation list -- no key anywhere actually exists, yet nothing raises.
+        """
+        block_specializations = _ProtoMapDouble(lambda: SimpleNamespace(operations=[]))
+        functions = _ProtoMapDouble(lambda: SimpleNamespace(opset="", block_specializations=block_specializations))
+        spec = SimpleNamespace(mlProgram=SimpleNamespace(functions=functions))
+
+        assert _mil_op_types(spec) == set()
 
 
 class TestE2EParityPrecondition:
