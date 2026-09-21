@@ -142,7 +142,7 @@ class TestBuildTrainerCallbacks:
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._log_per_class_metrics is False
 
-    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco"])
+    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco", "vernier"])
     def test_coco_eval_uses_eval_backend(self, tmp_path: Path, backend: str) -> None:
         """COCOEvalCallback receives every eval_backend value TrainConfig accepts."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend=backend), _mc())
