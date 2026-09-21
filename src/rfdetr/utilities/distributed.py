@@ -47,7 +47,12 @@ def get_rank() -> int:
 
 
 def is_main_process() -> bool:
-    """Return True if the current process is rank 0."""
+    """Return True if the current process is rank 0.
+
+    See Also:
+        Before the process group is up, use :func:`is_launcher_main_process`; :func:`get_rank` reports 0 in every
+        process until then.
+    """
     return get_rank() == 0
 
 
@@ -64,13 +69,18 @@ def is_launcher_main_process() -> bool:
     resolution does not make, each of which marks the process as not the main one when set to anything but ``"0"``:
 
     * ``NODE_RANK``, because the Lightning rank is node-local when it comes from ``LOCAL_RANK``, which Lightning's
-      own subprocess launcher leaves at 0 on every node of a multi-node run, so without it one process per node
-      would pass.
+      own subprocess launcher sets to 0 for the process it launches from on every node of a multi-node run, so
+      without it one process per node would pass.
     * ``LOCAL_RANK``, because a ``RANK=0`` inherited from the parent environment wins Lightning's resolution in
       every subprocess child (the launcher overrides only ``LOCAL_RANK``), so without it every local rank would
       pass; no supported launcher gives global rank 0 a ``LOCAL_RANK`` other than ``"0"``.
     * ``OMPI_COMM_WORLD_RANK`` and ``PMI_RANK``, the global rank under ``mpirun``/PMI launchers. Lightning reads it
       only through ``mpi4py`` (its ``MPIEnvironment``), never at import, so without them every MPI worker would pass.
+
+    The answer is per launch, not per training: because ``SLURM_PROCID`` feeds the Lightning rank, an ``srun`` sweep
+    of independent ``devices=1`` trainings, one per task, sees ``SLURM_PROCID`` other than 0 on tasks 1..N-1 and the
+    guard returns False there, so those tasks skip the pre-fit writes it protects. The post-fit rewrite guarded by
+    :func:`is_main_process` is unaffected, as each such task has no process group and reports rank 0.
 
     Returns:
         Whether the launcher's environment identifies this process as rank 0 of node 0.
@@ -86,8 +96,9 @@ def is_launcher_main_process() -> bool:
     # require it. Every caller reaches this only after the training stack has already been imported. Lightning
     # resolves `.rank` from RANK / LOCAL_RANK / SLURM_PROCID / JSM_NAMESPACE_RANK when this module is first
     # imported, which a launcher does before the subprocess it starts ever calls into rfdetr.
-    # PTL re-exports this without `__all__` and types it as an overload, neither of which mypy --strict accepts;
-    # the same two ignores appear on the same import in `training/callbacks/gpu_memory_progress_bar.py`.
+    # PTL re-exports this without `__all__` (an implicit re-export mypy --strict rejects; the `rank_zero_warn` import
+    # in `training/callbacks/gpu_memory_progress_bar.py` carries the same ignore) and types it as an overload, which
+    # has no `.rank` attribute -- Lightning attaches that at runtime, hence the second ignore on the access below.
     from pytorch_lightning.utilities.rank_zero import rank_zero_only  # type: ignore[attr-defined]
 
     return (
