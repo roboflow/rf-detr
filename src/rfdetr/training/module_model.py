@@ -785,11 +785,10 @@ class RFDETRModelModule(LightningModule):
             loss_for_backward = None
         weight_dict = self.criterion.weight_dict
         loss: Tensor = torch.stack([loss_dict[k] * weight_dict[k] for k in loss_dict if k in weight_dict]).sum()
-        # Automatic optimization path: divide by accumulate_grad_batches so the accumulated
-        # gradient matches a single large batch, matching the legacy engine.  PTL accumulates
-        # full-scale gradients by default; dividing here keeps the effective LR identical.
-        accumulate_grad_batches = max(1, int(self.trainer.accumulate_grad_batches))
-        loss_for_return = loss if self._use_manual_optimization else loss / accumulate_grad_batches
+        # Automatic optimization path: return the loss unscaled. Lightning divides the returned loss by
+        # ``trainer.accumulate_grad_batches`` itself (``ClosureResult.from_training_step_output``) before
+        # ``backward()``, so the accumulated gradient already equals the mean over the window; dividing here as
+        # well scaled every accumulated gradient by ``1/N**2``. The manual path scales its own backward loss above.
         train_log_sync_dist = bool(self.train_config.train_log_sync_dist)
         train_log_on_step = bool(self.train_config.train_log_on_step)
         if self.train_config.compact_train_metrics:
@@ -854,11 +853,11 @@ class RFDETRModelModule(LightningModule):
                 }
                 results = self.postprocess(inference_outputs, orig_sizes)
             return {
-                "loss": loss_for_return.detach() if self._use_manual_optimization else loss_for_return,
+                "loss": loss.detach() if self._use_manual_optimization else loss,
                 "results": self._detach_results(results),
                 "targets": targets,
             }
-        return loss_for_return.detach() if self._use_manual_optimization else loss_for_return
+        return loss.detach() if self._use_manual_optimization else loss
 
     def _aux_aggregate_map(self, loss_dict: dict[str, Tensor], weight_dict: dict[str, float]) -> dict[str, str | None]:
         """Return the memoized ``loss_name -> aggregate train/ key`` map for the current loss_dict keys.
