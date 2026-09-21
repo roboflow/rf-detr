@@ -28,13 +28,12 @@ _RANK_ENV_VARS = (
 
 
 def _minimal_subprocess_env() -> dict[str, str]:
-    """Build a bare interpreter environment with every launcher rank variable removed.
+    """Build a child interpreter environment with every launcher rank variable removed.
 
-    Keeps only what a child ``python -c`` process needs to import ``rfdetr`` and ``pytorch_lightning`` from the
-    active virtualenv -- ``PATH``, ``PYTHONPATH``, ``VIRTUAL_ENV``, ``HOME``, ``TMPDIR``, and (on Windows)
-    ``SYSTEMROOT`` -- then strips every rank/launcher variable ``_is_launcher_main_process`` or Lightning's own
-    rank resolution reads, so each subprocess probe starts from a known-clean baseline before its case applies
-    its own variables on top.
+    Preserves the parent runtime environment so fresh Windows interpreters retain dependency-specific configuration,
+    then strips every rank/launcher variable ``_is_launcher_main_process`` or Lightning's own rank resolution reads.
+    Each subprocess probe therefore starts from the same non-rank environment as the test process before its case
+    applies its own launcher variables on top.
 
     Returns:
         A fresh environment mapping, safe for a caller to mutate per test case.
@@ -46,13 +45,22 @@ def _minimal_subprocess_env() -> dict[str, str]:
         >>> "RANK" in env
         False
     """
-    keep = {"PATH", "PYTHONPATH", "VIRTUAL_ENV", "HOME", "TMPDIR"}
-    if sys.platform == "win32":
-        keep |= {"SYSTEMROOT", "SystemRoot"}
-    env = {key: value for key, value in os.environ.items() if key in keep}
+    env = os.environ.copy()
     for rank_var in _RANK_ENV_VARS:
         env.pop(rank_var, None)
     return env
+
+
+def test_minimal_subprocess_env_preserves_non_rank_runtime_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The subprocess environment retains inherited runtime configuration but removes launcher ranks."""
+    monkeypatch.setenv("APPDATA", "C:\\Users\\runneradmin\\AppData\\Roaming")
+    for rank_var in _RANK_ENV_VARS:
+        monkeypatch.setenv(rank_var, "1")
+
+    env = _minimal_subprocess_env()
+
+    assert env["APPDATA"] == "C:\\Users\\runneradmin\\AppData\\Roaming"
+    assert all(rank_var not in env for rank_var in _RANK_ENV_VARS)
 
 
 def _fake_all_gather(output_tensors, input_tensor) -> None:
