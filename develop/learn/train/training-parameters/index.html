@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-17T16:52:00">
+  <meta property="article:modified_time" content="2026-09-21T07:59:26">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-17T16:52:00",
+    "dateModified": "2026-09-21T07:59:26",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3623,9 +3623,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 <tr>
 <td><code>eval_backend</code></td>
-<td><code>Literal["hotcoco","faster_coco_eval","ufcoco"]</code></td>
-<td><code>"hotcoco"</code></td>
-<td>COCO evaluation backend for detection and segmentation mAP. All three ship with <code>rfdetr[train]</code> and return identical metrics; <code>"faster_coco_eval"</code> selects the previous, slower evaluator and <code>"ufcoco"</code> selects ultrafast-pycocotools.</td>
+<td><code>Literal["hotcoco","faster_coco_eval","ufcoco","vernier"]</code></td>
+<td><code>"vernier"</code></td>
+<td>COCO evaluation backend for detection and segmentation mAP. All four ship with <code>rfdetr[train]</code> and return identical metrics; <code>"vernier"</code> additionally requires a box on every annotation, so it cannot evaluate a mask-only run. <code>"faster_coco_eval"</code> selects the previous, slower evaluator, <code>"ufcoco"</code> selects ultrafast-pycocotools and <code>"hotcoco"</code> selects hotcoco.</td>
 </tr>
 <tr>
 <td><code>eval_base_model</code></td>
@@ -3661,8 +3661,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><code>eval_base_model=True</code> restores the previous behaviour: the base model is evaluated under <code>val/mAP_*</code>, the EMA model under <code>val/ema_*</code>, and both checkpoint tracks run. It costs one extra forward pass per validation batch.</li>
 <li><code>eval_interval</code> controls validation frequency, not the cost of a validation epoch: non-evaluation epochs skip the complete validation loop, while the final epoch always evaluates.</li>
 <li>Lowering <code>eval_max_dets</code> can reduce detection/segmentation evaluation work, but it also changes AP and AR semantics. Keypoint evaluation keeps COCO <code>maxDets=20</code>.</li>
-<li><code>eval_backend</code> selects the COCO evaluator. The default <code>"hotcoco"</code> (<a href="https://github.com/derekallman/hotcoco">hotcoco</a>) ships with <code>rfdetr[train]</code>; <code>"faster_coco_eval"</code> restores the previous evaluator. Metrics are identical, not merely close: the parity tests compare every aggregate, per-class and class-ID output of both backends for box-only and box-plus-mask evaluation and require exact equality. The knob changes the cost of <code>compute()</code>, not the validation forward pass that usually dominates a validation epoch, so it matters most on large validation sets. On synthetic COCO-val-shaped state (5,000 images, 36.6k ground-truth boxes, 300 detections per image, 80 classes, <code>eval_max_dets=500</code>) one macOS-CPU <code>compute()</code> took 6.2 s on <code>faster_coco_eval</code> against 1.1 s on <code>hotcoco</code>. Keypoint evaluation uses its own OKS path and is unaffected, as is the ONNX/TensorRT benchmark evaluator.</li>
-<li><code>eval_backend="ufcoco"</code> selects <a href="https://github.com/developer0hye/ultrafast-pycocotools">ultrafast-pycocotools</a>, a Rust evaluator that reproduces pycocotools' precision, recall and score arrays byte for byte. It ships with <code>rfdetr[train]</code> like the other two backends; pass <code>eval_backend="ufcoco"</code> to <code>model.train(...)</code> or <code>model.evaluate(...)</code>. The selection reaches the validation, train-split and EMA metrics alike, and the parity tests hold it to the same exact equality against <code>faster_coco_eval</code> as <code>hotcoco</code>, for box-only and box-plus-mask evaluation at <code>eval_max_dets</code> 100 and 500.</li>
+<li><code>eval_backend</code> selects the COCO evaluator. The default <code>"vernier"</code> (<a href="https://github.com/NoeFontana/vernier">vernier</a>) ships with <code>rfdetr[train]</code>; <code>"faster_coco_eval"</code> restores the previous evaluator. Metrics are identical, not merely close: the parity tests compare every aggregate, per-class and class-ID output of every backend for box-only and box-plus-mask evaluation and require exact equality. The knob changes the cost of <code>compute()</code>, not the validation forward pass that usually dominates a validation epoch, so it matters most on large validation sets. <code>"vernier"</code> is the one backend that requires a box on every annotation, so it cannot evaluate a mask-only run: an <code>iou_type</code> without <code>"bbox"</code> is rejected when the metric is constructed rather than at <code>compute()</code>, so the run fails immediately instead of after a validation epoch. On a synthetic COCO-val-shaped state (5,000 images, 300 detections per image, 80 classes, box-only) one Linux four-core <code>compute()</code> took 3.18 s on <code>hotcoco</code> against 1.86 s on <code>vernier</code>, a ~1.7x speedup; the macOS-CPU figures below were measured on a different machine and are not directly comparable to these. The margin is wider away from that shape: on the 20-class synthetic configuration <code>vernier</code> is 2.1-2.3x <code>hotcoco</code> on box-only and 5.9-8.6x on box-plus-mask evaluation, at every core count from one to eight. These are single-process timings; under multi-GPU DDP each rank merges the gathered state and runs the whole <code>compute()</code> itself, so the ranks evaluate concurrently and the wall-clock saving per validation epoch may differ. Keypoint evaluation uses its own OKS path and is unaffected, as is the ONNX/TensorRT benchmark evaluator.</li>
+<li><code>eval_backend="hotcoco"</code> selects <a href="https://github.com/derekallman/hotcoco">hotcoco</a>, a Rust COCO evaluator. On synthetic COCO-val-shaped state (5,000 images, 36.6k ground-truth boxes, 300 detections per image, 80 classes, <code>eval_max_dets=500</code>) one macOS-CPU <code>compute()</code> took 6.2 s on <code>faster_coco_eval</code> against 1.1 s on <code>hotcoco</code>. It ships with <code>rfdetr[train]</code> like the other backends.</li>
+<li><code>eval_backend="ufcoco"</code> selects <a href="https://github.com/developer0hye/ultrafast-pycocotools">ultrafast-pycocotools</a>, a Rust evaluator that reproduces pycocotools' precision, recall and score arrays byte for byte. It ships with <code>rfdetr[train]</code> like the other backends; pass <code>eval_backend="ufcoco"</code> to <code>model.train(...)</code> or <code>model.evaluate(...)</code>. The selection reaches the validation, train-split and EMA metrics alike, and the parity tests hold it to the same exact equality against <code>faster_coco_eval</code> as <code>hotcoco</code>, for box-only and box-plus-mask evaluation at <code>eval_max_dets</code> 100 and 500.</li>
 </ul>
 <h2 id="keypoint-preview-parameters">Keypoint Preview Parameters<a class="headerlink" href="#keypoint-preview-parameters" title="Permanent link">&para;</a></h2>
 <p>These parameters apply when training <code>RFDETRKeypointPreview</code> on COCO keypoint annotations or Ultralytics YOLO pose labels.</p>
@@ -4091,9 +4092,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 <tr>
 <td><code>eval_backend</code></td>
-<td><code>Literal["hotcoco","faster_coco_eval","ufcoco"]</code></td>
-<td>"hotcoco"</td>
-<td>COCO evaluation backend; <code>"faster_coco_eval"</code> selects the previous, slower evaluator and <code>"ufcoco"</code> for ultrafast-pycocotools.</td>
+<td><code>Literal["hotcoco","faster_coco_eval","ufcoco","vernier"]</code></td>
+<td>"vernier"</td>
+<td>COCO evaluation backend; <code>"faster_coco_eval"</code> selects the previous, slower evaluator, <code>"ufcoco"</code> for ultrafast-pycocotools and <code>"hotcoco"</code> for hotcoco.</td>
 </tr>
 <tr>
 <td><code>eval_base_model</code></td>
@@ -4255,7 +4256,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 17, 2026 16:52:00 UTC">2026-09-17 16:52:00</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 21, 2026 07:59:26 UTC">2026-09-21 07:59:26</span>
   </span>
 
     

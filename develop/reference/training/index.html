@@ -7687,14 +7687,15 @@ forward pass, so both models are evaluated from independent predictions.</p>
             <td>
               <div class="doc-md-description">
                 <p>COCO evaluation backend, mirroring :attr:<code>~rfdetr.config.TrainConfig.eval_backend</code>.
-<code>"hotcoco"</code> is the faster default, <code>"faster_coco_eval"</code> is the previous evaluator and <code>"ufcoco"</code>
-selects ultrafast-pycocotools; all three ship with <code>rfdetr[train]</code> and return identical metrics.
+<code>"vernier"</code> is the default and computes fastest, <code>"faster_coco_eval"</code> is the previous
+evaluator and <code>"ufcoco"</code> selects ultrafast-pycocotools; all four ship with <code>rfdetr[train]</code> and return
+identical metrics.
 Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
 positional callers keep binding the arguments they always did.</p>
               </div>
             </td>
             <td>
-                  <code>&#39;hotcoco&#39;</code>
+                  <code>&#39;vernier&#39;</code>
             </td>
           </tr>
       </tbody>
@@ -7723,7 +7724,7 @@ positional callers keep binding the arguments they always did.</p>
 
 
 <h3 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_ema_only</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_base_model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_backend</span><span class="o">=</span><span class="s1">'hotcoco'</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_ema_only</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_base_model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_backend</span><span class="o">=</span><span class="s1">'vernier'</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 

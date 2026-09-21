@@ -2461,6 +2461,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Added <code>"ufcoco"</code> as a third value of <code>TrainConfig.eval_backend</code>, selecting <a href="https://github.com/developer0hye/ultrafast-pycocotools">ultrafast-pycocotools</a>, a Rust COCO evaluator (BSD-2-Clause, <code>numpy</code> as its only runtime dependency) that reproduces pycocotools' precision, recall and score arrays byte for byte. It is added to the <code>train</code> extra alongside the other two backends; the default stays <code>"hotcoco"</code>. The selection reaches the validation, train-split and EMA metrics and the explicit distributed state merge alike, and the parity tests hold the backend to the same exact equality against <code>faster_coco_eval</code> as hotcoco, for box-only and box-plus-mask evaluation at <code>eval_max_dets</code> 100 and 500. Two places where ufcoco follows pycocotools more literally than the other two backends are adapted in <code>rfdetr.training.coco_map</code>: aggregate AP is summarized at the configured <code>eval_max_dets</code> rather than pycocotools' fixed 100, and the boolean masks TorchMetrics encodes are converted to <code>uint8</code> first. Keypoint OKS evaluation and the ONNX/TensorRT benchmark evaluator are unaffected. (<a href="https://github.com/roboflow/rf-detr/pull/1449">#1449</a>)</p>
 </li>
 <li>
+<p>Added <code>"vernier"</code> as a fourth value of <code>TrainConfig.eval_backend</code>, selecting <a href="https://github.com/NoeFontana/vernier">vernier</a>, a Rust COCO evaluator (MIT OR Apache-2.0). It ships with the <code>train</code> extra; the default stays <code>"hotcoco"</code>. It runs in vernier's <code>corrected</code> parity mode, which corrects some pycocotools quirks similarly as <code>hotcoco</code> and <code>faster_coco_eval</code>.</p>
+</li>
+<li>
 <p>Added <code>python -m rfdetr.cli.webdataset</code> as the dedicated packing entry point.</p>
 </li>
 <li>
