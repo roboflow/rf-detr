@@ -225,8 +225,7 @@ jobs:
 
       - name: 🧪 Run ExecuTorch CoreML delegate tests
         run: |
-          uv run --no-sync pytest tests/export/test_executorch_coreml.py \
-            -m e2e_executorch -n 1 \
+          uv run --no-sync pytest . -m e2e_executorch -n 1 \
             --timeout=600 \
             --durations=20
 
