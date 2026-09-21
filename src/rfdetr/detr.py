@@ -42,7 +42,7 @@ from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categorie
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
-from rfdetr.utilities.distributed import is_main_process
+from rfdetr.utilities.distributed import is_launcher_main_process, is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -459,6 +459,48 @@ def _prepare_run_config(
         )
     detector.model_config.model_name = type(detector).__name__
     return config, _accelerator, _devices
+
+
+def _save_training_config(config: TrainConfig, model_config: ModelConfig, class_names: list[str] | None) -> None:
+    """Write the run's complete configuration to ``training_config.json`` in the output directory.
+
+    Called twice per run: once before training starts, so a run stopped with Ctrl-C or killed by a crash still
+    leaves a record of how it was configured, and once after it finishes, which overwrites the first copy with the
+    dataset-resolved class names. Both copies carry the same keys; the start-of-run one may hold ``class_names:
+    null`` where the label space could not be read ahead of training.
+
+    The configuration is assembled and serialized in full before the file is opened, because opening for writing
+    truncates immediately and a resumed run writes over a previous run's complete copy. Nothing here can end a
+    training run: every failure, serialization included, is logged and swallowed, since this file is provenance
+    rather than part of training.
+
+    Args:
+        config: The resolved training configuration.
+        model_config: The detector's model configuration, after dataset-derived alignment.
+        class_names: Label space to record, or ``None`` when it could not be resolved.
+
+    Examples:
+        Writes to ``config.output_dir``, so this is documentation rather than a doctest:
+
+        ```python
+        _save_training_config(train_config, model_config, ["cat", "dog"])
+        # -> writes output/training_config.json
+        ```
+    """
+    try:
+        complete_config = {
+            "train_config": config.model_dump(),
+            "model_config": model_config.model_dump(),
+            "model_config_type": model_config.__class__.__name__,
+            "class_names": class_names,
+            "num_classes": len(class_names) if class_names else 0,
+        }
+        payload = json.dumps(complete_config, indent=2, default=str)
+        os.makedirs(config.output_dir, exist_ok=True)
+        with open(os.path.join(config.output_dir, "training_config.json"), "w") as f:
+            f.write(payload)
+    except Exception:
+        logger.warning("Could not save training_config.json to %s.", config.output_dir, exc_info=True)
 
 
 class RFDETR:
@@ -993,14 +1035,43 @@ class RFDETR:
             self._align_keypoint_schema_from_dataset(config)
             self._align_num_classes_from_dataset(dataset_dir)
 
+        # Record the run's configuration before anything expensive starts, so a run interrupted while the model is
+        # built, while dataset grids render, or during training itself still leaves one behind (#1493). Rewritten
+        # after trainer.fit() with the dataset's class names. Both configs are final here: the alignment above is
+        # the last thing that mutates them, and neither module construction nor build_trainer touches them.
+        #
+        # The dataset's class names are not known until the datamodule builds a dataset inside fit(), so read the
+        # label space straight off disk instead. Best-effort on the same exception tuple as the num_classes
+        # alignment above: a layout these readers do not understand (dataset_file="webdataset" among them) records
+        # class_names: null until the post-fit write fills it in, rather than blocking training.
+        #
+        # Guarded on the launcher's environment rather than is_main_process(), which reports rank 0 in every
+        # process until trainer.fit() initializes torch.distributed; several ranks would otherwise write this one
+        # path at once, where a torn write can truncate a previous run's good copy. Same guard as the dataset-grid
+        # block below.
+        if is_launcher_main_process():
+            pre_fit_class_names = getattr(config, "class_names", None)
+            if pre_fit_class_names is None and dataset_dir:
+                try:
+                    pre_fit_class_names = RFDETR._load_classes(dataset_dir)
+                except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                    logger.debug("Could not read class names from dataset '%s': %s", dataset_dir, exc)
+                    pre_fit_class_names = None
+            _save_training_config(config, self.model_config, pre_fit_class_names)
+        else:
+            # A non-zero launcher rank is the ordinary DDP case, but an otherwise single-process run started
+            # inside a SLURM step inherits SLURM_PROCID and lands here too, writing neither this file nor the
+            # dataset grids. Say so, rather than leaving an absent file with no explanation anywhere.
+            logger.debug("Not the launcher's main process; skipping the start-of-run training_config.json write.")
+
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
 
-        # Guard with LOCAL_RANK env var rather than is_main_process() because torch.distributed
-        # is not yet initialized here (it is set up inside trainer.fit()).  In Lightning DDP
-        # subprocesses, LOCAL_RANK is set by the launcher before the subprocess calls train(),
-        # so this correctly identifies rank 0 even before dist.init_process_group() runs.
-        if config.save_dataset_grids and os.environ.get("LOCAL_RANK", "0") == "0":
+        # Guard on the launcher's environment rather than is_main_process() because torch.distributed is not yet
+        # initialized here (it is set up inside trainer.fit()).  This used to read LOCAL_RANK alone, which let one
+        # process per node through on multi-node runs and every process through under srun, which sets neither
+        # LOCAL_RANK nor NODE_RANK.
+        if config.save_dataset_grids and is_launcher_main_process():
             try:
                 from rfdetr.datasets.save_grids import DatasetGridSaver
 
@@ -1121,22 +1192,11 @@ class RFDETR:
             if dataset_class_names is not None:
                 self.model.class_names = dataset_class_names
 
-        # Save complete training configuration to disk for reproducibility.
-        # Guard to main process only to avoid races in distributed/multi-GPU training.
+        # Rewrite the configuration saved at the start of the run, now that the dataset's class names are known.
+        # Guard to main process only to avoid races in distributed/multi-GPU training; unlike the start-of-run
+        # write before trainer.fit(), torch.distributed is initialized here, so the global rank is authoritative.
         if is_main_process():
-            complete_config = {
-                "train_config": config.model_dump(),
-                "model_config": self.model_config.model_dump(),
-                "model_config_type": self.model_config.__class__.__name__,
-                "class_names": self.model.class_names,
-                "num_classes": len(self.model.class_names) if self.model.class_names else 0,
-            }
-            try:
-                os.makedirs(config.output_dir, exist_ok=True)
-                with open(os.path.join(config.output_dir, "training_config.json"), "w") as f:
-                    json.dump(complete_config, f, indent=2, default=str)
-            except OSError as exc:
-                logger.warning("Could not save training_config.json to %s: %s", config.output_dir, exc)
+            _save_training_config(config, self.model_config, self.model.class_names)
 
     def evaluate(self, *, split: Literal["test", "val"] = "test", **kwargs: Any) -> dict[str, float]:
         """Evaluate the current model on a dataset split and return COCO metrics.

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import os
 import pickle
 from typing import Any
 
@@ -48,6 +49,40 @@ def get_rank() -> int:
 def is_main_process() -> bool:
     """Return True if the current process is rank 0."""
     return get_rank() == 0
+
+
+def is_launcher_main_process() -> bool:
+    """Return True if the process launcher designates this process to write files shared across a run.
+
+    The counterpart to :func:`is_main_process` for code that runs *before* ``torch.distributed`` is initialized,
+    where :func:`get_rank` reports 0 in every process and so cannot tell them apart. Prefer
+    :func:`is_main_process` wherever the process group is already up: it reads the real global rank instead of
+    inferring one from the environment.
+
+    The rank itself is Lightning's own ``rank_zero_only.rank``, resolved from whichever variable the launcher set
+    rather than re-listed here, so the set stays in one place and follows upstream. ``NODE_RANK`` is checked on top
+    of it because that resolution is node-local -- it accepts ``LOCAL_RANK``, which Lightning's own subprocess
+    launcher leaves at 0 on every node of a multi-node run, so without it one process per node would pass.
+
+    Returns:
+        Whether the launcher's environment identifies this process as rank 0 of node 0.
+
+    Examples:
+        The answer is read from the launcher environment this process was started in, so it is only meaningful
+        against a known one; ``tests/utilities/test_distributed.py`` pins each case.
+
+        >>> isinstance(is_launcher_main_process(), bool)
+        True
+    """
+    # pytorch_lightning ships in the optional `train` extra; a module-scope import would make `import rfdetr`
+    # require it. Every caller reaches this only after the training stack has already been imported. Lightning
+    # resolves `.rank` from RANK / LOCAL_RANK / SLURM_PROCID / JSM_NAMESPACE_RANK when this module is first
+    # imported, which a launcher does before the subprocess it starts ever calls into rfdetr.
+    # PTL re-exports this without `__all__` and types it as an overload, neither of which mypy --strict accepts;
+    # the same two ignores appear on the same import in `training/callbacks/gpu_memory_progress_bar.py`.
+    from pytorch_lightning.utilities.rank_zero import rank_zero_only  # type: ignore[attr-defined]
+
+    return rank_zero_only.rank == 0 and os.environ.get("NODE_RANK", "0") == "0"  # type: ignore[attr-defined]
 
 
 def save_on_master(obj: Any, f: Any, *args: Any, **kwargs: Any) -> None:

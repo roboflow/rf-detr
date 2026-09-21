@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
-from rfdetr.utilities.distributed import all_gather
+from rfdetr.utilities.distributed import all_gather, is_launcher_main_process
 
 
 def _fake_all_gather(output_tensors, input_tensor) -> None:
@@ -24,6 +25,28 @@ def _fake_all_gather(output_tensors, input_tensor) -> None:
     """
     for out in output_tensors:
         out.copy_(input_tensor)
+
+
+class TestIsLauncherMainProcess:
+    """is_launcher_main_process() answers from the launcher's environment, before torch.distributed exists."""
+
+    def test_true_on_rank_zero_of_node_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An ordinary single-process run is the one that writes."""
+        monkeypatch.setattr(rank_zero_only, "rank", 0)
+        monkeypatch.delenv("NODE_RANK", raising=False)
+        assert is_launcher_main_process() is True
+
+    def test_false_off_rank_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Whichever variable the launcher set, Lightning has already folded it into rank_zero_only.rank."""
+        monkeypatch.setattr(rank_zero_only, "rank", 1)
+        monkeypatch.delenv("NODE_RANK", raising=False)
+        assert is_launcher_main_process() is False
+
+    def test_false_on_a_secondary_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """NODE_RANK is consulted separately: Lightning's launcher leaves LOCAL_RANK at 0 on every node."""
+        monkeypatch.setattr(rank_zero_only, "rank", 0)
+        monkeypatch.setenv("NODE_RANK", "1")
+        assert is_launcher_main_process() is False
 
 
 def test_all_gather_supports_cpu_without_tensor_truthiness_error() -> None:
