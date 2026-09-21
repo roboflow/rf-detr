@@ -56,7 +56,14 @@ class _RequiresKornia:
     """
 
     @pytest.fixture(autouse=True)
-    def _require_kornia(self):
+    def _require_kornia(self) -> None:
+        """Skip tests when Kornia is unavailable.
+
+        Examples:
+            Pytest fixtures cannot be called directly outside fixture injection.
+
+            >>> _RequiresKornia()._require_kornia()  # doctest: +SKIP
+        """
         pytest.importorskip("kornia")
 
 

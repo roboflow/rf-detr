@@ -132,7 +132,13 @@ class _RgbImageFixture:
 
     @pytest.fixture
     def rgb_image(self, tmp_path: Path) -> Path:
-        """Write a small RGB JPEG to a temp file and return its path."""
+        """Write a small RGB JPEG to a temp file and return its path.
+
+        Examples:
+            Pytest fixtures cannot be called directly outside fixture injection.
+
+            >>> _RgbImageFixture().rgb_image(None)  # doctest: +SKIP
+        """
         p = tmp_path / "image.jpg"
         _save_rgb_image(p)
         return p

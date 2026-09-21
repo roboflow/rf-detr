@@ -8,6 +8,7 @@
 import runpy
 from unittest.mock import patch
 
+#: Import path patched to isolate the CLI entrypoint during module execution.
 RFDETR_CLI_MAIN = "rfdetr.cli.main"
 
 

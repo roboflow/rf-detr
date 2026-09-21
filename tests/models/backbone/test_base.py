@@ -15,6 +15,7 @@ from rfdetr.models.backbone.base import BackboneBase
 
 
 class TestBackboneBase:
+    """Tests the parameter-free base module and its subclass override contract."""
     def test_is_parameter_free_module(self) -> None:
         """A bare BackboneBase is a valid nn.Module with no parameters of its own.
 
