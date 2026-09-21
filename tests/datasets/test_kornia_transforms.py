@@ -48,19 +48,27 @@ def _sharpness_sampler_range(transform: torch.nn.Module) -> tuple[float, float]:
         )
 
 
+class _RequiresKornia:
+    """Mixin skipping every test in a subclass when Kornia is unavailable (optional extra not installed in CPU CI).
+
+    Shared by every class below that calls into ``kornia_transforms`` directly; classes that only exercise backend-
+    selection logic without importing Kornia do not inherit this and keep running without it installed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _require_kornia(self):
+        pytest.importorskip("kornia")
+
+
 # ---------------------------------------------------------------------------
 # TestBuildKorniaPipeline — validates the factory that translates aug_config
 # dicts into a Kornia AugmentationSequential pipeline.
 # ---------------------------------------------------------------------------
 
 
-class TestBuildKorniaPipeline:
+class TestBuildKorniaPipeline(_RequiresKornia):
     """build_kornia_pipeline returns a valid pipeline for every preset and rejects unknown transform keys with a clear
     error."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     @pytest.mark.parametrize(
         "config,config_name",
@@ -504,12 +512,8 @@ class TestBuildKorniaPipeline:
 # ---------------------------------------------------------------------------
 
 
-class TestCollateBoxes:
+class TestCollateBoxes(_RequiresKornia):
     """collate_boxes packs variable-length boxes into [B, N_max, 4] with mask."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def _make_targets(self, box_counts):
         """Build a list of target dicts with the given per-image box counts.
@@ -585,12 +589,8 @@ class TestCollateBoxes:
 # ---------------------------------------------------------------------------
 
 
-class TestUnpackBoxes:
+class TestUnpackBoxes(_RequiresKornia):
     """unpack_boxes writes augmented boxes back and removes zero-area entries."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def _make_inputs(
         self,
@@ -713,12 +713,8 @@ class TestUnpackBoxes:
 # ---------------------------------------------------------------------------
 
 
-class TestRotateFactory:
+class TestRotateFactory(_RequiresKornia):
     """Rotate factory translates limit (scalar or tuple) to K.RandomRotation(degrees=...)."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def test_limit_as_scalar(self):
         """Rotate(limit=45) produces K.RandomRotation(degrees=(-45, 45))."""
@@ -839,12 +835,8 @@ class TestGpuPostprocessFlag:
 # ---------------------------------------------------------------------------
 
 
-class TestGaussianBlurMinKernel:
+class TestGaussianBlurMinKernel(_RequiresKornia):
     """_make_gaussian_blur enforces kernel_size >= 3 regardless of blur_limit."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     @pytest.mark.parametrize(
         "blur_limit",
@@ -885,12 +877,8 @@ class TestGaussianBlurMinKernel:
 # ---------------------------------------------------------------------------
 
 
-class TestKorniaPipelineForwardPass:
+class TestKorniaPipelineForwardPass(_RequiresKornia):
     """build_kornia_pipeline output passes through without shape/dtype errors."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def test_forward_pass_shape_and_dtype(self):
         """Pipeline output images have same shape as input; boxes shape is [B, N, 4]."""
@@ -1000,13 +988,8 @@ class TestCollateMasks:
 # ---------------------------------------------------------------------------
 
 
-class TestBuildKorniaPipelineWithMasks:
+class TestBuildKorniaPipelineWithMasks(_RequiresKornia):
     """build_kornia_pipeline(with_masks=True) includes mask in data_keys."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        """Skip when Kornia is unavailable (optional extra not installed in CPU CI)."""
-        pytest.importorskip("kornia")
 
     def test_with_masks_false_is_default(self):
         """with_masks defaults to False; pipeline returns (img, boxes) on call."""
@@ -1108,12 +1091,8 @@ class TestUnpackBoxesWithMasks:
         assert result[0]["masks"] is original_mask, "Original masks object must be preserved unchanged"
 
 
-class TestGaussNoiseStdRangeWarning:
+class TestGaussNoiseStdRangeWarning(_RequiresKornia):
     """_make_gauss_noise warns when the configured std range is non-degenerate (GPU uses a fixed upper-bound std)."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def test_warns_for_unequal_std_range(self):
         """A non-degenerate std_range emits a divergence warning at build time."""
@@ -1138,12 +1117,8 @@ class TestGaussNoiseStdRangeWarning:
         mock_warning.assert_not_called()
 
 
-class TestToGrayDroppedParamsWarning:
+class TestToGrayDroppedParamsWarning(_RequiresKornia):
     """_make_to_gray warns when passed method/num_output_channels, which have no Kornia equivalent."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def test_warns_for_method(self):
         """A non-default method emits a dropped-param warning at build time."""
@@ -1396,13 +1371,9 @@ class TestPerspectiveFactory:
             build_kornia_pipeline({name: {"height": 32, "width": 32}}, 560)
 
 
-class TestGaussianDefaultsMatchAlbumentations:
+class TestGaussianDefaultsMatchAlbumentations(_RequiresKornia):
     """Unspecified Gaussian defaults must align to Albumentations bounds while documenting known sampling
     differences."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def test_gaussian_blur_sigma_default_matches_albumentations(self):
         """An unspecified sigma must equal albumentations' GaussianBlur sigma_limit default."""
@@ -1511,19 +1482,8 @@ def _affine_ranges(transform: Any) -> dict[str, tuple[float, float]]:
     return resolved
 
 
-class TestAffineScalarParameters:
+class TestAffineScalarParameters(_RequiresKornia):
     """Scalar ``Affine`` ranges must not lose an axis or fail in the Kornia backend."""
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self) -> None:
-        """Skip when Kornia is unavailable (optional extra not installed in CPU CI).
-
-        Examples:
-            Pytest fixture functions cannot be called directly outside fixture injection.
-
-            >>> TestAffineScalarParameters()._require_kornia()  # doctest: +SKIP
-        """
-        pytest.importorskip("kornia")
 
     def test_scalar_translate_percent_moves_both_axes(self) -> None:
         """A scalar translation must not silently leave the horizontal axis fixed."""
@@ -1635,7 +1595,7 @@ class TestAffineScalarParameters:
             _make_affine({parameter: value, "p": 1.0})
 
 
-class TestShiftScaleRotateFactory:
+class TestShiftScaleRotateFactory(_RequiresKornia):
     """`ShiftScaleRotate` on the Kornia backend (issue #1252).
 
     Albumentations deprecates this name in favour of `Affine`, but the CPU path still accepts it, so a config using it
@@ -1644,10 +1604,6 @@ class TestShiftScaleRotateFactory:
 
     The limits are *not* pass-through, which is why this needs its own builder rather than an alias.
     """
-
-    @pytest.fixture(autouse=True)
-    def _require_kornia(self):
-        pytest.importorskip("kornia")
 
     def _only_affine(self, aug_config: dict[str, dict[str, Any]]) -> Any:
         """Build a pipeline and return its sole ``RandomAffine`` transform.

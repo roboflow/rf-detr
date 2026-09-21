@@ -670,12 +670,9 @@ class TestExportFormatParameter:
         with pytest.warns(UserWarning, match="notes"):
             obj.export(format="openvino", output_dir=str(self._tmp_path / "out"), notes="some metadata")
 
-    def test_invalid_format_raises_value_error(self) -> None:
-        """Unknown ``format`` must raise ``ValueError`` listing supported formats, not reach the converter."""
-        obj = self._make_rfdetr()
-        with pytest.raises(ValueError, match="Unsupported export format"):
-            obj.export(format="bogus", output_dir=str(self._tmp_path / "out"))
-        self._mock_openvino_convert.assert_not_called()
+    # Invalid-format rejection is format-agnostic (RFDETR.export() validates before any dispatch) and is
+    # covered once, facade-level, by TestExportFormatParameter.test_invalid_format_raises_value_error in
+    # test_coreml_export.py; TestResolveExporter in test_registry.py covers the underlying guard per format.
 
 
 class TestExportOpenvinoMissingDependencyViaPublicAPI:
