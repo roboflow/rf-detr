@@ -23,12 +23,13 @@ Note:
     ``coreml_precision`` argument (string form only, so callers don't need to import ``coremltools``).
 
 Note:
-    ``torch>=2.12`` sharply raises the rate of a CoreML/eager numeric-parity divergence on
-    real-image input with coremltools 9.0 (bisected: torch<2.12 failed ~1/6 repeat runs,
-    torch>=2.12.0 failed ~6/7) — the ``coreml`` extra pins ``torch<2.12`` in ``pyproject.toml``
-    until this is understood/fixed upstream. That pin reduces the failure rate, it does not
-    guarantee determinism. See ``tests/export/test_coreml_export.py::TestCoreMLEndToEnd::
-    test_outputs_match_pytorch_supervision_image``.
+    Raw outputs can legitimately differ from eager PyTorch when the two-stage encoder ranking has
+    near-tied scores: fp32 rounding differences between runtimes can swap which queries ``torch.topk``
+    selects. This is not a conversion error, and it is why the end-to-end parity tests in
+    ``tests/export/test_coreml_export.py`` check that the ranking is well separated before comparing.
+    ``coreml_precision="float16"`` narrows that fp32 safety margin further and makes a rank swap more
+    likely, not less — see the "Raw tensors can differ more than the precision suggests" note under
+    Native CoreML Export in ``docs/learn/export.md``.
 """
 
 from __future__ import annotations
