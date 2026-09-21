@@ -14,7 +14,7 @@ import pytest
 import torch
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
-from rfdetr.utilities.distributed import all_gather, is_launcher_main_process
+from rfdetr.utilities.distributed import _is_launcher_main_process, all_gather
 
 _RANK_ENV_VARS = (
     "RANK",
@@ -32,7 +32,7 @@ def _minimal_subprocess_env() -> dict[str, str]:
 
     Keeps only what a child ``python -c`` process needs to import ``rfdetr`` and ``pytorch_lightning`` from the
     active virtualenv -- ``PATH``, ``PYTHONPATH``, ``VIRTUAL_ENV``, ``HOME``, ``TMPDIR``, and (on Windows)
-    ``SYSTEMROOT`` -- then strips every rank/launcher variable ``is_launcher_main_process`` or Lightning's own
+    ``SYSTEMROOT`` -- then strips every rank/launcher variable ``_is_launcher_main_process`` or Lightning's own
     rank resolution reads, so each subprocess probe starts from a known-clean baseline before its case applies
     its own variables on top.
 
@@ -69,7 +69,7 @@ def _fake_all_gather(output_tensors, input_tensor) -> None:
 
 
 class TestIsLauncherMainProcess:
-    """is_launcher_main_process() answers from the launcher's environment, before torch.distributed exists."""
+    """_is_launcher_main_process() answers from the launcher's environment, before torch.distributed exists."""
 
     @pytest.mark.parametrize(
         ("rank", "node_rank", "expected"),
@@ -99,11 +99,11 @@ class TestIsLauncherMainProcess:
         else:
             monkeypatch.setenv("NODE_RANK", node_rank)
 
-        assert is_launcher_main_process() is expected
+        assert _is_launcher_main_process() is expected
 
 
 class TestIsLauncherMainProcessEnvPrecedence:
-    """is_launcher_main_process(), probed via real subprocesses, honors Lightning's env-var precedence.
+    """_is_launcher_main_process(), probed via real subprocesses, honors Lightning's env-var precedence.
 
     ``TestIsLauncherMainProcess`` monkeypatches ``rank_zero_only.rank`` directly, so it never exercises the
     ``RANK`` > ``LOCAL_RANK`` > ``SLURM_PROCID`` > ``JSM_NAMESPACE_RANK`` resolution order Lightning applies once,
@@ -134,15 +134,15 @@ class TestIsLauncherMainProcessEnvPrecedence:
         Each case starts a subprocess from a minimal, rank-var-stripped environment (see ``_minimal_subprocess_env``),
         applies only its own launcher variables, imports ``rfdetr.utilities.distributed`` fresh so
         ``rank_zero_only.rank`` is resolved from exactly that environment rather than carried over from this test
-        process or an earlier case, and prints ``is_launcher_main_process()``. The ``rank-zero-but-local-rank-nonzero``,
-        ``ompi-comm-world-rank-nonzero``, and ``pmi-rank-nonzero`` cases pin the guard's target contract -- requiring
-        ``LOCAL_RANK`` in ``{unset, "0"}`` and rejecting a nonzero ``OMPI_COMM_WORLD_RANK``/``PMI_RANK`` -- and fail
-        until that guard change lands in ``is_launcher_main_process``.
+        process or an earlier case, and prints ``_is_launcher_main_process()``. The ``rank-zero-but-local-rank-
+        nonzero``, ``ompi-comm-world-rank-nonzero``, and ``pmi-rank-nonzero`` cases pin the guard's target contract --
+        requiring ``LOCAL_RANK`` in ``{unset, "0"}`` and rejecting a nonzero ``OMPI_COMM_WORLD_RANK``/``PMI_RANK`` --
+        and fail until that guard change lands in ``_is_launcher_main_process``.
         """
         pytest.importorskip("pytorch_lightning")
         env = _minimal_subprocess_env()
         env.update(env_vars)
-        code = "import rfdetr.utilities.distributed as d; print(d.is_launcher_main_process())"
+        code = "import rfdetr.utilities.distributed as d; print(d._is_launcher_main_process())"
 
         result = subprocess.run(
             [sys.executable, "-c", code],

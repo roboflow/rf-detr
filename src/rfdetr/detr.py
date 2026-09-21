@@ -42,7 +42,7 @@ from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categorie
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
-from rfdetr.utilities.distributed import is_launcher_main_process, is_main_process
+from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -1067,7 +1067,7 @@ class RFDETR:
         # process until trainer.fit() initializes torch.distributed; several ranks would otherwise write this one
         # path at once, where a torn write can truncate a previous run's good copy. Same guard as the dataset-grid
         # block below.
-        if is_launcher_main_process():
+        if _is_launcher_main_process():
             pre_fit_class_names = getattr(config, "class_names", None)
             # Keypoint mode stays null: the readers below return the detection basis (e.g. ['person']), but the
             # slot layout — a background-first schema such as [0, 17] pads a leading '' — is only known post-fit.
@@ -1114,7 +1114,7 @@ class RFDETR:
         # initialized here (it is set up inside trainer.fit()).  This used to read LOCAL_RANK alone, which let one
         # process per node through on multi-node runs and every process through under srun, which sets neither
         # LOCAL_RANK nor NODE_RANK.
-        if config.save_dataset_grids and is_launcher_main_process():
+        if config.save_dataset_grids and _is_launcher_main_process():
             try:
                 from rfdetr.datasets.save_grids import DatasetGridSaver
 

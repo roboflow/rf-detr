@@ -50,13 +50,13 @@ def is_main_process() -> bool:
     """Return True if the current process is rank 0.
 
     See Also:
-        Before the process group is up, use :func:`is_launcher_main_process`; :func:`get_rank` reports 0 in every
+        Before the process group is up, use :func:`_is_launcher_main_process`; :func:`get_rank` reports 0 in every
         process until then.
     """
     return get_rank() == 0
 
 
-def is_launcher_main_process() -> bool:
+def _is_launcher_main_process() -> bool:
     """Return True if the process launcher designates this process to write files shared across a run.
 
     The counterpart to :func:`is_main_process` for code that runs *before* ``torch.distributed`` is initialized,
@@ -89,7 +89,7 @@ def is_launcher_main_process() -> bool:
         The answer is read from the launcher environment this process was started in, so it is only meaningful
         against a known one; ``tests/utilities/test_distributed.py`` pins each case.
 
-        >>> isinstance(is_launcher_main_process(), bool)
+        >>> isinstance(_is_launcher_main_process(), bool)
         True
     """
     # pytorch_lightning ships in the optional `train` extra; a module-scope import would make `import rfdetr`

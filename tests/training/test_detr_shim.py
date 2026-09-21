@@ -650,7 +650,7 @@ class TestRFDETRTrainPTLAbsorption:
             p_dm,
             p_bt,
             patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
-            patch("rfdetr.detr.is_launcher_main_process", return_value=False),
+            patch("rfdetr.detr._is_launcher_main_process", return_value=False),
         ):
             RFDETR.train(mock_self)
 
@@ -1994,13 +1994,13 @@ class TestSaveTrainingConfig:
 
     def test_pre_fit_write_skipped_off_rank_zero(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
         """Distributed workers must not race on the file before fit() initializes torch.distributed."""
-        with patch("rfdetr.detr.is_launcher_main_process", return_value=False):
+        with patch("rfdetr.detr._is_launcher_main_process", return_value=False):
             pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
         assert pre_fit is None
 
     def test_post_fit_write_keeps_its_own_rank_guard(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
         """The post-fit write guards on is_main_process() instead, so the launcher guard does not suppress it."""
-        with patch("rfdetr.detr.is_launcher_main_process", return_value=False):
+        with patch("rfdetr.detr._is_launcher_main_process", return_value=False):
             _, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
         assert final is not None
 
