@@ -20,6 +20,8 @@ import json
 import logging
 import os
 import sys
+import tempfile
+import threading
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,7 +34,7 @@ import torch
 from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, RFDETRSmallConfig, TrainConfig
 from rfdetr.datasets.webdataset.index import ShardIndex, index_name
 from rfdetr.datasets.webdataset.load import WebDatasetDetection
-from rfdetr.detr import RFDETR
+from rfdetr.detr import RFDETR, _save_training_config
 from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
@@ -1841,6 +1843,7 @@ class TestSaveTrainingConfig:
         patch_lit: tuple[Any, ...],
         dataset_class_names: list[str] | None = None,
         fit_exception: BaseException | None = None,
+        post_fit_exception: BaseException | None = None,
         load_classes_patch: Any = None,
         **train_overrides: Any,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -1849,7 +1852,9 @@ class TestSaveTrainingConfig:
         trainer.fit is a MagicMock, so its side_effect is the only code that runs at the exact moment the start-of-run
         write must already have happened. Returns (pre_fit_payload, final_payload), each None when the file did not
         exist at that point. load_classes_patch defaults to an unreadable dataset so the start-of-run class-name lookup
-        is deterministic instead of depending on what tmp_path happens to contain.
+        is deterministic instead of depending on what tmp_path happens to contain. post_fit_exception, when set, makes
+        remove_optimized_model() raise after a successful fit() but before the post-fit write, simulating a
+        housekeeping step (distinct from fit() itself) failing on the way to the second write.
 
         Examples:
             Needs the ``tmp_path`` and ``patch_lit`` fixtures, so it cannot run standalone:
@@ -1861,6 +1866,8 @@ class TestSaveTrainingConfig:
         if load_classes_patch is None:
             load_classes_patch = patch.object(RFDETR, "_load_classes", side_effect=FileNotFoundError("no dataset"))
         mock_self = _make_rfdetr_self(tmp_path, **train_overrides)
+        if post_fit_exception is not None:
+            mock_self.remove_optimized_model.side_effect = post_fit_exception
         p_mod, p_dm, p_bt, _, dmcls, mock_bt = patch_lit
         dmcls.return_value.class_names = dataset_class_names
         config_path = os.path.join(mock_self.get_train_config.return_value.output_dir, "training_config.json")
@@ -1872,11 +1879,12 @@ class TestSaveTrainingConfig:
                 raise fit_exception
 
         mock_bt.return_value.fit.side_effect = _capture
+        expected_exception = fit_exception or post_fit_exception
         with p_mod, p_dm, p_bt, load_classes_patch:
-            if fit_exception is None:
+            if expected_exception is None:
                 RFDETR.train(mock_self)
             else:
-                with pytest.raises(type(fit_exception)):
+                with pytest.raises(type(expected_exception)):
                     RFDETR.train(mock_self)
         return captured.get("pre_fit"), _read_training_config(config_path)
 
@@ -1915,6 +1923,20 @@ class TestSaveTrainingConfig:
         """A run killed inside fit() still leaves a record of how it was configured (#1493)."""
         _, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit, fit_exception=fit_exception)
         assert final is not None
+
+    def test_post_fit_step_failure_keeps_pre_fit_training_config_intact(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """A post-fit step that raises before the final write must not lose the start-of-run copy.
+
+        Unlike test_training_config_json_survives_interrupted_fit, trainer.fit() itself succeeds here --
+        remove_optimized_model(), one of the housekeeping steps between fit() returning and the final
+        _save_training_config() call, raises instead. The code never reaches the post-fit write, so the on-disk
+        file must still hold exactly the pre-fit payload, untouched.
+        """
+        post_fit_exception = RuntimeError("optimized model teardown failed")
+        pre_fit, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit, post_fit_exception=post_fit_exception)
+        assert final == pre_fit
 
     def test_pre_fit_class_names_taken_from_config_when_set(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
         """An explicit TrainConfig.class_names is recorded in preference to the dataset's."""
@@ -1955,6 +1977,19 @@ class TestSaveTrainingConfig:
     def test_pre_fit_num_classes_zero_when_dataset_unreadable(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
         """num_classes stays the count of resolved names, so it is 0 when there are none."""
         pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
+        assert pre_fit["num_classes"] == 0
+
+    def test_pre_fit_payload_keeps_empty_class_names_list_not_null(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """An explicit empty class_names list is recorded as [], not coerced to null like an unset one.
+
+        TrainConfig(class_names=[]) is not None, so the pre-fit write must record it verbatim rather than falling
+        through to the dataset-lookup branch that only fires when class_names is unset -- locking in the [] vs None
+        distinction the payload relies on to tell "explicitly no classes" apart from "not yet resolved".
+        """
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, class_names=[])
+        assert pre_fit["class_names"] == []
         assert pre_fit["num_classes"] == 0
 
     def test_pre_fit_write_skipped_off_rank_zero(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
@@ -2028,6 +2063,117 @@ class TestSaveTrainingConfig:
         with caplog.at_level("WARNING", logger="rf-detr"):
             self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_class_names=[_UnserializableValue()])
         assert _count_config_write_warnings(caplog.records) == 1
+
+    def test_torn_write_keeps_prior_training_config_intact(self, tmp_path: Path) -> None:
+        """A write that fails partway through must not corrupt the previously saved good copy.
+
+        Pre-seeds output_dir with a valid training_config.json from an earlier run, then makes the new write raise
+        OSError right after committing half its bytes to disk -- the shape of a disk-full or killed-process failure mid-
+        write. ``_save_training_config``'s ``except Exception`` path must swallow the error without letting it escape,
+        and the atomic-write contract (tempfile + os.replace) requires the on-disk file to still parse as the untouched
+        prior payload afterward, with the abandoned temp file cleaned up.
+        """
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config_path = output_dir / "training_config.json"
+        prior_payload = {"marker": "prior-good-copy", "run": 1}
+        config_path.write_text(json.dumps(prior_payload))
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        def _torn_temporary_file(*args: Any, **kwargs: Any) -> Any:
+            handle = real_named_temporary_file(*args, **kwargs)
+            if str(kwargs.get("dir")) != str(output_dir):
+                return handle
+            real_write = handle.write
+
+            def _torn_write(data: str) -> int:
+                real_write(data[: len(data) // 2])
+                handle.flush()
+                raise OSError("disk full mid-write")
+
+            handle.write = _torn_write
+            return handle
+
+        with patch("tempfile.NamedTemporaryFile", side_effect=_torn_temporary_file):
+            _save_training_config(
+                _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
+            )
+
+        assert _read_training_config(str(config_path)) == prior_payload
+        assert [p.name for p in output_dir.iterdir()] == ["training_config.json"]
+
+    def test_interleaved_writers_leave_valid_json_not_a_byte_level_merge(self, tmp_path: Path) -> None:
+        """Two writers both cleared past the launcher-rank guard must never leave a byte-interleaved file.
+
+        Deterministically reproduces the race the guard exists to prevent, without relying on real OS-thread scheduling
+        (rejected in an earlier review round as non-deterministic): writer "a" starts writing, pauses once its first
+        half is flushed to disk, writer "b" then opens and fully writes a different, longer payload to the same path,
+        and only then does "a" resume and flush its second half. Ordering is pinned with ``threading.Event``s with
+        bounded waits, never a bare block. The atomic tempfile+os.replace write makes each writer's file appear whole or
+        not at all, so the final file is exactly one writer's payload.
+        """
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config_path = output_dir / "training_config.json"
+        payload_a = ["a"]
+        payload_b = ["bb"] * 100  # much longer serialized payload than payload_a
+        a_paused = threading.Event()
+        b_done = threading.Event()
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+        errors: list[BaseException] = []
+
+        def _paced_temporary_file(*args: Any, **kwargs: Any) -> Any:
+            handle = real_named_temporary_file(*args, **kwargs)
+            if str(kwargs.get("dir")) != str(output_dir) or threading.current_thread().name != "writer-a":
+                return handle
+            real_write = handle.write
+
+            def _paced_write(data: str) -> int:
+                half = len(data) // 2
+                written = real_write(data[:half])
+                handle.flush()
+                a_paused.set()
+                assert b_done.wait(timeout=5), "writer b did not finish in time"
+                written += real_write(data[half:])
+                handle.flush()
+                return written
+
+            handle.write = _paced_write
+            return handle
+
+        def _writer_a() -> None:
+            try:
+                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
+                    _save_training_config(
+                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_a
+                    )
+            except BaseException as exc:
+                errors.append(exc)
+
+        def _writer_b() -> None:
+            try:
+                assert a_paused.wait(timeout=5), "writer a did not pause in time"
+                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
+                    _save_training_config(
+                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_b
+                    )
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                b_done.set()
+
+        thread_a = threading.Thread(target=_writer_a, name="writer-a")
+        thread_b = threading.Thread(target=_writer_b, name="writer-b")
+        thread_a.start()
+        thread_b.start()
+        thread_a.join(timeout=10)
+        thread_b.join(timeout=10)
+
+        assert not thread_a.is_alive(), "writer a did not finish in time"
+        assert not thread_b.is_alive(), "writer b did not finish in time"
+        assert not errors
+        on_disk = _read_training_config(str(config_path))
+        assert on_disk["class_names"] in (payload_a, payload_b)
 
     def test_training_config_json_written_before_the_model_is_built(
         self, tmp_path: Path, patch_lit: tuple[Any, ...]

@@ -5,6 +5,9 @@
 # ------------------------------------------------------------------------
 """Tests for distributed utility helpers."""
 
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +15,44 @@ import torch
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from rfdetr.utilities.distributed import all_gather, is_launcher_main_process
+
+_RANK_ENV_VARS = (
+    "RANK",
+    "LOCAL_RANK",
+    "NODE_RANK",
+    "SLURM_PROCID",
+    "JSM_NAMESPACE_RANK",
+    "OMPI_COMM_WORLD_RANK",
+    "PMI_RANK",
+)
+
+
+def _minimal_subprocess_env() -> dict[str, str]:
+    """Build a bare interpreter environment with every launcher rank variable removed.
+
+    Keeps only what a child ``python -c`` process needs to import ``rfdetr`` and ``pytorch_lightning`` from the
+    active virtualenv -- ``PATH``, ``PYTHONPATH``, ``VIRTUAL_ENV``, ``HOME``, ``TMPDIR``, and (on Windows)
+    ``SYSTEMROOT`` -- then strips every rank/launcher variable ``is_launcher_main_process`` or Lightning's own
+    rank resolution reads, so each subprocess probe starts from a known-clean baseline before its case applies
+    its own variables on top.
+
+    Returns:
+        A fresh environment mapping, safe for a caller to mutate per test case.
+
+    Examples:
+        >>> env = _minimal_subprocess_env()
+        >>> "PATH" in env
+        True
+        >>> "RANK" in env
+        False
+    """
+    keep = {"PATH", "PYTHONPATH", "VIRTUAL_ENV", "HOME", "TMPDIR"}
+    if sys.platform == "win32":
+        keep |= {"SYSTEMROOT", "SystemRoot"}
+    env = {key: value for key, value in os.environ.items() if key in keep}
+    for rank_var in _RANK_ENV_VARS:
+        env.pop(rank_var, None)
+    return env
 
 
 def _fake_all_gather(output_tensors, input_tensor) -> None:
@@ -30,23 +71,88 @@ def _fake_all_gather(output_tensors, input_tensor) -> None:
 class TestIsLauncherMainProcess:
     """is_launcher_main_process() answers from the launcher's environment, before torch.distributed exists."""
 
-    def test_true_on_rank_zero_of_node_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """An ordinary single-process run is the one that writes."""
-        monkeypatch.setattr(rank_zero_only, "rank", 0)
-        monkeypatch.delenv("NODE_RANK", raising=False)
-        assert is_launcher_main_process() is True
+    @pytest.mark.parametrize(
+        ("rank", "node_rank", "expected"),
+        [
+            pytest.param(0, None, True, id="rank-zero-node-zero"),
+            pytest.param(1, None, False, id="off-rank-zero"),
+            pytest.param(0, "1", False, id="rank-zero-secondary-node"),
+        ],
+    )
+    def test_combines_resolved_rank_with_node_rank(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        rank: int,
+        node_rank: str | None,
+        expected: bool,
+    ) -> None:
+        """The guard is True only when both the resolved rank and NODE_RANK say "main".
 
-    def test_false_off_rank_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Whichever variable the launcher set, Lightning has already folded it into rank_zero_only.rank."""
-        monkeypatch.setattr(rank_zero_only, "rank", 1)
-        monkeypatch.delenv("NODE_RANK", raising=False)
-        assert is_launcher_main_process() is False
+        An ordinary single-process run (rank 0, no NODE_RANK) is the one that writes. Any process off rank 0 does not,
+        regardless of which launcher variable Lightning folded into rank_zero_only.rank. NODE_RANK is consulted
+        separately from that resolved rank because Lightning's own subprocess launcher leaves LOCAL_RANK at 0 on every
+        node of a multi-node run, so without the separate check one process per node would pass.
+        """
+        monkeypatch.setattr(rank_zero_only, "rank", rank)
+        if node_rank is None:
+            monkeypatch.delenv("NODE_RANK", raising=False)
+        else:
+            monkeypatch.setenv("NODE_RANK", node_rank)
 
-    def test_false_on_a_secondary_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """NODE_RANK is consulted separately: Lightning's launcher leaves LOCAL_RANK at 0 on every node."""
-        monkeypatch.setattr(rank_zero_only, "rank", 0)
-        monkeypatch.setenv("NODE_RANK", "1")
-        assert is_launcher_main_process() is False
+        assert is_launcher_main_process() is expected
+
+
+class TestIsLauncherMainProcessEnvPrecedence:
+    """is_launcher_main_process(), probed via real subprocesses, honors Lightning's env-var precedence.
+
+    ``TestIsLauncherMainProcess`` monkeypatches ``rank_zero_only.rank`` directly, so it never exercises the
+    ``RANK`` > ``LOCAL_RANK`` > ``SLURM_PROCID`` > ``JSM_NAMESPACE_RANK`` resolution order Lightning applies once,
+    at first import of ``pytorch_lightning.utilities.rank_zero`` -- nor the guard's own handling of
+    ``LOCAL_RANK``/``OMPI_COMM_WORLD_RANK``/``PMI_RANK``. A fresh subprocess per case is the only way to observe
+    that resolution honestly, since a single process can only resolve it once.
+    """
+
+    @pytest.mark.parametrize(
+        ("env_vars", "expected"),
+        [
+            pytest.param({}, True, id="no-launcher-vars-present"),
+            pytest.param({"LOCAL_RANK": "1"}, False, id="local-rank-nonzero"),
+            pytest.param({"SLURM_PROCID": "1"}, False, id="slurm-procid-nonzero"),
+            pytest.param({"RANK": "0", "NODE_RANK": "1"}, False, id="rank-zero-secondary-node"),
+            pytest.param({"SLURM_PROCID": "0", "LOCAL_RANK": "1"}, False, id="local-rank-precedes-slurm-procid"),
+            pytest.param({"RANK": "0", "LOCAL_RANK": "1"}, False, id="rank-zero-but-local-rank-nonzero"),
+            pytest.param({"RANK": "1"}, False, id="rank-nonzero"),
+            pytest.param({"JSM_NAMESPACE_RANK": "1"}, False, id="jsm-namespace-rank-nonzero"),
+            pytest.param({"OMPI_COMM_WORLD_RANK": "1"}, False, id="ompi-comm-world-rank-nonzero"),
+            pytest.param({"PMI_RANK": "1"}, False, id="pmi-rank-nonzero"),
+            pytest.param({"NODE_RANK": "0", "LOCAL_RANK": "0"}, True, id="node-rank-zero-local-rank-zero"),
+        ],
+    )
+    def test_answers_from_a_fresh_process_env(self, env_vars: dict[str, str], expected: bool) -> None:
+        """A fresh interpreter resolves the launcher's rank the same way a real launched process would.
+
+        Each case starts a subprocess from a minimal, rank-var-stripped environment (see ``_minimal_subprocess_env``),
+        applies only its own launcher variables, imports ``rfdetr.utilities.distributed`` fresh so
+        ``rank_zero_only.rank`` is resolved from exactly that environment rather than carried over from this test
+        process or an earlier case, and prints ``is_launcher_main_process()``. The ``rank-zero-but-local-rank-nonzero``,
+        ``ompi-comm-world-rank-nonzero``, and ``pmi-rank-nonzero`` cases pin the guard's target contract -- requiring
+        ``LOCAL_RANK`` in ``{unset, "0"}`` and rejecting a nonzero ``OMPI_COMM_WORLD_RANK``/``PMI_RANK`` -- and fail
+        until that guard change lands in ``is_launcher_main_process``.
+        """
+        pytest.importorskip("pytorch_lightning")
+        env = _minimal_subprocess_env()
+        env.update(env_vars)
+        code = "import rfdetr.utilities.distributed as d; print(d.is_launcher_main_process())"
+
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        assert result.stdout.strip() == str(expected), result.stderr
 
 
 def test_all_gather_supports_cpu_without_tensor_truthiness_error() -> None:
