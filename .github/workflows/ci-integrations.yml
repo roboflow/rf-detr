@@ -160,9 +160,72 @@ jobs:
         # Real ct.convert + mlmodel.predict + download_assets is heavy/network; single-worker,
         # opt-in marker (see pyproject.toml `e2e_coreml`) — the class also carries the shared
         # `integration` marker, excluded by ci-tests-cpu.yml (`and not integration`).
+        # test_coreml_ane.py runs here for the conversion and load coverage it shares with the rest:
+        # its Neural Engine assertions need a host that exposes one, which a virtualized runner does
+        # not, so those either pass trivially or skip (see that file's module docstring).
         run: |
-          uv run --no-sync pytest tests/export/test_coreml_export.py \
+          uv run --no-sync pytest tests/export/test_coreml_export.py tests/export/test_coreml_ane.py \
             -m e2e_coreml -n 1 \
+            --timeout=600 \
+            --durations=20
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
+  executorch-coreml-parity:
+    name: ExecuTorch CoreML parity
+    # The CoreML delegate lowers through coremltools and runs through Core ML itself, so unlike the
+    # portable XNNPACK parity job (ubuntu) this one needs macOS. [coreml] resolves together with
+    # [executorch] in a single install: the extra carries no torch cap (dropped in #1487) and pyproject
+    # declares no conflict between the two. Pulling coremltools through the extra rather than pinning it
+    # here keeps pyproject.toml its single owner — ci-deps-resolution.yml derives its checked set from
+    # [project.optional-dependencies], so a version range written into this workflow would be invisible
+    # to it and a breaking coremltools release would surface only as a failure of this job.
+    runs-on: macos-latest
+    concurrency:
+      group: pytest-executorch-coreml-${{ matrix.python-version }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # One interpreter: this job exists for the delegate, which the executorch-parity matrix above
+        # already brackets for the Python range. 3.13 is the ceiling executorch 1.3.1 ships wheels for.
+        python-version: ["3.13"]
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: ${{ matrix.python-version }}
+          activate-environment: true
+
+      - name: 🚀 Install Packages (executorch + coreml extras)
+        timeout-minutes: 10
+        run: |
+          uv pip install -e ".[executorch,coreml,train,augment,cli,visual]" --group tests --group ci-executorch-pin
+
+      - name: 🔎 Verify executorch runtime and coremltools import
+        # Guard against a silently-skipped test: the class is gated on executorch, coremltools and macOS,
+        # so a missing wheel would skip it (false green) instead of failing red.
+        run: |
+          from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+          from rfdetr.export._executorch.exporter import _check_executorch_available
+
+          _check_executorch_available(require_runtime=True)
+          assert _IS_EXECUTORCH_AVAILABLE, "executorch installed but not detected as available"
+          import coremltools  # noqa: F401
+
+          print("executorch runtime + coremltools import OK")
+        shell: python
+
+      - name: 🧪 Run ExecuTorch CoreML delegate tests
+        run: |
+          uv run --no-sync pytest . -m e2e_executorch -n 1 \
             --timeout=600 \
             --durations=20
 
@@ -500,22 +563,33 @@ jobs:
 
   export-priority-guardian:
     runs-on: ubuntu-latest
-    needs: [executorch-parity, coreml-parity, openvino-parity, tensorrt-parity, litert-parity, onnxruntime-session]
+    needs:
+      [
+        executorch-parity,
+        executorch-coreml-parity,
+        coreml-parity,
+        openvino-parity,
+        tensorrt-parity,
+        litert-parity,
+        onnxruntime-session,
+      ]
     if: always()
     steps:
       - name: 📋 Display export job results
         run: |
-          echo "executorch-parity:   ${{ needs.executorch-parity.result }}"
-          echo "coreml-parity:       ${{ needs.coreml-parity.result }}"
-          echo "openvino-parity:     ${{ needs.openvino-parity.result }}"
-          echo "tensorrt-parity:     ${{ needs.tensorrt-parity.result }}"
-          echo "litert-parity:       ${{ needs.litert-parity.result }}"
-          echo "onnxruntime-session: ${{ needs.onnxruntime-session.result }}"
+          echo "executorch-parity:        ${{ needs.executorch-parity.result }}"
+          echo "executorch-coreml-parity: ${{ needs.executorch-coreml-parity.result }}"
+          echo "coreml-parity:            ${{ needs.coreml-parity.result }}"
+          echo "openvino-parity:          ${{ needs.openvino-parity.result }}"
+          echo "tensorrt-parity:          ${{ needs.tensorrt-parity.result }}"
+          echo "litert-parity:            ${{ needs.litert-parity.result }}"
+          echo "onnxruntime-session:      ${{ needs.onnxruntime-session.result }}"
       # Fail explicitly on any non-success result (failure, cancelled, or skipped) instead of
       # relying on timeout behavior, so a cancelled or skipped export job still blocks the gate.
       - name: ❌ Fail guardian unless every export job succeeded
         if: >-
           needs.executorch-parity.result != 'success' ||
+          needs.executorch-coreml-parity.result != 'success' ||
           needs.coreml-parity.result != 'success' ||
           needs.openvino-parity.result != 'success' ||
           needs.tensorrt-parity.result != 'success' ||
@@ -525,4 +599,4 @@ jobs:
           echo "One or more export jobs did not succeed; failing explicitly."
           exit 1
       - name: ✅ all export jobs succeeded
-        run: echo "All export jobs (executorch/coreml/openvino/tensorrt/litert parity, onnxruntime session) completed successfully."
+        run: echo "All export jobs (executorch, executorch-coreml, coreml, openvino, tensorrt, litert parity, onnxruntime session) completed successfully."

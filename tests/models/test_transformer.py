@@ -1400,6 +1400,66 @@ def test_two_stage_topk_gather_selects_correct_rows_out_of_position_order(monkey
     assert torch.equal(boxes_ts, expected_coord)
 
 
+def test_two_stage_topk_gather_reads_pre_norm_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The eval-path two-stage gather must read ``enc_output``'s output, never ``enc_output_norm``'s.
+
+    Regression for an Apple Neural Engine compile failure: in an fp16 CoreML export, an ``enc_output_norm``
+    output that feeds the ANE-resident class head and also crosses to the CPU-resident ``topk``-indexed gather
+    makes the ANE compiler reject the whole program ("Invalid layer") when that norm still has its identity
+    affine and the encoder token count is a multiple of 32. The model then runs entirely on CPU, or fails to
+    load with ``ComputeUnit.ALL``. Trained checkpoints have a non-identity affine and are unaffected, so this
+    reaches models exported before training — the export tests among them. Gathering the pre-norm rows and
+    normalizing only the selected tokens is exact, because LayerNorm acts per token; the selected rows
+    themselves are pinned by ``test_two_stage_topk_gather_selects_correct_rows_out_of_position_order``.
+    """
+    hidden_dim, num_queries, feature_size = 16, 3, 4
+    num_tokens = feature_size * feature_size
+    srcs = [torch.randn(1, hidden_dim, feature_size, feature_size)]
+    masks = [torch.zeros(1, feature_size, feature_size, dtype=torch.bool)]
+    pos_embeds = [torch.randn(1, hidden_dim, feature_size, feature_size)]
+    transformer = Transformer(
+        d_model=hidden_dim,
+        num_queries=num_queries,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=1,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        bbox_reparam=False,
+        group_detr=1,
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(hidden_dim, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(hidden_dim, 4)])
+
+    norm_outputs: list[torch.Tensor] = []
+    transformer.enc_output_norm[0].register_forward_hook(lambda _m, _i, out: norm_outputs.append(out))
+    gather_inputs: list[torch.Tensor] = []
+    original_gather = torch.gather
+
+    def _tracking_gather(input: torch.Tensor, dim: int, index: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        gather_inputs.append(input)
+        return original_gather(input, dim, index, **kwargs)
+
+    monkeypatch.setattr(torch, "gather", _tracking_gather)
+
+    transformer.eval()
+    with torch.no_grad():
+        transformer(srcs, masks, pos_embeds, torch.rand(num_queries, 4), torch.randn(num_queries, hidden_dim))
+
+    full_length_norm_outputs = [out for out in norm_outputs if out.shape[1] == num_tokens]
+    assert full_length_norm_outputs, "expected enc_output_norm to run over every encoder position"
+    assert gather_inputs, "expected torch.gather to be called during the two-stage top-k selection"
+    norm_storages = {out.untyped_storage().data_ptr() for out in full_length_norm_outputs}
+    # Compare storage, not identity, so a view of the norm output (reshape/slice/expand) is caught as well.
+    assert not any(inp.untyped_storage().data_ptr() in norm_storages for inp in gather_inputs), (
+        "the two-stage gather reads enc_output_norm's output; gather the pre-norm enc_output rows and "
+        "normalize the selected tokens instead (fp16 CoreML ANE compile failure)"
+    )
+
+
 def _make_out_of_order_scores(total_hw: int, picks: list[int]) -> torch.Tensor:
     """Build batch=1 per-position class scores with `picks` as the strictly descending top-k winners.
 

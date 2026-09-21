@@ -459,9 +459,9 @@ class Transformer(nn.Module):
         per-group launch count to a constant.
 
         Only called for ``group_detr > 1``, which the caller (:meth:`forward`) only reaches while
-        training; eval/export always pass ``group_detr=1`` and use the original single-group code path,
-        so this method never touches ONNX/TorchScript tracing (#1155) or ``torch.compile`` export
-        graphs recorded in eval mode.
+        training -- the ``assert self.training`` below enforces that mechanically. Eval/export always
+        pass ``group_detr=1`` and use the original single-group code path, so this method never touches
+        ONNX/TorchScript tracing (#1155) or ``torch.compile`` export graphs recorded in eval mode.
 
         The batched GEMMs can use a different accumulation order than separate calls. The paths match
         within float32 tolerance at real model scale, but under bf16/fp16 a near-tied class score can
@@ -481,6 +481,12 @@ class Transformer(nn.Module):
             1's, ...). ``cls_ts`` is ``enc_out_class_embed``'s output at the same selected positions,
             gathered from the ranking pass rather than recomputed by the caller.
         """
+        # Training-only by contract, and the contract is load-bearing: the eval/export loop in forward
+        # gathers the pre-norm rows so an fp16 CoreML program keeps its Neural Engine placement, while
+        # this path norms the full length and gathers post-norm. An eval or exported graph routed here
+        # would still produce correct numbers, so nothing would fail -- the model would just silently
+        # lose the ANE and fall back to CPU. Assert instead of trusting the caller's guard.
+        assert self.training
         assert self.enc_out_class_embed is not None
         assert self.enc_out_bbox_embed is not None
         bs = output_memory.shape[0]
@@ -568,6 +574,22 @@ class Transformer(nn.Module):
         query_feat: Tensor,
         cross_attn_srcs: Sequence[Tensor] | None = None,
     ) -> tuple[Tensor | None, ...]:
+        """Flatten the multi-scale features, run the two-stage query selection, then the decoder.
+
+        Args:
+            srcs: Per-level feature maps, each ``(bs, d_model, h, w)``.
+            masks: Per-level padding masks, each ``(bs, h, w)``, or ``None`` for unpadded input.
+            pos_embeds: Per-level positional embeddings matching ``srcs``.
+            refpoint_embed: Learned reference points, ``(num_queries * group_detr, 4)``.
+            query_feat: Learned query features, ``(num_queries * group_detr, d_model)``.
+            cross_attn_srcs: Optional separate feature maps for decoder cross-attention.
+
+        Returns:
+            ``(hs, references, memory_ts, boxes_ts)``, followed by ``(keypoint_hs, enc_kp_predictions,
+            keypoint_memory_ts)`` when grouped-pose keypoints are enabled, and always ending with ``cls_ts``.
+            The two-stage entries are ``None`` when ``two_stage`` is off; ``hs``/``references`` are ``None``
+            without a decoder.
+        """
         src_flatten = []
         mask_flatten_parts: list[Tensor] | None = [] if masks is not None else None
         lvl_pos_embed_flatten_parts = []
@@ -676,7 +698,8 @@ class Transformer(nn.Module):
             else:
                 refpoint_embed_ts_parts, memory_ts_parts, boxes_ts_parts = [], [], []
                 for g_idx in range(group_detr):
-                    output_memory_gidx = self.enc_output_norm[g_idx](self.enc_output[g_idx](output_memory))
+                    output_memory_prenorm_gidx = self.enc_output[g_idx](output_memory)
+                    output_memory_gidx = self.enc_output_norm[g_idx](output_memory_prenorm_gidx)
 
                     enc_outputs_class_unselected_gidx = self.enc_out_class_embed[g_idx](output_memory_gidx)
                     topk = min(self.num_queries, enc_outputs_class_unselected_gidx.shape[-2])
@@ -684,9 +707,22 @@ class Transformer(nn.Module):
                         1
                     ]  # bs, nq
 
-                    # get memory tgt
-                    tgt_undetach_gidx = torch.gather(
-                        output_memory_gidx, 1, topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, self.d_model)
+                    # get memory tgt. LayerNorm acts per token, so gathering the pre-norm rows and normalizing
+                    # only the selected ones is mathematically the same as gathering the normalized rows. It
+                    # also keeps the full-length norm output from crossing into the CPU-resident topk/gather.
+                    # That crossing makes Apple's Neural Engine compiler reject a whole fp16 CoreML program
+                    # ("Invalid layer") when enc_output_norm still has its identity affine (weight all ones,
+                    # bias all zeros) and the token count is a multiple of 32. This reordering relies on
+                    # enc_output_norm being token-pointwise, like the box-MLP reordering below; a cross-token
+                    # norm must gather after.
+                    # _two_stage_group_selection still gathers post-norm: it runs only while training, and export
+                    # always takes this loop, so no exported graph reaches the ANE through that path.
+                    tgt_undetach_gidx = self.enc_output_norm[g_idx](
+                        torch.gather(
+                            output_memory_prenorm_gidx,
+                            1,
+                            topk_proposals_gidx.unsqueeze(-1).expand(-1, -1, self.d_model),
+                        )
                     )
                     # Ranking needs every position's class score, but the box MLP is a pointwise (no
                     # cross-token mixing) transform of a single token's features -- gather the selected

@@ -92,7 +92,7 @@ The `export()` method accepts several parameters to customize the export process
 | `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `fp16`               | `True`     | Build the TensorRT engine with FP16 precision (only used when `format="tensorrt"`). TensorRT 11+ removed the FP16 builder flag, so there the engine is built from an FP16-cast graph instead; engine inputs and outputs stay FP32 either way. On strongly typed TensorRT (11+), this graph cast requires `onnx`/`onnxconverter-common` — install `rfdetr[tensorrt]` for the complete set, or export raises `ImportError`. A lean/partial TensorRT < 11 wheel lacking the FP16 builder flag falls back to an FP32 engine with a warning instead. Pass `False` for an FP32 engine. |
 | `notes`              | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property.                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `coreml_precision`   | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (smaller, ANE-oriented bundle). Ignored for every other format.                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `coreml_precision`   | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (half the size, and the only precision the Apple Neural Engine runs — at a measured accuracy cost, see [Neural Engine, compute units, and the fallback boundary](#neural-engine-compute-units-and-the-fallback-boundary)). Ignored for every other format.                                                                                                                                                                                                      |
 | `openvino_precision` | `None`     | IR *storage* weight precision for `format="openvino"`: `None`/`"float16"` (OpenVINO's default FP16 weight compression) or `"float32"` (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename.                                                                                                                                                                                                                          |
 | `output_name`        | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_{backend}` detail suffix — see [Output Files](#output-files).                                                                                                                                                                                                                                                                                                                                                                                    |
 
@@ -679,9 +679,13 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="executorch", backend="coreml")
 ```
 
+RF-DETR's graph lowers to a **single** CoreML delegate — no operator is left behind on ExecuTorch's portable CPU kernels — so the `.pte` carries one Core ML model, and the Neural Engine is reachable through it. The compute units are not baked in; the app that loads the `.pte` chooses them, exactly as for a native `.mlpackage`.
+
+Measured on a pretrained `RFDETRNano` (Apple M3 Pro, macOS 27.0, COCO val2017, all 5000 images), this delegate keeps more accuracy than a native fp16 `.mlpackage`: 48.0 mAP against 45.1, at 14.0 ms against 20.8 ms. Both run their arithmetic in fp16, but the native export also stores the weights in fp16, and that is what costs the accuracy.
+
 !!! note
 
-    CoreML export uses fp16 arithmetic. Confident top-level detections (bounding boxes and class labels) carry over, but raw tensor values will differ from the PyTorch fp32 baseline — at the fp16 precision level, and through the two-stage query ranking described under [Native CoreML Export](#native-coreml-export-mlpackage), which fp16 makes more likely to diverge rather than less.
+    CoreML export uses fp16 arithmetic. Top-level detections (bounding boxes and class labels) are correct, but raw tensor values will differ from the PyTorch fp32 baseline — at the fp16 precision level, and through the two-stage query ranking described under [Native CoreML Export](#native-coreml-export-mlpackage), which fp16 makes more likely to diverge rather than less. For what fp16 costs in mAP, and for how Core ML splits the model across the ANE, GPU and CPU, see [Neural Engine, compute units, and the fallback boundary](#neural-engine-compute-units-and-the-fallback-boundary).
 
 ### QNN Backend (Qualcomm Snapdragon HTP, fp16)
 
@@ -788,7 +792,7 @@ This produces `output/rfdetr-medium_fp32.mlpackage` — the file is named after 
 
 ### Compute Precision
 
-CoreML export defaults to `FLOAT32` for tight CPU parity with eager PyTorch. Pass `coreml_precision="float16"` for a smaller, ANE-oriented bundle (expect larger numeric drift) — this also changes the output filename to `output/rfdetr-medium_fp16.mlpackage`:
+CoreML export defaults to `FLOAT32` for tight CPU parity with eager PyTorch. Pass `coreml_precision="float16"` for a bundle half the size that Core ML can schedule onto the Neural Engine — this also changes the output filename to `output/rfdetr-medium_fp16.mlpackage`:
 
 ```python
 model.export(format="coreml", coreml_precision="float16")
@@ -825,10 +829,77 @@ image_tensor = F.normalize(image_tensor, mean, std)
 
 image_array = image_tensor.unsqueeze(0).numpy()  # add batch dimension: (1, 3, H, W)
 
+# The input name is coremltools-inferred (currently "tensors"), so read it from the spec
+# rather than hard-coding it.
+input_name = mlmodel.get_spec().description.input[0].name
+
 # Outputs are positional (see the precision note above) — dets, labels, in that order.
-outputs = list(mlmodel.predict({"input": image_array.astype(np.float32)}).values())
+predictions = mlmodel.predict({input_name: image_array.astype(np.float32)})
+outputs = [predictions[output.name] for output in mlmodel.get_spec().description.output]
 boxes, labels = outputs[0], outputs[1]
 ```
+
+### Neural Engine, Compute Units, and the Fallback Boundary
+
+Core ML decides at **load time** which of the CPU, GPU and Apple Neural Engine (ANE) runs each part of the model. That choice is not stored in the `.mlpackage` — `MLModel` defaults to `ComputeUnit.ALL` every time it is loaded — so it is the caller's to make:
+
+=== "Python"
+
+    ```python
+    import coremltools as ct
+
+    mlmodel = ct.models.MLModel(
+        "output/rfdetr-small_fp16.mlpackage",
+        compute_units=ct.ComputeUnit.CPU_AND_NE,
+    )
+    ```
+
+=== "Swift"
+
+    ```swift
+    let configuration = MLModelConfiguration()
+    configuration.computeUnits = .cpuAndNeuralEngine
+    let model = try MLModel(contentsOf: url, configuration: configuration)
+    ```
+
+**Precision decides whether the ANE is reachable at all.** The ANE has no fp32 path, so an fp32 bundle never touches it — `CPU_AND_NE` then measures the same as `CPU_ONLY`. Only `coreml_precision="float16"` puts the model on the ANE.
+
+Single-image latency, pretrained `RFDETRNano` at 384x384, Apple M3 Pro (macOS 27.0, coremltools 9.0), batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:
+
+| Precision | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL` |
+| --------- | ---------- | ------------ | ------------- | ----- |
+| fp32      | 73.6       | 73.6         | **34.0**      | 33.7  |
+| fp16      | 44.5       | **20.8**     | 33.9          | 21.2  |
+
+So: **fp32 belongs on the GPU, fp16 on the ANE.** Loading an fp16 bundle with `CPU_AND_NE` is about 2.1x faster than CPU and about 1.6x faster than the GPU on this machine.
+
+The ANE pays for that at load: compiling an fp16 RFDETRNano for it takes about 5 s on first load, against about 0.5 s for the GPU or CPU path (subsequent loads of the same bundle are cached by the system). For a process that runs a handful of images and exits, the GPU is the better trade.
+
+**fp16 costs accuracy.** On COCO val2017 (all 5000 images, pretrained `RFDETRNano`, same decoding for both):
+
+| Precision | mAP@[.5:.95] | mAP@.5 |
+| --------- | ------------ | ------ |
+| fp32      | 48.0         | 67.1   |
+| fp16      | 45.1         | 65.8   |
+
+Confident detections survive fp16 — the same objects with the same classes — but the rest of the ranking shifts enough to move mAP by about 3 points. Validate an fp16 bundle on your own data before shipping it.
+
+**The fallback boundary, at fp16.** An fp16 RF-DETR graph is almost entirely ANE-eligible. The exceptions are the two-stage query selection — `topk`, and the `expand_dims`/`tile`/`gather_along_axis` that consume its indices — which Core ML runs on the CPU. Measured with `MLComputePlan` under `CPU_AND_NE`:
+
+| Model           | Ops on ANE | Ops on CPU | Share of estimated work on the ANE |
+| --------------- | ---------- | ---------- | ---------------------------------- |
+| `RFDETRNano`    | 592        | 7          | 99.9%                              |
+| `RFDETRSmall`   | 650        | 8          | 99.9%                              |
+| `RFDETRMedium`  | 708        | 8          | 99.9%                              |
+| `RFDETRSegNano` | 729        | 8          | 99.9%                              |
+
+Those seven or eight ops are the whole boundary, and they cost about 0.1% of the model's estimated work.
+
+At fp32 there is no boundary to speak of, because there is no ANE: the plan reports *every* op as ANE-unsupported, and the same RFDETRNano bundle runs all 599 ops on the GPU under `ALL` and all 599 on the CPU under `CPU_AND_NE`.
+
+**`ALL` is not always the fastest choice.** With `ALL`, Core ML is free to put part of the graph on the GPU, and for `RFDETRSegNano` it does: the plan splits 79% ANE / 21% GPU, and the transfers between them cost real time — 34.5 ms under `ALL` against 23.5 ms under `CPU_AND_NE` (p50, same methodology as the table above). Detection models are unaffected; their plan is the same under both. Measure both on your target device rather than assuming the default is best.
+
+The [ExecuTorch CoreML delegate](#coreml-backend-apple-neural-engine-fp16) lowers RF-DETR to a single Core ML model inside the `.pte`, and that model does reach the Neural Engine. Its internal split is not measurable with `MLComputePlan`, which needs an `.mlpackage`, so the table above is not a statement about the `.pte`.
 
 ## How Export Works
 
