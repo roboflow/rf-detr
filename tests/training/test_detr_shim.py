@@ -298,33 +298,21 @@ class TestRFDETRTrainPTL:
         assert mock_self.model.args.dataset_dir == str(tmp_path / "ds")
         assert mock_self.model.args.output_dir == str(tmp_path / "out")
 
-    def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
-        """Device='cpu' is consumed without a DeprecationWarning."""
+    @pytest.mark.parametrize(
+        "device",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("cuda", id="cuda"),
+            pytest.param(torch.device("cuda:1"), id="torch-device-cuda-index"),
+        ],
+    )
+    def test_device_kwarg_consumed_without_deprecation_warning(self, tmp_path, patch_lit, device: str | torch.device):
+        """Device= (string or torch.device) is consumed without a DeprecationWarning or reaching get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            RFDETR.train(mock_self, device="cpu")
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-        mock_self.get_train_config.assert_called_once_with()
-
-    def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path, patch_lit):
-        """Device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, device="cuda")
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-        mock_self.get_train_config.assert_called_once_with()
-
-    def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path, patch_lit):
-        """torch.device('cuda:1') is mapped to accelerator='gpu' and devices=[1]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, device=torch.device("cuda:1"))
+            RFDETR.train(mock_self, device=device)
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
@@ -416,61 +404,29 @@ class TestRFDETRTrainPTL:
 class TestRFDETRTrainPTLAbsorption:
     """RFDETR.train() absorbs legacy kwargs and routes through PTL build_trainer()."""
 
-    def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path, patch_lit):
-        """Device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
+    @pytest.mark.parametrize(
+        "device, expected_kwargs",
+        [
+            pytest.param("cpu", {"accelerator": "cpu"}, id="cpu"),
+            pytest.param("cuda", {"accelerator": "gpu"}, id="cuda"),
+            pytest.param("cuda:1", {"accelerator": "gpu", "devices": [1]}, id="cuda-index"),
+            pytest.param(torch.device("cuda:2"), {"accelerator": "gpu", "devices": [2]}, id="torch-device-cuda-index"),
+            pytest.param("xla", {"accelerator": "tpu"}, id="xla"),
+            pytest.param(torch.device("xla:0"), {"accelerator": "tpu", "devices": [0]}, id="torch-device-xla-index"),
+        ],
+    )
+    def test_device_absorbed_as_accelerator_and_devices_kwargs(
+        self, tmp_path, patch_lit, device: str | torch.device, expected_kwargs: dict[str, object]
+    ):
+        """Device= (string or torch.device, with or without an index) is absorbed and forwarded to build_trainer as the
+        matching accelerator= (and, when indexed, devices=) kwargs -- and no others, since assert_called_once_with is
+        exact on kwargs."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="cpu")
+            RFDETR.train(mock_self, device=device)
         config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
-
-    def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path, patch_lit):
-        """Device='cuda' forwards accelerator='gpu' without a devices kwarg."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="cuda")
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu")
-        assert "devices" not in mock_bt.call_args.kwargs
-
-    def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
-        """Device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="cuda:1")
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[1])
-
-    def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
-        """device=torch.device('cuda:2') forwards accelerator='gpu' and devices=[2]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device=torch.device("cuda:2"))
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
-
-    def test_device_xla_absorbed_as_accelerator_tpu(self, tmp_path, patch_lit):
-        """Device='xla' forwards accelerator='tpu' -- PTL's canonical name for the XLA backend."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="xla")
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu")
-        assert "devices" not in mock_bt.call_args.kwargs
-
-    def test_device_torch_device_xla_index_absorbed_as_accelerator_tpu_devices_list(self, tmp_path, patch_lit):
-        """device=torch.device('xla:0') forwards accelerator='tpu' and devices=[0]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device=torch.device("xla:0"))
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu", devices=[0])
+        mock_bt.assert_called_once_with(config, mock_self.model_config, **expected_kwargs)
 
     def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path, patch_lit):
         """Invalid device strings raise a ValueError with the train() device hint."""
@@ -801,38 +757,26 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["legacy_checkpoint_format"] is True
 
-    def test_args_as_namespace_converted_to_dict(self, tmp_path, patch_lit):
-        """argparse.Namespace args are converted to a plain dict via vars()."""
-        src = _make_legacy_pth(tmp_path, args_value="namespace")
+    @pytest.mark.parametrize(
+        "args_value, expected_hyper_parameters",
+        [
+            pytest.param("namespace", {"lr": pytest.approx(1e-4), "epochs": 100}, id="namespace-converted-via-vars"),
+            pytest.param("dict", {"lr": pytest.approx(1e-4), "epochs": 100}, id="dict-kept-as-dict"),
+            pytest.param(None, {}, id="none-gives-empty"),
+            pytest.param("missing", {}, id="missing-key-gives-empty"),
+        ],
+    )
+    def test_args_converted_to_hyper_parameters(
+        self, tmp_path, patch_lit, args_value: str | None, expected_hyper_parameters: dict[str, object]
+    ):
+        """convert_legacy_checkpoint() normalizes source 'args' into hyper_parameters: an argparse.Namespace is
+        converted via vars(), a dict is kept as-is, and a None or altogether-missing 'args' key produces an empty
+        dict."""
+        src = _make_legacy_pth(tmp_path, args_value=args_value)
         dst = str(tmp_path / "out.ckpt")
         convert_legacy_checkpoint(src, dst)
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert isinstance(ckpt["hyper_parameters"], dict)
-        assert ckpt["hyper_parameters"]["lr"] == pytest.approx(1e-4)
-
-    def test_args_as_dict_kept_as_dict(self, tmp_path, patch_lit):
-        """Plain dict args is preserved as-is."""
-        src = _make_legacy_pth(tmp_path, args_value="dict")
-        dst = str(tmp_path / "out.ckpt")
-        convert_legacy_checkpoint(src, dst)
-        ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert ckpt["hyper_parameters"] == {"lr": pytest.approx(1e-4), "epochs": 100}
-
-    def test_args_none_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
-        """Args=None produces an empty hyper_parameters dict."""
-        src = _make_legacy_pth(tmp_path, args_value=None)
-        dst = str(tmp_path / "out.ckpt")
-        convert_legacy_checkpoint(src, dst)
-        ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert ckpt["hyper_parameters"] == {}
-
-    def test_args_missing_key_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
-        """No 'args' key at all also produces empty hyper_parameters."""
-        src = _make_legacy_pth(tmp_path, args_value="missing")
-        dst = str(tmp_path / "out.ckpt")
-        convert_legacy_checkpoint(src, dst)
-        ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert ckpt["hyper_parameters"] == {}
+        assert ckpt["hyper_parameters"] == expected_hyper_parameters
 
     def test_args_custom_object_with_dict_converted_via_vars(self, tmp_path, patch_lit):
         """A custom object with __dict__ is converted via vars()."""
