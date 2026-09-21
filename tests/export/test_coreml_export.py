@@ -157,6 +157,48 @@ def _validate_coreml_vs_pytorch(
     )
 
 
+def _mil_op_types(spec: Any) -> set[str]:
+    """Return the distinct MIL operation types in *spec*'s active ``main`` block, nested blocks included.
+
+    Distinct types rather than a multiset: constant folding legitimately collapses a different number of
+    ``const``/``reshape`` nodes at different tensor sizes, while a type appearing on one side only is a lowering
+    route the other side never exercised. ``cond``/``while_loop`` carry their body in ``Operation.blocks``, so a
+    top-level-only walk would silently stop reporting once such an op appears.
+
+    Args:
+        spec: A CoreML ``Model`` protobuf (``coremltools.utils.load_spec``) holding an ``mlProgram``.
+
+    Returns:
+        Every ``Operation.type`` reachable from the ``main`` function's active block specialization. Empty when
+        *spec* holds no ``mlProgram``: protobuf message maps default-construct on lookup rather than raising, so
+        callers must treat an empty result as "traversal found nothing", not as "the graphs agree".
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> def op(type_, *blocks):
+        ...     return SimpleNamespace(type=type_, blocks=list(blocks))
+        >>> main = SimpleNamespace(
+        ...     opset="CoreML8",
+        ...     block_specializations={
+        ...         "CoreML8": SimpleNamespace(
+        ...             operations=[op("const"), op("cond", SimpleNamespace(operations=[op("linear")]))]
+        ...         ),
+        ...         "CoreML7": SimpleNamespace(operations=[op("matmul")]),
+        ...     },
+        ... )
+        >>> sorted(_mil_op_types(SimpleNamespace(mlProgram=SimpleNamespace(functions={"main": main}))))
+        ['cond', 'const', 'linear']
+    """
+    main = spec.mlProgram.functions["main"]
+    op_types: set[str] = set()
+    pending = list(main.block_specializations[main.opset].operations)
+    while pending:
+        operation = pending.pop()
+        op_types.add(operation.type)
+        pending.extend(nested_op for block in operation.blocks for nested_op in block.operations)
+    return op_types
+
+
 # ---------------------------------------------------------------------------
 # CoreMLExporter — unit / dependency behaviour
 # ---------------------------------------------------------------------------
@@ -492,6 +534,10 @@ def _two_stage_rank_margin(model: torch.nn.Module, example_input: torch.Tensor) 
     with mock.patch("torch.topk", wraps=torch.topk) as topk, torch.no_grad():
         model(example_input.clone())
     assert topk.call_count == 1, f"expected one two-stage torch.topk call, got {topk.call_count}"
+    assert len(topk.call_args.args) >= 2, (
+        "expected the two-stage torch.topk call to pass scores and k positionally, got "
+        f"args={topk.call_args.args!r} kwargs={topk.call_args.kwargs!r}"
+    )
     scores, k = topk.call_args.args[:2]
     top = scores.sort(dim=-1, descending=True).values[..., : k + 1]
     return float((top[..., :-1] - top[..., 1:]).min())
@@ -537,11 +583,20 @@ def people_walking_image_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS)
 def coreml_export(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> tuple[Any, torch.Tensor, Path, tuple[str, ...]]:
+) -> tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]:
     """Export RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview to a ``.mlpackage`` once per variant for e2e tests.
 
     Exports ``_COREML_E2E_NUM_QUERIES`` queries so the two-stage ranking is well separated (see the module-level
-    comment), and reseeds itself because it runs before the autouse per-test seed reset.
+    comment), and reseeds itself because it runs before the autouse per-test seed reset. The variant's class name
+    comes back with it so ``coreml_default_queries_export`` can depend on this fixture and inherit its
+    parametrization, rather than declaring the same ``params`` again and producing a cross product.
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``coremltools`` conversion, so it cannot run standalone.
+
+        >>> model_cls_name, model, example, mlpackage_path, output_labels = coreml_export  # doctest: +SKIP
+        >>> model_cls_name, example.shape[0], mlpackage_path.suffix, output_labels  # doctest: +SKIP
+        ('RFDETRNano', 1, '.mlpackage', ('boxes', 'logits'))
     """
     model_cls_name, output_labels = request.param
     model_cls = getattr(rfdetr, model_cls_name)
@@ -554,7 +609,7 @@ def coreml_export(
     model.export()
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
-    return model, example, Path(mlpackage_path), output_labels
+    return model_cls_name, model, example, Path(mlpackage_path), output_labels
 
 
 @pytest.fixture(scope="module")
@@ -575,16 +630,28 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     return reference_model, example, Path(mlpackage_path)
 
 
-@pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS)
+@pytest.fixture(scope="module")
 def coreml_default_queries_export(
-    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> tuple[torch.nn.Module, torch.Tensor, Path, tuple[str, ...]]:
+    coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]:
     """Export each e2e variant with its shipped query count, which ``coreml_export`` trades for a separated ranking.
 
     Those counts differ per variant (300 for detection, 100 for segmentation and keypoints), and the mask and keypoint
-    output shapes follow them, so every shipped graph is converted and run rather than only the detection one.
+    output shapes follow them, so every shipped graph is converted and run rather than only the detection one. Depends
+    on ``coreml_export`` for the variant *and* for its 5-query ``.mlpackage``, which the graph comparison below is
+    measured against.
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``coremltools`` conversion, so it cannot run standalone.
+
+        >>> model, example, mlpackage_path, few_queries_path, output_labels = (
+        ...     coreml_default_queries_export
+        ... )  # doctest: +SKIP
+        >>> mlpackage_path != few_queries_path, example.shape[0], output_labels  # doctest: +SKIP
+        (True, 1, ('boxes', 'logits'))
     """
-    model_cls_name, output_labels = request.param
+    model_cls_name, _, _, few_queries_path, output_labels = coreml_export
     out_dir = tmp_path_factory.mktemp(f"coreml_default_queries_{model_cls_name.lower()}")
     seed_all(_COREML_EXPORT_SEED)
     detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None)
@@ -593,7 +660,7 @@ def coreml_default_queries_export(
     model.export()
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
-    return model, example, Path(mlpackage_path), output_labels
+    return model, example, Path(mlpackage_path), few_queries_path, output_labels
 
 
 @coreml_only
@@ -602,9 +669,9 @@ def coreml_default_queries_export(
 class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
-    def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]]) -> None:
+    def test_mlpackage_written(self, coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]) -> None:
         """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision."""
-        _, _, mlpackage_path, _ = coreml_export
+        _, _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
         # Default compute_precision resolves to FLOAT32 (see the exporter module docstring); the filename must
         # always encode it, since precision materially changes the artifact.
@@ -612,20 +679,20 @@ class TestCoreMLEndToEnd:
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
     def test_outputs_match_pytorch_structured(
-        self, coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]]
+        self, coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]
     ) -> None:
         """CoreML output matches eager on structured (gradient+checkerboard) input."""
-        model, example, mlpackage_path, output_labels = coreml_export
+        _, model, example, mlpackage_path, output_labels = coreml_export
         _assert_well_conditioned(model, example)
         _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
 
     def test_outputs_match_pytorch_supervision_image(
         self,
-        coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]],
+        coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]],
         people_walking_image_path: Path,
     ) -> None:
         """CoreML output matches eager on ``ImageAssets.PEOPLE_WALKING``."""
-        model, structured, mlpackage_path, output_labels = coreml_export
+        _, model, structured, mlpackage_path, output_labels = coreml_export
         example = _parity_input_from_image(people_walking_image_path, int(structured.shape[-1]))
         _assert_well_conditioned(model, example)
         _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
@@ -642,20 +709,49 @@ class TestCoreMLEndToEnd:
         )
 
     def test_default_query_count_runs_with_eager_shapes(
-        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, tuple[str, ...]]
+        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]
     ) -> None:
         """The shipped-query-count export must run on CoreML with eager's output count, shapes and finite values.
 
         Values are deliberately not bounded here. At the shipped query count the untrained two-stage ranking always has
         near-ties, so a legitimate fp32 swap can move every output, and no value comparison is both tight and stable
-        (post-processed scores drift up to ~1e-3 on a swap). The graph is the same op for op as the 5-query
-        ``coreml_export`` one, which carries the strict 1e-4 value parity; this test covers what differs: the shipped
-        shapes.
+        (post-processed scores drift up to ~1e-3 on a swap). The strict 1e-4 value parity is carried by the 5-query
+        export; this test covers what the shipped graph adds on top of it: the shipped output shapes.
         """
-        model, example, mlpackage_path, output_labels = coreml_default_queries_export
+        model, example, mlpackage_path, _, output_labels = coreml_default_queries_export
         diffs = _coreml_parity_diffs(mlpackage_path, model, example)
         assert len(diffs) == len(output_labels), f"CoreML export must yield {output_labels}, got {len(diffs)} outputs"
         assert all(np.isfinite(diffs)), f"CoreML produced non-finite outputs: max abs diffs {diffs}"
+
+    def test_default_query_count_lowers_through_no_unchecked_operation(
+        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]
+    ) -> None:
+        """The shipped-query graph must reach no MIL operation the value-checked 5-query graph does not.
+
+        Deliberately a *structural* guard, not a numerical one, and it does not make the 5-query parity stand in for
+        the shipped graph: the historical CoreML parity failures this suite was rewritten around happened with an
+        identical op set on both sides, so op types cannot discriminate drift. What it does catch is the shipped
+        shapes taking a lowering route the strict 1e-4 assertions never execute — a shape-driven fold that leaves,
+        say, a live ``slice_by_index`` chain at 300 queries where 5 queries folded to a bare ``const``.
+
+        One-directional on purpose: an op the shipped graph reaches and the checked one does not is the gap; the
+        reverse (a node fused away only at the larger shape) is benign and must not turn the macOS-only parity job
+        red. Types rather than counts, for the same reason.
+        """
+        import coremltools as ct
+
+        _, _, mlpackage_path, few_queries_path, _ = coreml_default_queries_export
+
+        shipped_ops = _mil_op_types(ct.utils.load_spec(str(mlpackage_path)))
+        few_queries_ops = _mil_op_types(ct.utils.load_spec(str(few_queries_path)))
+
+        # Protobuf message maps default-construct on lookup, so a spec this traversal does not understand yields
+        # an empty set on both sides and the subset check below would pass while inspecting nothing.
+        assert shipped_ops, f"no MIL operations found in {mlpackage_path.name}: the spec traversal is wrong"
+        assert shipped_ops <= few_queries_ops, (
+            f"shipped-query graph reaches operations the {_COREML_E2E_NUM_QUERIES}-query parity graph never "
+            f"executes: {sorted(shipped_ops - few_queries_ops)}"
+        )
 
 
 class TestCoreMLParityInputHelpers:
@@ -683,6 +779,9 @@ class TestCoreMLParityInputHelpers:
 class _TopkRanker(torch.nn.Module):
     """Stand-in for a two-stage ranker: one ``torch.topk`` over the last dimension per configured ``k``.
 
+    Every ``k`` re-ranks the same input rather than chaining, so the call *count* is what varies — that is what
+    ``_two_stage_rank_margin``'s guard reads, and chaining would shrink the tensor out from under later ``k``s.
+
     Examples:
         >>> _TopkRanker(1)(torch.tensor([[0.25, 0.75]])).tolist()
         [[0.75]]
@@ -695,7 +794,7 @@ class _TopkRanker(torch.nn.Module):
         self.ks = ks
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Run ``torch.topk`` once per configured ``k`` and return the last result (``x`` when none)."""
+        """Rank ``x`` once per configured ``k`` and return the last ranking (``x`` itself when none)."""
         out = x
         for k in self.ks:
             out = torch.topk(x, k, dim=-1).values

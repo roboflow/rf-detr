@@ -623,7 +623,7 @@ scores = 1 / (1 + np.exp(-logits))  # sigmoid; boxes are normalized cxcywh
 
     - `dynamic_batch=True` is not supported: the runtime cannot resize RF-DETR's windowed-attention reshapes, so export one `.pte` per batch size instead.
     - The `"qnn"` backend requires a **source build** of ExecuTorch against the QAIRT SDK and cannot be installed via `pip`.
-    - CoreML export runs in fp16; top-level detections are correct but raw tensor values will differ from the PyTorch fp32 model as expected for fp16 computation.
+    - CoreML export runs in fp16; confident top-level detections carry over but raw tensor values will differ from the PyTorch fp32 model, both as expected for fp16 computation and through the query-ranking effect described under [Native CoreML Export](#native-coreml-export-mlpackage).
 
 ExecuTorch is PyTorch's on-device inference runtime. Unlike ONNX export, the model is exported directly via `torch.export` to a portable `.pte` binary — no intermediate ONNX conversion step is involved.
 
@@ -681,7 +681,7 @@ model.export(format="executorch", backend="coreml")
 
 !!! note
 
-    CoreML export uses fp16 arithmetic. Top-level detections (bounding boxes and class labels) are correct, but raw tensor values will differ from the PyTorch fp32 baseline at the fp16 precision level — this is expected behavior.
+    CoreML export uses fp16 arithmetic. Confident top-level detections (bounding boxes and class labels) carry over, but raw tensor values will differ from the PyTorch fp32 baseline — at the fp16 precision level, and through the two-stage query ranking described under [Native CoreML Export](#native-coreml-export-mlpackage), which fp16 makes more likely to diverge rather than less.
 
 ### QNN Backend (Qualcomm Snapdragon HTP, fp16)
 
@@ -797,6 +797,12 @@ model.export(format="coreml", coreml_precision="float16")
 !!! note
 
     Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation; `dets, labels, keypoints` for keypoints).
+
+!!! note "Raw tensors can differ more than the precision suggests"
+
+    RF-DETR's two-stage encoder picks its queries with a `topk` over the encoder tokens' class scores. CoreML's fp32 arithmetic differs from eager PyTorch's in the last bits — measured at up to 1e-5 on a ranking score — so when two neighbouring scores sit closer together than that, the two can rank them in opposite order and run the decoder on a slightly different set of queries. Every raw output then shifts, by ~1e0 on logits, on an export that otherwise tracks eager to ~1e-4. This repo's own parity tests require a 1e-4 gap between neighbouring top-k scores before they compare raw tensors at all.
+
+    This is a property of the ranking, not a conversion error, and it is not specific to `format="coreml"`: any runtime whose arithmetic differs from eager in the last bits can trip it, and fp16 — the ExecuTorch CoreML delegate, or `coreml_precision="float16"` — makes it more likely, not less. Detections comfortably above a confidence threshold survive it: on one pretrained `RFDETRSmall` image at threshold 0.5 (Apple M3 Pro, coremltools 9.0, default `ComputeUnit.ALL`) the two agree on every detection, within 1.1e-4 on scores and 0.005 px on boxes. A detection sitting *on* the threshold can still cross it, since a swap was measured to move post-processed scores by up to 1.2e-3. Compare **post-processed detections**, not raw tensors, when validating an export.
 
 ### CoreML Inference Example
 
