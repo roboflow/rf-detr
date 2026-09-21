@@ -538,7 +538,9 @@ class TestInit:
                 optimizer.zero_grad(set_to_none=True)
 
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
-    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, accelerator, tmp_path):
+    @patch("rfdetr.training.module_model.torch.compile")
+    @patch("rfdetr.config.DEVICE", "cuda")
+    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, mock_compile, accelerator, tmp_path):
         """XLA/TPU never compiles, and that no longer depends on multi_scale being set.
 
         This is the invariant the removed ``not multi_scale`` clause was documented as protecting; the accelerator check
@@ -546,11 +548,7 @@ class TestInit:
         """
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False, accelerator=accelerator)
-        with (
-            patch("rfdetr.config.DEVICE", "cuda"),
-            patch("rfdetr.training.module_model.torch.compile") as mock_compile,
-        ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
 
     def test_compile_disabled_when_device_is_not_cuda(self, tmp_path, caplog, monkeypatch):
@@ -1311,7 +1309,8 @@ class TestTrainingStep:
         fake_model.assert_not_called()
 
     @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
-    def test_marks_cudagraph_step_only_on_inductor_path(self, inductor_cudagraphs, tmp_path):
+    @patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin")
+    def test_marks_cudagraph_step_only_on_inductor_path(self, mark_step, inductor_cudagraphs, tmp_path):
         """Each step on the Inductor CUDA graph path begins with ``cudagraph_mark_step_begin``; other paths never do.
 
         Lightning keeps the logged loss tensors alive across steps. Without the mark, cudagraph trees raise "accessing
@@ -1320,8 +1319,7 @@ class TestTrainingStep:
         module, samples, targets, _, _ = self._run_step(tmp_path)
         module._inductor_cudagraphs = inductor_cudagraphs
 
-        with patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin") as mark_step:
-            module.training_step((samples, targets), batch_idx=0)
+        module.training_step((samples, targets), batch_idx=0)
 
         assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
 
@@ -2270,7 +2268,8 @@ class TestValidationStep:
         assert "val/giou" not in direct_log_names
 
     @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
-    def test_marks_cudagraph_step_only_on_inductor_path(self, inductor_cudagraphs, tmp_path):
+    @patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin")
+    def test_marks_cudagraph_step_only_on_inductor_path(self, mark_step, inductor_cudagraphs, tmp_path):
         """Validation on the Inductor CUDA graph path marks each step, since the compiled model records an eval graph.
 
         With ``eval_base_model=True`` or ``use_ema=False`` the ``OptimizedModule`` itself runs validation; the results
@@ -2283,8 +2282,7 @@ class TestValidationStep:
         fake_model.return_value = {}
         module.log = MagicMock()
 
-        with patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin") as mark_step:
-            module.validation_step((samples, targets), batch_idx=0)
+        module.validation_step((samples, targets), batch_idx=0)
 
         assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
 

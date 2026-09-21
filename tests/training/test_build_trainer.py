@@ -1014,18 +1014,18 @@ class TestBuildTrainerAmpDtype:
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
 
-    def test_fp8_accepts_supported_compute_capability(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
+    @patch("torch.cuda.get_device_capability", return_value=(8, 9))
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("torch.cuda.is_available", return_value=True)
+    def test_fp8_accepts_supported_compute_capability(
+        self, _mock_0, _mock_1, _mock_2, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """An Ada-or-newer device must resolve to the Transformer Engine precision string, not raise.
 
         The real ``pytorch_lightning.Trainer`` is mocked (as in ``_resolved_precision`` above) so this only exercises
         the capability gate itself, not Transformer Engine's actual plugin construction, which needs real hardware.
         """
-        with (
-            patch("torch.cuda.is_available", return_value=True),
-            patch("torch.cuda.device_count", return_value=1),
-            patch("torch.cuda.get_device_capability", return_value=(8, 9)),  # Ada (minimum supported)
-        ):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
+        build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
         assert captured_trainer_kwargs["precision"] == "transformer-engine"
 
     @pytest.mark.parametrize(
