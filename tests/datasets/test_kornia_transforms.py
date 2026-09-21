@@ -303,16 +303,27 @@ class TestBuildKorniaPipeline(_RequiresKornia):
         transform = next(iter(pipeline.children()))
         assert transform.flags["kernel_size"] == (expected, expected)
 
-    def test_blur_pair_warns_about_the_fixed_kernel(self):
-        """A non-degenerate pair the user chose explicitly collapses to one kernel, so it must say so."""
+    @pytest.mark.parametrize(
+        ("config", "expected_message"),
+        [
+            # A non-degenerate pair the user chose explicitly collapses to one kernel, so it must say so.
+            pytest.param({"Blur": {"blur_limit": (3, 5)}}, "Blur", id="blur-fixed-kernel"),
+            # Lightness has no Kornia equivalent, so dropping it must be announced.
+            pytest.param({"Sharpen": {"lightness": (0.5, 1.0)}}, "lightness", id="sharpen-ignored-lightness"),
+            # mode/by_channels/mask are albumentations-only.
+            pytest.param({"Equalize": {"by_channels": False}}, "by_channels", id="equalize-ignored-by_channels"),
+        ],
+    )
+    def test_dropped_or_collapsed_options_warn_with_the_option_name(self, config, expected_message):
+        """Building a config that silently collapses a range or drops an option must warn, naming what changed."""
         from unittest import mock
 
         from rfdetr.datasets import kornia_transforms
 
         with mock.patch.object(kornia_transforms.logger, "warning") as warning:
-            kornia_transforms.build_kornia_pipeline({"Blur": {"blur_limit": (3, 5)}}, 560)
+            kornia_transforms.build_kornia_pipeline(config, 560)
         assert warning.called
-        assert "Blur" in str(warning.call_args)
+        assert expected_message in str(warning.call_args)
 
     def test_blur_degenerate_pair_does_not_warn(self):
         """(5, 5) loses nothing, so it should stay quiet."""
@@ -391,28 +402,6 @@ class TestBuildKorniaPipeline(_RequiresKornia):
             "Sharpen at the default alpha=(0.2, 0.5) must increase edge energy (sharpen); an unchanged or lower "
             "value means the pivot-point bug regressed (sharpness range fell back to (0.2, 0.5), which blurs)."
         )
-
-    def test_sharpen_warns_about_ignored_lightness(self):
-        """Lightness has no Kornia equivalent, so dropping it must be announced."""
-        from unittest import mock
-
-        from rfdetr.datasets import kornia_transforms
-
-        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
-            kornia_transforms.build_kornia_pipeline({"Sharpen": {"lightness": (0.5, 1.0)}}, 560)
-        assert warning.called
-        assert "lightness" in str(warning.call_args)
-
-    def test_equalize_warns_about_ignored_options(self):
-        """mode/by_channels/mask are albumentations-only."""
-        from unittest import mock
-
-        from rfdetr.datasets import kornia_transforms
-
-        with mock.patch.object(kornia_transforms.logger, "warning") as warning:
-            kornia_transforms.build_kornia_pipeline({"Equalize": {"by_channels": False}}, 560)
-        assert warning.called
-        assert "by_channels" in str(warning.call_args)
 
     def test_clahe_maps_both_parameters(self):
         """clip_limit and tile_grid_size map straight onto Kornia's clip_limit and grid_size."""
@@ -1120,38 +1109,30 @@ class TestGaussNoiseStdRangeWarning(_RequiresKornia):
 class TestToGrayDroppedParamsWarning(_RequiresKornia):
     """_make_to_gray warns when passed method/num_output_channels, which have no Kornia equivalent."""
 
-    def test_warns_for_method(self):
-        """A non-default method emits a dropped-param warning at build time."""
+    @pytest.mark.parametrize(
+        ("config", "expects_warning"),
+        [
+            # A non-default method emits a dropped-param warning at build time.
+            pytest.param({"method": "max", "p": 0.5}, True, id="method"),
+            # A non-default num_output_channels emits a dropped-param warning at build time.
+            pytest.param({"num_output_channels": 1, "p": 0.5}, True, id="num_output_channels"),
+            # A config using only p matches the CPU path's default behavior and stays silent.
+            pytest.param({"p": 0.5}, False, id="p-only"),
+        ],
+    )
+    def test_warns_only_when_dropped_params_are_set(self, config, expects_warning):
+        """_make_to_gray warns exactly when method/num_output_channels diverge from Kornia's no-op default."""
         from unittest import mock
 
         from rfdetr.datasets import kornia_transforms
 
         with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
-            kornia_transforms._make_to_gray({"method": "max", "p": 0.5})
+            kornia_transforms._make_to_gray(config)
 
-        mock_warning.assert_called_once()
-
-    def test_warns_for_num_output_channels(self):
-        """A non-default num_output_channels emits a dropped-param warning at build time."""
-        from unittest import mock
-
-        from rfdetr.datasets import kornia_transforms
-
-        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
-            kornia_transforms._make_to_gray({"num_output_channels": 1, "p": 0.5})
-
-        mock_warning.assert_called_once()
-
-    def test_no_warning_for_p_only(self):
-        """A config using only p matches the CPU path's default behavior and stays silent."""
-        from unittest import mock
-
-        from rfdetr.datasets import kornia_transforms
-
-        with mock.patch.object(kornia_transforms.logger, "warning") as mock_warning:
-            kornia_transforms._make_to_gray({"p": 0.5})
-
-        mock_warning.assert_not_called()
+        if expects_warning:
+            mock_warning.assert_called_once()
+        else:
+            mock_warning.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
