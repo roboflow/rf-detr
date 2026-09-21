@@ -31,8 +31,14 @@ import torch
 from rfdetr import RFDETRNano
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors
 from tests.export.test_executorch_export import _portable_kernel_call_names
+
+# Same reason as tests/export/test_coreml_ane.py's `_EXPORT_SEED`: this fixture is module-scoped, so it runs
+# before the function-scoped autouse `reset_random_seeds` — without an explicit seed the untrained weight draw
+# depends on process/test order.
+_EXPORT_SEED = 0
 
 executorch_coreml_only = pytest.mark.skipif(
     not _IS_EXECUTORCH_AVAILABLE or not _IS_COREMLTOOLS_AVAILABLE or sys.platform != "darwin",
@@ -51,6 +57,7 @@ def nano_coreml_pte(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, tor
         >>> pte_path.suffix, len(eager_outputs)  # doctest: +SKIP
         ('.pte', 2)
     """
+    seed_all(_EXPORT_SEED)
     detector = RFDETRNano(pretrain_weights=None)
     out_dir = tmp_path_factory.mktemp("executorch_coreml")
     pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="coreml", verbose=False)
@@ -59,6 +66,32 @@ def nano_coreml_pte(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, tor
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
     return Path(pte_path), example, eager_reference_tensors(model, example)
+
+
+def _delegate_call_count(pte_path: Path) -> int:
+    """Return how many CoreML ``DelegateCall`` instructions the serialized ``.pte`` graph contains.
+
+    Args:
+        pte_path: Path to a serialized ExecuTorch program.
+
+    Returns:
+        Number of ``DelegateCall`` instructions across every chain in the first execution plan.
+
+    Examples:
+        Requires a real ``.pte`` artifact and the ``executorch`` package — not runnable standalone.
+
+        >>> callable(_delegate_call_count)
+        True
+    """
+    from executorch.exir._serialize import _deserialize_pte_binary
+
+    plan = _deserialize_pte_binary(pte_path.read_bytes()).program.execution_plan[0]
+    return sum(
+        1
+        for chain in plan.chains
+        for instruction in chain.instructions
+        if type(instruction.instr_args).__name__ == "DelegateCall"
+    )
 
 
 @executorch_coreml_only
@@ -80,6 +113,21 @@ class TestExecuTorchCoreMLDelegate:
 
         assert _portable_kernel_call_names(pte_path) == []
 
+    def test_shipped_pte_has_exactly_one_coreml_delegate_call(
+        self, nano_coreml_pte: tuple[Path, torch.Tensor, list[torch.Tensor]]
+    ) -> None:
+        """The exported ``.pte`` must contain exactly one CoreML ``DelegateCall``: the graph is one delegate blob.
+
+        The no-portable-kernel-calls test above only proves nothing fell back to portable CPU kernels; it does not prove
+        the documented invariant that the partitioner produced a single CoreML delegate rather than several disjoint
+        ones. Multiple delegate calls would mean the graph was split across separate Core ML subgraphs, each paying its
+        own load/dispatch overhead and losing the "one native ``.mlpackage``" scheduling guarantee this module's
+        docstring describes.
+        """
+        pte_path, _, _ = nano_coreml_pte
+
+        assert _delegate_call_count(pte_path) == 1
+
     def test_runtime_outputs_match_eager_shapes(
         self, nano_coreml_pte: tuple[Path, torch.Tensor, list[torch.Tensor]]
     ) -> None:
@@ -87,6 +135,9 @@ class TestExecuTorchCoreMLDelegate:
 
         Values are not compared: the delegate runs in fp16, where raw RF-DETR outputs drift by ~1e0. Numeric parity
         for this graph is covered at fp32 by the XNNPACK suite in ``test_executorch_export.py``.
+
+        Unlike the native ``.mlpackage`` ANE load test in ``test_coreml_ane.py``, this delegate-path test's
+        pre-fix ``develop`` baseline was not independently re-verified for this PR.
         """
         from executorch.runtime import Runtime
 
