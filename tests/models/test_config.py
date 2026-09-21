@@ -336,10 +336,6 @@ class TestTrainConfigT42PromotedFields:
         """optimizer_kwargs defaults to an empty dict."""
         assert self._tc(tmp_path).optimizer_kwargs == {}
 
-    def test_lr_min_factor_default(self, tmp_path):
-        """lr_min_factor defaults to 0.0."""
-        assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
-
     def test_dont_save_weights_default_is_false(self, tmp_path):
         """dont_save_weights defaults to False."""
         assert self._tc(tmp_path).dont_save_weights is False
@@ -869,45 +865,11 @@ class TestTrainConfigLRScheduler:
             tc = self._tc(tmp_path, lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.StepLR(optimizer, 5))
         assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
 
-    def test_deprecated_lr_drop_folds_into_kwargs_with_warning(self, tmp_path):
-        """A non-default lr_drop is folded into lr_scheduler_kwargs and warns (deprecation)."""
-        with pytest.warns(FutureWarning, match="lr_drop is deprecated"):
-            tc = self._tc(tmp_path, lr_drop=80)
-        assert tc.lr_scheduler_kwargs["lr_drop"] == 80
-
-    def test_deprecated_lr_min_factor_folds_into_kwargs_with_warning(self, tmp_path):
-        """A non-default lr_min_factor is folded into lr_scheduler_kwargs['min_factor'] and warns."""
-        with pytest.warns(FutureWarning, match="lr_min_factor is deprecated"):
-            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2)
-        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.2)
-
-    def test_default_deprecated_field_does_not_warn(self, tmp_path):
-        """Passing a deprecated field at its default value (e.g. on config reload) must not warn."""
-        default_lr_drop = TrainConfig.model_fields["lr_drop"].default
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", FutureWarning)
-            self._tc(tmp_path, lr_drop=default_lr_drop)
-
-    def test_migrated_config_reload_does_not_rewarn(self, tmp_path):
-        """Reloading a dumped config that already carries the folded kwarg must not re-warn."""
-        with pytest.warns(FutureWarning):
-            original = self._tc(tmp_path, lr_scheduler="step", lr_drop=8)
-        dumped = original.model_dump()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", FutureWarning)
-            reloaded = TrainConfig(**dumped)
-        assert reloaded.lr_scheduler_kwargs["lr_drop"] == 8
-
-    def test_deprecated_field_warns_but_not_folded_for_explicit_scheduler(self, tmp_path):
-        """A deprecated field set with an explicit scheduler warns (ignored) and is never folded into kwargs."""
-        with pytest.warns(FutureWarning, match="is ignored for the explicit"):
-            tc = self._tc(
-                tmp_path,
-                lr_scheduler="torch.optim.lr_scheduler.StepLR",
-                lr_scheduler_kwargs={"step_size": 5},
-                lr_drop=80,
-            )
-        assert tc.lr_scheduler_kwargs == {"step_size": 5}
+    @pytest.mark.parametrize("field", ["lr_drop", "lr_min_factor"])
+    def test_removed_lr_fields_are_rejected(self, tmp_path, field):
+        """The v1.9-deprecated top-level LR fields were removed in v1.11 and are now unknown kwargs."""
+        with pytest.raises(ValidationError, match=field):
+            self._tc(tmp_path, **{field: 1})
 
     def test_managed_preset_rejects_unknown_kwargs(self, tmp_path):
         """Managed presets reject lr_scheduler_kwargs keys they do not consume (mirrors optimizer_kwargs)."""
@@ -941,12 +903,6 @@ class TestTrainConfigLRScheduler:
         with pytest.warns(UserWarning, match="cannot be saved"):
             tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, gamma=object()))
         assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
-
-    def test_conflicting_field_and_kwarg_warns_kwarg_wins(self, tmp_path):
-        """When both lr_min_factor and kwargs['min_factor'] are set to different values, the kwarg wins and warns so."""
-        with pytest.warns(FutureWarning, match="the kwarg wins"):
-            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2, lr_scheduler_kwargs={"min_factor": 0.3})
-        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.3)
 
 
 class TestBuildTrainerUsesRealFields:

@@ -26,7 +26,6 @@ import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 import yaml
-from deprecate import deprecated
 from PIL import Image
 
 from rfdetr._namespace import _namespace_from_configs
@@ -1475,31 +1474,6 @@ class RFDETR:
             with contextlib.suppress(Exception):
                 self.remove_optimized_model()
             raise
-
-    @deprecated(target=inference, deprecated_in="1.9.0", remove_in="1.11.0")  # type: ignore[untyped-decorator]
-    def optimize_for_inference(
-        self,
-        compile: bool = True,
-        batch_size: int = 1,
-        dtype: torch.dtype | str = torch.float32,
-        *,
-        inplace: bool = False,
-        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
-    ) -> None:
-        """Deprecated alias for :meth:`inference`.
-
-        .. deprecated:: 1.9.0
-            ``optimize_for_inference`` was renamed to :meth:`inference`. Deprecated since v1.9.0, will be
-            removed in v1.11.0. Use :meth:`inference` instead.
-
-        Args:
-            compile: See :meth:`inference`.
-            batch_size: See :meth:`inference`.
-            dtype: See :meth:`inference`.
-            inplace: See :meth:`inference`.
-            compile_backend: See :meth:`inference`.
-        """
-        ...
 
     def remove_optimized_model(self) -> None:
         """Remove the optimized inference model and reset all optimization flags.
