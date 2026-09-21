@@ -176,9 +176,12 @@ jobs:
   executorch-coreml-parity:
     name: ExecuTorch CoreML parity
     # The CoreML delegate lowers through coremltools and runs through Core ML itself, so unlike the
-    # portable XNNPACK parity job (ubuntu) this one needs macOS. The [coreml] extra pins an older torch
-    # than [executorch] accepts — pyproject declares the two extras conflicting — so coremltools is
-    # installed on its own next to the [executorch] extra instead of through that extra.
+    # portable XNNPACK parity job (ubuntu) this one needs macOS. [coreml] resolves together with
+    # [executorch] in a single install: the extra carries no torch cap (dropped in #1487) and pyproject
+    # declares no conflict between the two. Pulling coremltools through the extra rather than pinning it
+    # here keeps pyproject.toml its single owner — ci-deps-resolution.yml derives its checked set from
+    # [project.optional-dependencies], so a version range written into this workflow would be invisible
+    # to it and a breaking coremltools release would surface only as a failure of this job.
     runs-on: macos-latest
     concurrency:
       group: pytest-executorch-coreml-${{ matrix.python-version }}-${{ github.ref }}
@@ -201,11 +204,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           activate-environment: true
 
-      - name: 🚀 Install Packages (executorch extra + coremltools)
+      - name: 🚀 Install Packages (executorch + coreml extras)
         timeout-minutes: 10
         run: |
-          uv pip install -e ".[executorch,train,augment,cli,visual]" --group tests --group ci-executorch-pin
-          uv pip install "coremltools>=8.0,<10.0"
+          uv pip install -e ".[executorch,coreml,train,augment,cli,visual]" --group tests --group ci-executorch-pin
 
       - name: 🔎 Verify executorch runtime and coremltools import
         # Guard against a silently-skipped test: the class is gated on executorch, coremltools and macOS,

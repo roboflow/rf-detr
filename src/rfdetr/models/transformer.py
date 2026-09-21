@@ -459,9 +459,9 @@ class Transformer(nn.Module):
         per-group launch count to a constant.
 
         Only called for ``group_detr > 1``, which the caller (:meth:`forward`) only reaches while
-        training; eval/export always pass ``group_detr=1`` and use the original single-group code path,
-        so this method never touches ONNX/TorchScript tracing (#1155) or ``torch.compile`` export
-        graphs recorded in eval mode.
+        training -- the ``assert self.training`` below enforces that mechanically. Eval/export always
+        pass ``group_detr=1`` and use the original single-group code path, so this method never touches
+        ONNX/TorchScript tracing (#1155) or ``torch.compile`` export graphs recorded in eval mode.
 
         The batched GEMMs can use a different accumulation order than separate calls. The paths match
         within float32 tolerance at real model scale, but under bf16/fp16 a near-tied class score can
@@ -481,6 +481,12 @@ class Transformer(nn.Module):
             1's, ...). ``cls_ts`` is ``enc_out_class_embed``'s output at the same selected positions,
             gathered from the ranking pass rather than recomputed by the caller.
         """
+        # Training-only by contract, and the contract is load-bearing: the eval/export loop in forward
+        # gathers the pre-norm rows so an fp16 CoreML program keeps its Neural Engine placement, while
+        # this path norms the full length and gathers post-norm. An eval or exported graph routed here
+        # would still produce correct numbers, so nothing would fail -- the model would just silently
+        # lose the ANE and fall back to CPU. Assert instead of trusting the caller's guard.
+        assert self.training
         assert self.enc_out_class_embed is not None
         assert self.enc_out_bbox_embed is not None
         bs = output_memory.shape[0]
