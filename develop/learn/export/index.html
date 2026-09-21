@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-21T10:16:07">
+  <meta property="article:modified_time" content="2026-09-21T13:25:07">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-21T10:16:07",
+    "dateModified": "2026-09-21T13:25:07",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1917,6 +1917,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#neural-engine-compute-units-and-the-fallback-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Neural Engine, Compute Units, and the Fallback Boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3648,6 +3659,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#neural-engine-compute-units-and-the-fallback-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Neural Engine, Compute Units, and the Fallback Boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3882,7 +3904,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>coreml_precision</code></td>
 <td><code>None</code></td>
-<td>Compute precision for <code>format="coreml"</code>: <code>None</code>/<code>"float32"</code> (tight CPU parity with eager PyTorch) or <code>"float16"</code> (smaller, ANE-oriented bundle). Ignored for every other format.</td>
+<td>Compute precision for <code>format="coreml"</code>: <code>None</code>/<code>"float32"</code> (tight CPU parity with eager PyTorch) or <code>"float16"</code> (half the size, and the only precision the Apple Neural Engine runs — at a measured accuracy cost, see <a href="#neural-engine-compute-units-and-the-fallback-boundary">Neural Engine, compute units, and the fallback boundary</a>). Ignored for every other format.</td>
 </tr>
 <tr>
 <td><code>openvino_precision</code></td>
@@ -4417,9 +4439,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>
 </span><span id="__span-33-5"><a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"executorch"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">)</span>
 </span></code></pre></div>
+<p>RF-DETR's graph lowers to a <strong>single</strong> CoreML delegate — no operator is left behind on ExecuTorch's portable CPU kernels — so the <code>.pte</code> carries one Core ML model, and the Neural Engine is reachable through it. The compute units are not baked in; the app that loads the <code>.pte</code> chooses them, exactly as for a native <code>.mlpackage</code>.</p>
+<p>Measured on a pretrained <code>RFDETRNano</code> (Apple M3 Pro, macOS 27.0, COCO val2017, all 5000 images), this delegate keeps more accuracy than a native fp16 <code>.mlpackage</code>: 48.0 mAP against 45.1, at 14.0 ms against 20.8 ms. Both run their arithmetic in fp16, but the native export also stores the weights in fp16, and that is what costs the accuracy.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>CoreML export uses fp16 arithmetic. Confident top-level detections (bounding boxes and class labels) carry over, but raw tensor values will differ from the PyTorch fp32 baseline — at the fp16 precision level, and through the two-stage query ranking described under <a href="#native-coreml-export-mlpackage">Native CoreML Export</a>, which fp16 makes more likely to diverge rather than less.</p>
+<p>CoreML export uses fp16 arithmetic. Top-level detections (bounding boxes and class labels) are correct, but raw tensor values will differ from the PyTorch fp32 baseline — at the fp16 precision level, and through the two-stage query ranking described under <a href="#native-coreml-export-mlpackage">Native CoreML Export</a>, which fp16 makes more likely to diverge rather than less. For what fp16 costs in mAP, and for how Core ML splits the model across the ANE, GPU and CPU, see <a href="#neural-engine-compute-units-and-the-fallback-boundary">Neural Engine, compute units, and the fallback boundary</a>.</p>
 </div>
 <h3 id="qnn-backend-qualcomm-snapdragon-htp-fp16">QNN Backend (Qualcomm Snapdragon HTP, fp16)<a class="headerlink" href="#qnn-backend-qualcomm-snapdragon-htp-fp16" title="Permanent link">&para;</a></h3>
 <p>The <code>"qnn"</code> backend targets the Qualcomm AI Engine (HTP) on Snapdragon SoCs and runs in fp16. It <strong>requires a source build</strong> of ExecuTorch against the QAIRT SDK and cannot be installed via <code>pip</code>.</p>
@@ -4510,7 +4534,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <p>This produces <code>output/rfdetr-medium_fp32.mlpackage</code> — the file is named after the model variant plus the resolved precision (<code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code>), not a generic <code>inference_model_fp32.mlpackage</code>. The precision is always encoded, even at its default value, since fp16 vs fp32 materially changes the bundle.</p>
 <h3 id="compute-precision">Compute Precision<a class="headerlink" href="#compute-precision" title="Permanent link">&para;</a></h3>
-<p>CoreML export defaults to <code>FLOAT32</code> for tight CPU parity with eager PyTorch. Pass <code>coreml_precision="float16"</code> for a smaller, ANE-oriented bundle (expect larger numeric drift) — this also changes the output filename to <code>output/rfdetr-medium_fp16.mlpackage</code>:</p>
+<p>CoreML export defaults to <code>FLOAT32</code> for tight CPU parity with eager PyTorch. Pass <code>coreml_precision="float16"</code> for a bundle half the size that Core ML can schedule onto the Neural Engine — this also changes the output filename to <code>output/rfdetr-medium_fp16.mlpackage</code>:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-39-1"><a id="__codelineno-39-1" name="__codelineno-39-1" href="#__codelineno-39-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">,</span> <span class="n">coreml_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">)</span>
 </span></code></pre></div>
 <div class="admonition note">
@@ -4541,10 +4565,131 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-40-16"><a id="__codelineno-40-16" name="__codelineno-40-16" href="#__codelineno-40-16"></a>
 </span><span id="__span-40-17"><a id="__codelineno-40-17" name="__codelineno-40-17" href="#__codelineno-40-17"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>  <span class="c1"># add batch dimension: (1, 3, H, W)</span>
 </span><span id="__span-40-18"><a id="__codelineno-40-18" name="__codelineno-40-18" href="#__codelineno-40-18"></a>
-</span><span id="__span-40-19"><a id="__codelineno-40-19" name="__codelineno-40-19" href="#__codelineno-40-19"></a><span class="c1"># Outputs are positional (see the precision note above) — dets, labels, in that order.</span>
-</span><span id="__span-40-20"><a id="__codelineno-40-20" name="__codelineno-40-20" href="#__codelineno-40-20"></a><span class="n">outputs</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">mlmodel</span><span class="o">.</span><span class="n">predict</span><span class="p">({</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)})</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
-</span><span id="__span-40-21"><a id="__codelineno-40-21" name="__codelineno-40-21" href="#__codelineno-40-21"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-40-19"><a id="__codelineno-40-19" name="__codelineno-40-19" href="#__codelineno-40-19"></a><span class="c1"># The input name is coremltools-inferred (currently "tensors"), so read it from the spec</span>
+</span><span id="__span-40-20"><a id="__codelineno-40-20" name="__codelineno-40-20" href="#__codelineno-40-20"></a><span class="c1"># rather than hard-coding it.</span>
+</span><span id="__span-40-21"><a id="__codelineno-40-21" name="__codelineno-40-21" href="#__codelineno-40-21"></a><span class="n">input_name</span> <span class="o">=</span> <span class="n">mlmodel</span><span class="o">.</span><span class="n">get_spec</span><span class="p">()</span><span class="o">.</span><span class="n">description</span><span class="o">.</span><span class="n">input</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
+</span><span id="__span-40-22"><a id="__codelineno-40-22" name="__codelineno-40-22" href="#__codelineno-40-22"></a>
+</span><span id="__span-40-23"><a id="__codelineno-40-23" name="__codelineno-40-23" href="#__codelineno-40-23"></a><span class="c1"># Outputs are positional (see the precision note above) — dets, labels, in that order.</span>
+</span><span id="__span-40-24"><a id="__codelineno-40-24" name="__codelineno-40-24" href="#__codelineno-40-24"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">mlmodel</span><span class="o">.</span><span class="n">predict</span><span class="p">({</span><span class="n">input_name</span><span class="p">:</span> <span class="n">image_array</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)})</span>
+</span><span id="__span-40-25"><a id="__codelineno-40-25" name="__codelineno-40-25" href="#__codelineno-40-25"></a><span class="n">outputs</span> <span class="o">=</span> <span class="p">[</span><span class="n">predictions</span><span class="p">[</span><span class="n">output</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="k">for</span> <span class="n">output</span> <span class="ow">in</span> <span class="n">mlmodel</span><span class="o">.</span><span class="n">get_spec</span><span class="p">()</span><span class="o">.</span><span class="n">description</span><span class="o">.</span><span class="n">output</span><span class="p">]</span>
+</span><span id="__span-40-26"><a id="__codelineno-40-26" name="__codelineno-40-26" href="#__codelineno-40-26"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
 </span></code></pre></div>
+<h3 id="neural-engine-compute-units-and-the-fallback-boundary">Neural Engine, Compute Units, and the Fallback Boundary<a class="headerlink" href="#neural-engine-compute-units-and-the-fallback-boundary" title="Permanent link">&para;</a></h3>
+<p>Core ML decides at <strong>load time</strong> which of the CPU, GPU and Apple Neural Engine (ANE) runs each part of the model. That choice is not stored in the <code>.mlpackage</code> — <code>MLModel</code> defaults to <code>ComputeUnit.ALL</code> every time it is loaded — so it is the caller's to make:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="7:2"><input checked="checked" id="__tabbed_7_1" name="__tabbed_7" type="radio" /><input id="__tabbed_7_2" name="__tabbed_7" type="radio" /><div class="tabbed-labels"><label for="__tabbed_7_1">Python</label><label for="__tabbed_7_2">Swift</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-41-1"><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">coremltools</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ct</span>
+</span><span id="__span-41-2"><a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a>
+</span><span id="__span-41-3"><a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a><span class="n">mlmodel</span> <span class="o">=</span> <span class="n">ct</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">MLModel</span><span class="p">(</span>
+</span><span id="__span-41-4"><a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a>    <span class="s2">"output/rfdetr-small_fp16.mlpackage"</span><span class="p">,</span>
+</span><span id="__span-41-5"><a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a>    <span class="n">compute_units</span><span class="o">=</span><span class="n">ct</span><span class="o">.</span><span class="n">ComputeUnit</span><span class="o">.</span><span class="n">CPU_AND_NE</span><span class="p">,</span>
+</span><span id="__span-41-6"><a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-swift highlight"><pre><span></span><code><span id="__span-42-1"><a id="__codelineno-42-1" name="__codelineno-42-1" href="#__codelineno-42-1"></a><span class="kd">let</span><span class="w"> </span><span class="nv">configuration</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="bp">MLModelConfiguration</span><span class="p">()</span>
+</span><span id="__span-42-2"><a id="__codelineno-42-2" name="__codelineno-42-2" href="#__codelineno-42-2"></a><span class="n">configuration</span><span class="p">.</span><span class="n">computeUnits</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">.</span><span class="n">cpuAndNeuralEngine</span>
+</span><span id="__span-42-3"><a id="__codelineno-42-3" name="__codelineno-42-3" href="#__codelineno-42-3"></a><span class="kd">let</span><span class="w"> </span><span class="nv">model</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="k">try</span><span class="w"> </span><span class="bp">MLModel</span><span class="p">(</span><span class="n">contentsOf</span><span class="p">:</span><span class="w"> </span><span class="n">url</span><span class="p">,</span><span class="w"> </span><span class="n">configuration</span><span class="p">:</span><span class="w"> </span><span class="n">configuration</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<p><strong>Precision decides whether the ANE is reachable at all.</strong> The ANE has no fp32 path, so an fp32 bundle never touches it — <code>CPU_AND_NE</code> then measures the same as <code>CPU_ONLY</code>. Only <code>coreml_precision="float16"</code> puts the model on the ANE.</p>
+<p>Single-image latency, pretrained <code>RFDETRNano</code> at 384x384, Apple M3 Pro (macOS 27.0, coremltools 9.0), batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:</p>
+<table>
+<thead>
+<tr>
+<th>Precision</th>
+<th><code>CPU_ONLY</code></th>
+<th><code>CPU_AND_NE</code></th>
+<th><code>CPU_AND_GPU</code></th>
+<th><code>ALL</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>fp32</td>
+<td>73.6</td>
+<td>73.6</td>
+<td><strong>34.0</strong></td>
+<td>33.7</td>
+</tr>
+<tr>
+<td>fp16</td>
+<td>44.5</td>
+<td><strong>20.8</strong></td>
+<td>33.9</td>
+<td>21.2</td>
+</tr>
+</tbody>
+</table>
+<p>So: <strong>fp32 belongs on the GPU, fp16 on the ANE.</strong> Loading an fp16 bundle with <code>CPU_AND_NE</code> is about 2.1x faster than CPU and about 1.6x faster than the GPU on this machine.</p>
+<p>The ANE pays for that at load: compiling an fp16 RFDETRNano for it takes about 5 s on first load, against about 0.5 s for the GPU or CPU path (subsequent loads of the same bundle are cached by the system). For a process that runs a handful of images and exits, the GPU is the better trade.</p>
+<p><strong>fp16 costs accuracy.</strong> On COCO val2017 (all 5000 images, pretrained <code>RFDETRNano</code>, same decoding for both):</p>
+<table>
+<thead>
+<tr>
+<th>Precision</th>
+<th>mAP@[.5:.95]</th>
+<th>mAP@.5</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>fp32</td>
+<td>48.0</td>
+<td>67.1</td>
+</tr>
+<tr>
+<td>fp16</td>
+<td>45.1</td>
+<td>65.8</td>
+</tr>
+</tbody>
+</table>
+<p>Confident detections survive fp16 — the same objects with the same classes — but the rest of the ranking shifts enough to move mAP by about 3 points. Validate an fp16 bundle on your own data before shipping it.</p>
+<p><strong>The fallback boundary, at fp16.</strong> An fp16 RF-DETR graph is almost entirely ANE-eligible. The exceptions are the two-stage query selection — <code>topk</code>, and the <code>expand_dims</code>/<code>tile</code>/<code>gather_along_axis</code> that consume its indices — which Core ML runs on the CPU. Measured with <code>MLComputePlan</code> under <code>CPU_AND_NE</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Ops on ANE</th>
+<th>Ops on CPU</th>
+<th>Share of estimated work on the ANE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RFDETRNano</code></td>
+<td>592</td>
+<td>7</td>
+<td>99.9%</td>
+</tr>
+<tr>
+<td><code>RFDETRSmall</code></td>
+<td>650</td>
+<td>8</td>
+<td>99.9%</td>
+</tr>
+<tr>
+<td><code>RFDETRMedium</code></td>
+<td>708</td>
+<td>8</td>
+<td>99.9%</td>
+</tr>
+<tr>
+<td><code>RFDETRSegNano</code></td>
+<td>729</td>
+<td>8</td>
+<td>99.9%</td>
+</tr>
+</tbody>
+</table>
+<p>Those seven or eight ops are the whole boundary, and they cost about 0.1% of the model's estimated work.</p>
+<p>At fp32 there is no boundary to speak of, because there is no ANE: the plan reports <em>every</em> op as ANE-unsupported, and the same RFDETRNano bundle runs all 599 ops on the GPU under <code>ALL</code> and all 599 on the CPU under <code>CPU_AND_NE</code>.</p>
+<p><strong><code>ALL</code> is not always the fastest choice.</strong> With <code>ALL</code>, Core ML is free to put part of the graph on the GPU, and for <code>RFDETRSegNano</code> it does: the plan splits 79% ANE / 21% GPU, and the transfers between them cost real time — 34.5 ms under <code>ALL</code> against 23.5 ms under <code>CPU_AND_NE</code> (p50, same methodology as the table above). Detection models are unaffected; their plan is the same under both. Measure both on your target device rather than assuming the default is best.</p>
+<p>The <a href="#coreml-backend-apple-neural-engine-fp16">ExecuTorch CoreML delegate</a> lowers RF-DETR to a single Core ML model inside the <code>.pte</code>, and that model does reach the Neural Engine. Its internal split is not measurable with <code>MLComputePlan</code>, which needs an <code>.mlpackage</code>, so the table above is not a statement about the <code>.pte</code>.</p>
 <h2 id="how-export-works">How Export Works<a class="headerlink" href="#how-export-works" title="Permanent link">&para;</a></h2>
 <p>Every format is written by an <code>Exporter</code> class built from that format's own configuration, and <code>model.export()</code> is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent <code>ExportGraph</code>, and hands the graph to the exporter. The signature and return value on this page are the supported surface; the classes behind it are internal.</p>
 <p>If you want to add a format, or you are reading the export code, see <a href="../export-blueprint/">Exporter Blueprint</a> for the contract each format implements and the steps a new one takes.</p>
@@ -4560,73 +4705,73 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Choose the background slot from the checkpoint layout</p>
 <p>The tensor width does not identify the background slot, and the layout depends on how categories were mapped during training, not simply on whether the checkpoint is fine-tuned. Checkpoints trained with contiguous 0-based category IDs — the common case for custom/Roboflow datasets — and active-first keypoint checkpoints use the final slot (index <code>-1</code>) as background. Checkpoints trained directly on sparse COCO category IDs — including the official pretrained weights — retain every slot with <code>background_class_id=None</code>, since a real foreground category (90 for official COCO) occupies the final slot. Legacy background-first keypoint checkpoints use slot <code>0</code>. The ONNX and TFLite <code>_run_inference</code> reference helpers expose this choice explicitly and default to <code>-1</code> for backward compatibility.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-41-1"><a id="__codelineno-41-1" name="__codelineno-41-1" href="#__codelineno-41-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
-</span><span id="__span-41-2"><a id="__codelineno-41-2" name="__codelineno-41-2" href="#__codelineno-41-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-41-3"><a id="__codelineno-41-3" name="__codelineno-41-3" href="#__codelineno-41-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
-</span><span id="__span-41-4"><a id="__codelineno-41-4" name="__codelineno-41-4" href="#__codelineno-41-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-41-5"><a id="__codelineno-41-5" name="__codelineno-41-5" href="#__codelineno-41-5"></a>
-</span><span id="__span-41-6"><a id="__codelineno-41-6" name="__codelineno-41-6" href="#__codelineno-41-6"></a><span class="c1"># Load the ONNX model</span>
-</span><span id="__span-41-7"><a id="__codelineno-41-7" name="__codelineno-41-7" href="#__codelineno-41-7"></a><span class="n">session</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
-</span><span id="__span-41-8"><a id="__codelineno-41-8" name="__codelineno-41-8" href="#__codelineno-41-8"></a>
-</span><span id="__span-41-9"><a id="__codelineno-41-9" name="__codelineno-41-9" href="#__codelineno-41-9"></a><span class="c1"># Prepare input image</span>
-</span><span id="__span-41-10"><a id="__codelineno-41-10" name="__codelineno-41-10" href="#__codelineno-41-10"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">4</span><span class="p">]</span>
-</span><span id="__span-41-11"><a id="__codelineno-41-11" name="__codelineno-41-11" href="#__codelineno-41-11"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-</span><span id="__span-41-12"><a id="__codelineno-41-12" name="__codelineno-41-12" href="#__codelineno-41-12"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
-</span><span id="__span-41-13"><a id="__codelineno-41-13" name="__codelineno-41-13" href="#__codelineno-41-13"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-41-14"><a id="__codelineno-41-14" name="__codelineno-41-14" href="#__codelineno-41-14"></a>
-</span><span id="__span-41-15"><a id="__codelineno-41-15" name="__codelineno-41-15" href="#__codelineno-41-15"></a><span class="c1"># Normalize</span>
-</span><span id="__span-41-16"><a id="__codelineno-41-16" name="__codelineno-41-16" href="#__codelineno-41-16"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
-</span><span id="__span-41-17"><a id="__codelineno-41-17" name="__codelineno-41-17" href="#__codelineno-41-17"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
-</span><span id="__span-41-18"><a id="__codelineno-41-18" name="__codelineno-41-18" href="#__codelineno-41-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
-</span><span id="__span-41-19"><a id="__codelineno-41-19" name="__codelineno-41-19" href="#__codelineno-41-19"></a>
-</span><span id="__span-41-20"><a id="__codelineno-41-20" name="__codelineno-41-20" href="#__codelineno-41-20"></a><span class="c1"># Convert to NCHW format</span>
-</span><span id="__span-41-21"><a id="__codelineno-41-21" name="__codelineno-41-21" href="#__codelineno-41-21"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
-</span><span id="__span-41-22"><a id="__codelineno-41-22" name="__codelineno-41-22" href="#__codelineno-41-22"></a>
-</span><span id="__span-41-23"><a id="__codelineno-41-23" name="__codelineno-41-23" href="#__codelineno-41-23"></a><span class="c1"># Run inference</span>
-</span><span id="__span-41-24"><a id="__codelineno-41-24" name="__codelineno-41-24" href="#__codelineno-41-24"></a><span class="n">outputs</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="p">})</span>
-</span><span id="__span-41-25"><a id="__codelineno-41-25" name="__codelineno-41-25" href="#__codelineno-41-25"></a>
-</span><span id="__span-41-26"><a id="__codelineno-41-26" name="__codelineno-41-26" href="#__codelineno-41-26"></a><span class="c1"># Match outputs by name — do NOT assume positional order or infer role from shape.</span>
-</span><span id="__span-41-27"><a id="__codelineno-41-27" name="__codelineno-41-27" href="#__codelineno-41-27"></a><span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
-</span><span id="__span-41-28"><a id="__codelineno-41-28" name="__codelineno-41-28" href="#__codelineno-41-28"></a><span class="n">boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-41-29"><a id="__codelineno-41-29" name="__codelineno-41-29" href="#__codelineno-41-29"></a><span class="n">logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-41-30"><a id="__codelineno-41-30" name="__codelineno-41-30" href="#__codelineno-41-30"></a><span class="k">if</span> <span class="n">boxes_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">logits_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-41-31"><a id="__codelineno-41-31" name="__codelineno-41-31" href="#__codelineno-41-31"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Could not find expected outputs 'dets'/'labels'. Available outputs: </span><span class="si">{</span><span class="n">output_names</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</span><span id="__span-41-32"><a id="__codelineno-41-32" name="__codelineno-41-32" href="#__codelineno-41-32"></a>
-</span><span id="__span-41-33"><a id="__codelineno-41-33" name="__codelineno-41-33" href="#__codelineno-41-33"></a><span class="n">boxes_cwh</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">boxes_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># (num_queries, 4) normalized cxcywh</span>
-</span><span id="__span-41-34"><a id="__codelineno-41-34" name="__codelineno-41-34" href="#__codelineno-41-34"></a><span class="n">raw_logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">logits_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
-</span><span id="__span-41-35"><a id="__codelineno-41-35" name="__codelineno-41-35" href="#__codelineno-41-35"></a>
-</span><span id="__span-41-36"><a id="__codelineno-41-36" name="__codelineno-41-36" href="#__codelineno-41-36"></a><span class="c1"># Select this from the checkpoint layout. Use None for official sparse-ID COCO</span>
-</span><span id="__span-41-37"><a id="__codelineno-41-37" name="__codelineno-41-37" href="#__codelineno-41-37"></a><span class="c1"># checkpoints, -1 for contiguous-ID/active-first checkpoints, or 0 for legacy</span>
-</span><span id="__span-41-38"><a id="__codelineno-41-38" name="__codelineno-41-38" href="#__codelineno-41-38"></a><span class="c1"># background-first keypoint checkpoints.</span>
-</span><span id="__span-41-39"><a id="__codelineno-41-39" name="__codelineno-41-39" href="#__codelineno-41-39"></a><span class="n">background_class_id</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
-</span><span id="__span-41-40"><a id="__codelineno-41-40" name="__codelineno-41-40" href="#__codelineno-41-40"></a><span class="n">class_slots</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
-</span><span id="__span-41-41"><a id="__codelineno-41-41" name="__codelineno-41-41" href="#__codelineno-41-41"></a><span class="k">if</span> <span class="n">background_class_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-41-42"><a id="__codelineno-41-42" name="__codelineno-41-42" href="#__codelineno-41-42"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span>
-</span><span id="__span-41-43"><a id="__codelineno-41-43" name="__codelineno-41-43" href="#__codelineno-41-43"></a><span class="k">else</span><span class="p">:</span>
-</span><span id="__span-41-44"><a id="__codelineno-41-44" name="__codelineno-41-44" href="#__codelineno-41-44"></a>    <span class="n">num_slots</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-</span><span id="__span-41-45"><a id="__codelineno-41-45" name="__codelineno-41-45" href="#__codelineno-41-45"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="o">-</span><span class="n">num_slots</span> <span class="o">&lt;=</span> <span class="n">background_class_id</span> <span class="o">&lt;</span> <span class="n">num_slots</span><span class="p">:</span>
-</span><span id="__span-41-46"><a id="__codelineno-41-46" name="__codelineno-41-46" href="#__codelineno-41-46"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"background_class_id must index one of </span><span class="si">{</span><span class="n">num_slots</span><span class="si">}</span><span class="s2"> exported class slots"</span><span class="p">)</span>
-</span><span id="__span-41-47"><a id="__codelineno-41-47" name="__codelineno-41-47" href="#__codelineno-41-47"></a>    <span class="n">background_class_id</span> <span class="o">%=</span> <span class="n">num_slots</span>
-</span><span id="__span-41-48"><a id="__codelineno-41-48" name="__codelineno-41-48" href="#__codelineno-41-48"></a>    <span class="n">foreground_mask</span> <span class="o">=</span> <span class="n">class_slots</span> <span class="o">!=</span> <span class="n">background_class_id</span>
-</span><span id="__span-41-49"><a id="__codelineno-41-49" name="__codelineno-41-49" href="#__codelineno-41-49"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="p">[:,</span> <span class="n">foreground_mask</span><span class="p">]</span>
-</span><span id="__span-41-50"><a id="__codelineno-41-50" name="__codelineno-41-50" href="#__codelineno-41-50"></a>    <span class="n">class_slots</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">foreground_mask</span><span class="p">]</span>
-</span><span id="__span-41-51"><a id="__codelineno-41-51" name="__codelineno-41-51" href="#__codelineno-41-51"></a>
-</span><span id="__span-41-52"><a id="__codelineno-41-52" name="__codelineno-41-52" href="#__codelineno-41-52"></a><span class="c1"># RF-DETR uses per-class sigmoid (multi-label), not softmax. This compact example keeps</span>
-</span><span id="__span-41-53"><a id="__codelineno-41-53" name="__codelineno-41-53" href="#__codelineno-41-53"></a><span class="c1"># one top class per query; the reference decoders instead rank query/class pairs globally,</span>
-</span><span id="__span-41-54"><a id="__codelineno-41-54" name="__codelineno-41-54" href="#__codelineno-41-54"></a><span class="c1"># so they can retain multiple above-threshold classes for one query.</span>
-</span><span id="__span-41-55"><a id="__codelineno-41-55" name="__codelineno-41-55" href="#__codelineno-41-55"></a><span class="n">scores_all</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">logits</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="o">-</span><span class="mi">88</span><span class="p">,</span> <span class="mi">88</span><span class="p">)))</span>
-</span><span id="__span-41-56"><a id="__codelineno-41-56" name="__codelineno-41-56" href="#__codelineno-41-56"></a><span class="n">scores</span> <span class="o">=</span> <span class="n">scores_all</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-41-57"><a id="__codelineno-41-57" name="__codelineno-41-57" href="#__codelineno-41-57"></a><span class="n">class_ids</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">scores_all</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)]</span>
-</span><span id="__span-41-58"><a id="__codelineno-41-58" name="__codelineno-41-58" href="#__codelineno-41-58"></a>
-</span><span id="__span-41-59"><a id="__codelineno-41-59" name="__codelineno-41-59" href="#__codelineno-41-59"></a><span class="n">threshold</span> <span class="o">=</span> <span class="mf">0.5</span>
-</span><span id="__span-41-60"><a id="__codelineno-41-60" name="__codelineno-41-60" href="#__codelineno-41-60"></a><span class="n">keep</span> <span class="o">=</span> <span class="n">scores</span> <span class="o">&gt;</span> <span class="n">threshold</span>
-</span><span id="__span-41-61"><a id="__codelineno-41-61" name="__codelineno-41-61" href="#__codelineno-41-61"></a>
-</span><span id="__span-41-62"><a id="__codelineno-41-62" name="__codelineno-41-62" href="#__codelineno-41-62"></a><span class="c1"># cxcywh (normalized) -&gt; xyxy (pixel space)</span>
-</span><span id="__span-41-63"><a id="__codelineno-41-63" name="__codelineno-41-63" href="#__codelineno-41-63"></a><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">bw</span><span class="p">,</span> <span class="n">bh</span> <span class="o">=</span> <span class="n">boxes_cwh</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">T</span>
-</span><span id="__span-41-64"><a id="__codelineno-41-64" name="__codelineno-41-64" href="#__codelineno-41-64"></a><span class="n">xyxy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">cx</span> <span class="o">-</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cx</span> <span class="o">+</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">+</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-41-65"><a id="__codelineno-41-65" name="__codelineno-41-65" href="#__codelineno-41-65"></a><span class="n">xyxy</span> <span class="o">*=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-</span><span id="__span-41-66"><a id="__codelineno-41-66" name="__codelineno-41-66" href="#__codelineno-41-66"></a>
-</span><span id="__span-41-67"><a id="__codelineno-41-67" name="__codelineno-41-67" href="#__codelineno-41-67"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">confidences</span> <span class="o">=</span> <span class="n">xyxy</span><span class="p">,</span> <span class="n">class_ids</span><span class="p">[</span><span class="n">keep</span><span class="p">],</span> <span class="n">scores</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-43-1"><a id="__codelineno-43-1" name="__codelineno-43-1" href="#__codelineno-43-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
+</span><span id="__span-43-2"><a id="__codelineno-43-2" name="__codelineno-43-2" href="#__codelineno-43-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-43-3"><a id="__codelineno-43-3" name="__codelineno-43-3" href="#__codelineno-43-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+</span><span id="__span-43-4"><a id="__codelineno-43-4" name="__codelineno-43-4" href="#__codelineno-43-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+</span><span id="__span-43-5"><a id="__codelineno-43-5" name="__codelineno-43-5" href="#__codelineno-43-5"></a>
+</span><span id="__span-43-6"><a id="__codelineno-43-6" name="__codelineno-43-6" href="#__codelineno-43-6"></a><span class="c1"># Load the ONNX model</span>
+</span><span id="__span-43-7"><a id="__codelineno-43-7" name="__codelineno-43-7" href="#__codelineno-43-7"></a><span class="n">session</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+</span><span id="__span-43-8"><a id="__codelineno-43-8" name="__codelineno-43-8" href="#__codelineno-43-8"></a>
+</span><span id="__span-43-9"><a id="__codelineno-43-9" name="__codelineno-43-9" href="#__codelineno-43-9"></a><span class="c1"># Prepare input image</span>
+</span><span id="__span-43-10"><a id="__codelineno-43-10" name="__codelineno-43-10" href="#__codelineno-43-10"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">4</span><span class="p">]</span>
+</span><span id="__span-43-11"><a id="__codelineno-43-11" name="__codelineno-43-11" href="#__codelineno-43-11"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+</span><span id="__span-43-12"><a id="__codelineno-43-12" name="__codelineno-43-12" href="#__codelineno-43-12"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span><span id="__span-43-13"><a id="__codelineno-43-13" name="__codelineno-43-13" href="#__codelineno-43-13"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-43-14"><a id="__codelineno-43-14" name="__codelineno-43-14" href="#__codelineno-43-14"></a>
+</span><span id="__span-43-15"><a id="__codelineno-43-15" name="__codelineno-43-15" href="#__codelineno-43-15"></a><span class="c1"># Normalize</span>
+</span><span id="__span-43-16"><a id="__codelineno-43-16" name="__codelineno-43-16" href="#__codelineno-43-16"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
+</span><span id="__span-43-17"><a id="__codelineno-43-17" name="__codelineno-43-17" href="#__codelineno-43-17"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
+</span><span id="__span-43-18"><a id="__codelineno-43-18" name="__codelineno-43-18" href="#__codelineno-43-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
+</span><span id="__span-43-19"><a id="__codelineno-43-19" name="__codelineno-43-19" href="#__codelineno-43-19"></a>
+</span><span id="__span-43-20"><a id="__codelineno-43-20" name="__codelineno-43-20" href="#__codelineno-43-20"></a><span class="c1"># Convert to NCHW format</span>
+</span><span id="__span-43-21"><a id="__codelineno-43-21" name="__codelineno-43-21" href="#__codelineno-43-21"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+</span><span id="__span-43-22"><a id="__codelineno-43-22" name="__codelineno-43-22" href="#__codelineno-43-22"></a>
+</span><span id="__span-43-23"><a id="__codelineno-43-23" name="__codelineno-43-23" href="#__codelineno-43-23"></a><span class="c1"># Run inference</span>
+</span><span id="__span-43-24"><a id="__codelineno-43-24" name="__codelineno-43-24" href="#__codelineno-43-24"></a><span class="n">outputs</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="n">image_array</span><span class="p">})</span>
+</span><span id="__span-43-25"><a id="__codelineno-43-25" name="__codelineno-43-25" href="#__codelineno-43-25"></a>
+</span><span id="__span-43-26"><a id="__codelineno-43-26" name="__codelineno-43-26" href="#__codelineno-43-26"></a><span class="c1"># Match outputs by name — do NOT assume positional order or infer role from shape.</span>
+</span><span id="__span-43-27"><a id="__codelineno-43-27" name="__codelineno-43-27" href="#__codelineno-43-27"></a><span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
+</span><span id="__span-43-28"><a id="__codelineno-43-28" name="__codelineno-43-28" href="#__codelineno-43-28"></a><span class="n">boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-43-29"><a id="__codelineno-43-29" name="__codelineno-43-29" href="#__codelineno-43-29"></a><span class="n">logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-43-30"><a id="__codelineno-43-30" name="__codelineno-43-30" href="#__codelineno-43-30"></a><span class="k">if</span> <span class="n">boxes_idx</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">logits_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-43-31"><a id="__codelineno-43-31" name="__codelineno-43-31" href="#__codelineno-43-31"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Could not find expected outputs 'dets'/'labels'. Available outputs: </span><span class="si">{</span><span class="n">output_names</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span><span id="__span-43-32"><a id="__codelineno-43-32" name="__codelineno-43-32" href="#__codelineno-43-32"></a>
+</span><span id="__span-43-33"><a id="__codelineno-43-33" name="__codelineno-43-33" href="#__codelineno-43-33"></a><span class="n">boxes_cwh</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">boxes_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># (num_queries, 4) normalized cxcywh</span>
+</span><span id="__span-43-34"><a id="__codelineno-43-34" name="__codelineno-43-34" href="#__codelineno-43-34"></a><span class="n">raw_logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">logits_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+</span><span id="__span-43-35"><a id="__codelineno-43-35" name="__codelineno-43-35" href="#__codelineno-43-35"></a>
+</span><span id="__span-43-36"><a id="__codelineno-43-36" name="__codelineno-43-36" href="#__codelineno-43-36"></a><span class="c1"># Select this from the checkpoint layout. Use None for official sparse-ID COCO</span>
+</span><span id="__span-43-37"><a id="__codelineno-43-37" name="__codelineno-43-37" href="#__codelineno-43-37"></a><span class="c1"># checkpoints, -1 for contiguous-ID/active-first checkpoints, or 0 for legacy</span>
+</span><span id="__span-43-38"><a id="__codelineno-43-38" name="__codelineno-43-38" href="#__codelineno-43-38"></a><span class="c1"># background-first keypoint checkpoints.</span>
+</span><span id="__span-43-39"><a id="__codelineno-43-39" name="__codelineno-43-39" href="#__codelineno-43-39"></a><span class="n">background_class_id</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+</span><span id="__span-43-40"><a id="__codelineno-43-40" name="__codelineno-43-40" href="#__codelineno-43-40"></a><span class="n">class_slots</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+</span><span id="__span-43-41"><a id="__codelineno-43-41" name="__codelineno-43-41" href="#__codelineno-43-41"></a><span class="k">if</span> <span class="n">background_class_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-43-42"><a id="__codelineno-43-42" name="__codelineno-43-42" href="#__codelineno-43-42"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span>
+</span><span id="__span-43-43"><a id="__codelineno-43-43" name="__codelineno-43-43" href="#__codelineno-43-43"></a><span class="k">else</span><span class="p">:</span>
+</span><span id="__span-43-44"><a id="__codelineno-43-44" name="__codelineno-43-44" href="#__codelineno-43-44"></a>    <span class="n">num_slots</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="__span-43-45"><a id="__codelineno-43-45" name="__codelineno-43-45" href="#__codelineno-43-45"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="o">-</span><span class="n">num_slots</span> <span class="o">&lt;=</span> <span class="n">background_class_id</span> <span class="o">&lt;</span> <span class="n">num_slots</span><span class="p">:</span>
+</span><span id="__span-43-46"><a id="__codelineno-43-46" name="__codelineno-43-46" href="#__codelineno-43-46"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"background_class_id must index one of </span><span class="si">{</span><span class="n">num_slots</span><span class="si">}</span><span class="s2"> exported class slots"</span><span class="p">)</span>
+</span><span id="__span-43-47"><a id="__codelineno-43-47" name="__codelineno-43-47" href="#__codelineno-43-47"></a>    <span class="n">background_class_id</span> <span class="o">%=</span> <span class="n">num_slots</span>
+</span><span id="__span-43-48"><a id="__codelineno-43-48" name="__codelineno-43-48" href="#__codelineno-43-48"></a>    <span class="n">foreground_mask</span> <span class="o">=</span> <span class="n">class_slots</span> <span class="o">!=</span> <span class="n">background_class_id</span>
+</span><span id="__span-43-49"><a id="__codelineno-43-49" name="__codelineno-43-49" href="#__codelineno-43-49"></a>    <span class="n">logits</span> <span class="o">=</span> <span class="n">raw_logits</span><span class="p">[:,</span> <span class="n">foreground_mask</span><span class="p">]</span>
+</span><span id="__span-43-50"><a id="__codelineno-43-50" name="__codelineno-43-50" href="#__codelineno-43-50"></a>    <span class="n">class_slots</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">foreground_mask</span><span class="p">]</span>
+</span><span id="__span-43-51"><a id="__codelineno-43-51" name="__codelineno-43-51" href="#__codelineno-43-51"></a>
+</span><span id="__span-43-52"><a id="__codelineno-43-52" name="__codelineno-43-52" href="#__codelineno-43-52"></a><span class="c1"># RF-DETR uses per-class sigmoid (multi-label), not softmax. This compact example keeps</span>
+</span><span id="__span-43-53"><a id="__codelineno-43-53" name="__codelineno-43-53" href="#__codelineno-43-53"></a><span class="c1"># one top class per query; the reference decoders instead rank query/class pairs globally,</span>
+</span><span id="__span-43-54"><a id="__codelineno-43-54" name="__codelineno-43-54" href="#__codelineno-43-54"></a><span class="c1"># so they can retain multiple above-threshold classes for one query.</span>
+</span><span id="__span-43-55"><a id="__codelineno-43-55" name="__codelineno-43-55" href="#__codelineno-43-55"></a><span class="n">scores_all</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">logits</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="o">-</span><span class="mi">88</span><span class="p">,</span> <span class="mi">88</span><span class="p">)))</span>
+</span><span id="__span-43-56"><a id="__codelineno-43-56" name="__codelineno-43-56" href="#__codelineno-43-56"></a><span class="n">scores</span> <span class="o">=</span> <span class="n">scores_all</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-43-57"><a id="__codelineno-43-57" name="__codelineno-43-57" href="#__codelineno-43-57"></a><span class="n">class_ids</span> <span class="o">=</span> <span class="n">class_slots</span><span class="p">[</span><span class="n">scores_all</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)]</span>
+</span><span id="__span-43-58"><a id="__codelineno-43-58" name="__codelineno-43-58" href="#__codelineno-43-58"></a>
+</span><span id="__span-43-59"><a id="__codelineno-43-59" name="__codelineno-43-59" href="#__codelineno-43-59"></a><span class="n">threshold</span> <span class="o">=</span> <span class="mf">0.5</span>
+</span><span id="__span-43-60"><a id="__codelineno-43-60" name="__codelineno-43-60" href="#__codelineno-43-60"></a><span class="n">keep</span> <span class="o">=</span> <span class="n">scores</span> <span class="o">&gt;</span> <span class="n">threshold</span>
+</span><span id="__span-43-61"><a id="__codelineno-43-61" name="__codelineno-43-61" href="#__codelineno-43-61"></a>
+</span><span id="__span-43-62"><a id="__codelineno-43-62" name="__codelineno-43-62" href="#__codelineno-43-62"></a><span class="c1"># cxcywh (normalized) -&gt; xyxy (pixel space)</span>
+</span><span id="__span-43-63"><a id="__codelineno-43-63" name="__codelineno-43-63" href="#__codelineno-43-63"></a><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">bw</span><span class="p">,</span> <span class="n">bh</span> <span class="o">=</span> <span class="n">boxes_cwh</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">T</span>
+</span><span id="__span-43-64"><a id="__codelineno-43-64" name="__codelineno-43-64" href="#__codelineno-43-64"></a><span class="n">xyxy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">cx</span> <span class="o">-</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">-</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cx</span> <span class="o">+</span> <span class="n">bw</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">cy</span> <span class="o">+</span> <span class="n">bh</span> <span class="o">/</span> <span class="mi">2</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-43-65"><a id="__codelineno-43-65" name="__codelineno-43-65" href="#__codelineno-43-65"></a><span class="n">xyxy</span> <span class="o">*=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+</span><span id="__span-43-66"><a id="__codelineno-43-66" name="__codelineno-43-66" href="#__codelineno-43-66"></a>
+</span><span id="__span-43-67"><a id="__codelineno-43-67" name="__codelineno-43-67" href="#__codelineno-43-67"></a><span class="n">boxes</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">confidences</span> <span class="o">=</span> <span class="n">xyxy</span><span class="p">,</span> <span class="n">class_ids</span><span class="p">[</span><span class="n">keep</span><span class="p">],</span> <span class="n">scores</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
 </span></code></pre></div>
 <p>For a fuller reference implementation (name-based matching with a documented shape-based fallback), see <code>_run_inference</code> in <a href="https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_onnx/inference.py"><code>src/rfdetr/export/_onnx/inference.py</code></a>.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
@@ -4671,7 +4816,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 21, 2026 10:16:07 UTC">2026-09-21 10:16:07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 21, 2026 13:25:07 UTC">2026-09-21 13:25:07</span>
   </span>
 
     
