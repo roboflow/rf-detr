@@ -143,7 +143,7 @@ uv sync --group docs       # Documentation dependencies only
 uv sync --group build      # Build tools only
 ```
 
-Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because `coreml` and `executorch` are declared as conflicting. `--torch-backend` is also only available for `uv pip`.
+Use `uv pip install` rather than `uv sync` for the test environment. It needs the `uv venv` step above, because unlike `uv sync` it does not create the environment itself. `uv sync` resolves a universal lock across every extra, which fails on extras that declare different Python floors, and `uv sync --all-extras` errors outright because some extras are declared as conflicting (for example `executorch` with `tflite` or `xla`, and `litert` with `tflite`). `--torch-backend` is also only available for `uv pip`.
 
 The test suite imports the training and augmentation dependencies, so installing dependency groups alone leaves a large number of tests erroring on import.
 

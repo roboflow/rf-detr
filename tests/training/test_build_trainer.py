@@ -26,7 +26,11 @@ from rfdetr.training.callbacks.best_model import BestModelCallback, RFDETREarlyS
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.callbacks.drop_schedule import DropPathCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
-from rfdetr.training.trainer import _accelerator_resolves_to_xla, _ForceLastEpochValidationCallback
+from rfdetr.training.trainer import (
+    _accelerator_resolves_to_xla,
+    _ForceLastEpochValidationCallback,
+    _xla_resolves_to_single_device,
+)
 
 
 def _mc(**kwargs):
@@ -142,7 +146,7 @@ class TestBuildTrainerCallbacks:
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._log_per_class_metrics is False
 
-    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco"])
+    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco", "vernier"])
     def test_coco_eval_uses_eval_backend(self, tmp_path: Path, backend: str) -> None:
         """COCOEvalCallback receives every eval_backend value TrainConfig accepts."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend=backend), _mc())
@@ -1235,10 +1239,22 @@ class TestBuildTrainerEMAShardingGuard:
 
 
 class TestBuildTrainerEMAXLAGuard:
-    """XLA training must disable EMA and its checkpoint/evaluation bookkeeping."""
+    """Multi-device XLA training must disable EMA and its checkpoint/evaluation bookkeeping."""
 
-    def test_xla_disables_ema_and_uses_regular_checkpoint_track(self, tmp_path):
-        """XLA must omit EMA callbacks and metrics while keeping the regular-model path."""
+    @pytest.mark.parametrize(
+        ("devices", "num_nodes"),
+        [
+            pytest.param(4, 1, id="four_devices_one_node"),
+            pytest.param(1, 2, id="one_device_per_host_two_hosts"),
+        ],
+    )
+    def test_multi_device_xla_disables_ema_and_uses_regular_checkpoint_track(
+        self, tmp_path: Path, devices: int, num_nodes: int
+    ) -> None:
+        """Multi-device XLA, one device per host across nodes included, must omit EMA callbacks and metrics.
+
+        The regular-model checkpoint/evaluation path stays in place.
+        """
         import unittest.mock as mock
 
         captured: dict[str, Any] = {}
@@ -1250,13 +1266,15 @@ class TestBuildTrainerEMAXLAGuard:
         with (
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision"),
-            pytest.warns(UserWarning, match="EMA disabled on XLA"),
+            pytest.warns(UserWarning, match="EMA disabled on multi-device XLA"),
         ):
             build_trainer(
                 _tc(
                     tmp_path,
                     use_ema=True,
                     eval_base_model=False,
+                    devices=devices,
+                    num_nodes=num_nodes,
                 ),
                 _mc(),
                 accelerator="xla",
@@ -1268,8 +1286,52 @@ class TestBuildTrainerEMAXLAGuard:
         assert best_callback._monitor_ema is None
         assert best_callback._evaluates_base_model is True
 
-    def test_xla_evaluation_only_does_not_warn_about_training_ema(self, tmp_path):
-        """Evaluation-only trainers do not build EMA and must not emit the training warning."""
+    @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
+    def test_single_device_xla_keeps_ema_enabled(self, tmp_path: Path, accelerator: str) -> None:
+        """One-device XLA keeps EMA after the shipped callback completed the one-chip validation runs.
+
+        ``"tpu"`` is the accelerator string ``RFDETR.train(device="xla")`` forwards to ``build_trainer`` (see
+        ``test_device_xla_absorbed_as_accelerator_tpu``); the guard must treat it exactly like ``"xla"``.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+        ):
+            build_trainer(
+                _tc(
+                    tmp_path,
+                    use_ema=True,
+                    eval_base_model=False,
+                    devices=1,
+                ),
+                _mc(),
+                accelerator=accelerator,
+            )
+
+        assert captured["accelerator"] == accelerator
+        assert "precision" not in captured
+        callbacks = captured["callbacks"]
+        assert any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
+        best_callback = next(callback for callback in callbacks if isinstance(callback, BestModelCallback))
+        assert best_callback._monitor_ema is not None
+        assert best_callback._evaluates_base_model is False
+
+    def test_single_device_xla_does_not_warn(self, tmp_path: Path) -> None:
+        """The disable warning must not fire for a configuration that keeps EMA."""
         import unittest.mock as mock
 
         with (
@@ -1279,13 +1341,184 @@ class TestBuildTrainerEMAXLAGuard:
         ):
             warnings.simplefilter("always")
             build_trainer(
-                _tc(tmp_path, use_ema=True),
+                _tc(tmp_path, use_ema=True, devices=1),
+                _mc(),
+                accelerator="xla",
+            )
+
+        assert not any("EMA disabled" in str(warning.message) for warning in caught)
+
+    @pytest.mark.parametrize("auto_device_count", [1, 4])
+    def test_auto_devices_on_xla_follows_the_resolved_chip_count(self, tmp_path: Path, auto_device_count: int) -> None:
+        """``devices='auto'`` must resolve through the XLA chip count, not CUDA's auto branch."""
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+            mock.patch(
+                "pytorch_lightning.accelerators.XLAAccelerator.auto_device_count",
+                return_value=auto_device_count,
+            ),
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("ignore")
+            build_trainer(
+                _tc(tmp_path, use_ema=True, eval_base_model=False, devices="auto"),
+                _mc(),
+                accelerator="xla",
+            )
+
+        callbacks = captured["callbacks"]
+        has_ema = any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
+        assert has_ema is (auto_device_count == 1)
+
+    def test_xla_device_index_list_keeps_ema_disabled_instead_of_raising(self, tmp_path: Path) -> None:
+        """A device-index list, as ``RFDETR.train(device='xla:N')`` forwards it, must not raise in the EMA guard.
+
+        A distributed ``strategy`` skips the earlier ``_requests_multiple_devices`` call, so this is the first place the
+        list is inspected; the guard has to answer "not provably one device" like it did before.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
+
+            Examples:
+                >>> _fake_trainer  # doctest: +SKIP
+                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
+            """
+            captured.update(kwargs)
+            return MagicMock()
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+            pytest.warns(UserWarning, match="EMA disabled"),
+        ):
+            build_trainer(
+                _tc(tmp_path, use_ema=True, eval_base_model=False, strategy="ddp"),
+                _mc(),
+                accelerator="tpu",
+                devices=[0],
+            )
+
+        callbacks = captured["callbacks"]
+        assert not any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
+        best_callback = next(callback for callback in callbacks if isinstance(callback, BestModelCallback))
+        assert best_callback._monitor_ema is None
+        assert best_callback._evaluates_base_model is True
+
+    def test_xla_evaluation_only_does_not_warn_about_training_ema(self, tmp_path):
+        """Evaluation-only trainers do not build EMA and must not emit the training warning.
+
+        Uses the multi-device configuration that *does* warn when training callbacks are built, so the assertion is
+        about ``include_training_callbacks=False`` rather than about a device count that would stay silent either way.
+        """
+        import unittest.mock as mock
+
+        with (
+            mock.patch("rfdetr.training.trainer.Trainer", return_value=MagicMock()),
+            mock.patch("pytorch_lightning.plugins.XLAPrecision"),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            build_trainer(
+                _tc(tmp_path, use_ema=True, devices=4),
                 _mc(),
                 accelerator="xla",
                 include_training_callbacks=False,
             )
 
-        assert not any("EMA disabled on XLA" in str(warning.message) for warning in caught)
+        assert not any("EMA disabled" in str(warning.message) for warning in caught)
+
+
+class TestXlaResolvesToSingleDevice:
+    """``_xla_resolves_to_single_device`` decides the EMA guard, so each ``int | str`` device form is covered."""
+
+    @pytest.mark.parametrize(
+        ("devices", "expected"),
+        [
+            (1, True),
+            (2, False),
+            (4, False),
+            ("1", True),
+            ("4", False),
+            ("0,1", False),
+            ("", False),
+            ("all", False),
+        ],
+    )
+    def test_explicit_device_forms_do_not_consult_the_accelerator(self, devices: int | str, expected: bool) -> None:
+        """An explicitly named device count resolves without querying the XLA runtime."""
+        import unittest.mock as mock
+
+        with mock.patch(
+            "pytorch_lightning.accelerators.XLAAccelerator.auto_device_count",
+            side_effect=AssertionError("auto_device_count must not be consulted for explicit devices"),
+        ):
+            assert _xla_resolves_to_single_device(devices) is expected
+
+    @pytest.mark.parametrize(
+        "devices",
+        [
+            pytest.param([0], id="one_index_list"),
+            pytest.param([0, 1], id="two_index_list"),
+            pytest.param((0,), id="one_index_tuple"),
+            pytest.param([], id="empty_list"),
+        ],
+    )
+    def test_device_index_sequences_are_not_proven_single(self, devices: list[int] | tuple[int, ...]) -> None:
+        """A device-index sequence, as ``train(device='xla:N')`` forwards it, answers ``False``.
+
+        Only the ``int | str`` count forms are validated on one chip, so a sequence keeps the disabled path instead of
+        raising ``AttributeError`` on ``.strip()``.
+        """
+        import unittest.mock as mock
+
+        with mock.patch(
+            "pytorch_lightning.accelerators.XLAAccelerator.auto_device_count",
+            side_effect=AssertionError("auto_device_count must not be consulted for a device-index sequence"),
+        ):
+            assert _xla_resolves_to_single_device(devices) is False
+
+    @pytest.mark.parametrize("devices", [-1, "auto", "-1", "AUTO"])
+    @pytest.mark.parametrize("auto_device_count", [1, 8])
+    def test_auto_forms_resolve_through_the_xla_chip_count(self, devices: int | str, auto_device_count: int) -> None:
+        """``auto``/``-1`` must count TPU chips; CUDA's auto branch reports none for XLA."""
+        import unittest.mock as mock
+
+        with mock.patch(
+            "pytorch_lightning.accelerators.XLAAccelerator.auto_device_count",
+            return_value=auto_device_count,
+        ):
+            assert _xla_resolves_to_single_device(devices) is (auto_device_count == 1)
+
+    @pytest.mark.parametrize("devices", [1, "1", -1, "auto"])
+    @pytest.mark.parametrize("num_nodes", [2, 4])
+    def test_multiple_nodes_are_never_a_single_device(self, devices: int | str, num_nodes: int) -> None:
+        """One device per host across several hosts is a multi-replica run, whatever ``devices`` says."""
+        import unittest.mock as mock
+
+        with mock.patch(
+            "pytorch_lightning.accelerators.XLAAccelerator.auto_device_count",
+            side_effect=AssertionError("auto_device_count must not be consulted when num_nodes > 1"),
+        ):
+            assert _xla_resolves_to_single_device(devices, num_nodes) is False
 
 
 class TestBuildTrainerLoggers:

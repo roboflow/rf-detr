@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -30,10 +32,12 @@ import torch
 from PIL import Image
 from supervision.assets import ImageAssets, download_assets
 
+import rfdetr
 from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.exporter import CoreMLConfig, CoreMLExporter, _check_coremltools_available
 from rfdetr.export.prepare import ExportGraph
+from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import (
     _parity_input_from_image,
     _structured_parity_input,
@@ -153,6 +157,116 @@ def _validate_coreml_vs_pytorch(
     assert max(diffs) < _COREML_MAX_ABS_DIFF, (
         f"CoreML outputs diverge from PyTorch: max abs diff {max(diffs)} ({per_output}, bound={_COREML_MAX_ABS_DIFF})"
     )
+
+
+def _mil_op_counts(spec: Any) -> Counter[str]:
+    """Return per-type MIL operation counts in *spec*'s active ``main`` block, nested blocks included.
+
+    A multiset rather than a set of types: type membership alone cannot see a shape-driven lowering route that
+    reuses an op type both graphs already contain but emits far more of it. ``cond``/``while_loop`` carry their
+    body in ``Operation.blocks``, so a top-level-only walk would silently stop reporting once such an op appears.
+
+    Args:
+        spec: A CoreML ``Model`` protobuf (``coremltools.utils.load_spec``) holding an ``mlProgram``.
+
+    Returns:
+        A count of every ``Operation.type`` reachable from the ``main`` function's active block specialization.
+        Empty when *spec* holds no ``mlProgram``: protobuf message maps default-construct on lookup rather than
+        raising, so callers must treat an empty result as "traversal found nothing", not as "the graphs agree".
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> def op(type_, *blocks):
+        ...     return SimpleNamespace(type=type_, blocks=list(blocks))
+        >>> main = SimpleNamespace(
+        ...     opset="CoreML8",
+        ...     block_specializations={
+        ...         "CoreML8": SimpleNamespace(
+        ...             operations=[op("const"), op("const"), op("cond", SimpleNamespace(operations=[op("linear")]))]
+        ...         ),
+        ...         "CoreML7": SimpleNamespace(operations=[op("matmul")]),
+        ...     },
+        ... )
+        >>> sorted(_mil_op_counts(SimpleNamespace(mlProgram=SimpleNamespace(functions={"main": main}))).items())
+        [('cond', 1), ('const', 2), ('linear', 1)]
+    """
+    main = spec.mlProgram.functions["main"]
+    counts: Counter[str] = Counter()
+    pending = list(main.block_specializations[main.opset].operations)
+    while pending:
+        operation = pending.pop()
+        counts[operation.type] += 1
+        pending.extend(nested_op for block in operation.blocks for nested_op in block.operations)
+    return counts
+
+
+def _mil_op_types(spec: Any) -> set[str]:
+    """Return the distinct MIL operation types in *spec*'s active ``main`` block, nested blocks included.
+
+    Args:
+        spec: A CoreML ``Model`` protobuf (``coremltools.utils.load_spec``) holding an ``mlProgram``.
+
+    Returns:
+        Every ``Operation.type`` reachable from the ``main`` function's active block specialization (see
+        :func:`_mil_op_counts` for the traversal and the empty-result caveat).
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> def op(type_, *blocks):
+        ...     return SimpleNamespace(type=type_, blocks=list(blocks))
+        >>> main = SimpleNamespace(
+        ...     opset="CoreML8",
+        ...     block_specializations={
+        ...         "CoreML8": SimpleNamespace(
+        ...             operations=[op("const"), op("cond", SimpleNamespace(operations=[op("linear")]))]
+        ...         ),
+        ...         "CoreML7": SimpleNamespace(operations=[op("matmul")]),
+        ...     },
+        ... )
+        >>> sorted(_mil_op_types(SimpleNamespace(mlProgram=SimpleNamespace(functions={"main": main}))))
+        ['cond', 'const', 'linear']
+    """
+    return set(_mil_op_counts(spec))
+
+
+#: Max per-op-type count the shipped-query graph may exceed the value-checked (5-query) graph by before
+#: ``test_default_query_count_lowers_through_no_unchecked_operation`` flags it. Ordinary constant folding at the
+#: larger shipped shape can trim a handful of ``const``/``reshape`` nodes relative to the smaller checked shape;
+#: this value is a conservative starting point, not an empirical measurement like ``_MIN_TWO_STAGE_RANK_MARGIN`` --
+#: widen it if it proves noisy, narrow it if a real regression sneaks in under it.
+_MIL_OP_COUNT_TOLERANCE = 2
+
+
+def _mil_op_count_regressions(
+    shipped: Counter[str], checked: Counter[str], *, tolerance: int
+) -> dict[str, tuple[int, int]]:
+    """Return MIL op types where *shipped* exceeds *checked* by more than *tolerance* occurrences.
+
+    One-directional by design: an op type *shipped* reaches far more than *checked* (including one *checked*
+    never reaches at all, i.e. a checked count of 0) is the gap worth flagging; the reverse -- a node folded away
+    only at the larger shipped shape -- is benign, same rationale as :func:`_mil_op_types`.
+
+    Args:
+        shipped: Op-type counts from the shipped-query-count graph.
+        checked: Op-type counts from the value-checked (5-query) graph.
+        tolerance: Maximum benign per-type count difference before a type is reported.
+
+    Returns:
+        ``{op_type: (shipped_count, checked_count)}`` for every regression found; empty when none.
+
+    Examples:
+        >>> _mil_op_count_regressions(
+        ...     Counter(const=5, slice_by_index=3), Counter(const=4, slice_by_index=0), tolerance=2
+        ... )
+        {'slice_by_index': (3, 0)}
+        >>> _mil_op_count_regressions(Counter(const=5), Counter(const=4), tolerance=2)
+        {}
+    """
+    return {
+        op_type: (shipped_count, checked[op_type])
+        for op_type, shipped_count in shipped.items()
+        if shipped_count - checked[op_type] > tolerance
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -447,30 +561,89 @@ _COREML_E2E_VARIANTS = [
     pytest.param(("RFDETRKeypointPreview", ("boxes", "logits", "keypoints")), id="keypoint"),
 ]
 
-# coremltools 9.0's MIL converter occasionally constant-folds a weights-only `linear` op via
-# `np.matmul` at conversion time (coremltools/converters/mil/mil/ops/defs/iOS15/linear.py
-# value_inference) and, on some untrained-weight draws, that fold overflows ("divide by zero
-# encountered in matmul" / "invalid value encountered in matmul"), embedding a bad constant in
-# the exported .mlpackage. This is a coremltools bug, not something RF-DETR's export code
-# controls (see src/rfdetr/export/_coreml/exporter.py and the torch<2.12 pin in pyproject.toml,
-# which reduces but does not eliminate the underlying instability).
-#
-# tests/conftest.py's autouse `reset_random_seeds` fixture already calls `seed_all(seed=7)`
-# before every test, so weight init here is NOT actually random across runs/reruns — it is
-# deterministic per seed. `@pytest.mark.flaky` reruns do NOT help: pytest-rerunfailures only
-# re-runs fixtures that *failed setup*, and this failure happens in the test body, so a rerun
-# reseeds to the exact same seed=7 and reproduces the identical (bad) export every time —
-# confirmed empirically (5/5 identical failures across 3 separate rerun-enabled runs). The
-# repo's default seed=7 happens to be one of the bad draws for RFDETRNano detection parity.
-# Overriding to a verified-good seed via the repo's own `seed_all()` helper (not a raw
-# `torch.manual_seed` bypass) makes the export deterministic AND passing. Found by scanning
-# seed_all(0..12): seed=0 passed structured+real-image detection parity on 4/4 independent
-# fresh-process re-runs, plus segmentation. Keypoint (RFDETRKeypointPreview) was added without a
-# seed scan: seed=0 is backed by one manual run (max abs diff 9.54e-06 on Apple M3 Pro, coremltools
-# 9.0) plus passing CI macOS 3.11 and 3.13 jobs. If this starts failing again (model architecture
-# or coremltools upgrade changed the op graph), re-run the same small seed scan rather than
-# guessing — see tests/export/README or git history for the search script.
+# Raw-tensor parity on a two-stage detector is only well defined when the encoder's `torch.topk` ranking has
+# no near-ties. Untrained weights put the ranking scores of neighbouring encoder tokens ~1e-6 apart across the
+# default 300 selected queries, which is the size of legitimate fp32 rounding differences between eager and the
+# CoreML CPU runtime. A near-tied pair then swaps places, two reference points trade queries while `query_feat`
+# stays positional, and self-attention spreads that into every logit (0.5-1.5 abs diff). Which pairs flip moves
+# with the seed, the input, the torch version, the compute unit and even runtime kernel fusion, which is what made
+# this suite look flaky (and what the former `torch<2.12` pin on the `coreml` extra was wrongly attributed to).
+# The top of the ranking is sparse, though. Measured on Apple M3 Pro with coremltools 9.0 over Nano, SegNano and
+# KeypointPreview, seeds 0/3/7, both parity inputs and torch 2.11/2.12/2.14 (54 cases): CoreML moves a ranking
+# score by at most 1e-5, while the smallest gap among the top 6 scores is 3.1e-4. Exporting 5 queries therefore
+# keeps every output under the tight raw bound, and `_assert_well_conditioned` re-checks that precondition on
+# every run instead of trusting it (weight init differs across torch versions, so the margins do too).
+#: Queries the e2e parity exports select, small enough that their two-stage ranking is well separated.
+_COREML_E2E_NUM_QUERIES = 5
+#: Minimum eager gap between neighbouring top-ranked scores: 5x the worst swap (two scores drifting 1e-5 apart).
+_MIN_TWO_STAGE_RANK_MARGIN = 1e-4
+#: Seed the module-scoped e2e fixtures set themselves: they run before the autouse per-test ``reset_random_seeds``.
 _COREML_EXPORT_SEED = 0
+
+
+def _two_stage_rank_margin(model: torch.nn.Module, example_input: torch.Tensor) -> float:
+    """Return the smallest gap between neighbouring scores that decide the model's two-stage ``torch.topk``.
+
+    Only the top ``k + 1`` scores matter: a swap among them reorders the selected queries or changes which
+    ones are selected, and a swap below them changes nothing.
+
+    Args:
+        model: Export-mode module whose forward makes exactly one ``torch.topk`` call over its last dimension.
+        example_input: ``(N, C, H, W)`` input; every image in the batch is measured.
+
+    Returns:
+        The smallest gap between neighbouring scores among the top ``k + 1`` of any image.
+
+    Raises:
+        AssertionError: If the forward does not call ``torch.topk`` exactly once, or if the call does not rank
+            along the scores tensor's last axis (the margin below is only meaningful there).
+
+    Examples:
+        >>> _two_stage_rank_margin(_TopkRanker(2), torch.tensor([[1.0, 0.5, 0.25, 0.0]]))
+        0.25
+    """
+    with mock.patch("torch.topk", wraps=torch.topk) as topk, torch.no_grad():
+        model(example_input.clone())
+    assert topk.call_count == 1, f"expected one two-stage torch.topk call, got {topk.call_count}"
+    assert len(topk.call_args.args) >= 2, (
+        "expected the two-stage torch.topk call to pass scores and k positionally, got "
+        f"args={topk.call_args.args!r} kwargs={topk.call_args.kwargs!r}"
+    )
+    scores, k = topk.call_args.args[:2]
+    # `dim` may arrive as a third positional arg or (as the production call site does, a keyword on a
+    # 2-D tensor) as a kwarg; either way, the margin below is only meaningful when it targets the last axis.
+    dim = topk.call_args.kwargs.get("dim", topk.call_args.args[2] if len(topk.call_args.args) > 2 else -1)
+    assert dim % scores.ndim == scores.ndim - 1, (
+        "expected the two-stage torch.topk call to rank along the scores tensor's last axis, got "
+        f"dim={dim!r} for a {scores.ndim}-D scores tensor"
+    )
+    top = scores.sort(dim=-1, descending=True).values[..., : k + 1]
+    return float((top[..., :-1] - top[..., 1:]).min())
+
+
+def _assert_well_conditioned(model: torch.nn.Module, example_input: torch.Tensor) -> None:
+    """Fail with an explicit precondition message when the input's two-stage ranking has a near-tie.
+
+    Args:
+        model: Export-mode module whose forward makes exactly one ``torch.topk`` call.
+        example_input: ``(N, C, H, W)`` parity input.
+
+    Raises:
+        AssertionError: If the ranking margin is below ``_MIN_TWO_STAGE_RANK_MARGIN``.
+
+    Examples:
+        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[1.0, 0.0]]))
+        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[0.5, 0.5]]))
+        Traceback (most recent call last):
+            ...
+        AssertionError: parity input is ill-conditioned: ...
+    """
+    margin = _two_stage_rank_margin(model, example_input)
+    assert margin >= _MIN_TWO_STAGE_RANK_MARGIN, (
+        f"parity input is ill-conditioned: two-stage topk scores are only {margin:.2e} apart "
+        f"(< {_MIN_TWO_STAGE_RANK_MARGIN}), so fp32 rounding can swap selected queries and raw outputs cannot "
+        "match; lower _COREML_E2E_NUM_QUERIES or change the parity input rather than loosening the parity bound"
+    )
 
 
 @pytest.fixture(scope="module")
@@ -488,28 +661,33 @@ def people_walking_image_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS)
 def coreml_export(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> tuple[Any, torch.Tensor, Path, tuple[str, ...]]:
+) -> tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]:
     """Export RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview to a ``.mlpackage`` once per variant for e2e tests.
 
-    Re-seeds to ``_COREML_EXPORT_SEED`` (a verified-good draw, see module-level comment) immediately before model
-    construction, overriding the autouse ``reset_random_seeds`` fixture's default seed for this specific known-flaky
-    export.
-    """
-    import rfdetr
-    from rfdetr.utilities.reproducibility import seed_all
+    Exports ``_COREML_E2E_NUM_QUERIES`` queries so the two-stage ranking is well separated (see the module-level
+    comment), and reseeds itself because it runs before the autouse per-test seed reset. The variant's class name
+    comes back with it so ``coreml_default_queries_export`` can depend on this fixture and inherit its
+    parametrization, rather than declaring the same ``params`` again and producing a cross product.
 
+    Examples:
+        Skipped: a pytest fixture, and a real ``coremltools`` conversion, so it cannot run standalone.
+
+        >>> model_cls_name, model, example, mlpackage_path, output_labels = coreml_export  # doctest: +SKIP
+        >>> model_cls_name, example.shape[0], mlpackage_path.suffix, output_labels  # doctest: +SKIP
+        ('RFDETRNano', 1, '.mlpackage', ('boxes', 'logits'))
+    """
     model_cls_name, output_labels = request.param
     model_cls = getattr(rfdetr, model_cls_name)
     out_dir = tmp_path_factory.mktemp(f"coreml_{model_cls_name.lower()}")
     seed_all(_COREML_EXPORT_SEED)
-    detector = model_cls(pretrain_weights=None)
+    detector = model_cls(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
     mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
     model.export()
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
-    return model, example, Path(mlpackage_path), output_labels
+    return model_cls_name, model, example, Path(mlpackage_path), output_labels
 
 
 @pytest.fixture(scope="module")
@@ -519,9 +697,6 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     Uses the public ``backbone_only=True`` route so the CoreML runtime executes the same list-valued ``_BackboneExport``
     graph that users receive, rather than a mocked converter dispatch.
     """
-    import rfdetr
-    from rfdetr.utilities.reproducibility import seed_all
-
     out_dir = tmp_path_factory.mktemp("coreml_backbone")
     seed_all(_COREML_EXPORT_SEED)
     detector = rfdetr.RFDETRNano(pretrain_weights=None)
@@ -533,15 +708,48 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     return reference_model, example, Path(mlpackage_path)
 
 
+@pytest.fixture(scope="module")
+def coreml_default_queries_export(
+    coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]:
+    """Export each e2e variant with its shipped query count, which ``coreml_export`` trades for a separated ranking.
+
+    Those counts differ per variant (300 for detection, 100 for segmentation and keypoints), and the mask and keypoint
+    output shapes follow them, so every shipped graph is converted and run rather than only the detection one. Depends
+    on ``coreml_export`` for the variant *and* for its 5-query ``.mlpackage``, which the graph comparison below is
+    measured against.
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``coremltools`` conversion, so it cannot run standalone.
+
+        >>> model, example, mlpackage_path, few_queries_path, output_labels = (
+        ...     coreml_default_queries_export
+        ... )  # doctest: +SKIP
+        >>> mlpackage_path != few_queries_path, example.shape[0], output_labels  # doctest: +SKIP
+        (True, 1, ('boxes', 'logits'))
+    """
+    model_cls_name, _, _, few_queries_path, output_labels = coreml_export
+    out_dir = tmp_path_factory.mktemp(f"coreml_default_queries_{model_cls_name.lower()}")
+    seed_all(_COREML_EXPORT_SEED)
+    detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None)
+    mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
+    model = detector.model.model.to("cpu").eval()
+    model.export()
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
+    return model, example, Path(mlpackage_path), few_queries_path, output_labels
+
+
 @coreml_only
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
-    def test_mlpackage_written(self, coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]]) -> None:
+    def test_mlpackage_written(self, coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]) -> None:
         """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision."""
-        _, _, mlpackage_path, _ = coreml_export
+        _, _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
         # Default compute_precision resolves to FLOAT32 (see the exporter module docstring); the filename must
         # always encode it, since precision materially changes the artifact.
@@ -549,20 +757,22 @@ class TestCoreMLEndToEnd:
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
     def test_outputs_match_pytorch_structured(
-        self, coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]]
+        self, coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]
     ) -> None:
         """CoreML output matches eager on structured (gradient+checkerboard) input."""
-        model, example, mlpackage_path, output_labels = coreml_export
+        _, model, example, mlpackage_path, output_labels = coreml_export
+        _assert_well_conditioned(model, example)
         _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
 
     def test_outputs_match_pytorch_supervision_image(
         self,
-        coreml_export: tuple[Any, torch.Tensor, Path, tuple[str, ...]],
+        coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]],
         people_walking_image_path: Path,
     ) -> None:
         """CoreML output matches eager on ``ImageAssets.PEOPLE_WALKING``."""
-        model, structured, mlpackage_path, output_labels = coreml_export
+        _, model, structured, mlpackage_path, output_labels = coreml_export
         example = _parity_input_from_image(people_walking_image_path, int(structured.shape[-1]))
+        _assert_well_conditioned(model, example)
         _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
 
     def test_backbone_outputs_match_pytorch_structured(
@@ -574,6 +784,54 @@ class TestCoreMLEndToEnd:
         diffs = _coreml_parity_diffs(mlpackage_path, model, example)
         assert max(diffs) < _COREML_MAX_ABS_DIFF, (
             f"CoreML backbone outputs diverge from PyTorch: max abs diff {max(diffs)} (bound={_COREML_MAX_ABS_DIFF})"
+        )
+
+    def test_default_query_count_runs_with_eager_shapes(
+        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]
+    ) -> None:
+        """The shipped-query-count export must run on CoreML with eager's output count, shapes and finite values.
+
+        Values are deliberately not bounded here. At the shipped query count the untrained two-stage ranking always has
+        near-ties, so a legitimate fp32 swap can move every output, and no value comparison is both tight and stable
+        (post-processed scores drift up to ~1e-3 on a swap). The strict 1e-4 value parity is carried by the 5-query
+        export; this test covers what the shipped graph adds on top of it: the shipped output shapes.
+        """
+        model, example, mlpackage_path, _, output_labels = coreml_default_queries_export
+        diffs = _coreml_parity_diffs(mlpackage_path, model, example)
+        assert len(diffs) == len(output_labels), f"CoreML export must yield {output_labels}, got {len(diffs)} outputs"
+        assert all(np.isfinite(diffs)), f"CoreML produced non-finite outputs: max abs diffs {diffs}"
+
+    def test_default_query_count_lowers_through_no_unchecked_operation(
+        self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]
+    ) -> None:
+        """The shipped-query graph must reach no MIL operation, nor far more of one, than the checked graph does.
+
+        Deliberately a *structural* guard, not a numerical one, and it does not make the 5-query parity stand in for
+        the shipped graph: the historical CoreML parity failures this suite was rewritten around happened with an
+        identical op set on both sides, so bare op-type membership cannot discriminate drift on its own. Op *counts*
+        (within ``_MIL_OP_COUNT_TOLERANCE``, since constant folding legitimately trims a handful of `const`/`reshape`
+        nodes between shapes) additionally catch the shipped shapes reusing a familiar op type far more heavily —
+        say, a live ``slice_by_index`` chain at 300 queries where 5 queries folded most of it away to ``const``.
+
+        One-directional on purpose: an op type the shipped graph reaches far more of (including one the checked
+        graph never reaches at all) is the gap; the reverse (a node fused away only at the larger shape) is benign
+        and must not turn the macOS-only parity job red.
+        """
+        import coremltools as ct
+
+        _, _, mlpackage_path, few_queries_path, _ = coreml_default_queries_export
+
+        shipped_counts = _mil_op_counts(ct.utils.load_spec(str(mlpackage_path)))
+        few_queries_counts = _mil_op_counts(ct.utils.load_spec(str(few_queries_path)))
+
+        # Protobuf message maps default-construct on lookup, so a spec this traversal does not understand yields
+        # an empty count on both sides and the regression check below would pass while inspecting nothing.
+        assert shipped_counts, f"no MIL operations found in {mlpackage_path.name}: the spec traversal is wrong"
+        regressions = _mil_op_count_regressions(shipped_counts, few_queries_counts, tolerance=_MIL_OP_COUNT_TOLERANCE)
+        assert not regressions, (
+            f"shipped-query graph reaches these MIL ops far more than the {_COREML_E2E_NUM_QUERIES}-query parity "
+            f"graph does, beyond the folding tolerance of {_MIL_OP_COUNT_TOLERANCE} -- {{op: (shipped, checked)}}: "
+            f"{regressions}"
         )
 
 
@@ -597,3 +855,168 @@ class TestCoreMLParityInputHelpers:
         tensor = _parity_input_from_image(image_path, 64)
         assert tensor.shape == (1, 3, 64, 64)
         assert torch.isfinite(tensor).all()
+
+
+class _TopkRanker(torch.nn.Module):
+    """Stand-in for a two-stage ranker: one ``torch.topk`` over the last dimension per configured ``k``.
+
+    Every ``k`` re-ranks the same input rather than chaining, so the call *count* is what varies — that is what
+    ``_two_stage_rank_margin``'s guard reads, and chaining would shrink the tensor out from under later ``k``s.
+
+    Examples:
+        >>> _TopkRanker(1)(torch.tensor([[0.25, 0.75]])).tolist()
+        [[0.75]]
+        >>> _TopkRanker()(torch.tensor([[0.25]])).tolist()
+        [[0.25]]
+    """
+
+    def __init__(self, *ks: int) -> None:
+        super().__init__()
+        self.ks = ks
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Rank ``x`` once per configured ``k`` and return the last ranking (``x`` itself when none)."""
+        out = x
+        for k in self.ks:
+            out = torch.topk(x, k, dim=-1).values
+        return out
+
+
+class _RaisingRanker(torch.nn.Module):
+    """Stand-in ranker whose forward calls ``torch.topk`` once, then always raises.
+
+    Covers the restore-on-exception path of the ``mock.patch("torch.topk", ...)`` spy in
+    :func:`_two_stage_rank_margin`: a model that blows up mid-forward, after its one ranking call, must not
+    leave ``torch.topk`` patched for every test that runs after it.
+
+    Examples:
+        >>> _RaisingRanker()(torch.tensor([[0.9, 0.1]]))
+        Traceback (most recent call last):
+            ...
+        RuntimeError: boom
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Call ``torch.topk`` once, then unconditionally raise ``RuntimeError("boom")``."""
+        torch.topk(x, 1, dim=-1)
+        raise RuntimeError("boom")
+
+
+class TestTwoStageRankMargin:
+    """``_two_stage_rank_margin`` must measure exactly the gaps that decide the two-stage selection."""
+
+    @pytest.mark.parametrize(
+        ("scores", "k", "expected"),
+        [
+            pytest.param([[0.9, 0.5, 0.49, 0.1]], 2, 0.01, id="gap-at-selection-boundary-counts"),
+            pytest.param([[0.9, 0.5, 0.1, 0.1]], 1, 0.4, id="tie-below-boundary-ignored"),
+            pytest.param([[0.1, 0.9, 0.5]], 1, 0.4, id="input-order-irrelevant"),
+            pytest.param([[0.7, 0.7, 0.1]], 1, 0.0, id="exact-tie-inside-selection"),
+            pytest.param([[0.9, 0.1], [0.5, 0.5]], 1, 0.0, id="tie-in-second-image"),
+            pytest.param([[0.9, 0.9, 0.9, 0.1]], 2, 0.0, id="three-way-tie-at-selection-boundary"),
+            pytest.param(
+                [[0.9, 0.5, 0.1], [0.9, 0.85, 0.1], [0.9, 0.6, 0.1]],
+                1,
+                0.05,
+                id="min-gap-in-middle-image-of-three",
+            ),
+        ],
+    )
+    def test_margin(self, scores: list[list[float]], k: int, expected: float) -> None:
+        """The margin is the smallest neighbouring gap among the top ``k + 1`` scores of any image."""
+        assert _two_stage_rank_margin(_TopkRanker(k), torch.tensor(scores)) == pytest.approx(expected, abs=1e-6)
+
+    @pytest.mark.parametrize("ks", [pytest.param((), id="no-topk"), pytest.param((1, 1), id="two-topk")])
+    def test_rejects_forward_without_exactly_one_topk(self, ks: tuple[int, ...]) -> None:
+        """Measuring the wrong ranking would silently vouch for parity, so any other call count must fail."""
+        with pytest.raises(AssertionError, match="expected one two-stage torch.topk call"):
+            _two_stage_rank_margin(_TopkRanker(*ks), torch.tensor([[0.9, 0.1]]))
+
+    def test_raises_on_k_equal_zero(self) -> None:
+        """``k=0`` leaves no neighbouring pair to diff, so torch's own empty-tensor reduction error surfaces raw.
+
+        Documents actual behaviour rather than a documented contract: ``_two_stage_rank_margin`` has no ``k=0``
+        guard, so a caller hits ``Tensor.min()`` on an empty tensor instead of an actionable assertion.
+        """
+        with pytest.raises(RuntimeError, match=r"numel\(\) == 0"):
+            _two_stage_rank_margin(_TopkRanker(0), torch.tensor([[0.9, 0.1]]))
+
+    def test_restores_torch_topk(self) -> None:
+        """The spy must not leak: ``torch.topk`` is the original function after a measurement."""
+        original = torch.topk
+        _two_stage_rank_margin(_TopkRanker(1), torch.tensor([[0.9, 0.1]]))
+        assert torch.topk is original
+
+    def test_restores_torch_topk_after_forward_raises(self) -> None:
+        """The spy must not leak even when the model's forward raises after its one ``torch.topk`` call."""
+        original = torch.topk
+        with pytest.raises(RuntimeError, match="boom"):
+            _two_stage_rank_margin(_RaisingRanker(), torch.tensor([[0.9, 0.1]]))
+        assert torch.topk is original
+
+
+class _ProtoMapDouble(dict):
+    """Minimal double for a protobuf message-map: reads default-construct a missing key instead of raising.
+
+    Protobuf map fields (e.g. ``ModelSpecification.mlProgram.functions``, ``Function.block_specializations``)
+    return a fresh default-constructed message on ``some_map[missing_key]`` rather than raising ``KeyError`` --
+    exactly the semantics :func:`_mil_op_types`'s docstring documents, and a plain ``dict`` (raises ``KeyError``)
+    or ``SimpleNamespace`` (no ``__getitem__`` at all) cannot reproduce.
+
+    Args:
+        default_factory: Builds (and caches, matching protobuf's own auto-vivify-on-read behaviour) the value
+            returned for a key not already present.
+
+    Examples:
+        >>> m = _ProtoMapDouble(lambda: "default")
+        >>> m["missing"]
+        'default'
+        >>> m["missing"] is m["missing"]
+        True
+    """
+
+    def __init__(self, default_factory: Any) -> None:
+        super().__init__()
+        self._default_factory = default_factory
+
+    def __missing__(self, key: str) -> Any:
+        """Default-construct, cache, and return the value for *key* instead of raising ``KeyError``."""
+        value = self._default_factory()
+        self[key] = value
+        return value
+
+
+class TestMilOpTypesMalformedSpec:
+    """``_mil_op_types`` must not raise on a spec whose ``"main"`` function is entirely absent."""
+
+    def test_returns_empty_set_on_default_constructed_main(self) -> None:
+        """A spec with no ``"main"`` entry in ``functions`` must traverse to the empty set, never raise.
+
+        Mirrors real protobuf behaviour end to end: ``functions["main"]`` default-constructs an empty
+        ``Function`` (``opset=""``), and that function's ``block_specializations[""]`` in turn default-constructs
+        an empty operation list -- no key anywhere actually exists, yet nothing raises.
+        """
+        block_specializations = _ProtoMapDouble(lambda: SimpleNamespace(operations=[]))
+        functions = _ProtoMapDouble(lambda: SimpleNamespace(opset="", block_specializations=block_specializations))
+        spec = SimpleNamespace(mlProgram=SimpleNamespace(functions=functions))
+
+        assert _mil_op_types(spec) == set()
+
+
+class TestE2EParityPrecondition:
+    """The e2e query count must leave every exported variant's two-stage ranking well separated.
+
+    Needs no ``coremltools``, so a model or initialisation change that breaks the precondition is caught by the regular
+    CPU suite instead of first surfacing as a CoreML parity failure on the macOS-only ``e2e_coreml`` job.
+    """
+
+    @pytest.mark.parametrize("variant", _COREML_E2E_VARIANTS)
+    def test_structured_input_is_well_conditioned(self, variant: tuple[str, tuple[str, ...]]) -> None:
+        """Seeded exactly like ``coreml_export``, the structured parity input must pass the margin check."""
+        model_cls_name, _ = variant
+        seed_all(_COREML_EXPORT_SEED)
+        detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
+        model = detector.model.model.to("cpu").eval()
+        model.export()
+        resolution = int(detector.model.resolution)
+        _assert_well_conditioned(model, _structured_parity_input(1, 3, resolution, resolution))
