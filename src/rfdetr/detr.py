@@ -469,10 +469,11 @@ def _save_training_config(config: TrainConfig, model_config: ModelConfig, class_
     dataset-resolved class names. Both copies carry the same keys; the start-of-run one may hold ``class_names:
     null`` where the label space could not be read ahead of training.
 
-    The configuration is assembled and serialized in full before the file is opened, because opening for writing
-    truncates immediately and a resumed run writes over a previous run's complete copy. Nothing here can end a
-    training run: every failure, serialization included, is logged and swallowed, since this file is provenance
-    rather than part of training.
+    The serialized payload goes to a temporary file in the same directory and is moved over the final path with
+    :func:`os.replace`, so a kill or a full disk mid-write leaves the previous complete copy in place instead of a
+    truncated one — the start-of-run write overwrites the finished copy of an earlier run in the same output
+    directory. Nothing here can end a training run: every failure, serialization included, is logged and swallowed,
+    since this file is provenance rather than part of training.
 
     Args:
         config: The resolved training configuration.
@@ -497,8 +498,22 @@ def _save_training_config(config: TrainConfig, model_config: ModelConfig, class_
         }
         payload = json.dumps(complete_config, indent=2, default=str)
         os.makedirs(config.output_dir, exist_ok=True)
-        with open(os.path.join(config.output_dir, "training_config.json"), "w") as f:
-            f.write(payload)
+        # The temp file lives in the destination directory so os.replace stays on one filesystem (atomic); the
+        # same shape as utilities.state_dict's checkpoint rewrite.
+        tmp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", dir=config.output_dir, delete=False, encoding="utf-8", suffix=".tmp"
+            ) as tmp_file:
+                tmp_path = tmp_file.name
+                tmp_file.write(payload)
+                tmp_file.flush()
+            os.replace(tmp_path, os.path.join(config.output_dir, "training_config.json"))
+        finally:
+            # Best-effort: after a successful replace the temp path is gone; after a failure it is stray.
+            if tmp_path is not None and os.path.exists(tmp_path):
+                with contextlib.suppress(OSError):
+                    os.remove(tmp_path)
     except Exception:
         logger.warning("Could not save training_config.json to %s.", config.output_dir, exc_info=True)
 
@@ -512,6 +527,8 @@ class RFDETR:
     size: str | None = None
     _model_config_class: type[ModelConfig] = ModelConfig
     _train_config_class: type[TrainConfig] = TrainConfig
+    #: Per-instance memo for :meth:`_memoized_coco_categories`, created on first use like ``_keypoint_schema_cache``.
+    _coco_categories_cache: dict[str, list[dict[str, Any]]]
 
     def __init__(self, *, trust_checkpoint: bool = False, **kwargs: Any) -> None:
         """Initialize with ModelConfig fields as keyword arguments.
@@ -1041,9 +1058,10 @@ class RFDETR:
         # the last thing that mutates them, and neither module construction nor build_trainer touches them.
         #
         # The dataset's class names are not known until the datamodule builds a dataset inside fit(), so read the
-        # label space straight off disk instead. Best-effort on the same exception tuple as the num_classes
-        # alignment above: a layout these readers do not understand (dataset_file="webdataset" among them) records
-        # class_names: null until the post-fit write fills it in, rather than blocking training.
+        # label space straight off disk instead: the COCO/YOLO readers first, then the train shard index of a
+        # packed dataset_file="webdataset" directory. Best-effort on the same exception tuple as the num_classes
+        # alignment above: a layout none of these understand records class_names: null until the post-fit write
+        # fills it in, rather than blocking training.
         #
         # Guarded on the launcher's environment rather than is_main_process(), which reports rank 0 in every
         # process until trainer.fit() initializes torch.distributed; several ranks would otherwise write this one
@@ -1051,18 +1069,43 @@ class RFDETR:
         # block below.
         if is_launcher_main_process():
             pre_fit_class_names = getattr(config, "class_names", None)
-            if pre_fit_class_names is None and dataset_dir:
+            # Keypoint mode stays null: the readers below return the detection basis (e.g. ['person']), but the
+            # slot layout — a background-first schema such as [0, 17] pads a leading '' — is only known post-fit.
+            if pre_fit_class_names is None and dataset_dir and not self.model_config.use_grouppose_keypoints:
+                if not hasattr(self, "_coco_categories_cache"):
+                    self._coco_categories_cache = {}
                 try:
-                    pre_fit_class_names = RFDETR._load_classes(dataset_dir)
+                    # Reuses the parse the num_classes alignment above just did, when the layout is COCO.
+                    pre_fit_class_names = RFDETR._load_classes(
+                        dataset_dir,
+                        coco_categories=RFDETR._memoized_coco_categories(self._coco_categories_cache, dataset_dir),
+                    )
                 except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
                     logger.debug("Could not read class names from dataset '%s': %s", dataset_dir, exc)
                     pre_fit_class_names = None
+                if pre_fit_class_names is None and (Path(dataset_dir) / index_name("train")).exists():
+                    # A packed directory has no raw annotation file for _load_classes; its train shard index
+                    # carries the categories under the same "remap"/"raw" convention the num_classes alignment
+                    # above read. The tuple is wider than _detect_num_classes_for_training's own
+                    # WebDatasetSplitUnavailableError guard on purpose: a corrupt index raises ValueError/KeyError
+                    # from ShardIndex.from_json, and that must not block training either.
+                    try:
+                        pre_fit_class_names = read_shard_index(dataset_dir, "train").class_names()
+                    except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                        logger.debug("Could not read class names from the shard index in '%s': %s", dataset_dir, exc)
             _save_training_config(config, self.model_config, pre_fit_class_names)
         else:
-            # A non-zero launcher rank is the ordinary DDP case, but an otherwise single-process run started
-            # inside a SLURM step inherits SLURM_PROCID and lands here too, writing neither this file nor the
-            # dataset grids. Say so, rather than leaving an absent file with no explanation anywhere.
-            logger.debug("Not the launcher's main process; skipping the start-of-run training_config.json write.")
+            # A non-zero launcher rank is the ordinary DDP case, but a non-zero task of a multi-task `srun` step
+            # (SLURM_PROCID≠0) — e.g. a per-task sweep with devices=1, where every task is its own single-process
+            # run — lands here too, writing neither this file nor the dataset grids. Say so at INFO, naming the
+            # variable, rather than leaving an absent file with no explanation anywhere; WARNING would fire on
+            # N-1 ranks of every ordinary DDP run.
+            logger.info(
+                "Not the launcher's main process (RANK=%s, SLURM_PROCID=%s); skipping the start-of-run "
+                "training_config.json write.",
+                os.environ.get("RANK"),
+                os.environ.get("SLURM_PROCID"),
+            )
 
         module = RFDETRModelModule(self.model_config, config)
         datamodule = RFDETRDataModule(self.model_config, config)
@@ -1084,6 +1127,12 @@ class RFDETR:
                     "Failed to save dataset grids; training will continue without them.",
                     exc_info=True,
                 )
+        elif config.save_dataset_grids:
+            logger.info(
+                "Not the launcher's main process (RANK=%s, SLURM_PROCID=%s); skipping the dataset-grid render.",
+                os.environ.get("RANK"),
+                os.environ.get("SLURM_PROCID"),
+            )
 
         if config.resume:
             # BestModelCallback's four lightweight checkpoint files (unlike the trainer's own
@@ -1971,15 +2020,58 @@ class RFDETR:
         return filter_parent_categories(anns["categories"], annotated_category_ids(anns))
 
     @staticmethod
-    def _load_classes(dataset_dir: str) -> list[str]:
+    def _memoized_coco_categories(
+        cache: dict[str, list[dict[str, Any]]], dataset_dir: str
+    ) -> list[dict[str, Any]] | None:
+        """Return :meth:`_filtered_coco_categories` for *dataset_dir*, parsing the annotation file at most once.
+
+        :meth:`train` needs the same category basis twice back to back — once to align ``num_classes``, once to
+        record the label space in ``training_config.json`` — and the annotation file can be large. The memo holds
+        one directory at a time, keyed on its resolved path, so pointing the same detector at a different dataset
+        replaces the entry rather than accumulating. The cache is passed in rather than read off ``self`` so the
+        static readers this feeds stay callable without an instance; on a test double whose attribute is not a real
+        dict, membership tests are false and assignment is a no-op, so it degrades to parsing every time.
+
+        Args:
+            cache: The owning detector's ``_coco_categories_cache``.
+            dataset_dir: Path to the dataset root directory.
+
+        Returns:
+            The kept categories, or ``None`` when *dataset_dir* is not a COCO-style layout and there is nothing to
+            parse — the readers then take their own non-COCO branches.
+
+        Examples:
+            >>> RFDETR._memoized_coco_categories({}, "/missing") is None
+            True
+        """
+        if not is_valid_coco_dataset(dataset_dir):
+            return None
+        key = str(Path(dataset_dir).resolve())
+        if key in cache:
+            return cache[key]
+        categories = RFDETR._filtered_coco_categories(dataset_dir)
+        cache.clear()
+        cache[key] = categories
+        return categories
+
+    @staticmethod
+    def _load_classes(dataset_dir: str, *, coco_categories: list[dict[str, Any]] | None = None) -> list[str]:
         """Load class names from a COCO or YOLO dataset directory.
 
         Unannotated grouping categories are dropped by :func:`~rfdetr.datasets.coco.filter_parent_categories`, so the
         returned names are index-aligned with ``CocoDetection.cat2label``. See
         :meth:`_detect_num_classes_for_training` for the shared filter basis.
+
+        Args:
+            dataset_dir: Path to the dataset root directory.
+            coco_categories: An already-parsed :meth:`_filtered_coco_categories` result for *dataset_dir*, so a
+                caller holding one (see :meth:`_memoized_coco_categories`) skips the second parse. ``None`` reads
+                the annotation file here. Only consulted for a COCO-style layout.
         """
         if is_valid_coco_dataset(dataset_dir):
-            return [category["name"] for category in RFDETR._filtered_coco_categories(dataset_dir)]
+            if coco_categories is None:
+                coco_categories = RFDETR._filtered_coco_categories(dataset_dir)
+            return [category["name"] for category in coco_categories]
 
         yaml_path = RFDETR._yolo_data_file_path(dataset_dir) if is_valid_yolo_dataset(dataset_dir) else None
         if yaml_path is not None:
@@ -1996,7 +2088,12 @@ class RFDETR:
         )
 
     @staticmethod
-    def _detect_num_classes_for_training(dataset_dir: str, *, use_grouppose_keypoints: bool = False) -> int:
+    def _detect_num_classes_for_training(
+        dataset_dir: str,
+        *,
+        use_grouppose_keypoints: bool = False,
+        coco_categories: list[dict[str, Any]] | None = None,
+    ) -> int:
         """Detect the class count using the same category basis as training labels.
 
         For COCO-style datasets this counts the categories of ``train/_annotations.coco.json`` that
@@ -2009,12 +2106,21 @@ class RFDETR:
         *use_grouppose_keypoints* is false) it reads the train shard index instead of a raw annotation file, using
         the same ``"remap"``/``"raw"`` convention :func:`~rfdetr.datasets.webdataset.load.build_webdataset` does.
         For YOLO-style datasets it falls back to ``_load_classes``.
+
+        Args:
+            dataset_dir: Path to the dataset root directory.
+            use_grouppose_keypoints: Count keypoint label slots instead of detection categories.
+            coco_categories: An already-parsed :meth:`_filtered_coco_categories` result for *dataset_dir* (see
+                :meth:`_memoized_coco_categories`); ``None`` reads the annotation file here. Only consulted on the
+                COCO detection branch — the keypoint branch parses its own schema.
         """
         if is_valid_coco_dataset(dataset_dir):
             if use_grouppose_keypoints:
                 coco_path = os.path.join(dataset_dir, "train", "_annotations.coco.json")
                 return len(infer_coco_keypoint_schema(coco_path).class_names)
-            return len({category["id"] for category in RFDETR._filtered_coco_categories(dataset_dir)})
+            if coco_categories is None:
+                coco_categories = RFDETR._filtered_coco_categories(dataset_dir)
+            return len({category["id"] for category in coco_categories})
 
         if not use_grouppose_keypoints and (Path(dataset_dir) / index_name("train")).exists():
             try:
@@ -2052,10 +2158,20 @@ class RFDETR:
         Args:
             dataset_dir: Path to the training dataset root directory.
         """
+        if not hasattr(self, "_coco_categories_cache"):
+            self._coco_categories_cache = {}
         try:
+            # The keypoint branch parses its own schema, so only the detection branch has a parse worth sharing
+            # with the start-of-run training_config.json write in train().
+            coco_categories = (
+                None
+                if self.model_config.use_grouppose_keypoints
+                else RFDETR._memoized_coco_categories(self._coco_categories_cache, dataset_dir)
+            )
             dataset_num_classes = RFDETR._detect_num_classes_for_training(
                 dataset_dir,
                 use_grouppose_keypoints=self.model_config.use_grouppose_keypoints,
+                coco_categories=coco_categories,
             )
         except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
             # Best-effort only; do not block training if detection fails.

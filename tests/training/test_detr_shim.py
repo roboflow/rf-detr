@@ -30,6 +30,8 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, RFDETRSmallConfig, TrainConfig
+from rfdetr.datasets.webdataset.index import ShardIndex, index_name
+from rfdetr.datasets.webdataset.load import WebDatasetDetection
 from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
@@ -2556,3 +2558,198 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 3  # auto-adjust still fires
         assert mock_self.model_config.num_keypoints_per_class == []  # empty schema not padded
+
+
+# ---------------------------------------------------------------------------
+# Start-of-run class-name resolution (PR #1496 review follow-ups)
+# ---------------------------------------------------------------------------
+
+
+class TestPreFitClassNamesResolution:
+    """The start-of-run training_config.json resolves class names from every layout the datamodule will read.
+
+    ``_run_train_capturing_pre_fit`` is shared with ``TestSaveTrainingConfig`` — it never touches ``self``, so it is
+    aliased here rather than inherited, which would re-collect that class's tests under this one.
+    """
+
+    _run_train_capturing_pre_fit = TestSaveTrainingConfig._run_train_capturing_pre_fit
+
+    @staticmethod
+    def _write_train_shard_index(dataset_dir: Path, category_ids: str, *, version: int | None = None) -> Path:
+        """Write a packed ``train`` shard index whose grouping root carries no annotation.
+
+        Only the index is written -- the pre-fit read and ``WebDatasetDetection.__init__`` both stop at the JSON,
+        so no shard tar and no ``webdataset`` package is needed. ``version`` overrides the schema stamp to produce
+        an index the current reader rejects.
+
+        Examples:
+            >>> import tempfile
+            >>> with tempfile.TemporaryDirectory() as directory:
+            ...     written = TestPreFitClassNamesResolution._write_train_shard_index(Path(directory), "remap")
+            ...     json.loads((written / "train-index.json").read_text())["category_ids"]
+            'remap'
+        """
+        categories = (
+            {"id": 0, "name": "root", "supercategory": "none"},
+            {"id": 3, "name": "cat", "supercategory": "root"},
+            {"id": 9, "name": "dog", "supercategory": "root"},
+        )
+        index = ShardIndex("train", ("train-000000.tar",), 4, categories, (3, 9), category_ids, (4,))
+        payload = index.to_json()
+        if version is not None:
+            payload["version"] = version
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        (dataset_dir / index_name("train")).write_text(json.dumps(payload), encoding="utf-8")
+        return dataset_dir
+
+    @pytest.mark.parametrize(
+        ("category_ids", "expected"),
+        [
+            pytest.param("remap", ["cat", "dog"], id="remap-drops-the-unannotated-parent"),
+            pytest.param("raw", ["root", "", "", "cat", "", "", "", "", "", "dog"], id="raw-keeps-every-id-slot"),
+        ],
+    )
+    def test_pre_fit_class_names_match_the_webdataset_datamodule(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...], category_ids: str, expected: list[str]
+    ) -> None:
+        """A packed directory records the same names the streaming dataset will report after fit()."""
+        dataset_dir = self._write_train_shard_index(tmp_path / "ds", category_ids)
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_file="webdataset")
+        dataset = WebDatasetDetection(dataset_dir, "train", transforms=None)
+        assert pre_fit["class_names"] == dataset.class_names == expected
+
+    def test_pre_fit_num_classes_counts_the_shard_index_names(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """num_classes follows the recorded list instead of staying 0 for a packed directory."""
+        self._write_train_shard_index(tmp_path / "ds", "remap")
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_file="webdataset")
+        assert pre_fit["num_classes"] == 2
+
+    def test_unreadable_shard_index_records_null_and_does_not_block_training(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """An index the reader rejects (ValueError from ShardIndex.from_json) degrades to null, never an exception."""
+        self._write_train_shard_index(tmp_path / "ds", "remap", version=99)
+        pre_fit, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_file="webdataset")
+        assert (pre_fit["class_names"], final is not None) == (None, True)
+
+    @staticmethod
+    def _train_interrupted_keypoint_run(tmp_path: Path, patch_lit: tuple[Any, ...], **train_overrides: Any) -> dict:
+        """Run train() on a background-first keypoint model whose fit() dies; return the file it left behind.
+
+        The dataset reader is patched to hand back the detection basis ``['person']``, so a recorded null proves the
+        keypoint gate bypassed the reader rather than the dataset merely being unreadable.
+
+        Examples:
+            Needs the ``tmp_path`` and ``patch_lit`` fixtures, so it cannot run standalone:
+
+            >>> TestPreFitClassNamesResolution._train_interrupted_keypoint_run(tmp_path, patch_lit)  # doctest: +SKIP
+        """
+        mock_self = _make_rfdetr_self(tmp_path, **train_overrides)
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None, device="cpu", num_keypoints_per_class=[0, 17]
+        )
+        p_mod, p_dm, p_bt, _, _, mock_bt = patch_lit
+        mock_bt.return_value.fit.side_effect = RuntimeError("interrupted")
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["person"])
+        with p_mod, p_dm, p_bt, load_classes_patch, pytest.raises(RuntimeError):
+            RFDETR.train(mock_self)
+        output_dir = mock_self.get_train_config.return_value.output_dir
+        return _read_training_config(os.path.join(output_dir, "training_config.json")) or {}
+
+    def test_interrupted_keypoint_run_records_null_class_names(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """A bg-first keypoint run killed in fit() leaves class_names null, not the detection-basis ['person']."""
+        final = self._train_interrupted_keypoint_run(tmp_path, patch_lit)
+        assert (final["class_names"], final["num_classes"]) == (None, 0)
+
+    def test_keypoint_run_still_records_an_explicit_config_class_names(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """Only the dataset read is gated: a TrainConfig.class_names the user set is recorded as before."""
+        final = self._train_interrupted_keypoint_run(tmp_path, patch_lit, class_names=["", "person"])
+        assert final["class_names"] == ["", "person"]
+
+
+class TestSharedCocoCategoryParse:
+    """num_classes alignment and the start-of-run config write read ``train/_annotations.coco.json`` once.
+
+    ``_write_coco_categories`` is shared with ``TestRFDETRTrainNumClassesAutoDetect``; it never touches ``self``, so it
+    is aliased rather than inherited (see ``TestPreFitClassNamesResolution``).
+    """
+
+    _write_coco_categories = TestRFDETRTrainNumClassesAutoDetect._write_coco_categories
+
+    _CATEGORIES = [
+        {"id": 1, "name": "animal", "supercategory": "none"},
+        {"id": 2, "name": "dog", "supercategory": "animal"},
+        {"id": 3, "name": "cat", "supercategory": "animal"},
+    ]
+
+    @staticmethod
+    def _train_on_coco_dataset(tmp_path: Path, patch_lit: tuple[Any, ...]) -> tuple[MagicMock, dict[str, Any] | None]:
+        """Run train() with the real num_classes alignment bound and a real memo dict on the mock self.
+
+        ``_make_rfdetr_self`` leaves ``_align_num_classes_from_dataset`` as a MagicMock, which would make the pre-fit
+        write the only reader and a call count of one trivially true. Returns ``(mock_self, pre_fit_payload)``.
+
+        Examples:
+            Needs the ``tmp_path`` and ``patch_lit`` fixtures, so it cannot run standalone:
+
+            >>> TestSharedCocoCategoryParse._train_on_coco_dataset(tmp_path, patch_lit)  # doctest: +SKIP
+        """
+        mock_self = MagicMock()
+        mock_self.model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        mock_self.model = MagicMock()
+        mock_self.get_train_config.return_value = _make_train_config(tmp_path)
+        mock_self._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock_self, ds)
+        mock_self._coco_categories_cache = {}
+        config_path = os.path.join(mock_self.get_train_config.return_value.output_dir, "training_config.json")
+        captured: dict[str, Any] = {}
+        p_mod, p_dm, p_bt, _, _, mock_bt = patch_lit
+
+        def _capture(*args: Any, **kwargs: Any) -> None:
+            captured["pre_fit"] = _read_training_config(config_path)
+
+        mock_bt.return_value.fit.side_effect = _capture
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+        return mock_self, captured.get("pre_fit")
+
+    def test_annotation_file_is_parsed_once_across_alignment_and_pre_fit(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """Both readers go through one _filtered_coco_categories call instead of two back-to-back json.loads."""
+        self._write_coco_categories(tmp_path / "ds", categories=self._CATEGORIES, annotated_ids=[2, 3])
+        parse = patch.object(RFDETR, "_filtered_coco_categories", side_effect=RFDETR._filtered_coco_categories)
+        with parse as parse_mock:
+            self._train_on_coco_dataset(tmp_path, patch_lit)
+        assert parse_mock.call_count == 1
+
+    def test_shared_parse_feeds_both_num_classes_and_pre_fit_class_names(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """The single parse still lands in both places: the aligned count and the recorded label space agree."""
+        self._write_coco_categories(tmp_path / "ds", categories=self._CATEGORIES, annotated_ids=[2, 3])
+        mock_self, pre_fit = self._train_on_coco_dataset(tmp_path, patch_lit)
+        assert (mock_self.model_config.num_classes, pre_fit["class_names"]) == (2, ["dog", "cat"])
+
+    def test_memo_replaces_its_entry_for_a_different_dataset_dir(self, tmp_path: Path) -> None:
+        """One directory at a time: pointing at a second dataset evicts the first instead of accumulating."""
+        first, second = tmp_path / "first", tmp_path / "second"
+        self._write_coco_categories(first, categories=self._CATEGORIES, annotated_ids=[2, 3])
+        self._write_coco_categories(second, categories=self._CATEGORIES[:2], annotated_ids=[2])
+        cache: dict[str, list[dict[str, Any]]] = {}
+        RFDETR._memoized_coco_categories(cache, str(first))
+        RFDETR._memoized_coco_categories(cache, str(second))
+        assert list(cache) == [str(second.resolve())]
+
+    def test_memo_returns_the_cached_entry_without_reparsing(self, tmp_path: Path) -> None:
+        """A second lookup of the same directory is served from the memo."""
+        dataset_dir = tmp_path / "ds"
+        self._write_coco_categories(dataset_dir, categories=self._CATEGORIES, annotated_ids=[2, 3])
+        cache: dict[str, list[dict[str, Any]]] = {}
+        first = RFDETR._memoized_coco_categories(cache, str(dataset_dir))
+        with patch.object(RFDETR, "_filtered_coco_categories", side_effect=AssertionError("re-parsed")):
+            second = RFDETR._memoized_coco_categories(cache, str(dataset_dir))
+        assert second is first

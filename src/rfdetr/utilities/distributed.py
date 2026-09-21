@@ -59,10 +59,18 @@ def is_launcher_main_process() -> bool:
     :func:`is_main_process` wherever the process group is already up: it reads the real global rank instead of
     inferring one from the environment.
 
-    The rank itself is Lightning's own ``rank_zero_only.rank``, resolved from whichever variable the launcher set
-    rather than re-listed here, so the set stays in one place and follows upstream. ``NODE_RANK`` is checked on top
-    of it because that resolution is node-local -- it accepts ``LOCAL_RANK``, which Lightning's own subprocess
-    launcher leaves at 0 on every node of a multi-node run, so without it one process per node would pass.
+    The answer is an environment-based heuristic. It starts from Lightning's own ``rank_zero_only.rank`` -- resolved
+    once at import from ``RANK``, ``LOCAL_RANK``, ``SLURM_PROCID`` or ``JSM_NAMESPACE_RANK`` -- and adds checks that
+    resolution does not make, each of which marks the process as not the main one when set to anything but ``"0"``:
+
+    * ``NODE_RANK``, because the Lightning rank is node-local when it comes from ``LOCAL_RANK``, which Lightning's
+      own subprocess launcher leaves at 0 on every node of a multi-node run, so without it one process per node
+      would pass.
+    * ``LOCAL_RANK``, because a ``RANK=0`` inherited from the parent environment wins Lightning's resolution in
+      every subprocess child (the launcher overrides only ``LOCAL_RANK``), so without it every local rank would
+      pass; no supported launcher gives global rank 0 a ``LOCAL_RANK`` other than ``"0"``.
+    * ``OMPI_COMM_WORLD_RANK`` and ``PMI_RANK``, the global rank under ``mpirun``/PMI launchers. Lightning reads it
+      only through ``mpi4py`` (its ``MPIEnvironment``), never at import, so without them every MPI worker would pass.
 
     Returns:
         Whether the launcher's environment identifies this process as rank 0 of node 0.
@@ -82,7 +90,13 @@ def is_launcher_main_process() -> bool:
     # the same two ignores appear on the same import in `training/callbacks/gpu_memory_progress_bar.py`.
     from pytorch_lightning.utilities.rank_zero import rank_zero_only  # type: ignore[attr-defined]
 
-    return rank_zero_only.rank == 0 and os.environ.get("NODE_RANK", "0") == "0"  # type: ignore[attr-defined]
+    return (
+        rank_zero_only.rank == 0  # type: ignore[attr-defined]
+        and os.environ.get("NODE_RANK", "0") == "0"
+        and os.environ.get("LOCAL_RANK", "0") == "0"
+        and os.environ.get("OMPI_COMM_WORLD_RANK", "0") == "0"
+        and os.environ.get("PMI_RANK", "0") == "0"
+    )
 
 
 def save_on_master(obj: Any, f: Any, *args: Any, **kwargs: Any) -> None:
