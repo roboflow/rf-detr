@@ -27,6 +27,9 @@ Note:
     near-tied scores: fp32 rounding differences between runtimes can swap which queries ``torch.topk``
     selects. This is not a conversion error, and it is why the end-to-end parity tests in
     ``tests/export/test_coreml_export.py`` check that the ranking is well separated before comparing.
+    ``coreml_precision="float16"`` narrows that fp32 safety margin further and makes a rank swap more
+    likely, not less — see the "Raw tensors can differ more than the precision suggests" note under
+    Native CoreML Export in ``docs/learn/export.md``.
 """
 
 from __future__ import annotations
