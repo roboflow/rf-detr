@@ -215,50 +215,63 @@ class TestBuildTrainerCallbacks:
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb._skip_best_epochs == 3
 
-    def test_keypoint_best_model_monitors_keypoint_map(self, tmp_path):
-        """Keypoint training checkpoints should rank models by keypoint AP, not bbox mAP."""
-        trainer = build_trainer(_kp_tc(tmp_path, use_ema=True), RFDETRKeypointPreviewConfig(pretrain_weights=None))
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/keypoint_map_50_95"
-        assert best_cb._monitor_ema == "val/ema_keypoint_map_50_95"
+    @pytest.mark.parametrize(
+        "make_tc, make_mc, expected_monitor, expected_monitor_ema",
+        [
+            pytest.param(
+                lambda p: _kp_tc(p, use_ema=True),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_map_50_95",
+                "val/ema_keypoint_map_50_95",
+                id="keypoint-ranks-by-keypoint-ap-not-bbox-map",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True),
+                lambda: _mc(segmentation_head=True),
+                "val/segm_mAP_50_95",
+                "val/ema_segm_mAP_50_95",
+                id="segmentation-ranks-by-segmentation-ap-not-bbox-ap",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, best_model_metric="mar"),
+                lambda: _mc(),
+                "val/mAR",
+                "val/ema_mAR",
+                id="detection-mar-metric-ranks-by-mar-not-map",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=False, best_model_metric="mar"),
+                lambda: _mc(),
+                "val/mAR",
+                None,
+                id="detection-mar-metric-without-ema-has-no-ema-monitor",
+            ),
+            pytest.param(
+                lambda p: _kp_tc(p, use_ema=True, best_model_metric="mar"),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_mAR",
+                "val/ema_keypoint_mAR",
+                id="keypoint-mar-metric-ranks-by-oks-keypoint-mar",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, best_model_metric="mar"),
+                lambda: _mc(segmentation_head=True),
+                "val/mAR",
+                "val/ema_mAR",
+                id="segmentation-mar-metric-has-no-dedicated-mask-mar-falls-back-to-bbox-mar",
+            ),
+        ],
+    )
+    def test_best_model_monitor_selection(self, tmp_path, make_tc, make_mc, expected_monitor, expected_monitor_ema):
+        """BestModelCallback.monitor/._monitor_ema select the metric key matching task and best_model_metric.
 
-    def test_segmentation_best_model_monitors_segmentation_map(self, tmp_path):
-        """Segmentation training checkpoints should rank models by segmentation AP, not bbox AP."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True), _mc(segmentation_head=True))
+        Detection ranks by mAP by default and mAR when best_model_metric='mar'; keypoint and segmentation swap in their
+        own AP/AR metric families; the EMA monitor is only set when EMA is enabled.
+        """
+        trainer = build_trainer(make_tc(tmp_path), make_mc())
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/segm_mAP_50_95"
-        assert best_cb._monitor_ema == "val/ema_segm_mAP_50_95"
-
-    def test_best_model_metric_mar_monitors_bbox_mar(self, tmp_path):
-        """best_model_metric='mar' should rank detection checkpoints by mAR, not mAP."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc())
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/mAR"
-        assert best_cb._monitor_ema == "val/ema_mAR"
-
-    def test_best_model_metric_mar_without_ema_monitors_only_regular_bbox_mar(self, tmp_path):
-        """Detection mAR ranking must not configure an EMA monitor when EMA is disabled."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, best_model_metric="mar"), _mc())
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/mAR"
-        assert best_cb._monitor_ema is None
-
-    def test_keypoint_best_model_metric_mar_monitors_keypoint_mar(self, tmp_path):
-        """best_model_metric='mar' should rank keypoint checkpoints by the OKS-based keypoint mAR."""
-        trainer = build_trainer(
-            _kp_tc(tmp_path, use_ema=True, best_model_metric="mar"),
-            RFDETRKeypointPreviewConfig(pretrain_weights=None),
-        )
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/keypoint_mAR"
-        assert best_cb._monitor_ema == "val/ema_keypoint_mAR"
-
-    def test_segmentation_best_model_metric_mar_falls_back_to_bbox_mar(self, tmp_path):
-        """best_model_metric='mar' has no dedicated mask mAR, so segmentation falls back to bbox mAR."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc(segmentation_head=True))
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/mAR"
-        assert best_cb._monitor_ema == "val/ema_mAR"
+        assert best_cb.monitor == expected_monitor
+        assert best_cb._monitor_ema == expected_monitor_ema
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -369,61 +382,64 @@ class TestBuildTrainerCallbacks:
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._skip_best_epochs == 4
 
-    def test_keypoint_early_stopping_monitors_keypoint_map(self, tmp_path):
-        """Keypoint early stopping should use keypoint AP as the regular metric."""
-        trainer = build_trainer(
-            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
-            RFDETRKeypointPreviewConfig(pretrain_weights=None),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/keypoint_map_50_95"
-        assert early_stop_cb._monitor_ema == "val/ema_keypoint_map_50_95"
-
-    def test_segmentation_early_stopping_monitors_segmentation_map(self, tmp_path):
-        """Segmentation early stopping should use segmentation AP as the regular metric."""
-        trainer = build_trainer(
-            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
-            _mc(segmentation_head=True),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/segm_mAP_50_95"
-        assert early_stop_cb._monitor_ema == "val/ema_segm_mAP_50_95"
-
-    def test_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
-        """best_model_metric='mar' should make detection early stopping watch mAR, not mAP."""
-        trainer = build_trainer(
-            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
-            _mc(),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/mAR"
-        assert early_stop_cb._monitor_ema == "val/ema_mAR"
-
-    def test_keypoint_best_model_metric_mar_early_stopping_monitors_keypoint_mar(self, tmp_path):
-        """best_model_metric='mar' should make keypoint early stopping watch the OKS-based keypoint mAR."""
-        trainer = build_trainer(
-            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
-            RFDETRKeypointPreviewConfig(pretrain_weights=None),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/keypoint_mAR"
-        assert early_stop_cb._monitor_ema == "val/ema_keypoint_mAR"
-
-    def test_segmentation_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
-        """Segmentation mAR early stopping must use the bbox mAR keys when EMA is enabled."""
-        trainer = build_trainer(
-            _tc(
-                tmp_path,
-                use_ema=True,
-                early_stopping=True,
-                early_stopping_use_ema=True,
-                best_model_metric="mar",
+    @pytest.mark.parametrize(
+        "make_tc, make_mc, expected_monitor_regular, expected_monitor_ema",
+        [
+            pytest.param(
+                lambda p: _kp_tc(p, early_stopping=True, early_stopping_use_ema=True),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_map_50_95",
+                "val/ema_keypoint_map_50_95",
+                id="keypoint-uses-keypoint-ap-as-the-regular-metric",
             ),
-            _mc(segmentation_head=True),
-        )
+            pytest.param(
+                lambda p: _tc(p, early_stopping=True, early_stopping_use_ema=True),
+                lambda: _mc(segmentation_head=True),
+                "val/segm_mAP_50_95",
+                "val/ema_segm_mAP_50_95",
+                id="segmentation-uses-segmentation-ap-as-the-regular-metric",
+            ),
+            pytest.param(
+                lambda p: _tc(p, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+                lambda: _mc(),
+                "val/mAR",
+                "val/ema_mAR",
+                id="detection-mar-metric-watches-mar-not-map",
+            ),
+            pytest.param(
+                lambda p: _kp_tc(p, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_mAR",
+                "val/ema_keypoint_mAR",
+                id="keypoint-mar-metric-watches-oks-keypoint-mar",
+            ),
+            pytest.param(
+                lambda p: _tc(
+                    p,
+                    use_ema=True,
+                    early_stopping=True,
+                    early_stopping_use_ema=True,
+                    best_model_metric="mar",
+                ),
+                lambda: _mc(segmentation_head=True),
+                "val/mAR",
+                "val/ema_mAR",
+                id="segmentation-mar-metric-uses-bbox-mar-keys-when-ema-enabled",
+            ),
+        ],
+    )
+    def test_early_stopping_monitor_selection(
+        self, tmp_path, make_tc, make_mc, expected_monitor_regular, expected_monitor_ema
+    ):
+        """RFDETREarlyStopping's regular/EMA monitors select the metric key matching task and best_model_metric.
+
+        Mirrors BestModelCallback's monitor selection: detection watches mAP by default and mAR when
+        best_model_metric='mar'; keypoint and segmentation swap in their own AP/AR metric families.
+        """
+        trainer = build_trainer(make_tc(tmp_path), make_mc())
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/mAR"
-        assert early_stop_cb._monitor_ema == "val/ema_mAR"
+        assert early_stop_cb._monitor_regular == expected_monitor_regular
+        assert early_stop_cb._monitor_ema == expected_monitor_ema
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""
@@ -1697,40 +1713,29 @@ class TestBuildTrainerSeed:
 class TestBuildTrainerDDPFields:
     """build_trainer() must thread devices/num_nodes/strategy from TrainConfig to Trainer."""
 
-    def test_devices_threaded_from_train_config(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
-        """TrainConfig.devices is forwarded to Trainer(devices=...)."""
-        tc = _tc(tmp_path, use_ema=False, devices=4)
+    @pytest.mark.parametrize(
+        "extra_kwargs, captured_key, expected",
+        [
+            pytest.param({"devices": 4}, "devices", 4, id="devices-forwarded-from-train-config"),
+            pytest.param({"num_nodes": 2}, "num_nodes", 2, id="num-nodes-forwarded-from-train-config"),
+            pytest.param({"strategy": "auto"}, "strategy", "auto", id="strategy-forwarded-from-train-config"),
+            pytest.param({}, "devices", 1, id="default-devices-is-1-single-gpu-default"),
+            pytest.param({}, "num_nodes", 1, id="default-num-nodes-is-1"),
+        ],
+    )
+    def test_ddp_fields_threaded_from_train_config(
+        self,
+        captured_trainer_kwargs: dict[str, Any],
+        tmp_path,
+        extra_kwargs: dict[str, Any],
+        captured_key: str,
+        expected: object,
+    ):
+        """TrainConfig.devices/num_nodes/strategy are forwarded to Trainer(...) unchanged, defaults included."""
+        tc = _tc(tmp_path, use_ema=False, **extra_kwargs)
         build_trainer(tc, _mc())
 
-        assert captured_trainer_kwargs["devices"] == 4
-
-    def test_num_nodes_threaded_from_train_config(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
-        """TrainConfig.num_nodes is forwarded to Trainer(num_nodes=...)."""
-        tc = _tc(tmp_path, use_ema=False, num_nodes=2)
-        build_trainer(tc, _mc())
-
-        assert captured_trainer_kwargs["num_nodes"] == 2
-
-    def test_strategy_threaded_from_train_config(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
-        """TrainConfig.strategy is forwarded to Trainer(strategy=...)."""
-        tc = _tc(tmp_path, use_ema=False, strategy="auto")
-        build_trainer(tc, _mc())
-
-        assert captured_trainer_kwargs["strategy"] == "auto"
-
-    def test_default_devices_is_1(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
-        """Default TrainConfig.devices must produce devices=1 (single-GPU default)."""
-        tc = _tc(tmp_path, use_ema=False)
-        build_trainer(tc, _mc())
-
-        assert captured_trainer_kwargs["devices"] == 1
-
-    def test_default_num_nodes_is_1(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
-        """Default TrainConfig.num_nodes must produce num_nodes=1."""
-        tc = _tc(tmp_path, use_ema=False)
-        build_trainer(tc, _mc())
-
-        assert captured_trainer_kwargs["num_nodes"] == 1
+        assert captured_trainer_kwargs[captured_key] == expected
 
     def test_devices_string_accepted(self, tmp_path):
         """TrainConfig.devices accepts a string value (e.g. '0,1')."""
@@ -1908,56 +1913,42 @@ class TestBuildTrainerDDPFindUnusedParameters:
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
         assert captured_trainer_kwargs["devices"] == 2
 
-    def test_ddp_segmentation_enables_find_unused_parameters(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
-        """Strategy='ddp' + segmentation_head=True must produce DDPStrategy(find_unused_parameters=True).
-
-        One case of the broader unconditional rule: find_unused_parameters is enabled for all strategy='ddp'
-        requests.  The segmentation head's sparse_forward() is one source of conditionally-unused parameters under
-        DDP.
-        """
-        from pytorch_lightning.strategies import DDPStrategy
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=True)
-        build_trainer(tc, mc)
-
-        strategy_obj = captured_trainer_kwargs["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
-
-    def test_ddp_no_segmentation_enables_find_unused_parameters(
-        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    @pytest.mark.parametrize(
+        "strategy, segmentation_head",
+        [
+            pytest.param(
+                "ddp",
+                True,
+                id="ddp-segmentation-sparse-forward-is-one-source-of-conditionally-unused-params",
+            ),
+            pytest.param(
+                "ddp",
+                False,
+                id="ddp-detection-two-stage-modulelists-and-aux-loss-branches-regression-1093",
+            ),
+            pytest.param(
+                "ddp_spawn",
+                True,
+                id="ddp-spawn-segmentation-must-not-drop-the-flag-the-interactive-spawn-path-already-sets",
+            ),
+        ],
+    )
+    def test_ddp_variants_enable_find_unused_parameters(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path, strategy: str, segmentation_head: bool
     ):
-        """Strategy='ddp' for detection-only must produce DDPStrategy(find_unused_parameters=True).
+        """strategy='ddp'/'ddp_spawn' must produce DDPStrategy(find_unused_parameters=True) unconditionally.
 
-        Detection models can leave parameters unused under DDP (two-stage group_detr ModuleLists, conditional aux_loss
-        branches), so find_unused_parameters is enabled unconditionally for strategy='ddp' regardless of
-        segmentation_head. Regression test for
-        https://github.com/roboflow/rf-detr/issues/1093.
+        find_unused_parameters is enabled for every 'ddp'/'ddp_spawn' request regardless of segmentation_head: detection
+        can leave parameters unused under DDP (two-stage group_detr ModuleLists, conditional aux_loss branches —
+        regression test for
+        https://github.com/roboflow/rf-detr/issues/1093)
+        and segmentation's
+        sparse_forward() is another source.
         """
         from pytorch_lightning.strategies import DDPStrategy
 
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=False)
-        build_trainer(tc, mc)
-
-        strategy_obj = captured_trainer_kwargs["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
-
-    def test_ddp_spawn_segmentation_preserves_find_unused_parameters(
-        self, captured_trainer_kwargs: dict[str, Any], tmp_path
-    ):
-        """strategy='ddp_spawn' + segmentation_head=True must keep find_unused_parameters=True.
-
-        ddp_spawn is already replaced with an interactive-spawn DDPStrategy that has find_unused_parameters=True for
-        notebook compatibility.  Segmentation must not accidentally drop that flag when the ddp_spawn path is taken
-        instead of the plain 'ddp' path.
-        """
-        from pytorch_lightning.strategies import DDPStrategy
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp_spawn")
-        mc = _mc(segmentation_head=True)
+        tc = _tc(tmp_path, use_ema=False, strategy=strategy)
+        mc = _mc(segmentation_head=segmentation_head)
         build_trainer(tc, mc)
 
         strategy_obj = captured_trainer_kwargs["strategy"]
@@ -1978,33 +1969,31 @@ class TestBuildTrainerDDPStaticGraph:
     that measurement covered (detection, segmentation, grad_accum_steps<=1), and excludes keypoint models and
     grad_accum_steps>1, which were not exercised by that measurement."""
 
-    def test_ddp_detection_enables_static_graph(self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path) -> None:
-        """Strategy='ddp' for detection-only enables static_graph and gradient_as_bucket_view."""
-        from pytorch_lightning.strategies import DDPStrategy
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=False)
-        build_trainer(tc, mc)
-
-        strategy_obj = captured_trainer_kwargs["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("static_graph") is True
-        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
-
-    def test_ddp_segmentation_enables_static_graph(
-        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path
+    @pytest.mark.parametrize(
+        "strategy, segmentation_head",
+        [
+            pytest.param("ddp", False, id="ddp-detection"),
+            pytest.param(
+                "ddp",
+                True,
+                id="ddp-segmentation-sparse-forward-has-the-same-single-always-unused-mask-token-as-detection",
+            ),
+            pytest.param("ddp_spawn", False, id="ddp-spawn-via-the-interactive-spawn-ddpstrategy"),
+        ],
+    )
+    def test_ddp_variants_enable_static_graph(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path, strategy: str, segmentation_head: bool
     ) -> None:
-        """Strategy='ddp' + segmentation_head=True also enables static_graph.
+        """strategy='ddp'/'ddp_spawn' enables static_graph and gradient_as_bucket_view.
 
-        segmentation_head.sparse_forward() is named in the find_unused_parameters comment as a source of conditionally-
-        unused parameters; an empirical probe (real RFDETRSegNano forward, real/empty-target batches) found the same
-        single always-unused parameter (backbone mask_token) as detection-only, not a segmentation-specific dynamic one,
-        so segmentation stays in scope here too.
+        An empirical probe (real RFDETRSegNano forward, real/empty-target batches) found the same single always-unused
+        parameter (backbone mask_token) for segmentation as for detection-only, not a segmentation-specific dynamic one,
+        so segmentation stays in scope alongside detection here.
         """
         from pytorch_lightning.strategies import DDPStrategy
 
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=True)
+        tc = _tc(tmp_path, use_ema=False, strategy=strategy)
+        mc = _mc(segmentation_head=segmentation_head)
         build_trainer(tc, mc)
 
         strategy_obj = captured_trainer_kwargs["strategy"]
@@ -2023,19 +2012,6 @@ class TestBuildTrainerDDPStaticGraph:
         strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("static_graph") is True
-
-    def test_ddp_spawn_enables_static_graph(self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path) -> None:
-        """strategy='ddp_spawn' also enables static_graph through the interactive-spawn DDPStrategy."""
-        from pytorch_lightning.strategies import DDPStrategy
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp_spawn")
-        mc = _mc(segmentation_head=False)
-        build_trainer(tc, mc)
-
-        strategy_obj = captured_trainer_kwargs["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("static_graph") is True
-        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
 
     def test_ddp_grad_accum_disables_static_graph(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path
