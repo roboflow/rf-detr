@@ -1646,3 +1646,13 @@ class TestTensorRTEndToEnd:
             assert got.shape == reference[name].shape
             diff = float(np.abs(got - reference[name]).max())
             assert diff < 1e-4, f"TRTInference {name} differs from polygraphy on the same engine: {diff}"
+
+    def test_trt_inference_helper_refuses_a_batch_beyond_the_profile(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """A real context returns ``False`` from ``set_input_shape`` for batch 5; the helper must raise, not run."""
+        _, resolution, engine_path = trt_dynamic_engine
+        runtime = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+
+        with pytest.raises(ValueError, match="outside the engine's optimization profile"):
+            runtime({"input": _distinct_batch(5, resolution).to("cuda:0")})

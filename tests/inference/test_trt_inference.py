@@ -98,29 +98,42 @@ class _FakeEngine:
         return ((1, *shape[1:]), (2, *shape[1:]), (self._profile_max, *shape[1:]))
 
 
+def _runtime_around(engine: _FakeEngine, context: Mock, *, sync_mode: bool = True) -> TRTInference:
+    """Assemble a ``TRTInference`` around a fake engine and context without touching ``__init__`` (needs a GPU).
+
+    The module-level ``trt`` handle must already point at ``_FakeTensorRTModule`` (see the autouse fixture in
+    ``TestTRTInferenceDynamicBatch``); the doctest patches it itself.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> from rfdetr.export._tensorrt import inference as trt_inference
+        >>> engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
+        >>> with patch.object(trt_inference, "trt", _FakeTensorRTModule()):
+        ...     runtime = _runtime_around(engine, Mock())
+        >>> runtime.input_names, runtime.output_names, runtime.bindings["input"].shape
+        (['input'], ['dets'], (4, 3, 8, 8))
+    """
+    runtime = TRTInference.__new__(TRTInference)
+    runtime.engine = engine
+    runtime.context = context
+    runtime.sync_mode = sync_mode
+    runtime.stream = None if sync_mode else Mock(handle=7)
+    runtime.bindings = runtime.get_bindings(engine, context, device="cpu")
+    runtime.bindings_addr = OrderedDict((n, v.ptr) for n, v in runtime.bindings.items())
+    runtime.input_names = runtime.get_input_names()
+    runtime.output_names = runtime.get_output_names()
+    return runtime
+
+
 class TestTRTInferenceDynamicBatch:
     """``TRTInference`` serves engines built with ``dynamic_batch=True`` (a ``-1`` batch axis on every tensor)."""
 
     @pytest.fixture(autouse=True)
-    def _fake_tensorrt(self, monkeypatch: pytest.MonkeyPatch):
+    def _fake_tensorrt(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Point the module-level ``trt`` handle at the stand-in so no real TensorRT is needed."""
         from rfdetr.export._tensorrt import inference as trt_inference
 
         monkeypatch.setattr(trt_inference, "trt", _FakeTensorRTModule())
-
-    @staticmethod
-    def _runtime(engine: _FakeEngine, context) -> TRTInference:
-        """Assemble a ``TRTInference`` around *engine* without touching ``__init__`` (which needs a GPU)."""
-        runtime = TRTInference.__new__(TRTInference)
-        runtime.engine = engine
-        runtime.context = context
-        runtime.sync_mode = True
-        runtime.stream = None
-        runtime.bindings = runtime.get_bindings(engine, context, device="cpu")
-        runtime.bindings_addr = OrderedDict((n, v.ptr) for n, v in runtime.bindings.items())
-        runtime.input_names = runtime.get_input_names()
-        runtime.output_names = runtime.get_output_names()
-        return runtime
 
     def test_dynamic_tensors_are_allocated_at_the_profile_max(self) -> None:
         """A ``-1`` batch axis becomes the profile's max batch so any batch within the profile fits."""
@@ -129,7 +142,7 @@ class TestTRTInferenceDynamicBatch:
             profile_max=4,
         )
 
-        runtime = self._runtime(engine, context=Mock())
+        runtime = _runtime_around(engine, context=Mock())
 
         assert runtime.bindings["input"].shape == (4, 3, 8, 8)
         assert runtime.bindings["dets"].shape == (4, 5, 4)
@@ -140,7 +153,7 @@ class TestTRTInferenceDynamicBatch:
         """A fixed-batch engine is allocated exactly as declared and marked static."""
         engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (2, 5, 4))})
 
-        runtime = self._runtime(engine, context=Mock())
+        runtime = _runtime_around(engine, context=Mock())
 
         assert runtime.bindings["input"].shape == (2, 3, 8, 8)
         assert runtime.bindings["input"].dynamic is False
@@ -153,7 +166,7 @@ class TestTRTInferenceDynamicBatch:
         )
         context = Mock()
         context.get_tensor_shape.return_value = (3, 5, 4)
-        runtime = self._runtime(engine, context)
+        runtime = _runtime_around(engine, context)
         blob = {"input": torch.zeros(3, 3, 8, 8)}
 
         outputs = runtime(blob)
@@ -167,13 +180,48 @@ class TestTRTInferenceDynamicBatch:
         """A fixed-batch engine neither declares shapes nor trims, so the old behaviour is unchanged."""
         engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (2, 5, 4))})
         context = Mock()
-        runtime = self._runtime(engine, context)
+        runtime = _runtime_around(engine, context)
 
         outputs = runtime({"input": torch.zeros(2, 3, 8, 8)})
 
         context.set_input_shape.assert_not_called()
         context.get_tensor_shape.assert_not_called()
         assert tuple(outputs["dets"].shape) == (2, 5, 4)
+
+    def test_batch_beyond_the_profile_is_refused_before_execution(self) -> None:
+        """TensorRT reports an out-of-profile shape by returning ``False`` from ``set_input_shape``, not by raising.
+
+        Ignoring that result would execute anyway and hand back the previous call's output buffer contents, so the
+        helper must stop before touching the context's execution path.
+        """
+        engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
+        context = Mock()
+        context.set_input_shape.return_value = False
+        runtime = _runtime_around(engine, context)
+
+        with pytest.raises(ValueError, match="outside the engine's optimization profile"):
+            runtime({"input": torch.zeros(5, 3, 8, 8)})
+
+        context.execute_v2.assert_not_called()
+        context.execute_async_v3.assert_not_called()
+
+    def test_run_async_registers_every_tensor_address_and_trims_outputs(self) -> None:
+        """The async path binds each tensor by name, launches ``execute_async_v3`` on the stream, then syncs it."""
+        engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
+        context = Mock()
+        context.get_tensor_shape.return_value = (3, 5, 4)
+        runtime = _runtime_around(engine, context, sync_mode=False)
+        blob = {"input": torch.zeros(3, 3, 8, 8)}
+
+        outputs = runtime(blob)
+
+        context.set_input_shape.assert_called_once_with("input", (3, 3, 8, 8))
+        addresses = {name: address for (name, address), _ in context.set_tensor_address.call_args_list}
+        assert addresses == {"input": blob["input"].data_ptr(), "dets": runtime.bindings["dets"].ptr}
+        context.execute_async_v3.assert_called_once_with(stream_handle=7)
+        context.execute_v2.assert_not_called()
+        runtime.stream.synchronize.assert_called_once()
+        assert tuple(outputs["dets"].shape) == (3, 5, 4)
 
 
 class TestBenchmarkMain:

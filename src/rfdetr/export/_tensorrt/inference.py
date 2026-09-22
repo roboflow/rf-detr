@@ -162,10 +162,21 @@ class TRTInference:
         return bindings
 
     def _bind_inputs(self, blob: Mapping[str, Tensor]) -> None:
-        """Point the input bindings at *blob* and, for dynamic engines, declare this call's input shapes."""
+        """Point the input bindings at *blob* and, for dynamic engines, declare this call's input shapes.
+
+        Raises:
+            ValueError: If a dynamic input's shape falls outside the engine's optimization profile. TensorRT
+                reports that by returning ``False`` from ``set_input_shape`` rather than raising, and executing
+                anyway would hand back whatever the output buffers held from the previous call.
+        """
         for name in self.input_names:
-            if self.bindings[name].dynamic:
-                self.context.set_input_shape(name, tuple(blob[name].shape))
+            binding = self.bindings[name]
+            shape = tuple(blob[name].shape)
+            if binding.dynamic and not self.context.set_input_shape(name, shape):
+                raise ValueError(
+                    f"Input {name!r} shape {shape} is outside the engine's optimization profile (batch up to "
+                    f"{binding.shape[0]}, spatial {tuple(binding.shape[1:])}). Export with a larger max_batch_size."
+                )
             self.bindings_addr[name] = blob[name].data_ptr()
 
     def _collect_outputs(self) -> dict[str, Tensor]:
