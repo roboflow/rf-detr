@@ -51,8 +51,9 @@ def _sample_target_masks_at_points(
 ) -> Tensor:
     """Sample matched ground-truth masks at normalized point coordinates.
 
-    Large contiguous masks on CPU are indexed directly, avoiding the
-    full matched-mask copies created by advanced indexing and concatenation.
+    Large contiguous masks on CPU, and boolean masks on CUDA, are indexed directly, avoiding the full matched-mask
+    copies created by advanced indexing and concatenation. On CUDA those copies are float masks at input resolution,
+    one per match, repeated across query groups and decoder layers; at high resolution they dominate the loss.
     Eligible multi-image CUDA boolean masks are sampled per image with the native
     nearest-neighbor ``point_sample`` path, avoiding a full batch of matched float masks.
     Other inputs retain the existing concatenation and sampling path.
@@ -72,9 +73,12 @@ def _sample_target_masks_at_points(
         >>> _sample_target_masks_at_points([{"masks": masks}], [(matched, matched)], coords)
         tensor([[1.]])
     """
+    on_cuda = point_coords.device.type == "cuda"
     use_direct = (
         len(targets) == len(indices)
-        and point_coords.device.type == "cpu"
+        and point_coords.device.type in ("cpu", "cuda")
+        # The gather carries no gradient to the coordinates; keep grid sampling when one is asked for.
+        and not (on_cuda and point_coords.requires_grad)
         and point_coords.dtype == torch.float32
         and point_coords.ndim == 3
         and point_coords.shape[-1] == 2
@@ -105,7 +109,8 @@ def _sample_target_masks_at_points(
                 or current_shape is None
                 or not masks.is_contiguous()
                 or masks.device != point_coords.device
-                or target_indices.device.type != "cpu"
+                or (on_cuda and masks.dtype != torch.bool)
+                or (not on_cuda and target_indices.device.type != "cpu")
                 or target_indices.dtype != torch.int64
                 or target_indices.ndim != 1
                 or (mask_shape is not None and current_shape != mask_shape)
@@ -124,15 +129,21 @@ def _sample_target_masks_at_points(
                 min_group_count = group_count if min_group_count is None else min(min_group_count, group_count)
 
     sampled_elements = point_coords.shape[0] * point_coords.shape[1] if point_coords.ndim == 3 else 0
+    # The size floors keep the CPU path from paying a per-image loop cost that a small gather cannot repay. On CUDA the
+    # alternative materializes every matched mask as float at input resolution, so the gather always wins.
     use_direct = (
         use_direct
         and matched_count == point_coords.shape[0]
-        and matched_mask_elements >= _MIN_DIRECT_MASK_ELEMENTS
-        and matched_mask_elements >= _MIN_DIRECT_MASK_ELEMENTS_PER_POINT * sampled_elements
-        and (min_group_elements is None or min_group_elements >= _MIN_DIRECT_MASK_ELEMENTS)
-        and (min_group_count is None or min_group_count >= _MIN_DIRECT_MATCHES_PER_GROUP)
+        and (
+            on_cuda
+            or (
+                matched_mask_elements >= _MIN_DIRECT_MASK_ELEMENTS
+                and matched_mask_elements >= _MIN_DIRECT_MASK_ELEMENTS_PER_POINT * sampled_elements
+                and (min_group_elements is None or min_group_elements >= _MIN_DIRECT_MASK_ELEMENTS)
+                and (min_group_count is None or min_group_count >= _MIN_DIRECT_MATCHES_PER_GROUP)
+            )
+        )
     )
-
     if use_direct:
         use_direct = all(
             not bool((target_indices < 0).any()) and not bool((target_indices >= target["masks"].shape[0]).any())
@@ -176,6 +187,8 @@ def _sample_target_masks_at_points(
             # for the WHOLE call over one tied point among thousands would give away most of this
             # optimization's benefit for no reason: correct just the tied points instead.
             is_tie = (unnorm_x - torch.floor(unnorm_x) == 0.5) | (unnorm_y - torch.floor(unnorm_y) == 0.5)
+            # A NaN coordinate has no pixel to gather: grid sampling reads it as padding, so resolve it the same way.
+            is_tie |= torch.isnan(unnorm_x) | torch.isnan(unnorm_y)
             if bool(is_tie.any()):
                 tie_rows, tie_cols = is_tie.nonzero(as_tuple=True)
                 tie_masks = masks[target_indices_device[tie_rows]]

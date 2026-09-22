@@ -173,8 +173,8 @@ class TestTargetMaskPointSampling:
     @pytest.mark.parametrize(
         "variant", ["random", "ties", "outside", "nan", "strided", "empty", "coords_grad", "negative", "cuda_indices"]
     )
-    def test_cuda_samples_per_image_without_changing_bytes(self, monkeypatch: pytest.MonkeyPatch, variant: str) -> None:
-        """Sampling per CUDA image preserves native labels and matched-group order."""
+    def test_cuda_sampling_matches_native_labels(self, variant: str) -> None:
+        """Every CUDA route preserves native labels and matched-group order."""
         torch.manual_seed(51)
         masks = [torch.rand(3, 211, 673, device="cuda") > 0.5 for _ in range(3)]
         matched = [torch.tensor([2, 0, 1, 2, 1, 0]) for _ in masks]
@@ -199,21 +199,60 @@ class TestTargetMaskPointSampling:
         expected = criterion_module.point_sample(
             reference_masks.unsqueeze(1).float(), coords, align_corners=False, mode="nearest"
         ).squeeze(1)
-        sampler = MagicMock(wraps=criterion_module.point_sample)
-        monkeypatch.setattr(criterion_module, "point_sample", sampler)
 
         actual = criterion_module._sample_target_masks_at_points(
             [{"masks": mask} for mask in masks], [(index, index) for index in matched], coords
         )
 
         assert torch.equal(actual.detach().view(torch.uint8), expected.detach().view(torch.uint8))
-        assert [call.args[0].shape[0] for call in sampler.call_args_list] == [
-            index.numel() for index in matched if index.numel()
-        ]
         if coords.requires_grad:
             expected_grad = torch.autograd.grad(expected.sum(), coords)[0]
             actual_grad = torch.autograd.grad(actual.sum(), coords)[0]
             assert torch.equal(actual_grad.view(torch.uint8), expected_grad.view(torch.uint8))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize(
+        ("variant", "expected_sampled_rows"),
+        [
+            ("random", []),
+            ("single_match", []),
+            ("ties", [102, 102, 102]),
+            ("nan", [1]),
+            ("strided", [6, 6, 6]),
+            ("coords_grad", [6, 6, 6]),
+        ],
+    )
+    def test_cuda_bool_masks_are_gathered_not_copied(
+        self, monkeypatch: pytest.MonkeyPatch, variant: str, expected_sampled_rows: list[int]
+    ) -> None:
+        """Contiguous CUDA boolean masks are read with a gather; grid sampling only resolves ties and NaNs.
+
+        Grid sampling needs float masks, so every row it is handed is a full-resolution float copy of a matched mask.
+        Non-contiguous masks and coordinates that require a gradient keep the per-image grid-sampling path.
+        """
+        torch.manual_seed(7)
+        masks = [torch.rand(3, 211, 673, device="cuda") > 0.5 for _ in range(3)]
+        matched = [torch.tensor([2, 0, 1, 2, 1, 0]) for _ in masks]
+        if variant == "single_match":
+            matched = [torch.tensor([1]) for _ in masks]
+        coords = torch.rand(sum(index.numel() for index in matched), 17, 2, device="cuda")
+        if variant == "ties":
+            coords[:] = torch.tensor([1 / 673, 1 / 211], device="cuda")
+        elif variant == "nan":
+            coords[0, 0] = float("nan")
+        elif variant == "strided":
+            masks = [mask.transpose(1, 2) for mask in masks]
+        elif variant == "coords_grad":
+            coords.requires_grad_()
+        sampler = MagicMock(wraps=criterion_module.point_sample)
+        monkeypatch.setattr(criterion_module, "point_sample", sampler)
+
+        criterion_module._sample_target_masks_at_points(
+            [{"masks": mask} for mask in masks], [(index, index) for index in matched], coords
+        )
+
+        assert [call.args[0].shape[0] for call in sampler.call_args_list] == expected_sampled_rows
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -242,7 +281,8 @@ class TestTargetMaskPointSampling:
             )
             assert actual.shape == (matched.numel() * 2, 7)
             assert torch.equal(actual, torch.ones_like(actual))
-            sampler.assert_called_once()
+            # Float masks keep grid sampling; boolean masks with no matches are gathered (nothing to sample).
+            assert sampler.call_count == (1 if variant == "float" else 0)
 
     @pytest.mark.parametrize(
         ("height", "width", "groups", "expected_fallback_calls"),
@@ -586,8 +626,8 @@ class TestTargetMaskPointSampling:
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_single_cuda_image_retains_native_sampler(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A single CUDA image needs no per-image split and retains the native sampler."""
+    def test_single_cuda_image_is_gathered(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A single CUDA image is gathered too: batch 1 at high resolution is where the float copies cost most."""
         torch.manual_seed(0)  # deterministic and, at this point count, verified to land no exact-tie coordinate.
         masks = (torch.rand(8, 96, 96, device="cuda") > 0.5).contiguous()
         matched = torch.arange(8)
@@ -605,7 +645,7 @@ class TestTargetMaskPointSampling:
         actual = criterion_module._sample_target_masks_at_points([{"masks": masks}], indices, point_coords)
 
         assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
-        fallback.assert_called_once()
+        fallback.assert_not_called()
 
     def test_loss_masks_uses_guarded_target_sampler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The tensor ``loss_masks`` path delegates target labels to the guarded sampler."""
