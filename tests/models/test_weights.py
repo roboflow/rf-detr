@@ -108,7 +108,14 @@ class _PatchWeightsIO:
     """Mixin suppressing all download, file-existence, and validation side effects on ``rfdetr.models.weights``."""
 
     @pytest.fixture(autouse=True)
-    def _patch_io(self, monkeypatch):
+    def _patch_io(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Suppress external weights-I/O side effects for inheriting tests.
+
+        Examples:
+            Pytest applies this autouse fixture through fixture injection, so direct invocation is skipped.
+
+            >>> _PatchWeightsIO()._patch_io(pytest.MonkeyPatch())  # doctest: +SKIP
+        """
         monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
         monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
