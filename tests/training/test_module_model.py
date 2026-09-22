@@ -538,7 +538,9 @@ class TestInit:
                 optimizer.zero_grad(set_to_none=True)
 
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
-    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, accelerator, tmp_path):
+    @patch("rfdetr.training.module_model.torch.compile")
+    @patch("rfdetr.config.DEVICE", "cuda")
+    def test_compile_disabled_on_xla_accelerator_even_with_static_shapes(self, mock_compile, accelerator, tmp_path):
         """XLA/TPU never compiles, and that no longer depends on multi_scale being set.
 
         This is the invariant the removed ``not multi_scale`` clause was documented as protecting; the accelerator check
@@ -546,11 +548,7 @@ class TestInit:
         """
         mc = _base_model_config(compile=True)
         tc = _base_train_config(tmp_path, multi_scale=False, accelerator=accelerator)
-        with (
-            patch("rfdetr.config.DEVICE", "cuda"),
-            patch("rfdetr.training.module_model.torch.compile") as mock_compile,
-        ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_not_called()
 
     def test_compile_disabled_when_device_is_not_cuda(self, tmp_path, caplog, monkeypatch):
@@ -984,62 +982,50 @@ class TestLoadPretrainWeights:
         first_call = mock_download.call_args_list[0]
         assert first_call.args[0] == "/content/rf-detr-base.pth"
 
+    @pytest.mark.parametrize(
+        "ckpt_segmentation_head, ckpt_patch_size, module_overrides, expected_match",
+        [
+            pytest.param(
+                True, 12, {"segmentation_head": False}, "segmentation head", id="seg-checkpoint-into-detection-model"
+            ),
+            pytest.param(
+                False, 16, {"segmentation_head": True}, "segmentation head", id="detection-checkpoint-into-seg-model"
+            ),
+            pytest.param(
+                False,
+                12,
+                {"segmentation_head": False, "patch_size": 16},
+                "patch_size",
+                id="patch-size-mismatch",
+            ),
+        ],
+    )
     @patch("rfdetr.models.weights.torch.load")
     @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_seg_checkpoint_into_detection_model_raises(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
+    def test_incompatible_checkpoint_raises(
+        self,
+        mock_validate,
+        mock_torch_load,
+        base_model_config,
+        build_module,
+        ckpt_segmentation_head: bool,
+        ckpt_patch_size: int,
+        module_overrides: dict[str, object],
+        expected_match: str,
     ):
-        """Loading a segmentation checkpoint into a detection model must raise ValueError."""
+        """Loading a checkpoint whose segmentation_head/patch_size mismatch the model must raise ValueError."""
         mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(segmentation_head=True, patch_size=12)
+        ckpt_args = SimpleNamespace(segmentation_head=ckpt_segmentation_head, patch_size=ckpt_patch_size)
         checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
         checkpoint["args"] = ckpt_args
         mock_torch_load.return_value = checkpoint
 
         module, _, _, _ = build_module(model_config=mc)
         module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False}
+            update={"pretrain_weights": "/fake/weights.pth", **module_overrides}
         )
 
-        with pytest.raises(ValueError, match="segmentation head"):
-            load_pretrain_weights(module.model, module.model_config)
-
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_detection_checkpoint_into_seg_model_raises(
-        self, mock_validate, mock_torch_load, base_model_config, build_module
-    ):
-        """Loading a detection checkpoint into a segmentation model must raise ValueError."""
-        mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=16)
-        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
-        checkpoint["args"] = ckpt_args
-        mock_torch_load.return_value = checkpoint
-
-        module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": True}
-        )
-
-        with pytest.raises(ValueError, match="segmentation head"):
-            load_pretrain_weights(module.model, module.model_config)
-
-    @patch("rfdetr.models.weights.torch.load")
-    @patch("rfdetr.models.weights.validate_pretrain_weights")
-    def test_patch_size_mismatch_raises(self, mock_validate, mock_torch_load, base_model_config, build_module):
-        """Loading a checkpoint with a different patch_size must raise ValueError."""
-        mc = base_model_config(num_classes=90)
-        ckpt_args = SimpleNamespace(segmentation_head=False, patch_size=12)
-        checkpoint = self._make_checkpoint(num_classes_in_ckpt=91)
-        checkpoint["args"] = ckpt_args
-        mock_torch_load.return_value = checkpoint
-
-        module, _, _, _ = build_module(model_config=mc)
-        module.model_config = module.model_config.model_copy(
-            update={"pretrain_weights": "/fake/weights.pth", "segmentation_head": False, "patch_size": 16}
-        )
-
-        with pytest.raises(ValueError, match="patch_size"):
+        with pytest.raises(ValueError, match=expected_match):
             load_pretrain_weights(module.model, module.model_config)
 
     @patch("rfdetr.models.weights.torch.load")
@@ -1323,7 +1309,8 @@ class TestTrainingStep:
         fake_model.assert_not_called()
 
     @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
-    def test_marks_cudagraph_step_only_on_inductor_path(self, inductor_cudagraphs, tmp_path):
+    @patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin")
+    def test_marks_cudagraph_step_only_on_inductor_path(self, mark_step, inductor_cudagraphs, tmp_path):
         """Each step on the Inductor CUDA graph path begins with ``cudagraph_mark_step_begin``; other paths never do.
 
         Lightning keeps the logged loss tensors alive across steps. Without the mark, cudagraph trees raise "accessing
@@ -1332,8 +1319,7 @@ class TestTrainingStep:
         module, samples, targets, _, _ = self._run_step(tmp_path)
         module._inductor_cudagraphs = inductor_cudagraphs
 
-        with patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin") as mark_step:
-            module.training_step((samples, targets), batch_idx=0)
+        module.training_step((samples, targets), batch_idx=0)
 
         assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
 
@@ -1763,21 +1749,46 @@ class TestTrainingStep:
         assert module.log_dict.call_args.kwargs.get("on_step") is False
         assert module.log_dict.call_args.kwargs.get("on_epoch") is True
 
-    def test_logs_learning_rates_for_manual_optimizer_steps_including_tail(self, tmp_path):
-        """Manual accumulation logs rates once per completed or partial optimizer window, never twice.
+    @pytest.mark.parametrize(
+        "grad_accum_steps, num_training_batches, expected_log_count",
+        [
+            pytest.param(2, 3, 2, id="manual-accumulation-tail-fallback-logs-once-per-window-never-twice"),
+            pytest.param(
+                1,
+                3,
+                3,
+                id="grad-accum-steps-one-every-batch-closes-its-own-window-and-logs",
+            ),
+            pytest.param(
+                2,
+                float("inf"),
+                1,
+                id="infinite-dataset-logs-only-at-modulo-boundary-tail-fallback-never-fires",
+            ),
+        ],
+    )
+    def test_logs_learning_rates_for_manual_optimizer_steps(
+        self, tmp_path, grad_accum_steps: int, num_training_batches: float, expected_log_count: int
+    ):
+        """Manual accumulation logs learning rates once per completed or partial optimizer window, never twice.
 
         ``_step_optimizer`` must not log learning rates itself — the single emission site is the
         ``on_before_optimizer_step`` hook, which ``_StepHookOptimizer`` fires from ``step()`` the same way Lightning's
-        real ``LightningOptimizer.step()`` does on both automatic and manual paths.
+        real ``LightningOptimizer.step()`` does on both automatic and manual paths. The finite case
+        (``num_training_batches=3``) exercises ``_should_step_optimizer``'s end-of-epoch tail fallback on its third
+        batch; the infinite case proves ``batch_idx + 1 >= num_training_batches`` can never trip against infinity, so
+        only the modulo-boundary step (batch_idx=1) logs.
         """
         module, *_ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
+            train_config=_base_train_config(tmp_path, grad_accum_steps=grad_accum_steps),
             tmp_path=tmp_path,
         )
         parameter = nn.Parameter(torch.randn(4))
         optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
-        trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
+        trainer = MagicMock(
+            num_training_batches=num_training_batches, gradient_clip_val=0.0, gradient_clip_algorithm="norm"
+        )
         module._trainer = trainer
         type(module).trainer = property(lambda self: self._trainer)
         module.log = MagicMock()
@@ -1788,67 +1799,7 @@ class TestTrainingStep:
 
         for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
             metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
-            assert len(metric_calls) == 2
-
-    def test_logs_learning_rates_at_grad_accum_steps_one(self, tmp_path):
-        """With no accumulation (``grad_accum_steps=1``), every batch closes its own window and logs rates.
-
-        ``grad_accum_steps=1`` is this repo's own recommended setting for multi-GPU keypoint training (see
-        docs/learn/train/advanced.md's "Prefer grad_accum_steps=1 on multi-GPU for keypoints" note) — the
-        ``grad_accum_steps=2`` case above never exercises the no-accumulation path where the modulo check in
-        ``_should_step_optimizer`` is trivially true for every batch and the end-of-epoch tail fallback never engages
-        (there is never a partial window to flush).
-        """
-        module, *_ = _build_module(
-            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-            train_config=_base_train_config(tmp_path, grad_accum_steps=1),
-            tmp_path=tmp_path,
-        )
-        parameter = nn.Parameter(torch.randn(4))
-        optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
-        trainer = MagicMock(num_training_batches=3, gradient_clip_val=0.0, gradient_clip_algorithm="norm")
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
-        module.log = MagicMock()
-
-        for batch_idx in range(3):
-            if module._should_step_optimizer(batch_idx):
-                module._step_optimizer(optimizer)
-
-        for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
-            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
-            assert len(metric_calls) == 3
-
-    def test_logs_learning_rates_for_infinite_dataset_skips_tail_fallback(self, tmp_path):
-        """On an infinite/streaming dataset only modulo-boundary batches log rates; no spurious tail fallback fires.
-
-        ``test_logs_learning_rates_for_manual_optimizer_steps_including_tail`` above only covers a finite
-        ``num_training_batches=3``, where the third batch triggers ``_should_step_optimizer``'s end-of-epoch tail
-        fallback and logs a second time. ``TestShouldStepOptimizer.test_infinite_dataset_uses_modulo_only`` covers
-        the boolean return of ``_should_step_optimizer`` in isolation for ``num_training_batches=float("inf")``, but
-        not that the LR-logging path downstream reflects it: with the same ``grad_accum_steps=2`` and 3 batches, an
-        infinite dataset must log exactly once (only the modulo-boundary step at batch_idx=1), not twice, because
-        ``batch_idx + 1 >= num_training_batches`` can never hold against infinity.
-        """
-        module, *_ = _build_module(
-            model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
-            train_config=_base_train_config(tmp_path, grad_accum_steps=2),
-            tmp_path=tmp_path,
-        )
-        parameter = nn.Parameter(torch.randn(4))
-        optimizer = _StepHookOptimizer(module, torch.optim.SGD([parameter], lr=0.1))
-        trainer = MagicMock(num_training_batches=float("inf"), gradient_clip_val=0.0, gradient_clip_algorithm="norm")
-        module._trainer = trainer
-        type(module).trainer = property(lambda self: self._trainer)
-        module.log = MagicMock()
-
-        for batch_idx in range(3):
-            if module._should_step_optimizer(batch_idx):
-                module._step_optimizer(optimizer)
-
-        for metric_name in ("train/lr", "train/lr_min", "train/lr_max"):
-            metric_calls = [call for call in module.log.call_args_list if call.args[0] == metric_name]
-            assert len(metric_calls) == 1
+            assert len(metric_calls) == expected_log_count
 
     def test_logs_convergence_components_to_progress_bar(self, tmp_path):
         """Selected detection and keypoint losses should appear as compact progress-only metrics."""
@@ -2321,7 +2272,8 @@ class TestValidationStep:
         assert "val/giou" not in direct_log_names
 
     @pytest.mark.parametrize("inductor_cudagraphs", [True, False])
-    def test_marks_cudagraph_step_only_on_inductor_path(self, inductor_cudagraphs, tmp_path):
+    @patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin")
+    def test_marks_cudagraph_step_only_on_inductor_path(self, mark_step, inductor_cudagraphs, tmp_path):
         """Validation on the Inductor CUDA graph path marks each step, since the compiled model records an eval graph.
 
         With ``eval_base_model=True`` or ``use_ema=False`` the ``OptimizedModule`` itself runs validation; the results
@@ -2334,8 +2286,7 @@ class TestValidationStep:
         fake_model.return_value = {}
         module.log = MagicMock()
 
-        with patch("rfdetr.training.module_model.torch.compiler.cudagraph_mark_step_begin") as mark_step:
-            module.validation_step((samples, targets), batch_idx=0)
+        module.validation_step((samples, targets), batch_idx=0)
 
         assert mark_step.call_count == (1 if inductor_cudagraphs else 0)
 
@@ -2384,47 +2335,36 @@ class TestValidationStep:
         fake_criterion.assert_called_once_with({}, targets)
         assert any(call.args[0] == "val/loss" for call in module.log.call_args_list)
 
-    def test_auto_val_loss_keeps_criterion_for_rfdetr_early_stopping(self, tmp_path):
-        """compute_val_loss='auto' retains validation loss for a real RFDETREarlyStopping monitoring val/loss.
+    @pytest.mark.parametrize(
+        "callbacks, expected",
+        [
+            pytest.param(
+                [RFDETREarlyStopping(monitor_regular="val/loss")],
+                True,
+                id="real-rfdetr-early-stopping-monitor-lives-in-monitor-regular-not-monitor",
+            ),
+            pytest.param(
+                [SimpleNamespace(monitor="__rfdetr_effective_map__", _monitor_ema="val/loss")],
+                True,
+                id="ema-monitor-attribute-consuming-val-loss",
+            ),
+            pytest.param([], False, id="empty-callback-list-resolves-like-the-unattached-case"),
+        ],
+    )
+    def test_auto_val_loss_scan_resolves_should_compute_val_loss(self, tmp_path, callbacks: list, expected: bool):
+        """compute_val_loss='auto' scans trainer.callbacks for any callback that would consume val/loss.
 
-        ``RFDETREarlyStopping.monitor`` is always the synthetic ``__rfdetr_effective_map__`` key it injects itself, so
-        the callback's real target only ever appears in ``_monitor_regular``. Stub callbacks carrying a plain
-        ``monitor="val/loss"`` attribute exercise the generic half of the scan and would keep passing even if the half
-        covering RF-DETR's own callbacks regressed.
+        Covers three cases a naive scan (monitor attribute only) could miss: ``RFDETREarlyStopping``'s real target lives
+        in ``_monitor_regular`` (its ``monitor`` is always the synthetic ``__rfdetr_effective_map__`` key it injects
+        itself); RF-DETR's EMA callbacks track their metric via ``_monitor_ema`` instead; and an attached trainer with
+        an empty callback list must resolve exactly like the unattached case rather than raising or falling back to
+        computing the loss.
         """
         tc = _base_train_config(tmp_path, compute_val_loss="auto")
         module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
-        module.trainer = SimpleNamespace(callbacks=[RFDETREarlyStopping(monitor_regular="val/loss")])
+        module.trainer = SimpleNamespace(callbacks=callbacks)
 
-        assert module._should_compute_val_loss is True
-
-    def test_auto_val_loss_detects_ema_monitor_attribute(self, tmp_path):
-        """compute_val_loss='auto' retains validation loss for a callback consuming val/loss as its EMA monitor.
-
-        RF-DETR's ``BestModelCallback`` / ``RFDETREarlyStopping`` keep their EMA-track metric key in ``_monitor_ema``
-        rather than in the PTL-native ``monitor`` attribute, so a scan that inspects only ``monitor`` (and
-        ``_monitor_regular``) would silently skip the loss those callbacks still read.
-        """
-        tc = _base_train_config(tmp_path, compute_val_loss="auto")
-        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
-        module.trainer = SimpleNamespace(
-            callbacks=[SimpleNamespace(monitor="__rfdetr_effective_map__", _monitor_ema="val/loss")]
-        )
-
-        assert module._should_compute_val_loss is True
-
-    def test_auto_val_loss_skips_criterion_for_empty_callback_list(self, tmp_path):
-        """compute_val_loss='auto' resolves to skipping the loss when the attached trainer carries no callbacks.
-
-        ``any()`` over an empty callback list is False, which is the intended answer, but nothing in the scan states
-        it: an attached trainer with an empty ``callbacks`` list must resolve exactly like the unattached case rather
-        than raising or falling back to computing the loss.
-        """
-        tc = _base_train_config(tmp_path, compute_val_loss="auto")
-        module, *_ = _build_module(train_config=tc, tmp_path=tmp_path)
-        module.trainer = SimpleNamespace(callbacks=[])
-
-        assert module._should_compute_val_loss is False
+        assert module._should_compute_val_loss is expected
 
     def test_explicit_val_loss_disable_rejects_callback_monitor(self, tmp_path):
         """compute_val_loss=False rejects a callback that would consume val/loss."""
@@ -2983,9 +2923,16 @@ class TestConfigureOptimizers:
         expected = float(step) / float(max(1, 100))
         assert lr_lambda(step) == pytest.approx(expected)
 
+    @pytest.mark.parametrize(
+        "step, expected_factor",
+        [
+            pytest.param(500, 1.0, id="before-lr-drop-epoch-8-times-100-steps-per-epoch-equals-800"),
+            pytest.param(900, 0.1, id="after-lr-drop-epoch-decays-to-0.1"),
+        ],
+    )
     @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_step_decay_before_drop(self, mock_get_param_dict, tmp_path):
-        """Before lr_drop epoch, the LR multiplier must remain at 1.0."""
+    def test_lr_lambda_step_decay(self, mock_get_param_dict, tmp_path, step: int, expected_factor: float):
+        """The step-decay LR multiplier stays at 1.0 before lr_drop and decays to 0.1 after it."""
         module, param_dicts = self._setup_module(
             tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
         )
@@ -2995,23 +2942,7 @@ class TestConfigureOptimizers:
         scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
         lr_lambda = scheduler.lr_lambdas[0]
 
-        # lr_drop * steps_per_epoch = 8 * 100 = 800; step 500 < 800 → factor 1.0
-        assert lr_lambda(500) == pytest.approx(1.0)
-
-    @patch("rfdetr.training.module_model.get_param_dict")
-    def test_lr_lambda_step_decay_after_drop(self, mock_get_param_dict, tmp_path):
-        """After lr_drop epoch, the LR multiplier must decay to 0.1."""
-        module, param_dicts = self._setup_module(
-            tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler_kwargs={"lr_drop": 8}
-        )
-        module._trainer.estimated_stepping_batches = 1000
-        mock_get_param_dict.return_value = param_dicts
-
-        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
-        lr_lambda = scheduler.lr_lambdas[0]
-
-        # step 900 > 800 → factor 0.1
-        assert lr_lambda(900) == pytest.approx(0.1)
+        assert lr_lambda(step) == pytest.approx(expected_factor)
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_lr_lambda_cosine_reads_train_config_fields(self, mock_get_param_dict, tmp_path):
@@ -3029,8 +2960,34 @@ class TestConfigureOptimizers:
         scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
         lr_lambda = scheduler.lr_lambdas[0]
 
-        # At the final step, cosine schedule must end at lr_min_factor.
+        # At the final step, cosine schedule must end at min_factor.
         assert lr_lambda(1000) == pytest.approx(0.2)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_lr_lambda_step_default_drop_is_epoch_100(self, mock_get_param_dict, tmp_path):
+        """With no ``lr_drop`` kwarg the step preset falls back to the managed default of 100 epochs."""
+        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=200)
+        module._trainer.estimated_stepping_batches = 20000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+        lr_lambda = scheduler.lr_lambdas[0]
+
+        # steps_per_epoch=100 -> drop at step 10000
+        assert lr_lambda(9999) == pytest.approx(1.0)
+        assert lr_lambda(10000) == pytest.approx(0.1)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_lr_lambda_cosine_default_floor_is_zero(self, mock_get_param_dict, tmp_path):
+        """With no ``min_factor`` kwarg the cosine preset anneals to the managed default floor of 0.0."""
+        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler="cosine")
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+        lr_lambda = scheduler.lr_lambdas[0]
+
+        assert lr_lambda(1000) == pytest.approx(0.0)
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_explicit_dotted_scheduler_builds_from_kwargs(self, mock_get_param_dict, tmp_path):
@@ -3267,74 +3224,52 @@ class TestConfigureOptimizers:
 
         mock_logger.warning.assert_called_once()
 
+    @pytest.mark.parametrize(
+        "precision, expected_fused",
+        [
+            pytest.param(
+                "32-true",
+                False,
+                id="not-bf16-disables-fused-even-though-the-gpu-supports-bf16",
+            ),
+            pytest.param(
+                "bf16-mixed",
+                True,
+                id="bf16-mixed-enables-fused-params-grads-and-state-share-dtype-and-layout",
+            ),
+            pytest.param(
+                "transformer-engine",
+                True,
+                id="transformer-engine-default-fp8-uses-bf16-weights-so-fused-stays-active",
+            ),
+        ],
+    )
     @patch("rfdetr.training.module_model.get_param_dict")
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_fused_optimizer_disabled_when_precision_not_bf16(
+    def test_fused_optimizer_gating_by_precision(
         self,
         mock_cuda_available,
         mock_bf16_supported,
         mock_get_param_dict,
         tmp_path,
+        precision: str,
+        expected_fused: bool,
     ):
-        """Fused AdamW must be disabled when trainer precision is not bf16-mixed.
+        """Fused AdamW is enabled only for the precisions whose params/grads/state all stay BF16-compatible.
 
-        On Ampere+ GPUs torch.cuda.is_bf16_supported() is True even when the trainer is configured for 32-true
-        precision.  The old code always enabled fused AdamW based on GPU capability alone, crashing with ``params,
-        grads, exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP gradient bucket views had
-        non-matching strides. The fix checks ``trainer.precision`` before enabling fused.
+        On Ampere+ GPUs ``torch.cuda.is_bf16_supported()`` is True even when the trainer is configured for 32-true
+        precision. The old code always enabled fused AdamW based on GPU capability alone, crashing with ``params, grads,
+        exp_avgs, and exp_avg_sqs must have same dtype, device, and layout`` when DDP gradient bucket views had non-
+        matching strides — the fix checks ``trainer.precision`` before enabling fused.
         """
         module, param_dicts = self._setup_module(tmp_path)
         mock_get_param_dict.return_value = param_dicts
-        # Simulate trainer configured for full FP32 precision.
-        module._trainer.precision = "32-true"
+        module._trainer.precision = precision
 
         optimizer = module.configure_optimizers()["optimizer"]
 
-        assert not optimizer.defaults.get("fused")
-
-    @patch("rfdetr.training.module_model.get_param_dict")
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_fused_optimizer_enabled_when_precision_is_bf16_mixed(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-        mock_get_param_dict,
-        tmp_path,
-    ):
-        """Fused AdamW must be enabled when both GPU supports BF16 and trainer uses bf16-mixed.
-
-        The fused path is beneficial (and safe) only when training precision is actually BF16: parameters, gradients,
-        and optimizer state all stay in the same dtype/layout, satisfying the fused kernel requirements.
-        """
-        module, param_dicts = self._setup_module(tmp_path)
-        mock_get_param_dict.return_value = param_dicts
-        # Simulate trainer configured for BF16 mixed precision.
-        module._trainer.precision = "bf16-mixed"
-
-        optimizer = module.configure_optimizers()["optimizer"]
-
-        assert optimizer.defaults.get("fused") is True
-
-    @patch("rfdetr.training.module_model.get_param_dict")
-    @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
-    @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_fused_optimizer_enabled_with_transformer_engine(
-        self,
-        mock_cuda_available,
-        mock_bf16_supported,
-        mock_get_param_dict,
-        tmp_path,
-    ):
-        """Default FP8 uses BF16 weights, so the built-in fused AdamW path must remain active."""
-        module, param_dicts = self._setup_module(tmp_path)
-        mock_get_param_dict.return_value = param_dicts
-        module._trainer.precision = "transformer-engine"
-
-        optimizer = module.configure_optimizers()["optimizer"]
-
-        assert optimizer.defaults.get("fused") is True
+        assert bool(optimizer.defaults.get("fused")) is expected_fused
 
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=False)
     def test_fused_optimizer_disabled_when_cuda_unavailable(self, mock_cuda_available, tmp_path):
@@ -3349,21 +3284,21 @@ class TestConfigureOptimizers:
         """Keypoint (manual-opt) path must divide estimated_stepping_batches by grad_accum_steps for LR scheduling.
 
         With microbatches=100, grad_accum_steps=4, epochs=1, warmup_epochs=0 the scheduler should span 25 optimizer
-        steps (ceil(100/4)).  At step 24 (0-indexed last step) a cosine LR schedule should be nearly at lr_min_factor;
-        if total_steps were mistakenly 100 the LR would still be near its peak at step 24.
+        steps (ceil(100/4)).  At step 24 (0-indexed last step) a cosine LR schedule should be nearly at min_factor; if
+        total_steps were mistakenly 100 the LR would still be near its peak at step 24.
         """
         import math
 
         grad_accum_steps = 4
         microbatches = 100
-        lr_min_factor = 0.1
+        min_factor = 0.1
         tc = _base_train_config(
             tmp_path,
             grad_accum_steps=grad_accum_steps,
             warmup_epochs=0,
             epochs=1,
             lr_scheduler="cosine",
-            lr_scheduler_kwargs={"min_factor": lr_min_factor},
+            lr_scheduler_kwargs={"min_factor": min_factor},
         )
         module, _, _, _ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
@@ -3381,10 +3316,10 @@ class TestConfigureOptimizers:
         lr_lambda = scheduler.lr_lambdas[0]
 
         expected_total_steps = max(1, math.ceil(microbatches / grad_accum_steps))  # 25
-        # The cosine schedule reaches lr_min_factor exactly at step == total_steps (progress=1.0).
+        # The cosine schedule reaches min_factor exactly at step == total_steps (progress=1.0).
         # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
         lr_at_decay_end = lr_lambda(expected_total_steps)
-        assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
+        assert lr_at_decay_end == pytest.approx(min_factor, abs=1e-6)
 
 
 class TestCudaGraphLifecycle:
@@ -4085,35 +4020,44 @@ class TestManualOptLRSchedulerStepping:
         module.automatic_optimization = False
         return module
 
-    def test_step_interval_scheduler_stepped_per_optimizer_step(self, tmp_path):
-        """A step-interval scheduler is stepped by _step_lr_scheduler."""
+    @pytest.mark.parametrize(
+        "interval, method_name, assert_scheduler_state",
+        [
+            pytest.param(
+                "step",
+                "_step_lr_scheduler",
+                lambda scheduler: scheduler.step.assert_called_once_with(),
+                id="step-interval-stepped-per-optimizer-step",
+            ),
+            pytest.param(
+                "epoch",
+                "_step_lr_scheduler",
+                lambda scheduler: scheduler.step.assert_not_called(),
+                id="epoch-interval-not-stepped-by-the-per-optimizer-step-hook",
+            ),
+            pytest.param(
+                "epoch",
+                "on_train_epoch_end",
+                lambda scheduler: scheduler.step.assert_called_once_with(),
+                id="epoch-interval-stepped-on-train-epoch-end-manual-path",
+            ),
+        ],
+    )
+    def test_lr_scheduler_stepped_according_to_interval(
+        self, tmp_path, interval: str, method_name: str, assert_scheduler_state
+    ):
+        """The manual LR-scheduler step hooks respect ``_lr_scheduler_interval``.
+
+        A step-interval scheduler is stepped on every optimizer step (``_step_lr_scheduler``); an epoch-interval
+        scheduler is not stepped by that hook, only by ``on_train_epoch_end``.
+        """
         module = self._module(tmp_path)
-        module._lr_scheduler_interval = "step"
+        module._lr_scheduler_interval = interval
         scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
         with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module._step_lr_scheduler()
+            getattr(module, method_name)()
 
-        scheduler.step.assert_called_once_with()
-
-    def test_epoch_interval_scheduler_not_stepped_per_optimizer_step(self, tmp_path):
-        """An epoch-interval scheduler is not stepped by the per-optimizer-step hook."""
-        module = self._module(tmp_path)
-        module._lr_scheduler_interval = "epoch"
-        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module._step_lr_scheduler()
-
-        scheduler.step.assert_not_called()
-
-    def test_epoch_interval_scheduler_stepped_on_train_epoch_end(self, tmp_path):
-        """on_train_epoch_end steps an epoch-interval scheduler on the manual path."""
-        module = self._module(tmp_path)
-        module._lr_scheduler_interval = "epoch"
-        scheduler = MagicMock(spec=torch.optim.lr_scheduler.StepLR)
-        with patch.object(module, "lr_schedulers", return_value=scheduler):
-            module.on_train_epoch_end()
-
-        scheduler.step.assert_called_once_with()
+        assert_scheduler_state(scheduler)
 
     def test_plateau_stepped_from_monitor_metric_on_validation_epoch_end(self, tmp_path):
         """on_validation_epoch_end steps ReduceLROnPlateau with the monitored metric."""

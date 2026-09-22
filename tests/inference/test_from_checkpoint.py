@@ -377,15 +377,15 @@ class TestDeprecatedClassInstantiation:
             ("RFDETRSegPreview", "rfdetr.variants.RFDETRSegPreview"),
         ],
     )
-    def test_direct_instantiation_is_allowed(self, cls_name: str, import_path: str) -> None:
+    @patch("rfdetr.detr.RFDETR.__init__", return_value=None)
+    def test_direct_instantiation_is_allowed(self, _mock_0, cls_name: str, import_path: str) -> None:
         """Direct instantiation of a deprecated class does not raise RuntimeError."""
         import importlib
 
         module_path, attr = import_path.rsplit(".", 1)
         module = importlib.import_module(module_path)
         cls = getattr(module, attr)
-        with patch("rfdetr.detr.RFDETR.__init__", return_value=None):
-            model = cls()
+        model = cls()
         assert model.__class__.__name__ == cls_name
 
     @pytest.mark.parametrize("pretrain_weights", ["rf-detr-base.pth", "rf-detr-seg-preview.pt"])
