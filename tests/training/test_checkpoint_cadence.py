@@ -39,9 +39,11 @@ class _RecordLastCheckpointEpoch(Callback):
     def __init__(self, output_dir: Path) -> None:
         self.last_path = output_dir / "last.ckpt"
         self.epochs: list[int | None] = []
+        self.current_epoch = 0
 
     def on_train_epoch_start(self, trainer, pl_module) -> None:
-        """Append the epoch index ``last.ckpt`` currently holds."""
+        """Track the active epoch and append the prior checkpoint epoch."""
+        self.current_epoch = trainer.current_epoch
         if trainer.current_epoch == 0:
             return
         if not self.last_path.exists():
@@ -50,8 +52,16 @@ class _RecordLastCheckpointEpoch(Callback):
         self.epochs.append(int(torch.load(self.last_path, map_location="cpu", weights_only=False)["epoch"]))
 
 
-def _fit(tmp_path: Path, epochs: int, eval_interval: int, checkpoint_interval: int) -> tuple[Path, list[int | None]]:
+def _fit(
+    tmp_path: Path,
+    epochs: int,
+    eval_interval: int,
+    checkpoint_interval: int,
+    improve_validation: bool = False,
+) -> tuple[Path, list[int | None]]:
     """Fit ``epochs`` epochs of two batches each and return the output dir plus the recorded ``last.ckpt`` epochs.
+
+    When ``improve_validation`` is true, predictions miss before the final epoch and match exactly in its validation.
 
     Examples:
         >>> import contextlib, io
@@ -76,11 +86,25 @@ def _fit(tmp_path: Path, epochs: int, eval_interval: int, checkpoint_interval: i
         run_test=False,
     )
     recorder = _RecordLastCheckpointEpoch(Path(tc.output_dir))
+    postprocess = MagicMock(side_effect=_fake_postprocess)
+    if improve_validation:
+        postprocess = MagicMock(
+            side_effect=lambda outputs, orig_sizes: [
+                {
+                    "boxes": torch.tensor(
+                        [[14.4, 14.4, 17.6, 17.6]] if recorder.current_epoch == epochs - 1 else [[5.0, 5.0, 20.0, 20.0]]
+                    ),
+                    "scores": torch.tensor([0.9]),
+                    "labels": torch.tensor([1]),
+                }
+                for _ in range(orig_sizes.shape[0])
+            ]
+        )
     with (
         patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
         patch(
             "rfdetr.training.module_model.build_criterion_from_config",
-            return_value=(_FakeCriterion(), MagicMock(side_effect=_fake_postprocess)),
+            return_value=(_FakeCriterion(), postprocess),
         ),
         patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
         patch(
@@ -120,12 +144,13 @@ class TestCheckpointCadenceWithEvalInterval:
 
     def test_last_ckpt_carries_that_epochs_validation_state(self, tmp_path):
         """Saving on train epoch end must still capture the validation that ran inside the same epoch."""
-        out, _ = _fit(tmp_path, epochs=2, eval_interval=1, checkpoint_interval=5)
+        out, _ = _fit(tmp_path, epochs=2, eval_interval=1, checkpoint_interval=5, improve_validation=True)
 
         state = torch.load(out / "last.ckpt", map_location="cpu", weights_only=False)
         best_states = [value for key, value in state["callbacks"].items() if key.startswith("BestModelCallback")]
         assert best_states
-        assert best_states[0]["best_model_score"] is not None
+        assert state["epoch"] == 1
+        torch.testing.assert_close(best_states[0]["best_model_score"], torch.tensor(1.0), rtol=1e-4, atol=1e-6)
 
     @pytest.mark.parametrize("eval_interval", [1, 2])
     def test_final_epoch_is_saved(self, tmp_path, eval_interval):
