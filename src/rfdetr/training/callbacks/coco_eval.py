@@ -21,6 +21,7 @@ import torch.distributed as dist
 import torch.nn.functional as F  # noqa: N812
 from pytorch_lightning import Callback
 from torch import Tensor
+from torch.utils.data import DistributedSampler
 
 from rfdetr.config import CocoEvalBackend
 from rfdetr.datasets import get_coco_api_from_dataset
@@ -195,6 +196,10 @@ class COCOEvalCallback(Callback):
         self._train_segm_skip_warned: bool = False
         self._keypoint_oks_metrics: dict[str, MetricKeypointOKS] = {}
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
+        # DistributedSampler padding filter for the current evaluation epoch: ``(rank, num_replicas, dataset_len)``
+        # when the split is padded across ranks, else ``None``; ``_eval_samples_seen`` counts this rank's samples.
+        self._eval_padding: tuple[int, int, int] | None = None
+        self._eval_samples_seen: int = 0
         self._in_notebook: bool
         if in_notebook is None:
             self._in_notebook = _is_running_in_notebook()
@@ -335,6 +340,7 @@ class COCOEvalCallback(Callback):
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("val")
         self._reset_keypoint_split("val_ema")
+        self._reset_padding_filter(getattr(trainer, "val_dataloaders", None))
         self._prepare_ema_metric(trainer)
 
     def on_test_epoch_start(self, trainer: Any, pl_module: Any) -> None:
@@ -353,6 +359,7 @@ class COCOEvalCallback(Callback):
         self.map_metric.reset()
         self._f1_local = init_matching_accumulator()
         self._reset_keypoint_split("test")
+        self._reset_padding_filter(getattr(trainer, "test_dataloaders", None))
         self._prepare_ema_metric(trainer)
 
     def on_train_batch_end(
@@ -477,6 +484,15 @@ class COCOEvalCallback(Callback):
         """
         if not isinstance(outputs, Mapping):
             return
+        batch_targets = outputs["targets"]
+        keep = self._next_real_sample_mask(len(batch_targets))
+        if not any(keep):
+            return
+        if not all(keep):
+            outputs = {
+                "results": [item for item, real in zip(outputs["results"], keep) if real],
+                "targets": [item for item, real in zip(batch_targets, keep) if real],
+            }
         self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
@@ -508,12 +524,16 @@ class COCOEvalCallback(Callback):
         # pass would be pure duplicate compute (#416) — the ~3-3.5%-of-epoch saving PR12 claims.
         if self._eval_base_model and ema_cb is not None and ema_inner is not None and self.map_metric_ema is not None:
             samples, _ = batch
-            orig_sizes = torch.stack([t["orig_size"] for t in outputs["targets"]]).to(pl_module.device)
+            # The forward runs on the whole batch (padding included) so the orig_size row count matches; the
+            # postprocessed results are then trimmed with the same mask as the primary track.
+            orig_sizes = torch.stack([t["orig_size"] for t in batch_targets]).to(pl_module.device)
             ema_underlying = ema_inner.model
             with torch.no_grad():
                 ema_underlying.eval()  # AveragedModel deepcopy is not managed by PTL
                 ema_outputs = ema_underlying(samples)
                 ema_results = pl_module.postprocess(ema_outputs, orig_sizes)
+            if not all(keep):
+                ema_results = [item for item, real in zip(ema_results, keep) if real]
             self._sync_xla_metric_inputs(pl_module)
             ema_preds = self._convert_preds(ema_results)
             # Outside segmentation the conversion has no prediction-dependent input, so redoing it here would
@@ -575,6 +595,14 @@ class COCOEvalCallback(Callback):
         """
         if not isinstance(outputs, Mapping):
             return
+        keep = self._next_real_sample_mask(len(outputs["targets"]))
+        if not any(keep):
+            return
+        if not all(keep):
+            outputs = {
+                "results": [item for item, real in zip(outputs["results"], keep) if real],
+                "targets": [item for item, real in zip(outputs["targets"], keep) if real],
+            }
         self._sync_xla_metric_inputs(pl_module)
         preds: list[dict[str, Tensor]] = self._convert_preds(outputs["results"])
         targets = self._convert_targets(outputs["targets"], preds if self._use_segm_metrics else None)
@@ -600,6 +628,45 @@ class COCOEvalCallback(Callback):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _reset_padding_filter(self, dataloaders: Any) -> None:
+        """Derive this epoch's DistributedSampler padding rule from the evaluation loader and reset the counter.
+
+        Lightning replaces the evaluation loader's ``SequentialSampler`` with a ``DistributedSampler`` that pads the
+        index list to a multiple of ``world_size`` by repeating the leading indices, so up to ``world_size - 1``
+        images are forwarded twice per epoch. Rank ``r`` receives global positions ``r, r + W, r + 2W, ...`` in order
+        (``shuffle=False``), and a position at or past the dataset length is such a repeat. The forward still runs
+        on those samples (keeping every rank's batch count equal, which the epoch-end collectives rely on); only the
+        metric accumulators skip them, so each image is scored exactly once across ranks.
+
+        Args:
+            dataloaders: ``trainer.val_dataloaders`` or ``trainer.test_dataloaders`` (a loader or a list of them).
+        """
+        self._eval_samples_seen = 0
+        self._eval_padding = None
+        loaders = dataloaders if isinstance(dataloaders, (list, tuple)) else [dataloaders]
+        sampler = getattr(loaders[0], "sampler", None) if loaders else None
+        if not isinstance(sampler, DistributedSampler) or sampler.shuffle or sampler.drop_last:
+            return
+        dataset_len = len(sampler.dataset)  # type: ignore[arg-type]
+        if sampler.total_size > dataset_len:
+            self._eval_padding = (sampler.rank, sampler.num_replicas, dataset_len)
+
+    def _next_real_sample_mask(self, count: int) -> list[bool]:
+        """Return, for the next ``count`` samples on this rank, whether each is a real image rather than padding.
+
+        Args:
+            count: Number of samples in the batch being accumulated.
+
+        Returns:
+            One flag per sample, in batch order; all ``True`` when the split is not padded.
+        """
+        first = self._eval_samples_seen
+        self._eval_samples_seen += count
+        if self._eval_padding is None:
+            return [True] * count
+        rank, num_replicas, dataset_len = self._eval_padding
+        return [rank + (first + offset) * num_replicas < dataset_len for offset in range(count)]
 
     @staticmethod
     def _sync_xla_metric_inputs(pl_module: Any) -> None:
