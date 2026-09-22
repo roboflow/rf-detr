@@ -635,8 +635,9 @@ class BestModelCallback(ModelCheckpoint):
             if trainer.is_global_zero:
                 logger.warning(
                     "Skipping trainer.test() at fit end: run_test=True is not supported with spawn-based DDP "
-                    "(strategy='ddp_spawn' / 'ddp_notebook'). Evaluate checkpoint_best_total.pth afterwards with "
-                    "RFDETR.evaluate(split='test')."
+                    "(strategy='ddp_spawn' / 'ddp_notebook'). To score the best checkpoint afterwards, load it "
+                    f"first: RFDETR.from_checkpoint('{total_path}').evaluate(split='test', dataset_dir=...) "
+                    "(evaluate() scores the weights held in memory, not a checkpoint file)."
                 )
             return
         # The barrier orders the main process's checkpoint writes before any rank reads them; the broadcast keeps
