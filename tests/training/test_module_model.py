@@ -1429,7 +1429,7 @@ class TestTrainingStep:
         optimizer.toggle_model.assert_called_once_with(sync_grad=sync_grad)
         module.manual_backward.assert_called_once()
 
-    def test_detection_loss_is_returned_unscaled_for_lightning_accumulation(self, tmp_path):
+    def test_detection_loss_is_returned_unscaled_for_lightning_accumulation(self, tmp_path: Path) -> None:
         """Detection (automatic optimization) returns the weighted loss unscaled.
 
         Lightning's ``ClosureResult.from_training_step_output`` divides the returned loss by

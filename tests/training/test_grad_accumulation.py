@@ -17,6 +17,7 @@ return the loss unscaled; dividing it again scales every accumulated gradient by
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -45,7 +46,9 @@ class TestAutomaticOptimizationAccumulationScaling:
     """The accumulated gradient must be the mean of the microbatch gradients, not the mean divided by ``N`` again."""
 
     @pytest.mark.parametrize("accumulate_grad_batches", [1, 2, 4])
-    def test_accumulated_gradient_is_mean_of_microbatch_gradients(self, tmp_path, accumulate_grad_batches):
+    def test_accumulated_gradient_is_mean_of_microbatch_gradients(
+        self, tmp_path: Path, accumulate_grad_batches: int
+    ) -> None:
         """``N`` microbatches at ``accumulate_grad_batches=N`` must leave a gradient of ``1.0`` on ``dummy``."""
         mc = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=3)
         tc = TrainConfig(
