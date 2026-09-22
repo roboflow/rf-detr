@@ -1241,7 +1241,7 @@ class TestResolveBackendForBuild:
             resolve_backend_for_build("gpu", has_cuda=True)
 
 
-class TestPerspectiveFactory:
+class TestPerspectiveFactory(_RequiresKornia):
     """`Perspective` on the Kornia backend (issue #1252).
 
     Perspective preserves output resolution, and the DataModule carries the batch padding mask through the same Kornia
@@ -1447,8 +1447,11 @@ def _affine_ranges(transform: Any) -> dict[str, tuple[float, float]]:
     actionable message rather than a raw ``AttributeError`` inside a test body.
 
     Examples:
-        >>> transform = TestShiftScaleRotateFactory()._only_affine({"ShiftScaleRotate": {"p": 1.0}})
-        >>> len(_affine_ranges(transform))
+        Requires the optional Kornia dependency, so the examples are skipped where it is unavailable.
+
+        >>> config = {"ShiftScaleRotate": {"p": 1.0}}
+        >>> transform = TestShiftScaleRotateFactory()._only_affine(config)  # doctest: +SKIP
+        >>> len(_affine_ranges(transform))  # doctest: +SKIP
         3
     """
     generator = getattr(transform, "_param_generator", None)
@@ -1597,8 +1600,11 @@ class TestShiftScaleRotateFactory(_RequiresKornia):
         """Build a pipeline and return its sole ``RandomAffine`` transform.
 
         Examples:
-            >>> transform = TestShiftScaleRotateFactory()._only_affine({"ShiftScaleRotate": {"p": 1.0}})
-            >>> transform.__class__.__name__
+            Requires the optional Kornia dependency, so the examples are skipped where it is unavailable.
+
+            >>> config = {"ShiftScaleRotate": {"p": 1.0}}
+            >>> transform = TestShiftScaleRotateFactory()._only_affine(config)  # doctest: +SKIP
+            >>> transform.__class__.__name__  # doctest: +SKIP
             'RandomAffine'
         """
         import kornia.augmentation as kornia_augmentation

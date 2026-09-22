@@ -161,11 +161,10 @@ class TestMultiScaleProjectorExtraPool:
     """``forward`` appends an extra max-pooled feature map when ``use_extra_pool`` is set."""
 
     def test_forward_appends_a_max_pooled_copy_of_the_last_stage_output(self) -> None:
-        """Isolates the pooling step in ``forward`` from the scale-0.25 construction issue above.
+        """Verifies the extra-pooling step independently of marker construction.
 
-        The flag is set directly on an otherwise ordinary projector rather than through
-        ``scale_factors=[..., 0.25]``, since building it that way currently raises (see
-        ``TestMultiScaleProjectorScale025Branch``).
+        The flag is set directly on an otherwise ordinary projector so this test isolates ``forward()``;
+        ``TestMultiScaleProjectorExtraPoolMarker`` covers construction via ``scale_factors=[..., 0.25]``.
         """
         proj = MultiScaleProjector(in_channels=[4], out_channels=4, scale_factors=[1.0])
         proj.use_extra_pool = True
