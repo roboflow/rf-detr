@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, call, patch
 import numpy as np
 import pytest
 import torch
+from torch.utils.data import DistributedSampler, SequentialSampler
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
@@ -405,6 +406,143 @@ class TestBatchEndCommon:
         assert boxes[0, 1].item() == pytest.approx(45.0)
         assert boxes[0, 2].item() == pytest.approx(110.0)
         assert boxes[0, 3].item() == pytest.approx(55.0)
+
+
+def _trainer_with_sampler(loaders_attr: str, dataset_len: int, rank: int, num_replicas: int) -> MagicMock:
+    """Return a mock trainer whose evaluation loader carries a real padded ``DistributedSampler``.
+
+    Examples:
+        >>> trainer = _trainer_with_sampler("val_dataloaders", dataset_len=21, rank=1, num_replicas=2)
+        >>> sampler = trainer.val_dataloaders.sampler
+        >>> (sampler.rank, sampler.num_replicas, sampler.total_size, sampler.num_samples)
+        (1, 2, 22, 11)
+    """
+    sampler = DistributedSampler(list(range(dataset_len)), num_replicas=num_replicas, rank=rank, shuffle=False)
+    loader = MagicMock(name="loader")
+    loader.sampler = sampler
+    trainer = _make_trainer()
+    setattr(trainer, loaders_attr, loader)
+    return trainer
+
+
+@pytest.mark.parametrize(
+    "epoch_start,batch_end,loaders_attr,stage",
+    [
+        pytest.param("on_validation_epoch_start", "on_validation_batch_end", "val_dataloaders", "fit", id="val"),
+        pytest.param("on_test_epoch_start", "on_test_batch_end", "test_dataloaders", "test", id="test"),
+    ],
+)
+class TestDistributedSamplerPaddingFilter:
+    """DistributedSampler padding must not be scored: each image counts exactly once across ranks.
+
+    Lightning pads the evaluation split to a multiple of ``world_size`` by repeating the leading images, so with 21
+    images on 2 ranks each rank forwards 11 samples and the 22nd is image 0 again. The callback skips the repeat when
+    accumulating, using the sampler's own ``rank, num_replicas, total_size`` arithmetic (``shuffle=False``).
+    """
+
+    def test_last_sample_on_padded_rank_is_skipped(self, epoch_start, batch_end, loaders_attr, stage) -> None:
+        """Rank 1 of 2 over 21 images owns positions 1, 3, ..., 19, 21; position 21 is the padded repeat."""
+        cb = COCOEvalCallback()
+        trainer = _trainer_with_sampler(loaders_attr, dataset_len=21, rank=1, num_replicas=2)
+        cb.setup(trainer, _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        getattr(cb, epoch_start)(trainer, _cpu_module())
+
+        seen: list[int] = []
+        cb.map_metric.update.side_effect = lambda preds, targets: seen.append(len(targets))
+        for batch_size in (4, 4, 3):  # the 11 samples this rank receives, in batches of 4
+            outputs = {"results": _detection_preds(0) * batch_size, "targets": _detection_targets() * batch_size}
+            getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0)
+
+        assert seen == [4, 4, 2]
+
+    def test_unpadded_rank_scores_every_sample(self, epoch_start, batch_end, loaders_attr, stage) -> None:
+        """Rank 0 of 2 over 21 images owns positions 0, 2, ..., 20, all real, so nothing is dropped."""
+        cb = COCOEvalCallback()
+        trainer = _trainer_with_sampler(loaders_attr, dataset_len=21, rank=0, num_replicas=2)
+        cb.setup(trainer, _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        getattr(cb, epoch_start)(trainer, _cpu_module())
+
+        seen: list[int] = []
+        cb.map_metric.update.side_effect = lambda preds, targets: seen.append(len(targets))
+        for batch_size in (4, 4, 3):
+            outputs = {"results": _detection_preds(0) * batch_size, "targets": _detection_targets() * batch_size}
+            getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0)
+
+        assert seen == [4, 4, 3]
+
+    def test_counter_restarts_each_epoch(self, epoch_start, batch_end, loaders_attr, stage) -> None:
+        """A second epoch must skip the padded sample at the same position again, not one sample earlier."""
+        cb = COCOEvalCallback()
+        trainer = _trainer_with_sampler(loaders_attr, dataset_len=3, rank=1, num_replicas=2)
+        cb.setup(trainer, _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        seen: list[int] = []
+        cb.map_metric.update.side_effect = lambda preds, targets: seen.append(len(targets))
+
+        for _ in range(2):
+            getattr(cb, epoch_start)(trainer, _cpu_module())
+            outputs = {"results": _detection_preds(0) * 2, "targets": _detection_targets() * 2}
+            getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0)
+
+        assert seen == [1, 1]
+
+    def test_rank_holding_only_padding_still_records_an_update(
+        self, epoch_start, batch_end, loaders_attr, stage
+    ) -> None:
+        """With fewer images than ranks, a rank whose whole shard is padding must still update its accumulators.
+
+        Rank 1 of 2 over a single image receives image 0 as a padded repeat and nothing else. Skipping the update
+        entirely would leave that rank voting "no updates" in the epoch-end collectives and silence the ranks that do
+        hold data, so the batch flows through as empty lists instead.
+        """
+        cb = COCOEvalCallback()
+        trainer = _trainer_with_sampler(loaders_attr, dataset_len=1, rank=1, num_replicas=2)
+        cb.setup(trainer, _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        getattr(cb, epoch_start)(trainer, _cpu_module())
+
+        outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
+        getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0)
+
+        called_preds, called_targets = cb.map_metric.update.call_args.args
+        assert (called_preds, called_targets) == ([], [])
+
+    def test_sequential_sampler_is_left_alone(self, epoch_start, batch_end, loaders_attr, stage) -> None:
+        """Single-process evaluation has no padding, so every sample is accumulated."""
+        cb = COCOEvalCallback()
+        loader = MagicMock(name="loader")
+        loader.sampler = SequentialSampler(list(range(3)))
+        trainer = _make_trainer()
+        setattr(trainer, loaders_attr, loader)
+        cb.setup(trainer, _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        getattr(cb, epoch_start)(trainer, _cpu_module())
+
+        outputs = {"results": _detection_preds(0) * 3, "targets": _detection_targets() * 3}
+        getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0)
+
+        assert len(cb.map_metric.update.call_args.args[1]) == 3
+
+    def test_each_loader_uses_its_own_padding_rule(self, epoch_start, batch_end, loaders_attr, stage) -> None:
+        """A padded second loader must not inherit the unpadded first loader's sample counter or sampler."""
+        cb = COCOEvalCallback()
+        first_loader = MagicMock(name="first_loader")
+        first_loader.sampler = SequentialSampler(list(range(3)))
+        second_loader = MagicMock(name="second_loader")
+        second_loader.sampler = DistributedSampler(list(range(3)), num_replicas=2, rank=1, shuffle=False)
+        trainer = _make_trainer()
+        setattr(trainer, loaders_attr, [first_loader, second_loader])
+        cb.setup(trainer, _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        getattr(cb, epoch_start)(trainer, _cpu_module())
+
+        outputs = {"results": _detection_preds(0) * 2, "targets": _detection_targets() * 2}
+        getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0, dataloader_idx=0)
+        getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0, dataloader_idx=1)
+
+        assert [len(call.args[1]) for call in cb.map_metric.update.call_args_list] == [2, 1]
 
 
 class TestOnTestBatchEnd:
