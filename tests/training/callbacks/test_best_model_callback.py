@@ -72,6 +72,8 @@ def _make_trainer(
     trainer.world_size = 1
     # Required by ModelCheckpoint.check_monitor_top_k and EarlyStopping (DDP reduce)
     trainer.strategy.reduce_boolean_decision.side_effect = lambda x, **kwargs: x
+    # Required by BestModelCallback.on_fit_end, which broadcasts the run_test decision from the main process.
+    trainer.strategy.broadcast.side_effect = lambda obj, src=0: obj
     # Prevent MagicMock auto-attribute from triggering class_names enrichment.
     trainer.datamodule.class_names = None
     return trainer
@@ -987,6 +989,61 @@ class TestBestModelCallback:
         cb.on_fit_end(trainer, pl_module)
 
         trainer.test.assert_called_once_with(pl_module, datamodule=trainer.datamodule, verbose=False)
+
+    def test_run_test_true_enters_trainer_test_on_non_main_rank(self, tmp_path: Path) -> None:
+        """A non-main rank must still enter the collective trainer.test() once the main process broadcasts go.
+
+        Regression test: ``on_fit_end`` used to return early on every rank but the main one, so under DDP the main
+        process called the collective ``trainer.test()`` alone and hung waiting for the others.
+        """
+        from pytorch_lightning import LightningModule
+
+        class _ModuleWithTestStep(LightningModule):
+            def test_step(self, batch: object, batch_idx: int) -> None: ...
+
+        pl_module = _ModuleWithTestStep()
+        pl_module.model = MagicMock()
+        pl_module.model.load_state_dict.return_value = torch.nn.modules.module._IncompatibleKeys([], [])
+        torch.save({"model": {"w": torch.zeros(1)}}, tmp_path / "checkpoint_best_total.pth")
+
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5}, is_global_zero=False)
+        # The main process decides; this rank receives (should_test, chose_ema) from the broadcast.
+        trainer.strategy.broadcast.side_effect = lambda obj, src=0: (True, False)
+
+        cb.on_fit_end(trainer, pl_module)
+
+        trainer.strategy.barrier.assert_called_once()
+        pl_module.model.load_state_dict.assert_called_once()
+        trainer.test.assert_called_once_with(pl_module, datamodule=trainer.datamodule, verbose=False)
+
+    def test_run_test_true_skips_trainer_test_inside_spawned_worker(self, tmp_path: Path) -> None:
+        """Inside a spawn-launcher worker, run_test=True must warn and skip instead of launching a second time.
+
+        Regression test: calling ``trainer.test()`` from a ``ddp_spawn`` worker made ``_MultiProcessingLauncher``
+        spawn another set of processes and fail with ``DistNetworkError: EADDRINUSE``.
+        """
+        from pytorch_lightning import LightningModule
+        from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
+
+        class _ModuleWithTestStep(LightningModule):
+            def test_step(self, batch: object, batch_idx: int) -> None: ...
+
+        pl_module = _ModuleWithTestStep()
+        pl_module.model = MagicMock()
+        pl_module.model.state_dict.return_value = {"w": torch.zeros(1)}
+        pl_module.train_config = {"lr": 0.001}
+
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
+        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+        trainer.strategy.launcher = MagicMock(spec=_MultiProcessingLauncher)
+
+        cb.on_validation_end(trainer, pl_module)
+        cb.on_fit_end(trainer, pl_module)
+
+        assert (tmp_path / "checkpoint_best_total.pth").exists()
+        trainer.strategy.barrier.assert_not_called()
+        trainer.test.assert_not_called()
 
     def test_run_test_true_without_test_step_skips_trainer_test(self, tmp_path: Path) -> None:
         """run_test=True but no test_step override — trainer.test() is NOT called.
