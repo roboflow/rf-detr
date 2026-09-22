@@ -5,9 +5,11 @@
 # ------------------------------------------------------------------------
 
 import sys
-from types import ModuleType
+from collections import OrderedDict
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
@@ -57,6 +59,121 @@ class TestTRTInference:
         assert image_tensor.shape == (3, 640, 640)
         assert image_tensor.dtype == torch.float32
         assert target is None
+
+
+class _FakeTensorRTModule(ModuleType):
+    """Stand-in ``tensorrt`` module with the two symbols ``get_bindings`` reads: ``TensorIOMode`` and ``nptype``."""
+
+    def __init__(self) -> None:
+        super().__init__("tensorrt")
+        self.TensorIOMode = SimpleNamespace(INPUT="input", OUTPUT="output")
+        self.nptype = lambda dtype: dtype
+
+
+class _FakeEngine:
+    """Deserialized-engine stand-in: iterates tensor names and answers the shape/dtype/mode/profile queries.
+
+    Shapes use ``-1`` for a dynamic batch axis, as TensorRT reports them; ``profile_max`` is the batch upper bound the
+    single optimization profile declares on every dynamic input.
+    """
+
+    def __init__(self, tensors: dict[str, tuple[str, tuple[int, ...]]], profile_max: int = 4) -> None:
+        self._tensors = tensors
+        self._profile_max = profile_max
+
+    def __iter__(self):
+        return iter(self._tensors)
+
+    def get_tensor_mode(self, name: str) -> str:
+        return self._tensors[name][0]
+
+    def get_tensor_shape(self, name: str) -> tuple[int, ...]:
+        return self._tensors[name][1]
+
+    def get_tensor_dtype(self, name: str):
+        return np.float32
+
+    def get_tensor_profile_shape(self, name: str, profile_index: int):
+        shape = self._tensors[name][1]
+        return ((1, *shape[1:]), (2, *shape[1:]), (self._profile_max, *shape[1:]))
+
+
+class TestTRTInferenceDynamicBatch:
+    """``TRTInference`` serves engines built with ``dynamic_batch=True`` (a ``-1`` batch axis on every tensor)."""
+
+    @pytest.fixture(autouse=True)
+    def _fake_tensorrt(self, monkeypatch: pytest.MonkeyPatch):
+        """Point the module-level ``trt`` handle at the stand-in so no real TensorRT is needed."""
+        from rfdetr.export._tensorrt import inference as trt_inference
+
+        monkeypatch.setattr(trt_inference, "trt", _FakeTensorRTModule())
+
+    @staticmethod
+    def _runtime(engine: _FakeEngine, context) -> TRTInference:
+        """Assemble a ``TRTInference`` around *engine* without touching ``__init__`` (which needs a GPU)."""
+        runtime = TRTInference.__new__(TRTInference)
+        runtime.engine = engine
+        runtime.context = context
+        runtime.sync_mode = True
+        runtime.stream = None
+        runtime.bindings = runtime.get_bindings(engine, context, device="cpu")
+        runtime.bindings_addr = OrderedDict((n, v.ptr) for n, v in runtime.bindings.items())
+        runtime.input_names = runtime.get_input_names()
+        runtime.output_names = runtime.get_output_names()
+        return runtime
+
+    def test_dynamic_tensors_are_allocated_at_the_profile_max(self) -> None:
+        """A ``-1`` batch axis becomes the profile's max batch so any batch within the profile fits."""
+        engine = _FakeEngine(
+            {"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4)), "labels": ("output", (-1, 5, 3))},
+            profile_max=4,
+        )
+
+        runtime = self._runtime(engine, context=Mock())
+
+        assert runtime.bindings["input"].shape == (4, 3, 8, 8)
+        assert runtime.bindings["dets"].shape == (4, 5, 4)
+        assert runtime.bindings["dets"].dynamic is True
+        assert tuple(runtime.bindings["labels"].data.shape) == (4, 5, 3)
+
+    def test_static_tensors_keep_their_shape(self) -> None:
+        """A fixed-batch engine is allocated exactly as declared and marked static."""
+        engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (2, 5, 4))})
+
+        runtime = self._runtime(engine, context=Mock())
+
+        assert runtime.bindings["input"].shape == (2, 3, 8, 8)
+        assert runtime.bindings["input"].dynamic is False
+
+    def test_run_sync_declares_the_input_shape_and_trims_outputs(self) -> None:
+        """Each call sets the real input shape on the context and returns only the rows the engine produced."""
+        engine = _FakeEngine(
+            {"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))},
+            profile_max=4,
+        )
+        context = Mock()
+        context.get_tensor_shape.return_value = (3, 5, 4)
+        runtime = self._runtime(engine, context)
+        blob = {"input": torch.zeros(3, 3, 8, 8)}
+
+        outputs = runtime(blob)
+
+        context.set_input_shape.assert_called_once_with("input", (3, 3, 8, 8))
+        context.execute_v2.assert_called_once()
+        assert tuple(outputs["dets"].shape) == (3, 5, 4)
+        assert runtime.bindings_addr["input"] == blob["input"].data_ptr()
+
+    def test_run_sync_on_a_static_engine_returns_the_whole_buffer(self) -> None:
+        """A fixed-batch engine neither declares shapes nor trims, so the old behaviour is unchanged."""
+        engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (2, 5, 4))})
+        context = Mock()
+        runtime = self._runtime(engine, context)
+
+        outputs = runtime({"input": torch.zeros(2, 3, 8, 8)})
+
+        context.set_input_shape.assert_not_called()
+        context.get_tensor_shape.assert_not_called()
+        assert tuple(outputs["dets"].shape) == (2, 5, 4)
 
 
 class TestBenchmarkMain:

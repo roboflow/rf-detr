@@ -1619,6 +1619,7 @@ class RFDETR:
         backend: str | None = None,
         soc: str | None = None,
         fp16: bool = True,
+        max_batch_size: int | None = None,
         notes: object = None,
         coreml_precision: str | None = None,
         openvino_precision: str | None = None,
@@ -1638,21 +1639,21 @@ class RFDETR:
             verbose: Print export progress information.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
-            batch_size: Static batch size to bake into the ONNX graph.
+            batch_size: Static batch size to bake into the ONNX graph. With ``dynamic_batch=True`` and
+                ``format="tensorrt"`` it is also the batch the engine's optimization profile is tuned for.
             dynamic_batch: If True, export with a dynamic batch dimension
                 so the model accepts variable batch sizes at runtime
                 (spatial dimensions always stay fixed). Applies to the ONNX
-                and TFLite graphs. Not supported for ExecuTorch export on
+                and TFLite graphs, and to ``format="tensorrt"``, where the engine is built with one
+                optimization profile spanning batch ``1 .. max_batch_size`` (tuned for *batch_size*); pass
+                *max_batch_size* in that case. Not supported for ExecuTorch export on
                 executorch 1.3.1 (raises ``NotImplementedError``): the runtime
                 cannot resize RF-DETR's windowed-attention reshapes, so a
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
                 Also unsupported for ``format="openvino"``: the IR graph bakes a fixed input shape;
-                export one model per batch size instead.
-                Also unsupported for ``format="tensorrt"``: the engine is compiled without a
-                TensorRT optimization profile, so it accepts only the exported batch size;
-                export one engine per batch size instead. Also unsupported for ``format="litert"``:
+                export one model per batch size instead. Also unsupported for ``format="litert"``:
                 the ``.tflite`` bakes a fixed input shape; export one file per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
@@ -1741,6 +1742,10 @@ class RFDETR:
                 TensorRT < 11 wheel that lacks the FP16 builder flag falls back to an FP32 engine with a
                 warning instead — see :meth:`~rfdetr.export._tensorrt.exporter.TensorRTExporter.build_engine`
                 for the full precision-resolution logic.  Pass ``False`` for an FP32 engine.
+            max_batch_size: Largest batch a dynamic TensorRT engine must accept.  Only read when
+                ``format="tensorrt"`` and ``dynamic_batch=True``, where it is required: the engine is built with
+                one optimization profile spanning batch ``1 .. max_batch_size`` and tuned for *batch_size*
+                (``batch_size <= max_batch_size``).  Ignored for every other format.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -1786,8 +1791,9 @@ class RFDETR:
         Raises:
             ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
                 unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; if the resolved export shape is
-                not divisible by ``patch_size * num_windows``; or if ``coreml_precision``/``openvino_precision``
-                is not one of their accepted values.
+                not divisible by ``patch_size * num_windows``; if ``coreml_precision``/``openvino_precision``
+                is not one of their accepted values; or if ``format="tensorrt"`` with ``dynamic_batch=True``
+                lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, or ``format="litert"`` — those paths require a fixed
                 batch size; or if ``format="litert"`` is combined with a ``quantization`` other than ``None`` /
@@ -1837,6 +1843,8 @@ class RFDETR:
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,
+            batch_size=batch_size,
+            max_batch_size=max_batch_size,
         )
         # Constructing the exporter validates the request against the format's capabilities — an unsupported
         # dynamic_batch is refused here, before the user pays for a full DINOv2 forward pass (seconds + GBs).

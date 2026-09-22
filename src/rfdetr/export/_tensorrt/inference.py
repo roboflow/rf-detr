@@ -93,7 +93,7 @@ class TRTInference:
         for name, binding in self.bindings.items():
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 logger.info(f"make dummy input {name} with shape {binding.shape}")
-                blob[name] = torch.rand(batch_size, *binding.shape[1:]).float().to("cuda:0")
+                blob[name] = torch.rand(batch_size, *binding.shape[1:]).float().to(self.device)
         return blob
 
     def load_engine(self, path: str) -> Any:
@@ -116,39 +116,80 @@ class TRTInference:
                 names.append(name)
         return names
 
+    @staticmethod
+    def _profile_max_batch(engine: Any) -> int | None:
+        """Return the largest batch the engine's first optimization profile accepts on any input.
+
+        Args:
+            engine: A deserialized TensorRT engine.
+
+        Returns:
+            The batch upper bound, or ``None`` when no input carries a dynamic batch axis.
+        """
+        bounds = []
+        for name in engine:
+            if engine.get_tensor_mode(name) != trt.TensorIOMode.INPUT or engine.get_tensor_shape(name)[0] != -1:
+                continue
+            _, _, max_shape = engine.get_tensor_profile_shape(name, 0)
+            bounds.append(int(max_shape[0]))
+        return max(bounds) if bounds else None
+
     def get_bindings(
         self, engine: Any, context: Any, max_batch_size: int = 32, device: str | torch.device | None = None
     ) -> OrderedDict[str, Any]:
-        """Build binddings."""
-        Binding = namedtuple("Binding", ("name", "dtype", "shape", "data", "ptr"))
+        """Allocate one device buffer per engine tensor.
+
+        A tensor whose batch axis is dynamic (``-1``, from an engine built with ``dynamic_batch=True``) is allocated at
+        the largest batch the engine's optimization profile accepts, so any batch within the profile fits;
+        :meth:`run_sync` / :meth:`run_async` then set the real input shape per call and return the outputs trimmed to
+        it.
+        """
+        Binding = namedtuple("Binding", ("name", "dtype", "shape", "data", "ptr", "dynamic"))
         bindings = OrderedDict()
+        profile_max = self._profile_max_batch(engine)
 
-        for i, name in enumerate(engine):
-            shape = engine.get_tensor_shape(name)
+        for name in engine:
+            shape = list(engine.get_tensor_shape(name))
             dtype = trt.nptype(engine.get_tensor_dtype(name))
-
-            if shape[0] == -1:
-                raise NotImplementedError
-
-            else:
-                data = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
-                bindings[name] = Binding(name, dtype, shape, data, data.data_ptr())
+            dynamic = shape[0] == -1
+            if dynamic:
+                if profile_max is None:
+                    raise ValueError(f"engine tensor {name!r} has a dynamic batch axis but no input carries a profile")
+                shape[0] = profile_max
+            data = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
+            bindings[name] = Binding(name, dtype, tuple(shape), data, data.data_ptr(), dynamic)
 
         return bindings
 
-    def run_sync(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
-        self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
-        self.context.execute_v2(list(self.bindings_addr.values()))
-        outputs = {n: self.bindings[n].data for n in self.output_names}
+    def _bind_inputs(self, blob: Mapping[str, Tensor]) -> None:
+        """Point the input bindings at *blob* and, for dynamic engines, declare this call's input shapes."""
+        for name in self.input_names:
+            if self.bindings[name].dynamic:
+                self.context.set_input_shape(name, tuple(blob[name].shape))
+            self.bindings_addr[name] = blob[name].data_ptr()
+
+    def _collect_outputs(self) -> dict[str, Tensor]:
+        """Return the output buffers, trimmed to the batch the engine actually produced."""
+        outputs: dict[str, Tensor] = {}
+        for name in self.output_names:
+            binding = self.bindings[name]
+            outputs[name] = binding.data[: self.context.get_tensor_shape(name)[0]] if binding.dynamic else binding.data
         return outputs
 
+    def run_sync(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
+        self._bind_inputs(blob)
+        self.context.execute_v2(list(self.bindings_addr.values()))
+        return self._collect_outputs()
+
     def run_async(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
-        self.bindings_addr.update({n: blob[n].data_ptr() for n in self.input_names})
-        bindings_addr = [int(v) for _, v in self.bindings_addr.items()]
+        self._bind_inputs(blob)
         if self.stream is None:
             raise RuntimeError("Async TensorRT inference requires a CUDA stream.")
-        self.context.execute_async_v2(bindings=bindings_addr, stream_handle=self.stream.handle)
-        outputs = {n: self.bindings[n].data for n in self.output_names}
+        # execute_async_v2 (binding lists) is gone from TensorRT 11; the tensor-address API exists since 8.5.
+        for name, address in self.bindings_addr.items():
+            self.context.set_tensor_address(name, int(address))
+        self.context.execute_async_v3(stream_handle=self.stream.handle)
+        outputs = self._collect_outputs()
         self.stream.synchronize()
         return outputs
 
