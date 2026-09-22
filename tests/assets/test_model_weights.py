@@ -162,13 +162,13 @@ def test_model_weights_inherits_from_base():
     )
 
 
-def test_rfdetr_large_deprecated_emits_future_warning() -> None:
+@patch("rfdetr.detr.RFDETR.__init__", return_value=None)
+def test_rfdetr_large_deprecated_emits_future_warning(_mock_0) -> None:
     """RFDETRLargeDeprecated emits FutureWarning on instantiation via the pyDeprecate class decorator."""
     from rfdetr.variants import RFDETRLargeDeprecated
 
     # The proxy uses num_warns=1; reset counter so this test is order-independent
     # regardless of whether another test already triggered the warning in this session.
     RFDETRLargeDeprecated._cfg.warned = 0
-    with patch("rfdetr.detr.RFDETR.__init__", return_value=None):
-        with pytest.warns(FutureWarning):
-            RFDETRLargeDeprecated()
+    with pytest.warns(FutureWarning):
+        RFDETRLargeDeprecated()

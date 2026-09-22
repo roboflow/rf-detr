@@ -460,15 +460,18 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, optimizer="  ")
 
-    def test_optimizer_rejects_unknown_short_name(self, tmp_path):
-        """A bare short name that is not a torch.optim optimizer is rejected at config time."""
+    @pytest.mark.parametrize(
+        "optimizer",
+        [
+            pytest.param("lion", id="unknown_short_name"),
+            # Pytorch-optimizer names are not selectable by short name (use an import path).
+            pytest.param("pytorch_optimizer:lion", id="non_torch_optim_short_name"),
+        ],
+    )
+    def test_optimizer_rejects_non_native_short_name(self, tmp_path, optimizer):
+        """A bare short name that does not resolve to a torch.optim optimizer is rejected at config time."""
         with pytest.raises((ValueError, ValidationError), match="native optimizer"):
-            self._tc(tmp_path, optimizer="lion")
-
-    def test_optimizer_rejects_non_torch_optim_short_name(self, tmp_path):
-        """Pytorch-optimizer names are not selectable by short name (use an import path)."""
-        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
-            self._tc(tmp_path, optimizer="pytorch_optimizer:lion")
+            self._tc(tmp_path, optimizer=optimizer)
 
     def test_optimizer_accepts_native_short_name(self, tmp_path):
         """A native torch.optim short name (e.g. 'sgd') is accepted."""
@@ -1004,14 +1007,12 @@ class TestBuildTrainerUsesRealFields:
         )
         assert trainer.gradient_clip_val is None
 
-    def test_seed_not_applied_in_build_trainer_factory(self, tmp_path):
+    @patch("pytorch_lightning.seed_everything")
+    def test_seed_not_applied_in_build_trainer_factory(self, mock_seed, tmp_path):
         """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""
-        import unittest.mock as mock
-
         from rfdetr.training import build_trainer
 
-        with mock.patch("pytorch_lightning.seed_everything") as mock_seed:
-            build_trainer(self._tc(tmp_path, seed=99), self._mc())
+        build_trainer(self._tc(tmp_path, seed=99), self._mc())
         mock_seed.assert_not_called()
 
     def test_sync_bn_forwarded_to_trainer(self, tmp_path):
@@ -1223,27 +1224,23 @@ class TestPretrainWeightsCompatibilityWarning:
         assert len(captured) == 1
         assert field in str(captured[0].message)
 
-    def test_mask_downsample_ratio_warns_on_seg_variant(self) -> None:
-        """``mask_downsample_ratio`` change is silently miscalibrating; must warn at config time."""
-        captured = self._capture(RFDETRSegNanoConfig, mask_downsample_ratio=2)
+    @pytest.mark.parametrize(
+        "config_cls, field, value",
+        [
+            pytest.param(RFDETRSegNanoConfig, "mask_downsample_ratio", 2, id="mask_downsample_ratio"),
+            # patch_size already raises in load_pretrain_weights; this warning is defense-in-depth.
+            # Value differs from RFDETRNanoConfig's default (16).
+            pytest.param(RFDETRNanoConfig, "patch_size", 14, id="patch_size"),
+            # RFDETRNanoConfig has segmentation_head=False; flipping it to True is the override,
+            # which also raises at load time but the warning fires first.
+            pytest.param(RFDETRNanoConfig, "segmentation_head", True, id="segmentation_head"),
+        ],
+    )
+    def test_single_field_override_warns(self, config_cls: type, field: str, value: object) -> None:
+        """A single breaking-field override on its variant config fires exactly one warning naming the field."""
+        captured = self._capture(config_cls, **{field: value})
         assert len(captured) == 1
-        assert "mask_downsample_ratio" in str(captured[0].message)
-
-    def test_patch_size_override_warns_defense_in_depth(self) -> None:
-        """patch_size already raises in load_pretrain_weights; the new warning is defense-in-depth.
-
-        We change patch_size to a value that differs from RFDETRNanoConfig's default (16).
-        """
-        captured = self._capture(RFDETRNanoConfig, patch_size=14)
-        assert len(captured) == 1
-        assert "patch_size" in str(captured[0].message)
-
-    def test_segmentation_head_override_warns(self) -> None:
-        """segmentation_head also raises at load time but warning fires first."""
-        # RFDETRNanoConfig has segmentation_head=False; flipping it to True is the override.
-        captured = self._capture(RFDETRNanoConfig, segmentation_head=True)
-        assert len(captured) == 1
-        assert "segmentation_head" in str(captured[0].message)
+        assert field in str(captured[0].message)
 
     @pytest.mark.parametrize(
         "field, value",
