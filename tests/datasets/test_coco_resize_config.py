@@ -47,12 +47,13 @@ class TestBuildTrainResizeConfigStructure:
 class TestBuildTrainResizeConfigSquareSingleScale:
     """Square=True, single scale — OneOf[Resize] + Sequential[..., OneOf[RandomSizedCrop]]."""
 
-    def test_option_a_is_oneof_wrapping_single_resize(self):
-        result = _build_train_resize_config([640], square=True)
+    @pytest.mark.parametrize("scale", [640, 480])
+    def test_option_a_is_oneof_wrapping_single_resize(self, scale):
+        result = _build_train_resize_config([scale], square=True)
         option_a = result[0]["OneOf"]["transforms"][0]
         assert option_a == {
             "OneOf": {
-                "transforms": [{"Resize": {"height": 640, "width": 640}}],
+                "transforms": [{"Resize": {"height": scale, "width": scale}}],
             }
         }
 
@@ -71,15 +72,6 @@ class TestBuildTrainResizeConfigSquareSingleScale:
                         }
                     },
                 ]
-            }
-        }
-
-    def test_uses_correct_scale_value(self):
-        result = _build_train_resize_config([480], square=True)
-        option_a = result[0]["OneOf"]["transforms"][0]
-        assert option_a == {
-            "OneOf": {
-                "transforms": [{"Resize": {"height": 480, "width": 480}}],
             }
         }
 

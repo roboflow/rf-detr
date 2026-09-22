@@ -369,9 +369,10 @@ def _desugar_optimizer_callable(
 
 
 _MANAGED_SCHEDULER_PRESETS = {"step", "cosine"}
-_DEPRECATED_LR_FIELD_KWARGS = {"lr_drop": "lr_drop", "lr_min_factor": "min_factor"}
-# Keys the managed "step" / "cosine" presets actually consume from lr_scheduler_kwargs.
-_MANAGED_SCHEDULER_KWARGS = {"min_factor", "lr_drop"}
+#: Default values used when managed step/cosine scheduler kwargs are omitted.
+_MANAGED_SCHEDULER_DEFAULTS: dict[str, int | float] = {"lr_drop": 100, "min_factor": 0.0}
+#: Keyword arguments consumed by the managed step/cosine scheduler presets.
+_MANAGED_SCHEDULER_KWARGS = frozenset(_MANAGED_SCHEDULER_DEFAULTS)
 
 # ReduceLROnPlateau does not subclass LRScheduler but is a supported explicit scheduler.
 SchedulerType: TypeAlias = LRScheduler | ReduceLROnPlateau
@@ -1109,7 +1110,6 @@ class TrainConfig(BaseConfig):
     resume: PathLikeStr | None = None
     ema_decay: float = 0.993
     ema_tau: int = 100
-    lr_drop: int = 100
     checkpoint_interval: int = Field(default=10, ge=1)
     skip_best_epochs: int = Field(default=0, ge=0)
     smooth_alpha: float = 0.0
@@ -1344,8 +1344,6 @@ class TrainConfig(BaseConfig):
     lr_scheduler_kwargs: dict[str, Any] = Field(default_factory=dict)
     lr_scheduler_interval: Literal["step", "epoch"] = "step"
     lr_scheduler_monitor: str = "val/loss"
-    # Deprecated aux LR knobs — kept for one cycle; folded into lr_scheduler_kwargs (see _map_deprecated_lr_fields).
-    lr_min_factor: float = 0.0
     optimizer: str | Callable[..., Optimizer] = "adamw"
     optimizer_kwargs: dict[str, Any] = Field(default_factory=dict)
     dont_save_weights: bool = False
@@ -1609,65 +1607,6 @@ class TrainConfig(BaseConfig):
                     f"{{{allowed}}}; unknown key(s): {unknown_keys}."
                 )
         return self
-
-    @model_validator(mode="before")
-    @classmethod
-    def _map_deprecated_lr_fields(cls, data: Any) -> Any:
-        """Fold the deprecated ``lr_drop`` / ``lr_min_factor`` fields into ``lr_scheduler_kwargs``.
-
-        These loose knobs are deprecated in favor of ``lr_scheduler_kwargs``. When either is supplied with a non-default
-        value for a managed preset (``"step"`` / ``"cosine"``), it is copied into ``lr_scheduler_kwargs`` (without
-        overriding an explicit kwarg) and a ``FutureWarning`` is emitted. Default values are ignored silently so round-
-        tripping a dumped config (which always carries these fields) never warns. For explicit (dotted-path / callable)
-        schedulers the deprecated fields are preset-specific and left untouched.
-        """
-        if not isinstance(data, dict):
-            return data
-        # Only managed presets consume these knobs; default lr_scheduler ("step") is managed.
-        if not _is_managed_scheduler_name(data.get("lr_scheduler", "step")):
-            # Explicit / callable scheduler: these preset knobs are inert. Warn (never fold) when a non-default
-            # value is set so a stale lr_drop / lr_min_factor carried over from a managed config is not silently
-            # dropped — a reproducibility footgun when migrating a saved config to an explicit scheduler.
-            for field_name in _DEPRECATED_LR_FIELD_KWARGS:
-                if field_name in data and data[field_name] != cls.model_fields[field_name].default:
-                    warnings.warn(
-                        f"{field_name} is ignored for the explicit (non-managed) lr_scheduler "
-                        f"{data.get('lr_scheduler')!r}; it only applies to the managed 'step'/'cosine' presets.",
-                        FutureWarning,
-                        stacklevel=2,
-                    )
-            return data
-        kwargs = dict(data.get("lr_scheduler_kwargs") or {})
-        for field_name, kwarg_name in _DEPRECATED_LR_FIELD_KWARGS.items():
-            if field_name not in data:
-                continue
-            # A default value (common when reloading a dumped config) is a no-op: the managed builder falls back to
-            # the same default. Skip silently so serialization round-trips don't emit spurious deprecation warnings.
-            if data[field_name] == cls.model_fields[field_name].default:
-                continue
-            # Already migrated: a dumped config carries both the top-level field and the folded kwarg. If the kwarg
-            # already holds this value, the field adds nothing — skip silently so migrated-config reloads never warn.
-            if kwargs.get(kwarg_name) == data[field_name]:
-                continue
-            # Both set to different values: the kwarg wins (setdefault below is a no-op). Say so explicitly rather
-            # than implying the deprecated field was migrated, which would mislead — the field value is discarded.
-            if kwarg_name in kwargs:
-                warnings.warn(
-                    f"{field_name}={data[field_name]!r} is ignored because lr_scheduler_kwargs already sets "
-                    f"{kwarg_name!r}={kwargs[kwarg_name]!r} (the kwarg wins); remove the deprecated {field_name}.",
-                    FutureWarning,
-                    stacklevel=2,
-                )
-                continue
-            warnings.warn(
-                f"{field_name} is deprecated; pass it via lr_scheduler_kwargs={{'{kwarg_name}': ...}} instead.",
-                FutureWarning,
-                stacklevel=2,
-            )
-            kwargs[kwarg_name] = data[field_name]
-        if kwargs:
-            data["lr_scheduler_kwargs"] = kwargs
-        return data
 
     @model_validator(mode="before")
     @classmethod

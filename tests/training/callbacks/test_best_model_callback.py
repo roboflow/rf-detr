@@ -1160,187 +1160,117 @@ class TestBestModelCallback:
 
         trainer.test.assert_not_called()
 
-    def test_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
-        """Saved checkpoint args.class_names reflects dataset class names.
+    @pytest.mark.parametrize(
+        (
+            "cb_kwargs",
+            "trainer_metrics",
+            "datamodule_class_names",
+            "train_config_kwargs",
+            "checkpoint_filename",
+            "expected",
+        ),
+        [
+            pytest.param(
+                {},
+                {"val/mAP_50_95": 0.5},
+                ["cat", "dog"],
+                {},
+                "checkpoint_best_regular.pth",
+                ["cat", "dog"],
+                id="regular-unset-config-uses-datamodule-names",
+            ),
+            pytest.param(
+                {"monitor_ema": "val/ema_mAP_50_95"},
+                {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
+                ["cat", "dog"],
+                {},
+                "checkpoint_best_ema.pth",
+                ["cat", "dog"],
+                id="ema-unset-config-uses-datamodule-names",
+            ),
+            pytest.param(
+                {},
+                {"val/mAP_50_95": 0.5},
+                ["other_class"],  # would overwrite if bug exists
+                {"class_names": ["defect"]},
+                "checkpoint_best_regular.pth",
+                ["defect"],
+                id="regular-explicit-names-not-overwritten-by-datamodule",
+            ),
+            pytest.param(
+                {},
+                {"val/mAP_50_95": 0.5},
+                ["cat", "dog"],  # would overwrite if bug exists
+                # Guard-bypass regression: `not getattr(..., "class_names", None)` treated an explicit empty
+                # list the same as None (both falsy). The fix uses `is None` identity.
+                {"class_names": []},
+                "checkpoint_best_regular.pth",
+                [],
+                id="regular-explicit-empty-names-not-overwritten-by-datamodule",
+            ),
+            pytest.param(
+                {"monitor_ema": "val/ema_mAP_50_95"},
+                {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
+                ["cat", "dog"],  # would overwrite if bug exists
+                {"class_names": []},
+                "checkpoint_best_ema.pth",
+                [],
+                id="ema-explicit-empty-names-not-overwritten-by-datamodule",
+            ),
+            pytest.param(
+                {},
+                {"val/mAP_50_95": 0.5},
+                [],
+                {},
+                "checkpoint_best_regular.pth",
+                [],
+                id="regular-unset-config-uses-empty-datamodule-names",
+            ),
+            pytest.param(
+                {"monitor_ema": "val/ema_mAP_50_95"},
+                {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
+                [],
+                {},
+                "checkpoint_best_ema.pth",
+                [],
+                id="ema-unset-config-uses-empty-datamodule-names",
+            ),
+        ],
+    )
+    def test_checkpoint_class_names_reflects_datamodule_and_train_config(
+        self,
+        tmp_path: Path,
+        cb_kwargs: dict,
+        trainer_metrics: dict,
+        datamodule_class_names: list,
+        train_config_kwargs: dict,
+        checkpoint_filename: str,
+        expected: list,
+    ) -> None:
+        """Saved checkpoint args.class_names reflects dataset class names, explicit TrainConfig values winning.
 
-        Regression test for #509: checkpoints were saved with class_names=None when the user did not pass class_names
-        explicitly, causing reloaded-model inference to fall through to COCO labels instead of dataset labels.
+        Regression tests for #509: checkpoints were saved with class_names=None when the user did not pass class_names
+        explicitly (fixed by falling back to the datamodule), and a separate guard-bypass let an explicit empty list get
+        silently overwritten by the datamodule's names. Covers both the regular and EMA checkpoint paths across unset,
+        explicit, and explicit-empty class_names in TrainConfig.
         """
         from rfdetr.config import TrainConfig
 
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        custom_names = ["cat", "dog"]
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        trainer.datamodule.class_names = custom_names
+        cb = BestModelCallback(output_dir=str(tmp_path), **cb_kwargs)
+        trainer = _make_trainer(trainer_metrics)
+        trainer.datamodule.class_names = datamodule_class_names
 
         pl_module = _make_pl_module()
-        # Real TrainConfig with class_names unset — the bug scenario.
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
+        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, **train_config_kwargs)
 
         cb.on_validation_end(trainer, pl_module)
 
         checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
+            tmp_path / checkpoint_filename,
             map_location="cpu",
             weights_only=False,
         )
-        assert checkpoint["args"]["class_names"] == custom_names
-
-    def test_ema_checkpoint_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
-        """EMA checkpoint args.class_names also reflects dataset class names.
-
-        Regression test for #509: EMA checkpoint path was not enriched with class names, so EMA-selected runs would
-        still return COCO labels after reload.
-        """
-        from rfdetr.config import TrainConfig
-
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-        )
-        custom_names = ["cat", "dog"]
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
-        trainer.datamodule.class_names = custom_names
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_ema.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["class_names"] == custom_names
-
-    def test_checkpoint_class_names_not_overwritten_when_already_set(self, tmp_path: Path) -> None:
-        """Explicitly-set class_names in TrainConfig are preserved in the checkpoint.
-
-        When the user passes class_names=['defect'] to TrainConfig, the saved checkpoint must keep that value even if
-        the datamodule reports different names.
-        """
-        from rfdetr.config import TrainConfig
-
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        trainer.datamodule.class_names = ["other_class"]  # would overwrite if bug exists
-
-        pl_module = _make_pl_module()
-        explicit_names = ["defect"]
-        pl_module.train_config = TrainConfig(
-            dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=explicit_names
-        )
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["class_names"] == explicit_names
-
-    def test_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(self, tmp_path: Path) -> None:
-        """TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
-
-        Guard-bypass regression: the truthiness check `not getattr(..., "class_names", None)` treated an explicit empty
-        list the same as None (both falsy), silently overwriting the user's intent with the datamodule's names. The fix
-        uses `is None` identity.
-        """
-        from rfdetr.config import TrainConfig
-
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[])
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["class_names"] == [], (
-            "Explicit class_names=[] in TrainConfig must not be overwritten by datamodule names"
-        )
-
-    def test_ema_checkpoint_explicit_empty_class_names_not_overwritten_by_datamodule(self, tmp_path: Path) -> None:
-        """EMA path: TrainConfig(class_names=[]) is preserved even when datamodule has non-empty names.
-
-        Mirrors the regular checkpoint guard-bypass regression test for the EMA path.
-        """
-        from rfdetr.config import TrainConfig
-
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-        )
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
-        trainer.datamodule.class_names = ["cat", "dog"]  # would overwrite if bug exists
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False, class_names=[])
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_ema.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["class_names"] == [], (
-            "Explicit class_names=[] in TrainConfig must not be overwritten by datamodule names (EMA path)"
-        )
-
-    def test_checkpoint_empty_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
-        """Checkpoint preserves explicitly-empty dataset class names.
-
-        Empty list should be treated as a provided value, not as missing.
-        """
-        from rfdetr.config import TrainConfig
-
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        trainer.datamodule.class_names = []
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_regular.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["class_names"] == []
-
-    def test_ema_checkpoint_empty_class_names_populated_from_datamodule(self, tmp_path: Path) -> None:
-        """EMA checkpoint preserves explicitly-empty dataset class names."""
-        from rfdetr.config import TrainConfig
-
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-        )
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
-        trainer.datamodule.class_names = []
-
-        pl_module = _make_pl_module()
-        pl_module.train_config = TrainConfig(dataset_dir=str(tmp_path / "ds"), tensorboard=False)
-
-        cb.on_validation_end(trainer, pl_module)
-
-        checkpoint = torch.load(
-            tmp_path / "checkpoint_best_ema.pth",
-            map_location="cpu",
-            weights_only=False,
-        )
-        assert checkpoint["args"]["class_names"] == []
+        assert checkpoint["args"]["class_names"] == expected
 
     # --- PTL-compatible format tests ---
 
@@ -2194,18 +2124,58 @@ class TestRFDETREarlyStopping:
 class TestCheckpointModelName:
     """Verify model_name is stored in checkpoint payloads."""
 
-    def test_regular_checkpoint_contains_model_name(self, tmp_path: Path) -> None:
-        """Regular checkpoint includes model_name from model_config."""
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
+    @pytest.mark.parametrize(
+        ("cb_kwargs", "trainer_metrics", "model_config_factory", "checkpoint_filename", "expected_model_name"),
+        [
+            pytest.param(
+                {},
+                {"val/mAP_50_95": 0.5},
+                lambda: MagicMock(model_name="RFDETRLarge"),
+                "checkpoint_best_regular.pth",
+                "RFDETRLarge",
+                id="regular-explicit-model-name",
+            ),
+            pytest.param(
+                {},
+                {"val/mAP_50_95": 0.5},
+                lambda: RFDETRMediumConfig(model_name=None),
+                "checkpoint_best_regular.pth",
+                "RFDETRMedium",
+                id="regular-infers-model-name-from-config-type",
+            ),
+            pytest.param(
+                {"monitor_ema": "val/ema_mAP_50_95"},
+                {"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6},
+                lambda: MagicMock(model_name="RFDETRMedium"),
+                "checkpoint_best_ema.pth",
+                "RFDETRMedium",
+                id="ema-explicit-model-name",
+            ),
+        ],
+    )
+    def test_checkpoint_contains_model_name(
+        self,
+        tmp_path: Path,
+        cb_kwargs: dict,
+        trainer_metrics: dict,
+        model_config_factory,
+        checkpoint_filename: str,
+        expected_model_name: str,
+    ) -> None:
+        """Checkpoint payload stores model_name, explicit or inferred from the model_config type.
+
+        Covers an explicit model_name on a mocked config, inference from a real ModelConfig subclass when unset, and the
+        EMA checkpoint path.
+        """
+        cb = BestModelCallback(output_dir=str(tmp_path), **cb_kwargs)
+        trainer = _make_trainer(trainer_metrics)
         pl_module = _make_pl_module()
-        pl_module.model_config = MagicMock()
-        pl_module.model_config.model_name = "RFDETRLarge"
+        pl_module.model_config = model_config_factory()
 
         cb.on_validation_end(trainer, pl_module)
 
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
-        assert ckpt["model_name"] == "RFDETRLarge"
+        ckpt = torch.load(tmp_path / checkpoint_filename, weights_only=False)
+        assert ckpt["model_name"] == expected_model_name
 
     def test_regular_checkpoint_model_name_absent_when_not_set(self, tmp_path: Path) -> None:
         """model_name key is absent when model_config has no model_name attribute."""
@@ -2217,34 +2187,6 @@ class TestCheckpointModelName:
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
         assert "model_name" not in ckpt
-
-    def test_regular_checkpoint_infers_model_name_from_model_config_type(self, tmp_path: Path) -> None:
-        """When model_name is unset, infer class name from concrete ModelConfig type."""
-        cb = BestModelCallback(output_dir=str(tmp_path))
-        trainer = _make_trainer({"val/mAP_50_95": 0.5})
-        pl_module = _make_pl_module()
-        pl_module.model_config = RFDETRMediumConfig(model_name=None)
-
-        cb.on_validation_end(trainer, pl_module)
-
-        ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
-        assert ckpt["model_name"] == "RFDETRMedium"
-
-    def test_ema_checkpoint_contains_model_name(self, tmp_path: Path) -> None:
-        """EMA checkpoint also includes model_name."""
-        cb = BestModelCallback(
-            output_dir=str(tmp_path),
-            monitor_ema="val/ema_mAP_50_95",
-        )
-        trainer = _make_trainer({"val/mAP_50_95": 0.4, "val/ema_mAP_50_95": 0.6})
-        pl_module = _make_pl_module()
-        pl_module.model_config = MagicMock()
-        pl_module.model_config.model_name = "RFDETRMedium"
-
-        cb.on_validation_end(trainer, pl_module)
-
-        ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
-        assert ckpt["model_name"] == "RFDETRMedium"
 
     def test_deprecated_config_raises_runtime_error(self, tmp_path: Path) -> None:
         """RFDETRLargeDeprecatedConfig raises RuntimeError — deprecated configs are unsupported."""
@@ -2265,24 +2207,22 @@ class TestCheckpointModelName:
 class TestCheckpointRfdetrVersion:
     """Verify rfdetr_version is stored in checkpoint payloads."""
 
-    def test_regular_checkpoint_contains_rfdetr_version(self, tmp_path: Path) -> None:
+    @patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
+    def test_regular_checkpoint_contains_rfdetr_version(self, mock_get_version, tmp_path: Path) -> None:
         """Regular checkpoint includes rfdetr_version string."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
         expected_version = "test-version"
 
-        with patch(
-            "rfdetr.training.callbacks.best_model.get_version",
-            return_value=expected_version,
-        ):
-            cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
         assert "rfdetr_version" in ckpt
         assert ckpt["rfdetr_version"] == expected_version
 
-    def test_ema_checkpoint_contains_rfdetr_version(self, tmp_path: Path) -> None:
+    @patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
+    def test_ema_checkpoint_contains_rfdetr_version(self, mock_get_version, tmp_path: Path) -> None:
         """EMA checkpoint also includes rfdetr_version."""
         cb = BestModelCallback(
             output_dir=str(tmp_path),
@@ -2292,43 +2232,36 @@ class TestCheckpointRfdetrVersion:
         pl_module = _make_pl_module()
         expected_version = "test-version"
 
-        with patch(
-            "rfdetr.training.callbacks.best_model.get_version",
-            return_value=expected_version,
-        ):
-            cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_ema.pth", weights_only=False)
         assert "rfdetr_version" in ckpt
         assert ckpt["rfdetr_version"] == expected_version
 
-    def test_best_total_preserves_rfdetr_version_after_strip(self, tmp_path: Path) -> None:
+    @patch("rfdetr.training.callbacks.best_model.get_version", return_value="test-version")
+    def test_best_total_preserves_rfdetr_version_after_strip(self, mock_get_version, tmp_path: Path) -> None:
         """strip_checkpoint must preserve rfdetr_version in the final checkpoint."""
         cb = BestModelCallback(output_dir=str(tmp_path), run_test=False)
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
         expected_version = "test-version"
 
-        with patch(
-            "rfdetr.training.callbacks.best_model.get_version",
-            return_value=expected_version,
-        ):
-            cb.on_validation_end(trainer, pl_module)
-            cb.on_fit_end(trainer, pl_module)
+        cb.on_validation_end(trainer, pl_module)
+        cb.on_fit_end(trainer, pl_module)
 
         total = tmp_path / "checkpoint_best_total.pth"
         data = torch.load(total, map_location="cpu", weights_only=False)
         assert "rfdetr_version" in data
         assert data["rfdetr_version"] == expected_version
 
-    def test_rfdetr_version_absent_when_get_version_returns_none(self, tmp_path: Path) -> None:
+    @patch("rfdetr.training.callbacks.best_model.get_version", return_value=None)
+    def test_rfdetr_version_absent_when_get_version_returns_none(self, mock_get_version, tmp_path: Path) -> None:
         """rfdetr_version must be omitted when get_version() cannot resolve the version."""
         cb = BestModelCallback(output_dir=str(tmp_path))
         trainer = _make_trainer({"val/mAP_50_95": 0.5})
         pl_module = _make_pl_module()
 
-        with patch("rfdetr.training.callbacks.best_model.get_version", return_value=None):
-            cb.on_validation_end(trainer, pl_module)
+        cb.on_validation_end(trainer, pl_module)
 
         ckpt = torch.load(tmp_path / "checkpoint_best_regular.pth", weights_only=False)
         assert "rfdetr_version" not in ckpt
@@ -2751,21 +2684,19 @@ class TestBestModelSmoothAlpha:
             "_smoothed_regular must be > 0.0 at epoch 2 because the skip-window epochs warmed the EMA"
         )
 
-    def test_callback_metrics_restored_when_super_raises(self, tmp_path: Path) -> None:
+    @patch(
+        "rfdetr.training.callbacks.best_model.ModelCheckpoint.on_validation_end",
+        side_effect=RuntimeError("simulated failure"),
+    )
+    def test_callback_metrics_restored_when_super_raises(self, mock_on_validation_end, tmp_path: Path) -> None:
         """trainer.callback_metrics[monitor] is restored in the finally block even when super() raises."""
-        from unittest.mock import patch
-
         cb = BestModelCallback(output_dir=str(tmp_path), smooth_alpha=0.5)
         pl_module = _make_pl_module()
         trainer = _make_trainer({"val/mAP_50_95": 0.8}, current_epoch=0)
         raw_tensor = trainer.callback_metrics["val/mAP_50_95"]
 
-        with patch(
-            "rfdetr.training.callbacks.best_model.ModelCheckpoint.on_validation_end",
-            side_effect=RuntimeError("simulated failure"),
-        ):
-            with pytest.raises(RuntimeError, match="simulated failure"):
-                cb.on_validation_end(trainer, pl_module)
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            cb.on_validation_end(trainer, pl_module)
 
         assert trainer.callback_metrics["val/mAP_50_95"] is raw_tensor
 

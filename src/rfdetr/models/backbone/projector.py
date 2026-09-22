@@ -223,6 +223,12 @@ class MultiScaleProjector(nn.Module):
         # use_bias = norm == ""
         self.use_extra_pool = False
         for scale in scale_factors:
+            if scale == 0.25:
+                # Marker only: this scale factor builds no pyramid stage of its own -- it just
+                # flags an extra max-pool downsample of the last built stage's output in forward().
+                self.use_extra_pool = True
+                continue
+
             scale_stage_layers: list[nn.Module] = []
             for in_dim in in_channels:
                 layers: list[nn.Module] = []
@@ -264,9 +270,6 @@ class MultiScaleProjector(nn.Module):
                             ConvX(in_dim, in_dim, 3, 2, layer_norm=layer_norm),
                         ]
                     )
-                elif scale == 0.25:
-                    self.use_extra_pool = True
-                    continue
                 else:
                     raise NotImplementedError(f"Unsupported scale_factor:{scale}")
                 scale_stage_layers.append(nn.Sequential(*layers))
