@@ -17,8 +17,11 @@ import argparse
 import builtins
 import importlib
 import json
+import logging
 import os
 import sys
+import tempfile
+import threading
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,7 +32,9 @@ import pytest
 import torch
 
 from rfdetr.config import RFDETRBaseConfig, RFDETRKeypointPreviewConfig, RFDETRSmallConfig, TrainConfig
-from rfdetr.detr import RFDETR
+from rfdetr.datasets.webdataset.index import ShardIndex, index_name
+from rfdetr.datasets.webdataset.load import WebDatasetDetection
+from rfdetr.detr import RFDETR, _save_training_config
 from rfdetr.detr import logger as detr_logger
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
@@ -88,6 +93,76 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
     mock.model = MagicMock()  # exposes mock.model.model for sync-back assertions
     mock.get_train_config.return_value = _make_train_config(tmp_path, **train_overrides)
     return mock
+
+
+def _count_config_write_warnings(records: list[logging.LogRecord]) -> int:
+    """Count the distinct ``training_config.json`` warnings among *records*.
+
+    pytest installs its capture handler on the non-propagating ``rf-detr`` logger *and* on the root logger, so
+    once a test forces ``propagate = True`` every emission is appended to ``caplog.records`` twice. Both entries
+    are the same ``LogRecord`` object, so counting distinct objects recovers how many writes actually failed.
+
+    Examples:
+        >>> def _record(message):
+        ...     record = logging.LogRecord("rf-detr", logging.WARNING, __file__, 0, message, (), None)
+        ...     record.message = record.getMessage()
+        ...     return record
+        >>> warned, unrelated = _record("Could not save training_config.json to /out."), _record("something else")
+        >>> _count_config_write_warnings([warned, warned, unrelated])
+        1
+        >>> _count_config_write_warnings([])
+        0
+    """
+    return len(
+        {id(record) for record in records if record.levelname == "WARNING" and "training_config.json" in record.message}
+    )
+
+
+class _UnevaluableValue:
+    """A value that raises when its truthiness is tested, as the payload's ``num_classes`` branch does.
+
+    Examples:
+        >>> bool(_UnevaluableValue())
+        Traceback (most recent call last):
+        ...
+        RuntimeError: cannot evaluate truthiness
+    """
+
+    def __bool__(self) -> bool:
+        raise RuntimeError("cannot evaluate truthiness")
+
+
+class _UnserializableValue:
+    """A value ``json.dumps`` cannot write even with ``default=str``, because coercing it raises.
+
+    Examples:
+        >>> str(_UnserializableValue())
+        Traceback (most recent call last):
+        ...
+        RuntimeError: cannot stringify
+    """
+
+    def __str__(self) -> str:
+        raise RuntimeError("cannot stringify")
+
+
+def _read_training_config(path: str) -> dict[str, Any] | None:
+    """Return the parsed training_config.json at *path*, or None when it does not exist.
+
+    Examples:
+        >>> import json, tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     written = os.path.join(directory, "training_config.json")
+        ...     _ = Path(written).write_text(json.dumps({"num_classes": 2}))
+        ...     _read_training_config(written)
+        {'num_classes': 2}
+        >>> _read_training_config("/nonexistent/training_config.json") is None
+        True
+    """
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
 
 
 @pytest.fixture
@@ -298,33 +373,21 @@ class TestRFDETRTrainPTL:
         assert mock_self.model.args.dataset_dir == str(tmp_path / "ds")
         assert mock_self.model.args.output_dir == str(tmp_path / "out")
 
-    def test_device_kwarg_cpu_no_warning(self, tmp_path, patch_lit):
-        """Device='cpu' is consumed without a DeprecationWarning."""
+    @pytest.mark.parametrize(
+        "device",
+        [
+            pytest.param("cpu", id="cpu"),
+            pytest.param("cuda", id="cuda"),
+            pytest.param(torch.device("cuda:1"), id="torch-device-cuda-index"),
+        ],
+    )
+    def test_device_kwarg_consumed_without_deprecation_warning(self, tmp_path, patch_lit, device: str | torch.device):
+        """Device= (string or torch.device) is consumed without a DeprecationWarning or reaching get_train_config."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, *_ = patch_lit
         with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            RFDETR.train(mock_self, device="cpu")
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-        mock_self.get_train_config.assert_called_once_with()
-
-    def test_device_kwarg_cuda_forwards_gpu_accelerator_without_devices(self, tmp_path, patch_lit):
-        """Device='cuda' is mapped to accelerator='gpu' without explicit devices override."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, device="cuda")
-        assert not any(issubclass(x.category, DeprecationWarning) for x in w)
-        mock_self.get_train_config.assert_called_once_with()
-
-    def test_device_kwarg_torch_device_cuda_index_forwards_gpu_accelerator_and_devices(self, tmp_path, patch_lit):
-        """torch.device('cuda:1') is mapped to accelerator='gpu' and devices=[1]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, *_ = patch_lit
-        with p_mod, p_dm, p_bt, warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            RFDETR.train(mock_self, device=torch.device("cuda:1"))
+            RFDETR.train(mock_self, device=device)
         assert not any(issubclass(x.category, DeprecationWarning) for x in w)
         mock_self.get_train_config.assert_called_once_with()
 
@@ -416,61 +479,29 @@ class TestRFDETRTrainPTL:
 class TestRFDETRTrainPTLAbsorption:
     """RFDETR.train() absorbs legacy kwargs and routes through PTL build_trainer()."""
 
-    def test_device_cpu_absorbed_as_accelerator_cpu(self, tmp_path, patch_lit):
-        """Device='cpu' is absorbed and forwarded to build_trainer as accelerator='cpu'."""
+    @pytest.mark.parametrize(
+        "device, expected_kwargs",
+        [
+            pytest.param("cpu", {"accelerator": "cpu"}, id="cpu"),
+            pytest.param("cuda", {"accelerator": "gpu"}, id="cuda"),
+            pytest.param("cuda:1", {"accelerator": "gpu", "devices": [1]}, id="cuda-index"),
+            pytest.param(torch.device("cuda:2"), {"accelerator": "gpu", "devices": [2]}, id="torch-device-cuda-index"),
+            pytest.param("xla", {"accelerator": "tpu"}, id="xla"),
+            pytest.param(torch.device("xla:0"), {"accelerator": "tpu", "devices": [0]}, id="torch-device-xla-index"),
+        ],
+    )
+    def test_device_absorbed_as_accelerator_and_devices_kwargs(
+        self, tmp_path, patch_lit, device: str | torch.device, expected_kwargs: dict[str, object]
+    ):
+        """Device= (string or torch.device, with or without an index) is absorbed and forwarded to build_trainer as the
+        matching accelerator= (and, when indexed, devices=) kwargs -- and no others, since assert_called_once_with is
+        exact on kwargs."""
         mock_self = _make_rfdetr_self(tmp_path)
         p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
         with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="cpu")
+            RFDETR.train(mock_self, device=device)
         config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="cpu")
-
-    def test_device_cuda_absorbed_as_accelerator_gpu(self, tmp_path, patch_lit):
-        """Device='cuda' forwards accelerator='gpu' without a devices kwarg."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="cuda")
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu")
-        assert "devices" not in mock_bt.call_args.kwargs
-
-    def test_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
-        """Device='cuda:1' forwards accelerator='gpu' and devices=[1]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="cuda:1")
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[1])
-
-    def test_device_torch_device_cuda_index_absorbed_as_accelerator_gpu_devices_list(self, tmp_path, patch_lit):
-        """device=torch.device('cuda:2') forwards accelerator='gpu' and devices=[2]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device=torch.device("cuda:2"))
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="gpu", devices=[2])
-
-    def test_device_xla_absorbed_as_accelerator_tpu(self, tmp_path, patch_lit):
-        """Device='xla' forwards accelerator='tpu' -- PTL's canonical name for the XLA backend."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device="xla")
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu")
-        assert "devices" not in mock_bt.call_args.kwargs
-
-    def test_device_torch_device_xla_index_absorbed_as_accelerator_tpu_devices_list(self, tmp_path, patch_lit):
-        """device=torch.device('xla:0') forwards accelerator='tpu' and devices=[0]."""
-        mock_self = _make_rfdetr_self(tmp_path)
-        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
-        with p_mod, p_dm, p_bt:
-            RFDETR.train(mock_self, device=torch.device("xla:0"))
-        config = mock_self.get_train_config.return_value
-        mock_bt.assert_called_once_with(config, mock_self.model_config, accelerator="tpu", devices=[0])
+        mock_bt.assert_called_once_with(config, mock_self.model_config, **expected_kwargs)
 
     def test_device_invalid_raises_value_error_with_expected_message(self, tmp_path, patch_lit):
         """Invalid device strings raise a ValueError with the train() device hint."""
@@ -564,6 +595,22 @@ class TestRFDETRTrainPTLAbsorption:
         expected_output_dir = Path(config.output_dir) / "dataset_grids"
         called_dirs = [call.args[1] for call in mock_saver_cls.call_args_list]
         assert all(d == expected_output_dir for d in called_dirs)
+
+    def test_save_dataset_grids_skipped_off_rank_zero(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """The grid write shares the launcher guard, so a non-zero rank renders nothing."""
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, _mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+            patch("rfdetr.detr._is_launcher_main_process", return_value=False),
+        ):
+            RFDETR.train(mock_self)
+
+        mock_saver_cls.assert_not_called()
 
     def test_save_dataset_grids_failure_does_not_abort_training(self, tmp_path, patch_lit):
         """A save_grid() failure must not abort training — trainer.fit() must still be called."""
@@ -801,38 +848,26 @@ class TestConvertLegacyCheckpoint:
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
         assert ckpt["legacy_checkpoint_format"] is True
 
-    def test_args_as_namespace_converted_to_dict(self, tmp_path, patch_lit):
-        """argparse.Namespace args are converted to a plain dict via vars()."""
-        src = _make_legacy_pth(tmp_path, args_value="namespace")
+    @pytest.mark.parametrize(
+        "args_value, expected_hyper_parameters",
+        [
+            pytest.param("namespace", {"lr": pytest.approx(1e-4), "epochs": 100}, id="namespace-converted-via-vars"),
+            pytest.param("dict", {"lr": pytest.approx(1e-4), "epochs": 100}, id="dict-kept-as-dict"),
+            pytest.param(None, {}, id="none-gives-empty"),
+            pytest.param("missing", {}, id="missing-key-gives-empty"),
+        ],
+    )
+    def test_args_converted_to_hyper_parameters(
+        self, tmp_path, patch_lit, args_value: str | None, expected_hyper_parameters: dict[str, object]
+    ):
+        """convert_legacy_checkpoint() normalizes source 'args' into hyper_parameters: an argparse.Namespace is
+        converted via vars(), a dict is kept as-is, and a None or altogether-missing 'args' key produces an empty
+        dict."""
+        src = _make_legacy_pth(tmp_path, args_value=args_value)
         dst = str(tmp_path / "out.ckpt")
         convert_legacy_checkpoint(src, dst)
         ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert isinstance(ckpt["hyper_parameters"], dict)
-        assert ckpt["hyper_parameters"]["lr"] == pytest.approx(1e-4)
-
-    def test_args_as_dict_kept_as_dict(self, tmp_path, patch_lit):
-        """Plain dict args is preserved as-is."""
-        src = _make_legacy_pth(tmp_path, args_value="dict")
-        dst = str(tmp_path / "out.ckpt")
-        convert_legacy_checkpoint(src, dst)
-        ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert ckpt["hyper_parameters"] == {"lr": pytest.approx(1e-4), "epochs": 100}
-
-    def test_args_none_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
-        """Args=None produces an empty hyper_parameters dict."""
-        src = _make_legacy_pth(tmp_path, args_value=None)
-        dst = str(tmp_path / "out.ckpt")
-        convert_legacy_checkpoint(src, dst)
-        ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert ckpt["hyper_parameters"] == {}
-
-    def test_args_missing_key_gives_empty_hyper_parameters(self, tmp_path, patch_lit):
-        """No 'args' key at all also produces empty hyper_parameters."""
-        src = _make_legacy_pth(tmp_path, args_value="missing")
-        dst = str(tmp_path / "out.ckpt")
-        convert_legacy_checkpoint(src, dst)
-        ckpt = torch.load(dst, map_location="cpu", weights_only=False)
-        assert ckpt["hyper_parameters"] == {}
+        assert ckpt["hyper_parameters"] == expected_hyper_parameters
 
     def test_args_custom_object_with_dict_converted_via_vars(self, tmp_path, patch_lit):
         """A custom object with __dict__ is converted via vars()."""
@@ -1685,7 +1720,7 @@ class TestDeployToRoboflow:
 
 
 class TestSaveTrainingConfig:
-    """RFDETR.train() writes training_config.json to output_dir after training."""
+    """RFDETR.train() writes training_config.json to output_dir when training starts and again when it ends."""
 
     def _run_train(self, tmp_path, patch_lit, class_names=None, **train_overrides):
         """Run RFDETR.train() with patched PTL; return (mock_self, output_dir path).
@@ -1745,6 +1780,357 @@ class TestSaveTrainingConfig:
         nested_dir = str(tmp_path / "new" / "nested" / "output")
         _, output_dir = self._run_train(tmp_path, patch_lit, output_dir=nested_dir)
         assert os.path.exists(os.path.join(output_dir, "training_config.json"))
+
+    def _run_train_capturing_pre_fit(
+        self,
+        tmp_path: Path,
+        patch_lit: tuple[Any, ...],
+        dataset_class_names: list[str] | None = None,
+        fit_exception: BaseException | None = None,
+        post_fit_exception: BaseException | None = None,
+        load_classes_patch: Any = None,
+        **train_overrides: Any,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Run RFDETR.train() and read training_config.json both at fit() time and after train() returns.
+
+        trainer.fit is a MagicMock, so its side_effect is the only code that runs at the exact moment the start-of-run
+        write must already have happened. Returns (pre_fit_payload, final_payload), each None when the file did not
+        exist at that point. load_classes_patch defaults to an unreadable dataset so the start-of-run class-name lookup
+        is deterministic instead of depending on what tmp_path happens to contain. post_fit_exception, when set, makes
+        remove_optimized_model() raise after a successful fit() but before the post-fit write, simulating a
+        housekeeping step (distinct from fit() itself) failing on the way to the second write.
+
+        Examples:
+            Needs the ``tmp_path`` and ``patch_lit`` fixtures, so it cannot run standalone:
+
+            >>> self._run_train_capturing_pre_fit(tmp_path, patch_lit)  # doctest: +SKIP
+        """
+        if dataset_class_names is None:
+            dataset_class_names = ["cat", "dog", "bird"]
+        if load_classes_patch is None:
+            load_classes_patch = patch.object(RFDETR, "_load_classes", side_effect=FileNotFoundError("no dataset"))
+        mock_self = _make_rfdetr_self(tmp_path, **train_overrides)
+        if post_fit_exception is not None:
+            mock_self.remove_optimized_model.side_effect = post_fit_exception
+        p_mod, p_dm, p_bt, _, dmcls, mock_bt = patch_lit
+        dmcls.return_value.class_names = dataset_class_names
+        config_path = os.path.join(mock_self.get_train_config.return_value.output_dir, "training_config.json")
+        captured = {}
+
+        def _capture(*args: Any, **kwargs: Any) -> None:
+            captured["pre_fit"] = _read_training_config(config_path)
+            if fit_exception is not None:
+                raise fit_exception
+
+        mock_bt.return_value.fit.side_effect = _capture
+        expected_exception = fit_exception or post_fit_exception
+        with p_mod, p_dm, p_bt, load_classes_patch:
+            if expected_exception is None:
+                RFDETR.train(mock_self)
+            else:
+                with pytest.raises(type(expected_exception)):
+                    RFDETR.train(mock_self)
+        return captured.get("pre_fit"), _read_training_config(config_path)
+
+    def test_training_config_json_written_before_fit(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """The file already exists by the time trainer.fit() is entered."""
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
+        assert pre_fit is not None
+
+    def test_pre_fit_payload_carries_the_full_schema(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """The start-of-run copy carries the same five keys as the final one, not a reduced subset."""
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
+        assert set(pre_fit.keys()) == {
+            "train_config",
+            "model_config",
+            "model_config_type",
+            "class_names",
+            "num_classes",
+        }
+
+    def test_post_fit_write_replaces_pre_fit_class_names(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """The second write wins: the dataset's class names overwrite the start-of-run ones."""
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["placeholder"])
+        _, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit, load_classes_patch=load_classes_patch)
+        assert final["class_names"] == ["cat", "dog", "bird"]
+
+    @pytest.mark.parametrize(
+        "fit_exception",
+        [
+            pytest.param(RuntimeError("boom"), id="crash"),
+            pytest.param(KeyboardInterrupt(), id="interrupt"),
+        ],
+    )
+    def test_training_config_json_survives_interrupted_fit(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...], fit_exception: BaseException
+    ) -> None:
+        """A run killed inside fit() still leaves a record of how it was configured (#1493)."""
+        _, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit, fit_exception=fit_exception)
+        assert final is not None
+
+    def test_post_fit_step_failure_keeps_pre_fit_training_config_intact(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """A post-fit step that raises before the final write must not lose the start-of-run copy.
+
+        Unlike test_training_config_json_survives_interrupted_fit, trainer.fit() itself succeeds here --
+        remove_optimized_model(), one of the housekeeping steps between fit() returning and the final
+        _save_training_config() call, raises instead. The code never reaches the post-fit write, so the on-disk
+        file must still hold exactly the pre-fit payload, untouched.
+        """
+        post_fit_exception = RuntimeError("optimized model teardown failed")
+        pre_fit, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit, post_fit_exception=post_fit_exception)
+        assert final == pre_fit
+
+    def test_pre_fit_class_names_taken_from_config_when_set(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """An explicit TrainConfig.class_names is recorded in preference to the dataset's."""
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["from-dataset"])
+        pre_fit, _ = self._run_train_capturing_pre_fit(
+            tmp_path,
+            patch_lit,
+            load_classes_patch=load_classes_patch,
+            class_names=["from-config"],
+        )
+        assert pre_fit["class_names"] == ["from-config"]
+
+    def test_pre_fit_class_names_read_from_dataset_when_config_has_none(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """Without an explicit setting the label space is read straight off the dataset directory."""
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["cat", "dog"])
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, load_classes_patch=load_classes_patch)
+        assert pre_fit["class_names"] == ["cat", "dog"]
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            pytest.param(FileNotFoundError("no such dataset"), id="file-not-found"),
+            pytest.param(ValueError("bad dataset"), id="value-error"),
+            pytest.param(KeyError("missing key"), id="key-error"),
+            pytest.param(OSError("io error"), id="os-error"),
+        ],
+    )
+    def test_pre_fit_class_names_null_when_dataset_unreadable(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...], exc: Exception
+    ) -> None:
+        """An unreadable or unsupported dataset layout records null rather than blocking training."""
+        load_classes_patch = patch.object(RFDETR, "_load_classes", side_effect=exc)
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, load_classes_patch=load_classes_patch)
+        assert pre_fit["class_names"] is None
+
+    def test_pre_fit_num_classes_zero_when_dataset_unreadable(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """num_classes stays the count of resolved names, so it is 0 when there are none."""
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
+        assert pre_fit["num_classes"] == 0
+
+    def test_pre_fit_payload_keeps_empty_class_names_list_not_null(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """An explicit empty class_names list is recorded as [], not coerced to null like an unset one.
+
+        TrainConfig(class_names=[]) is not None, so the pre-fit write must record it verbatim rather than falling
+        through to the dataset-lookup branch that only fires when class_names is unset -- locking in the [] vs None
+        distinction the payload relies on to tell "explicitly no classes" apart from "not yet resolved".
+        """
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, class_names=[])
+        assert pre_fit["class_names"] == []
+        assert pre_fit["num_classes"] == 0
+
+    def test_pre_fit_write_skipped_off_rank_zero(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """Distributed workers must not race on the file before fit() initializes torch.distributed."""
+        with patch("rfdetr.detr._is_launcher_main_process", return_value=False):
+            pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
+        assert pre_fit is None
+
+    def test_post_fit_write_keeps_its_own_rank_guard(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """The post-fit write guards on is_main_process() instead, so the launcher guard does not suppress it."""
+        with patch("rfdetr.detr._is_launcher_main_process", return_value=False):
+            _, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit)
+        assert final is not None
+
+    def test_write_failure_does_not_abort_training(
+        self,
+        tmp_path: Path,
+        patch_lit: tuple[Any, ...],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An output_dir that cannot be created warns from both writes and still lets training run."""
+        blocked = tmp_path / "blocked"
+        blocked.write_text("a regular file where output_dir should be")
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level("WARNING", logger="rf-detr"):
+            self._run_train_capturing_pre_fit(tmp_path, patch_lit, output_dir=str(blocked))
+        assert _count_config_write_warnings(caplog.records) == 2
+
+    def test_pre_fit_serialization_failure_does_not_abort_training(
+        self,
+        tmp_path: Path,
+        patch_lit: tuple[Any, ...],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A value json refuses to serialize is a warning, not an exception out of train()."""
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=[_UnserializableValue()])
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level("WARNING", logger="rf-detr"):
+            self._run_train_capturing_pre_fit(tmp_path, patch_lit, load_classes_patch=load_classes_patch)
+        assert _count_config_write_warnings(caplog.records) == 1
+
+    def test_payload_assembly_failure_does_not_abort_training(
+        self,
+        tmp_path: Path,
+        patch_lit: tuple[Any, ...],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Assembling the payload is guarded too, not just writing it: both steps run inside the same try.
+
+        The value is synthetic -- `_load_classes` is annotated `-> list[str]`, so nothing real reaches the assembly step
+        this way -- but it is the only handle a test has on that step in isolation.
+        """
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=_UnevaluableValue())
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level("WARNING", logger="rf-detr"):
+            self._run_train_capturing_pre_fit(tmp_path, patch_lit, load_classes_patch=load_classes_patch)
+        assert _count_config_write_warnings(caplog.records) == 1
+
+    def test_post_fit_serialization_failure_does_not_abort_training(
+        self,
+        tmp_path: Path,
+        patch_lit: tuple[Any, ...],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The post-fit write tolerates it too: before this it only caught OSError, and a completed run died here."""
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level("WARNING", logger="rf-detr"):
+            self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_class_names=[_UnserializableValue()])
+        assert _count_config_write_warnings(caplog.records) == 1
+
+    def test_torn_write_keeps_prior_training_config_intact(self, tmp_path: Path) -> None:
+        """A write that fails partway through must not corrupt the previously saved good copy.
+
+        Pre-seeds output_dir with a valid training_config.json from an earlier run, then makes the new write raise
+        OSError right after committing half its bytes to disk -- the shape of a disk-full or killed-process failure mid-
+        write. ``_save_training_config``'s ``except Exception`` path must swallow the error without letting it escape,
+        and the atomic-write contract (tempfile + os.replace) requires the on-disk file to still parse as the untouched
+        prior payload afterward, with the abandoned temp file cleaned up.
+        """
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config_path = output_dir / "training_config.json"
+        prior_payload = {"marker": "prior-good-copy", "run": 1}
+        config_path.write_text(json.dumps(prior_payload))
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+
+        def _torn_temporary_file(*args: Any, **kwargs: Any) -> Any:
+            handle = real_named_temporary_file(*args, **kwargs)
+            if str(kwargs.get("dir")) != str(output_dir):
+                return handle
+            real_write = handle.write
+
+            def _torn_write(data: str) -> int:
+                real_write(data[: len(data) // 2])
+                handle.flush()
+                raise OSError("disk full mid-write")
+
+            handle.write = _torn_write
+            return handle
+
+        with patch("tempfile.NamedTemporaryFile", side_effect=_torn_temporary_file):
+            _save_training_config(
+                _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
+            )
+
+        assert _read_training_config(str(config_path)) == prior_payload
+        assert [p.name for p in output_dir.iterdir()] == ["training_config.json"]
+
+    def test_interleaved_writers_leave_valid_json_not_a_byte_level_merge(self, tmp_path: Path) -> None:
+        """Two writers both cleared past the launcher-rank guard must never leave a byte-interleaved file.
+
+        Deterministically reproduces the race the guard exists to prevent, without relying on real OS-thread scheduling
+        (rejected in an earlier review round as non-deterministic): writer "a" starts writing, pauses once its first
+        half is flushed to disk, writer "b" then opens and fully writes a different, longer payload to the same path,
+        and only then does "a" resume and flush its second half. Ordering is pinned with ``threading.Event``s with
+        bounded waits, never a bare block. The atomic tempfile+os.replace write makes each writer's file appear whole or
+        not at all, so the final file is exactly one writer's payload.
+        """
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config_path = output_dir / "training_config.json"
+        payload_a = ["a"]
+        payload_b = ["bb"] * 100  # much longer serialized payload than payload_a
+        a_paused = threading.Event()
+        b_done = threading.Event()
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+        errors: list[BaseException] = []
+
+        def _paced_temporary_file(*args: Any, **kwargs: Any) -> Any:
+            handle = real_named_temporary_file(*args, **kwargs)
+            if str(kwargs.get("dir")) != str(output_dir) or threading.current_thread().name != "writer-a":
+                return handle
+            real_write = handle.write
+
+            def _paced_write(data: str) -> int:
+                half = len(data) // 2
+                written = real_write(data[:half])
+                handle.flush()
+                a_paused.set()
+                assert b_done.wait(timeout=5), "writer b did not finish in time"
+                written += real_write(data[half:])
+                handle.flush()
+                return written
+
+            handle.write = _paced_write
+            return handle
+
+        def _writer_a() -> None:
+            try:
+                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
+                    _save_training_config(
+                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_a
+                    )
+            except BaseException as exc:
+                errors.append(exc)
+
+        def _writer_b() -> None:
+            try:
+                assert a_paused.wait(timeout=5), "writer a did not pause in time"
+                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
+                    _save_training_config(
+                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_b
+                    )
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                b_done.set()
+
+        thread_a = threading.Thread(target=_writer_a, name="writer-a")
+        thread_b = threading.Thread(target=_writer_b, name="writer-b")
+        thread_a.start()
+        thread_b.start()
+        thread_a.join(timeout=10)
+        thread_b.join(timeout=10)
+
+        assert not thread_a.is_alive(), "writer a did not finish in time"
+        assert not thread_b.is_alive(), "writer b did not finish in time"
+        assert not errors
+        on_disk = _read_training_config(str(config_path))
+        assert on_disk["class_names"] in (payload_a, payload_b)
+
+    def test_training_config_json_written_before_the_model_is_built(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """The write precedes module construction, so a run that dies loading weights still leaves a record."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        p_mod, p_dm, p_bt, modcls, _, _ = patch_lit
+        modcls.side_effect = RuntimeError("checkpoint is corrupt")
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["cat"])
+        with p_mod, p_dm, p_bt, load_classes_patch, pytest.raises(RuntimeError):
+            RFDETR.train(mock_self)
+        output_dir = mock_self.get_train_config.return_value.output_dir
+        assert _read_training_config(os.path.join(output_dir, "training_config.json")) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -2262,3 +2648,198 @@ class TestRFDETRTrainNumClassesAutoDetect:
 
         assert mock_self.model_config.num_classes == 3  # auto-adjust still fires
         assert mock_self.model_config.num_keypoints_per_class == []  # empty schema not padded
+
+
+# ---------------------------------------------------------------------------
+# Start-of-run class-name resolution (PR #1496 review follow-ups)
+# ---------------------------------------------------------------------------
+
+
+class TestPreFitClassNamesResolution:
+    """The start-of-run training_config.json resolves class names from every layout the datamodule will read.
+
+    ``_run_train_capturing_pre_fit`` is shared with ``TestSaveTrainingConfig`` — it never touches ``self``, so it is
+    aliased here rather than inherited, which would re-collect that class's tests under this one.
+    """
+
+    _run_train_capturing_pre_fit = TestSaveTrainingConfig._run_train_capturing_pre_fit
+
+    @staticmethod
+    def _write_train_shard_index(dataset_dir: Path, category_ids: str, *, version: int | None = None) -> Path:
+        """Write a packed ``train`` shard index whose grouping root carries no annotation.
+
+        Only the index is written -- the pre-fit read and ``WebDatasetDetection.__init__`` both stop at the JSON,
+        so no shard tar and no ``webdataset`` package is needed. ``version`` overrides the schema stamp to produce
+        an index the current reader rejects.
+
+        Examples:
+            >>> import tempfile
+            >>> with tempfile.TemporaryDirectory() as directory:
+            ...     written = TestPreFitClassNamesResolution._write_train_shard_index(Path(directory), "remap")
+            ...     json.loads((written / "train-index.json").read_text())["category_ids"]
+            'remap'
+        """
+        categories = (
+            {"id": 0, "name": "root", "supercategory": "none"},
+            {"id": 3, "name": "cat", "supercategory": "root"},
+            {"id": 9, "name": "dog", "supercategory": "root"},
+        )
+        index = ShardIndex("train", ("train-000000.tar",), 4, categories, (3, 9), category_ids, (4,))
+        payload = index.to_json()
+        if version is not None:
+            payload["version"] = version
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        (dataset_dir / index_name("train")).write_text(json.dumps(payload), encoding="utf-8")
+        return dataset_dir
+
+    @pytest.mark.parametrize(
+        ("category_ids", "expected"),
+        [
+            pytest.param("remap", ["cat", "dog"], id="remap-drops-the-unannotated-parent"),
+            pytest.param("raw", ["root", "", "", "cat", "", "", "", "", "", "dog"], id="raw-keeps-every-id-slot"),
+        ],
+    )
+    def test_pre_fit_class_names_match_the_webdataset_datamodule(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...], category_ids: str, expected: list[str]
+    ) -> None:
+        """A packed directory records the same names the streaming dataset will report after fit()."""
+        dataset_dir = self._write_train_shard_index(tmp_path / "ds", category_ids)
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_file="webdataset")
+        dataset = WebDatasetDetection(dataset_dir, "train", transforms=None)
+        assert pre_fit["class_names"] == dataset.class_names == expected
+
+    def test_pre_fit_num_classes_counts_the_shard_index_names(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """num_classes follows the recorded list instead of staying 0 for a packed directory."""
+        self._write_train_shard_index(tmp_path / "ds", "remap")
+        pre_fit, _ = self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_file="webdataset")
+        assert pre_fit["num_classes"] == 2
+
+    def test_unreadable_shard_index_records_null_and_does_not_block_training(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """An index the reader rejects (ValueError from ShardIndex.from_json) degrades to null, never an exception."""
+        self._write_train_shard_index(tmp_path / "ds", "remap", version=99)
+        pre_fit, final = self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_file="webdataset")
+        assert (pre_fit["class_names"], final is not None) == (None, True)
+
+    @staticmethod
+    def _train_interrupted_keypoint_run(tmp_path: Path, patch_lit: tuple[Any, ...], **train_overrides: Any) -> dict:
+        """Run train() on a background-first keypoint model whose fit() dies; return the file it left behind.
+
+        The dataset reader is patched to hand back the detection basis ``['person']``, so a recorded null proves the
+        keypoint gate bypassed the reader rather than the dataset merely being unreadable.
+
+        Examples:
+            Needs the ``tmp_path`` and ``patch_lit`` fixtures, so it cannot run standalone:
+
+            >>> TestPreFitClassNamesResolution._train_interrupted_keypoint_run(tmp_path, patch_lit)  # doctest: +SKIP
+        """
+        mock_self = _make_rfdetr_self(tmp_path, **train_overrides)
+        mock_self.model_config = RFDETRKeypointPreviewConfig(
+            pretrain_weights=None, device="cpu", num_keypoints_per_class=[0, 17]
+        )
+        p_mod, p_dm, p_bt, _, _, mock_bt = patch_lit
+        mock_bt.return_value.fit.side_effect = RuntimeError("interrupted")
+        load_classes_patch = patch.object(RFDETR, "_load_classes", return_value=["person"])
+        with p_mod, p_dm, p_bt, load_classes_patch, pytest.raises(RuntimeError):
+            RFDETR.train(mock_self)
+        output_dir = mock_self.get_train_config.return_value.output_dir
+        return _read_training_config(os.path.join(output_dir, "training_config.json")) or {}
+
+    def test_interrupted_keypoint_run_records_null_class_names(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """A bg-first keypoint run killed in fit() leaves class_names null, not the detection-basis ['person']."""
+        final = self._train_interrupted_keypoint_run(tmp_path, patch_lit)
+        assert (final["class_names"], final["num_classes"]) == (None, 0)
+
+    def test_keypoint_run_still_records_an_explicit_config_class_names(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """Only the dataset read is gated: a TrainConfig.class_names the user set is recorded as before."""
+        final = self._train_interrupted_keypoint_run(tmp_path, patch_lit, class_names=["", "person"])
+        assert final["class_names"] == ["", "person"]
+
+
+class TestSharedCocoCategoryParse:
+    """num_classes alignment and the start-of-run config write read ``train/_annotations.coco.json`` once.
+
+    ``_write_coco_categories`` is shared with ``TestRFDETRTrainNumClassesAutoDetect``; it never touches ``self``, so it
+    is aliased rather than inherited (see ``TestPreFitClassNamesResolution``).
+    """
+
+    _write_coco_categories = TestRFDETRTrainNumClassesAutoDetect._write_coco_categories
+
+    _CATEGORIES = [
+        {"id": 1, "name": "animal", "supercategory": "none"},
+        {"id": 2, "name": "dog", "supercategory": "animal"},
+        {"id": 3, "name": "cat", "supercategory": "animal"},
+    ]
+
+    @staticmethod
+    def _train_on_coco_dataset(tmp_path: Path, patch_lit: tuple[Any, ...]) -> tuple[MagicMock, dict[str, Any] | None]:
+        """Run train() with the real num_classes alignment bound and a real memo dict on the mock self.
+
+        ``_make_rfdetr_self`` leaves ``_align_num_classes_from_dataset`` as a MagicMock, which would make the pre-fit
+        write the only reader and a call count of one trivially true. Returns ``(mock_self, pre_fit_payload)``.
+
+        Examples:
+            Needs the ``tmp_path`` and ``patch_lit`` fixtures, so it cannot run standalone:
+
+            >>> TestSharedCocoCategoryParse._train_on_coco_dataset(tmp_path, patch_lit)  # doctest: +SKIP
+        """
+        mock_self = MagicMock()
+        mock_self.model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
+        mock_self.model = MagicMock()
+        mock_self.get_train_config.return_value = _make_train_config(tmp_path)
+        mock_self._align_num_classes_from_dataset = lambda ds: RFDETR._align_num_classes_from_dataset(mock_self, ds)
+        mock_self._coco_categories_cache = {}
+        config_path = os.path.join(mock_self.get_train_config.return_value.output_dir, "training_config.json")
+        captured: dict[str, Any] = {}
+        p_mod, p_dm, p_bt, _, _, mock_bt = patch_lit
+
+        def _capture(*args: Any, **kwargs: Any) -> None:
+            captured["pre_fit"] = _read_training_config(config_path)
+
+        mock_bt.return_value.fit.side_effect = _capture
+        with p_mod, p_dm, p_bt:
+            RFDETR.train(mock_self)
+        return mock_self, captured.get("pre_fit")
+
+    def test_annotation_file_is_parsed_once_across_alignment_and_pre_fit(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """Both readers go through one _filtered_coco_categories call instead of two back-to-back json.loads."""
+        self._write_coco_categories(tmp_path / "ds", categories=self._CATEGORIES, annotated_ids=[2, 3])
+        parse = patch.object(RFDETR, "_filtered_coco_categories", side_effect=RFDETR._filtered_coco_categories)
+        with parse as parse_mock:
+            self._train_on_coco_dataset(tmp_path, patch_lit)
+        assert parse_mock.call_count == 1
+
+    def test_shared_parse_feeds_both_num_classes_and_pre_fit_class_names(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """The single parse still lands in both places: the aligned count and the recorded label space agree."""
+        self._write_coco_categories(tmp_path / "ds", categories=self._CATEGORIES, annotated_ids=[2, 3])
+        mock_self, pre_fit = self._train_on_coco_dataset(tmp_path, patch_lit)
+        assert (mock_self.model_config.num_classes, pre_fit["class_names"]) == (2, ["dog", "cat"])
+
+    def test_memo_replaces_its_entry_for_a_different_dataset_dir(self, tmp_path: Path) -> None:
+        """One directory at a time: pointing at a second dataset evicts the first instead of accumulating."""
+        first, second = tmp_path / "first", tmp_path / "second"
+        self._write_coco_categories(first, categories=self._CATEGORIES, annotated_ids=[2, 3])
+        self._write_coco_categories(second, categories=self._CATEGORIES[:2], annotated_ids=[2])
+        cache: dict[str, list[dict[str, Any]]] = {}
+        RFDETR._memoized_coco_categories(cache, str(first))
+        RFDETR._memoized_coco_categories(cache, str(second))
+        assert list(cache) == [str(second.resolve())]
+
+    def test_memo_returns_the_cached_entry_without_reparsing(self, tmp_path: Path) -> None:
+        """A second lookup of the same directory is served from the memo."""
+        dataset_dir = tmp_path / "ds"
+        self._write_coco_categories(dataset_dir, categories=self._CATEGORIES, annotated_ids=[2, 3])
+        cache: dict[str, list[dict[str, Any]]] = {}
+        first = RFDETR._memoized_coco_categories(cache, str(dataset_dir))
+        with patch.object(RFDETR, "_filtered_coco_categories", side_effect=AssertionError("re-parsed")):
+            second = RFDETR._memoized_coco_categories(cache, str(dataset_dir))
+        assert second is first

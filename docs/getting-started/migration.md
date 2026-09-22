@@ -86,6 +86,44 @@ You can apply all changes in one go; working through sections one release at a t
 
     Two differences to plan for: the replacement writes **dense** COCO category ids (`1, 2, 3, …`) where the removed generator wrote sparse ones (`1, 3, 5, …`), and its shape set adds `rectangle`, so a fixed class count of 3 becomes 4. Derive the class count from the annotation file rather than hard-coding it. Generation also draws from fresh entropy unless you pass `seed`.
 
+!!! warning "Removed: `RFDETR.optimize_for_inference()`"
+
+    The alias deprecated in v1.9.0 is gone. Call `RFDETR.inference()`; the signature is unchanged.
+
+    ```python
+    # Before (removed)
+    model.optimize_for_inference(dtype=torch.float16)
+
+    # After
+    model.inference(dtype=torch.float16)
+    ```
+
+!!! warning "Removed: `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`"
+
+    Both fields, deprecated in v1.9.0, are gone together with the shim that folded them into `lr_scheduler_kwargs`. Pass the values through `lr_scheduler_kwargs`; the managed `"step"` / `"cosine"` presets fall back to `lr_drop=100` and `min_factor=0.0` when a key is absent, the same defaults the removed fields carried.
+
+    ```python
+    # Before (removed)
+    TrainConfig(lr_scheduler="step", lr_drop=80, lr_min_factor=0.1)
+
+    # After
+    TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
+    ```
+
+    `TrainConfig` rejects unknown fields, so a `training_config.json` written by v1.9 or v1.10 no longer loads as-is — it carries both keys explicitly. Drop them before reloading:
+
+    ```python
+    import json
+
+    with open("training_config.json") as f:
+        saved = json.load(f)
+    saved.pop("lr_drop", None)
+    saved.pop("lr_min_factor", None)
+    train_config = TrainConfig(**saved)
+    ```
+
+    A config saved by v1.9+ already carries the migrated values in `lr_scheduler_kwargs`, so nothing is lost by dropping the two keys.
+
 ---
 
 ## Upgrade 1.9 → 1.10
@@ -273,7 +311,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     model = RFDETRLargeDeprecated(pretrain_weights="old_large_checkpoint.pth")
     ```
 
-### Deprecated in v1.9 → Remove in v1.11
+### Deprecated in v1.9 → Removed in v1.11
 
 !!! note "Deprecated: `RFDETR.optimize_for_inference()` renamed to `RFDETR.inference()`"
 

@@ -254,9 +254,11 @@ class TestRenderSummaryTables:
         _render_summary_tables(console, "Val", "overall-text", [])
         console.print.assert_called_once()
 
-    def test_no_op_when_rich_unavailable(self) -> None:
+    @patch("rfdetr.utilities.console._IS_RICH_AVAILABLE", False)
+    def test_no_op_when_rich_unavailable(
+        self,
+    ) -> None:
         """No call made when Rich not installed."""
         console = MagicMock(name="console")
-        with patch("rfdetr.utilities.console._IS_RICH_AVAILABLE", False):
-            _render_summary_tables(console, "Val", "overall-text", [])
+        _render_summary_tables(console, "Val", "overall-text", [])
         console.print.assert_not_called()

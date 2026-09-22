@@ -313,9 +313,11 @@ def main(
         repeats = 1
 
     if not disable_eval:
+        from faster_coco_eval import COCO
+
         from rfdetr.evaluation.coco_eval import CocoEvaluator
 
-        coco_evaluator = CocoEvaluator(coco_gt, ["bbox"])
+        coco_evaluator = CocoEvaluator(COCO(coco_gt), ["bbox"])
     else:
         coco_evaluator = None
     time_profile = TimeProfiler()

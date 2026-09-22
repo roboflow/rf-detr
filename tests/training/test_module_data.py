@@ -215,23 +215,19 @@ class TestInit:
         assert dm._dataset_val is None
         assert dm._dataset_test is None
 
-    def test_prefetch_factor_defaults_to_two_when_workers_enabled(self, tmp_path, base_train_config):
-        """prefetch_factor defaults to 2 for worker-based DataLoaders."""
-        tc = base_train_config(num_workers=2, prefetch_factor=None)
+    @pytest.mark.parametrize(
+        "num_workers, prefetch_factor, expected_prefetch_factor",
+        [
+            pytest.param(2, None, 2, id="defaults-to-two-when-workers-enabled"),
+            pytest.param(2, 5, 5, id="honors-train-config"),
+            pytest.param(0, 5, None, id="none-when-workers-disabled"),
+        ],
+    )
+    def test_prefetch_factor(self, tmp_path, base_train_config, num_workers, prefetch_factor, expected_prefetch_factor):
+        """_prefetch_factor is derived from num_workers and the configured prefetch_factor."""
+        tc = base_train_config(num_workers=num_workers, prefetch_factor=prefetch_factor)
         dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
-        assert dm._prefetch_factor == 2
-
-    def test_prefetch_factor_honors_train_config(self, tmp_path, base_train_config):
-        """prefetch_factor from TrainConfig is forwarded when workers are enabled."""
-        tc = base_train_config(num_workers=2, prefetch_factor=5)
-        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
-        assert dm._prefetch_factor == 5
-
-    def test_prefetch_factor_none_when_workers_disabled(self, tmp_path, base_train_config):
-        """prefetch_factor is None when num_workers == 0."""
-        tc = base_train_config(num_workers=0, prefetch_factor=5)
-        dm = _build_datamodule(train_config=tc, tmp_path=tmp_path)
-        assert dm._prefetch_factor is None
+        assert dm._prefetch_factor == expected_prefetch_factor
 
     def test_pin_memory_override_is_respected(self, tmp_path, base_train_config):
         """pin_memory can be explicitly overridden from TrainConfig."""
@@ -337,16 +333,16 @@ class TestPrivateShowSamples:
         with pytest.raises(ImportError, match=r"rfdetr\[visual\]"):
             dm._show_samples(1)
 
-    def test_private_show_samples_returns_figure_for_segmentation_targets(self, fixture_training_setup, monkeypatch):
+    @patch("supervision.MaskAnnotator")
+    def test_private_show_samples_returns_figure_for_segmentation_targets(
+        self, mock_mask_ann, fixture_training_setup, monkeypatch
+    ):
         """_show_samples renders mask overlays when dataset targets include instance masks."""
         _, _, dm = fixture_training_setup
         import matplotlib
         import numpy as np
 
         matplotlib.use("Agg", force=True)
-        from unittest.mock import MagicMock
-        from unittest.mock import patch as _patch
-
         from matplotlib import pyplot as plt
         from matplotlib.figure import Figure
 
@@ -369,22 +365,21 @@ class TestPrivateShowSamples:
 
         mock_instance = MagicMock()
         mock_instance.annotate.return_value = np.zeros((16, 16, 3), dtype=np.uint8)
+        mock_mask_ann.return_value = mock_instance
 
-        with _patch("supervision.MaskAnnotator", return_value=mock_instance) as mock_mask_ann:
-            figure = dm._show_samples(1, split="train", columns=1)
+        figure = dm._show_samples(1, split="train", columns=1)
 
         assert isinstance(figure, Figure)
         mock_mask_ann.assert_called_once()
         mock_instance.annotate.assert_called_once()
         plt.close(figure)
 
+    @patch("supervision.MaskAnnotator")
     def test_private_show_samples_detection_only_does_not_call_mask_annotator(
-        self, fixture_training_setup, monkeypatch
+        self, mock_mask_ann, fixture_training_setup, monkeypatch
     ):
         """_show_samples skips MaskAnnotator when dataset targets have no masks key."""
         _, _, dm = fixture_training_setup
-        from unittest.mock import patch as _patch
-
         import matplotlib
         from matplotlib import pyplot as plt
 
@@ -392,17 +387,17 @@ class TestPrivateShowSamples:
 
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
 
-        with _patch("supervision.MaskAnnotator") as mock_mask_ann:
-            figure = dm._show_samples(1, split="train", columns=1)
+        figure = dm._show_samples(1, split="train", columns=1)
 
         mock_mask_ann.assert_not_called()
         plt.close(figure)
 
-    def test_private_show_samples_empty_masks_skips_mask_annotator(self, fixture_training_setup, monkeypatch):
+    @patch("supervision.MaskAnnotator")
+    def test_private_show_samples_empty_masks_skips_mask_annotator(
+        self, mock_mask_ann, fixture_training_setup, monkeypatch
+    ):
         """_show_samples skips MaskAnnotator when masks tensor has zero instances (0, H, W)."""
         _, _, dm = fixture_training_setup
-        from unittest.mock import patch as _patch
-
         import matplotlib
         from matplotlib import pyplot as plt
 
@@ -425,8 +420,7 @@ class TestPrivateShowSamples:
 
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _EmptyMasksDataset())
 
-        with _patch("supervision.MaskAnnotator") as mock_mask_ann:
-            figure = dm._show_samples(1, split="train", columns=1)
+        figure = dm._show_samples(1, split="train", columns=1)
 
         mock_mask_ann.assert_not_called()
         plt.close(figure)
@@ -473,7 +467,8 @@ class TestSetup:
         assert dm._dataset_test is fake_test
 
     @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
-    def test_test_stage_falls_back_to_val_without_test_split(self, tmp_path, dataset_file):
+    @patch("rfdetr.training.module_data.build_dataset")
+    def test_test_stage_falls_back_to_val_without_test_split(self, mock_build_dataset, tmp_path, dataset_file):
         """Setup('test') falls back to 'val' when the dataset declares no test split.
 
         A ``dataset_file="roboflow"`` dataset whose detected format is YOLO-style
@@ -489,8 +484,8 @@ class TestSetup:
                 raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
             return fake_val
 
-        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            dm.setup("test")
+        mock_build_dataset.side_effect = _build
+        dm.setup("test")
 
         assert dm._dataset_test is fake_val
 
@@ -553,7 +548,8 @@ class TestSetup:
         assert len(dm._dataset_test) == 2
 
     @pytest.mark.parametrize("dataset_file", [pytest.param("roboflow", id="roboflow"), pytest.param("yolo", id="yolo")])
-    def test_test_stage_propagates_broken_test_split(self, tmp_path, dataset_file):
+    @patch("rfdetr.training.module_data.build_dataset")
+    def test_test_stage_propagates_broken_test_split(self, mock_build_dataset, tmp_path, dataset_file):
         """Setup('test') propagates builder failures after a test split is resolved."""
         dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
 
@@ -562,15 +558,19 @@ class TestSetup:
                 raise FileNotFoundError("declared test annotation file is broken")
             return _fake_dataset(20)
 
-        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            with pytest.raises(FileNotFoundError, match="declared test annotation file is broken"):
-                dm.setup("test")
+        mock_build_dataset.side_effect = _build
+        with pytest.raises(FileNotFoundError, match="declared test annotation file is broken"):
+            dm.setup("test")
 
     @pytest.mark.parametrize(
         "dataset_file, dataset_label",
         [pytest.param("roboflow", "Roboflow", id="roboflow"), pytest.param("yolo", "YOLO", id="yolo")],
     )
-    def test_test_stage_warns_when_falling_back_to_val(self, tmp_path, dataset_file, dataset_label):
+    @patch("rfdetr.training.module_data.logger")
+    @patch("rfdetr.training.module_data.build_dataset")
+    def test_test_stage_warns_when_falling_back_to_val(
+        self, mock_build_dataset, mock_logger, tmp_path, dataset_file, dataset_label
+    ):
         """The test-to-val fallback is logged at WARNING rather than applied silently."""
         dm = _build_datamodule(train_config=_base_train_config(tmp_path, dataset_file=dataset_file))
 
@@ -579,11 +579,8 @@ class TestSetup:
                 raise YoloSplitUnavailableError(str(tmp_path / "test" / "images"))
             return _fake_dataset(20)
 
-        with (
-            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
-            patch("rfdetr.training.module_data.logger") as mock_logger,
-        ):
-            dm.setup("test")
+        mock_build_dataset.side_effect = _build
+        dm.setup("test")
 
         mock_logger.warning.assert_called_once_with(
             "No resolvable 'test' split for this %s dataset (%s); evaluating the 'val' split instead.",
@@ -591,7 +588,8 @@ class TestSetup:
             str(tmp_path / "test" / "images"),
         )
 
-    def test_test_stage_coco_uses_val_split(self, coco_datamodule):
+    @patch("rfdetr.training.module_data.build_dataset")
+    def test_test_stage_coco_uses_val_split(self, mock_build_dataset, coco_datamodule):
         """Setup('test') falls back to 'val' for COCO, whose test2017 split is unlabelled test-dev."""
         requested_splits = []
 
@@ -599,8 +597,8 @@ class TestSetup:
             requested_splits.append(image_set)
             return _fake_dataset(10)
 
-        with patch("rfdetr.training.module_data.build_dataset", side_effect=_build):
-            coco_datamodule.setup("test")
+        mock_build_dataset.side_effect = _build
+        coco_datamodule.setup("test")
 
         assert "val" in requested_splits
         assert "test" not in requested_splits
@@ -623,7 +621,8 @@ class TestSetup:
 
         assert dm._dataset_test is fake_val
 
-    def test_fit_does_not_rebuild_if_already_set(self, tmp_path):
+    @patch("rfdetr.training.module_data.build_dataset")
+    def test_fit_does_not_rebuild_if_already_set(self, mock_build, tmp_path):
         """Setup('fit') skips building if datasets are already populated."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
@@ -633,9 +632,8 @@ class TestSetup:
         dm._dataset_train = existing_train
         dm._dataset_val = existing_val
 
-        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
-            dm.setup("fit")
-            mock_build.assert_not_called()
+        dm.setup("fit")
+        mock_build.assert_not_called()
 
         assert dm._dataset_train is existing_train
         assert dm._dataset_val is existing_val
@@ -647,7 +645,8 @@ class TestSetup:
         assert dm._dataset_train is None
         assert dm._dataset_test is None
 
-    def test_predict_stage_does_not_rebuild_existing_val(self, tmp_path):
+    @patch("rfdetr.training.module_data.build_dataset")
+    def test_predict_stage_does_not_rebuild_existing_val(self, mock_build, tmp_path):
         """Setup('predict') skips building when _dataset_val is already set."""
         mc = _base_model_config()
         tc = _base_train_config(tmp_path)
@@ -655,9 +654,8 @@ class TestSetup:
         existing_val = _fake_dataset(20)
         dm._dataset_val = existing_val
 
-        with patch("rfdetr.training.module_data.build_dataset") as mock_build:
-            dm.setup("predict")
-            mock_build.assert_not_called()
+        dm.setup("predict")
+        mock_build.assert_not_called()
 
         assert dm._dataset_val is existing_val
 
@@ -736,12 +734,12 @@ class TestPadTargetsToKorniaGuard:
         ):
             dm.setup("fit")
 
-    def test_pad_targets_to_with_cpu_augmentation_no_raise(self, tmp_path):
+    @patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10))
+    def test_pad_targets_to_with_cpu_augmentation_no_raise(self, mock_build_dataset, tmp_path):
         """Setup('fit') should not raise when pad_targets_to is combined with CPU augmentation."""
         dm = self._build_dm(tmp_path, pad_targets_to=12, augmentation_backend="cpu")
 
-        with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda *a, **k: _fake_dataset(10)):
-            dm.setup("fit")
+        dm.setup("fit")
 
         assert dm.train_config.pad_targets_to == 12
 
@@ -1003,7 +1001,8 @@ class TestTrainDataloader:
         assert val_targets[0]["boxes"].shape[0] == 1
         assert "valid" not in val_targets[0]
 
-    def test_webdataset_loader_pads_only_the_fixed_epoch_train_call(self, tmp_path):
+    @patch("rfdetr.training.module_data.build_webdataset_loader")
+    def test_webdataset_loader_pads_only_the_fixed_epoch_train_call(self, mock_build_webdataset_loader, tmp_path):
         """_webdataset_loader is shared by train (fixed_epoch=True) and eval; only the train call may collate through
         the padded/packed self._collate_fn_train."""
         dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, pack_targets=True, pad_targets_to=4))
@@ -1013,12 +1012,13 @@ class TestTrainDataloader:
             captured["collate_fn"] = collate_fn
             return MagicMock()
 
-        with patch("rfdetr.training.module_data.build_webdataset_loader", _fake_build_webdataset_loader):
-            dm._webdataset_loader(MagicMock(), batch_size=2, fixed_epoch=True)
-            assert captured["collate_fn"] is dm._collate_fn_train
+        mock_build_webdataset_loader.side_effect = _fake_build_webdataset_loader
 
-            dm._webdataset_loader(MagicMock(), batch_size=2, fixed_epoch=False)
-            assert captured["collate_fn"] is dm._collate_fn
+        dm._webdataset_loader(MagicMock(), batch_size=2, fixed_epoch=True)
+        assert captured["collate_fn"] is dm._collate_fn_train
+
+        dm._webdataset_loader(MagicMock(), batch_size=2, fixed_epoch=False)
+        assert captured["collate_fn"] is dm._collate_fn
 
     @staticmethod
     def _raw_segmentation_sample(
@@ -1114,29 +1114,23 @@ class TestGradAccumAlignedDataset:
         wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
         assert len(wrapped) % 16 == 0
 
-    def test_no_padding_needed_when_already_aligned(self):
-        """If len(dataset) % pad_unit == 0, length is unchanged."""
+    @pytest.mark.parametrize(
+        "length, effective_batch_size, world_size, minimum_length, expected_length",
+        [
+            pytest.param(64, 16, 1, None, 64, id="no-padding-needed-when-already-aligned"),
+            pytest.param(50, 16, 1, None, 64, id="padding-adds-correct-count"),  # 50 % 16 = 2 -> pad 14
+            pytest.param(3, 2, 2, 20, 20, id="minimum-length-repeats-to-requested-aligned-size"),
+        ],
+    )
+    def test_wrapped_length(self, length, effective_batch_size, world_size, minimum_length, expected_length):
+        """Len(wrapped) reflects padding to the alignment unit, or to minimum_length when it is larger."""
         from rfdetr.training.module_data import GradAccumAlignedDataset
 
-        ds = self._make_dataset(64)
-        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
-        assert len(wrapped) == 64
-
-    def test_padding_adds_correct_count(self):
-        """Exactly (pad_unit - remainder) % pad_unit samples are added."""
-        from rfdetr.training.module_data import GradAccumAlignedDataset
-
-        ds = self._make_dataset(50)  # 50 % 16 = 2 → pad 14
-        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=16, world_size=1)
-        assert len(wrapped) == 64
-
-    def test_minimum_length_repeats_to_requested_aligned_size(self) -> None:
-        """A minimum length extends short datasets while preserving the alignment unit."""
-        from rfdetr.training.module_data import GradAccumAlignedDataset
-
-        ds = self._make_dataset(3)
-        wrapped = GradAccumAlignedDataset(ds, effective_batch_size=2, world_size=2, minimum_length=20)
-        assert len(wrapped) == 20
+        ds = self._make_dataset(length)
+        wrapped = GradAccumAlignedDataset(
+            ds, effective_batch_size=effective_batch_size, world_size=world_size, minimum_length=minimum_length
+        )
+        assert len(wrapped) == expected_length
 
     def test_getitem_forwards_to_original_dataset(self):
         """Items in the original range map directly to the underlying dataset."""
@@ -1354,18 +1348,21 @@ class TestEvalBatchSize:
         return dm
 
     @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
-    def test_defaults_to_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
-        """With eval_batch_size unset, every eval DataLoader keeps using the train batch size."""
-        dm = self._setup_dm(tmp_path, batch_size=6, eval_batch_size=None)
+    @pytest.mark.parametrize(
+        "batch_size, eval_batch_size, expected_batch_size",
+        [
+            pytest.param(6, None, 6, id="defaults-to-train-batch-size"),
+            pytest.param(2, 16, 16, id="explicit-value-overrides-train-batch-size"),
+            pytest.param("auto", 8, 8, id="explicit-value-works-with-unresolved-auto-batch-size"),
+        ],
+    )
+    def test_eval_loader_batch_size(
+        self, tmp_path: Path, loader_name: str, batch_size, eval_batch_size, expected_batch_size
+    ) -> None:
+        """Every eval DataLoader's batch_size follows eval_batch_size when set, else the train batch_size."""
+        dm = self._setup_dm(tmp_path, batch_size=batch_size, eval_batch_size=eval_batch_size)
         loader = getattr(dm, loader_name)()
-        assert loader.batch_size == 6
-
-    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
-    def test_explicit_value_overrides_train_batch_size(self, tmp_path: Path, loader_name: str) -> None:
-        """An explicit eval_batch_size is used by every eval DataLoader instead of the train batch size."""
-        dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16)
-        loader = getattr(dm, loader_name)()
-        assert loader.batch_size == 16
+        assert loader.batch_size == expected_batch_size
 
     def test_train_dataloader_keeps_train_batch_size(self, tmp_path: Path) -> None:
         """The training DataLoader ignores eval_batch_size and keeps the configured train batch size."""
@@ -1378,13 +1375,6 @@ class TestEvalBatchSize:
         dm = self._setup_dm(tmp_path, batch_size=2, eval_batch_size=16, grad_accum_steps=4, dataset_length=50)
         loader = dm.train_dataloader()
         assert len(loader.dataset) % (2 * 4) == 0
-
-    @pytest.mark.parametrize("loader_name", _EVAL_LOADERS)
-    def test_explicit_value_works_with_unresolved_auto_batch_size(self, tmp_path: Path, loader_name: str) -> None:
-        """An explicit eval_batch_size does not depend on batch_size='auto' having been resolved."""
-        dm = self._setup_dm(tmp_path, batch_size="auto", eval_batch_size=8)
-        loader = getattr(dm, loader_name)()
-        assert loader.batch_size == 8
 
     def test_unresolved_auto_batch_size_still_raises_without_explicit_value(self, tmp_path: Path) -> None:
         """Without eval_batch_size, an unresolved batch_size='auto' still fails eval loader construction."""
@@ -1610,11 +1600,11 @@ class TestBackendResolution:
             dm.setup("fit")
         return dm
 
-    def test_auto_no_cuda_falls_back_to_cpu(self, tmp_path):
+    @patch("rfdetr.training.module_data._has_cuda_device", return_value=False)
+    def test_auto_no_cuda_falls_back_to_cpu(self, mock_has_cuda_device, tmp_path):
         """Auto + no CUDA: _kornia_pipeline stays None, no error."""
         dm = self._build_dm_with_backend(tmp_path, "auto")
-        with patch("rfdetr.training.module_data._has_cuda_device", return_value=False):
-            dm = self._setup_with_mock_build(dm)
+        dm = self._setup_with_mock_build(dm)
         assert getattr(dm, "_kornia_pipeline", None) is None, (
             "auto backend with no CUDA must not build a Kornia pipeline"
         )
@@ -1694,7 +1684,9 @@ class TestBackendResolution:
         )
         assert captured.get("with_masks") is True, "GPU path must transport the padding mask for detection batches"
 
-    def test_auto_no_cuda_does_not_strip_cpu_normalize(self, tmp_path):
+    @patch("rfdetr.training.module_data.build_dataset")
+    @patch("rfdetr.training.module_data._has_cuda_device", return_value=False)
+    def test_auto_no_cuda_does_not_strip_cpu_normalize(self, mock_has_cuda_device, mock_build_dataset, tmp_path):
         """Auto + no CUDA: gpu_postprocess must be False so CPU Normalize is retained."""
         dm = self._build_dm_with_backend(tmp_path, "auto")
         captured_gpu_postprocess = {}
@@ -1703,11 +1695,9 @@ class TestBackendResolution:
             captured_gpu_postprocess[image_set] = getattr(args, "augmentation_backend", "cpu")
             return _fake_dataset(10)
 
-        with (
-            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
-            patch("rfdetr.training.module_data.build_dataset", side_effect=_spy_build),
-        ):
-            dm.setup("fit")
+        mock_build_dataset.side_effect = _spy_build
+
+        dm.setup("fit")
 
         # When CUDA is unavailable, resolved backend must be 'cpu' so datasets are
         # built with gpu_postprocess=False and CPU Normalize is not stripped.
@@ -2045,7 +2035,9 @@ class TestKorniaSetupDoneSentinel:
         dm = self._setup_fit_with_mocks(dm)
         assert dm._kornia_setup_done is True
 
-    def test_setup_kornia_pipeline_not_called_twice(self, tmp_path):
+    @patch("rfdetr.training.module_data._has_cuda_device", return_value=False)
+    @patch("rfdetr.training.module_data.build_dataset")
+    def test_setup_kornia_pipeline_not_called_twice(self, mock_build_dataset, mock_has_cuda_device, tmp_path):
         """Calling setup('fit') twice only calls _setup_kornia_pipeline once."""
         dm = self._build_dm(tmp_path)
         call_count = 0
@@ -2064,12 +2056,10 @@ class TestKorniaSetupDoneSentinel:
         def _build(image_set, args, resolution):
             return fake_train if image_set == "train" else fake_val
 
-        with (
-            patch("rfdetr.training.module_data.build_dataset", side_effect=_build),
-            patch("rfdetr.training.module_data._has_cuda_device", return_value=False),
-        ):
-            dm.setup("fit")
-            dm.setup("fit")
+        mock_build_dataset.side_effect = _build
+
+        dm.setup("fit")
+        dm.setup("fit")
 
         assert call_count == 1, f"_setup_kornia_pipeline called {call_count} times; expected exactly 1"
 

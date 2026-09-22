@@ -4,8 +4,10 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import json
 import sys
 from collections import OrderedDict
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
@@ -17,6 +19,13 @@ from PIL import Image
 import rfdetr.export.benchmark as benchmark
 from rfdetr.export._tensorrt.inference import TRTInference
 from rfdetr.export.benchmark import infer_transforms
+
+#: Minimal indexed COCO dataset used to verify evaluator construction.
+_MINIMAL_COCO = {
+    "images": [{"id": 1, "file_name": "000000000001.jpg", "width": 64, "height": 48}],
+    "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [8, 8, 16, 16], "area": 256, "iscrowd": 0}],
+    "categories": [{"id": 1, "name": "widget"}],
+}
 
 
 class TestTRTInference:
@@ -259,6 +268,26 @@ class TestBenchmarkMain:
         assert infer_onnx.call_args.args[0] is session
         assert infer_onnx.call_args.kwargs["device"] == expected_torch_device
         assert infer_onnx.call_args.kwargs["repeats"] == 1
+
+    def test_eval_enabled_passes_a_loaded_coco_object_to_the_evaluator(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``main`` loads the annotation file so ``CocoEvaluator`` receives a COCO object, not a path string."""
+        pytest.importorskip("faster_coco_eval")
+        annotations = tmp_path / "annotations"
+        annotations.mkdir()
+        (annotations / "instances_val2017.json").write_text(json.dumps(_MINIMAL_COCO))
+        onnxruntime = ModuleType("onnxruntime")
+        onnxruntime.InferenceSession = Mock(return_value=Mock())  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
+        infer_onnx = Mock()
+        monkeypatch.setattr(benchmark, "infer_onnx", infer_onnx)
+
+        benchmark.main("model.onnx", coco_path=str(tmp_path), disable_eval=False)
+
+        infer_onnx.assert_called_once()
+        evaluator = infer_onnx.call_args.args[1]
+        assert evaluator.cat_ids == {1}
 
 
 class TestBenchmarkShapeParameterization:
