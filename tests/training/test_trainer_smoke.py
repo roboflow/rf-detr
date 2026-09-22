@@ -13,6 +13,7 @@ Chapter 1 gate: these must pass before Chapter 2 begins.
 """
 
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -403,6 +404,43 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
 
     trainer = build_trainer(tc, mc, accelerator="cpu", fast_dev_run=2)
     trainer.fit(module, datamodule=datamodule)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@pytest.mark.timeout(300)
+def test_ddp_spawn_run_test_completes(base_model_config, base_train_config):
+    """``run_test=True`` under ``ddp_spawn`` must finish ``fit`` and leave the best checkpoint behind.
+
+    ``BestModelCallback.on_fit_end`` used to call ``trainer.test()`` from the main rank's spawned worker, which made the
+    spawn launcher start a second set of processes and re-initialise the process group on the same port
+    (``DistNetworkError: EADDRINUSE``). Spawn workers now skip the fit-end test with a warning instead; the subprocess
+    launcher behind ``strategy="ddp"`` runs it on every rank. The 300 s timeout turns a hang into a failure should the
+    collective path ever regress into a rank-0-only call.
+    """
+    mc = base_model_config()
+    tc = base_train_config(use_ema=False, run_test=True, devices=2, strategy="ddp_spawn", epochs=1)
+
+    fake_dataset = _FakeDataset(length=20)
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), _FakePostProcess()),
+        ),
+    ):
+        module = _DDPModule(mc, tc)
+
+    datamodule = RFDETRDataModule(mc, tc)
+    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
+    datamodule._dataset_train = fake_dataset
+    datamodule._dataset_val = fake_dataset
+    datamodule._dataset_test = fake_dataset
+
+    trainer = build_trainer(tc, mc, accelerator="cpu", limit_train_batches=2, limit_val_batches=2, limit_test_batches=2)
+    trainer.fit(module, datamodule=datamodule)
+
+    assert (Path(tc.output_dir) / "checkpoint_best_total.pth").exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
