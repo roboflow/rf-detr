@@ -22,6 +22,7 @@ from typing import Any, cast
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
+from transformers import PreTrainedModel
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig
@@ -688,4 +689,4 @@ def apply_lora(nn_model: LWDETR) -> None:
     # peft.get_peft_model() type-hints its first argument as PreTrainedModel, but only actually
     # needs an nn.Module whose named submodules match target_modules; DinoV2 (a plain nn.Module
     # wrapper, not itself a PreTrainedModel) satisfies that at runtime.
-    backbone.encoder = get_peft_model(backbone.encoder, lora_config)  # type: ignore[assignment]
+    backbone.encoder = get_peft_model(cast(PreTrainedModel, backbone.encoder), lora_config)  # type: ignore[assignment]
