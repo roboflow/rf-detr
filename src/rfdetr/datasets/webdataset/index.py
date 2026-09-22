@@ -14,6 +14,7 @@ schemas and unavailable split indexes. Used by: webdataset pack, load, RF-DETR d
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -30,6 +31,50 @@ DEFAULT_MAX_SHARD_BYTES = 100 * 1024 * 1024
 IMAGE_EXTENSIONS: tuple[str, ...] = ("jpg", "jpeg", "png", "webp", "bmp")
 
 CategoryIdPolicy = Literal["remap", "raw"]
+
+
+def category_names_by_label(categories: Iterable[dict[str, Any]], cat2label: dict[int, int] | None) -> list[str]:
+    """Return category names indexed by the label the dataset emits for them.
+
+    Every entry sits at its own label index, so ``names[label]`` is always the emitted label's name. Under a
+    ``"remap"`` mapping that is the contiguous 0-based index; with no mapping (``"raw"``) it is the source
+    ``category_id`` itself — raw labels skip whatever gaps the id range has, so the list carries an empty string at
+    every skipped index rather than shifting later names down to fill the gap. A mapping whose labels leave a slot
+    unnamed gets the same empty-string placeholder.
+
+    Args:
+        categories: COCO ``categories`` entries; ``id`` and ``name`` are read from each.
+        cat2label: ``category_id`` to label-index mapping, or ``None`` when source ids are used as labels.
+
+    Returns:
+        The category names, indexed by label, with an empty string at every label with no category.
+
+    Examples:
+        >>> categories = [{"id": 3, "name": "cat"}, {"id": 9, "name": "dog"}]
+        >>> category_names_by_label(categories, {3: 0, 9: 1})
+        ['cat', 'dog']
+        >>> category_names_by_label(categories, None)
+        ['', '', '', 'cat', '', '', '', '', '', 'dog']
+        >>> category_names_by_label(categories, {3: 0, 9: 2})
+        ['cat', '', 'dog']
+        >>> category_names_by_label([], None), category_names_by_label(categories, {})
+        ([], [])
+    """
+    names_by_id = {int(category["id"]): str(category["name"]) for category in categories}
+    if cat2label is None:
+        if not names_by_id:
+            return []
+        names = [""] * (max(names_by_id) + 1)
+        for category_id, name in names_by_id.items():
+            names[category_id] = name
+        return names
+    if not cat2label:
+        return []
+    names = [""] * (max(cat2label.values()) + 1)
+    for category_id, label in cat2label.items():
+        if category_id in names_by_id:
+            names[label] = names_by_id[category_id]
+    return names
 
 
 def resolve_within(base: Path, name: str) -> Path:
@@ -258,6 +303,26 @@ class ShardIndex:
             return None
         kept = filter_parent_categories(list(self.categories), set(self.annotated_category_ids))
         return {int(category["id"]): label for label, category in enumerate(kept)}
+
+    def class_names(self) -> list[str]:
+        """Return the category names in label order, as a reader of this split would emit them.
+
+        The packed index is the only place a shard stream keeps its category list, so this is what
+        :attr:`~rfdetr.datasets.webdataset.load.WebDatasetDetection.class_names` reports for a train split and what
+        :meth:`~rfdetr.detr.RFDETR.train` records before the datamodule has built one. See
+        :func:`category_names_by_label` for the ``"remap"`` versus ``"raw"`` layout.
+
+        Returns:
+            The category names, indexed by label, with an empty string at every label with no category.
+
+        Examples:
+            >>> categories = ({"id": 3, "name": "a"}, {"id": 9, "name": "b"})
+            >>> ShardIndex("t", (), 0, categories, (3, 9), "remap").class_names()
+            ['a', 'b']
+            >>> ShardIndex("t", (), 0, categories, (3, 9), "raw").class_names()
+            ['', '', '', 'a', '', '', '', '', '', 'b']
+        """
+        return category_names_by_label(self.categories, self.cat2label())
 
 
 class WebDatasetSplitUnavailableError(FileNotFoundError):
