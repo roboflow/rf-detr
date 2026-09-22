@@ -104,21 +104,31 @@ def _fake_nn_model() -> MagicMock:
     return model
 
 
+class _PatchWeightsIO:
+    """Mixin suppressing all download, file-existence, and validation side effects on ``rfdetr.models.weights``."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_io(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Suppress external weights-I/O side effects for inheriting tests.
+
+        Examples:
+            Pytest applies this autouse fixture through fixture injection, so direct invocation is skipped.
+
+            >>> _PatchWeightsIO()._patch_io(pytest.MonkeyPatch())  # doctest: +SKIP
+        """
+        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
+        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
+
+
 # ---------------------------------------------------------------------------
 # load_pretrain_weights — reinit scenarios
 # ---------------------------------------------------------------------------
 
 
-class TestLoadPretrainWeightsReinitScenarios:
+class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
     """Verify reinitialize_detection_head call patterns for all class-count scenarios."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_io(self, monkeypatch):
-        """Suppress all download, file-existence, and validation side effects."""
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
     def test_characterization_fine_tuned_checkpoint_auto_aligns_default_num_classes(self, monkeypatch, tmp_path):
         """Fine-tuned checkpoint (fewer classes) + default num_classes → 1 reinit to ckpt size.
@@ -295,15 +305,8 @@ class TestLoadPretrainWeightsReinitScenarios:
 # ---------------------------------------------------------------------------
 
 
-class TestLoadPretrainWeightsClassNames:
+class TestLoadPretrainWeightsClassNames(_PatchWeightsIO):
     """Verify that class_names are extracted from checkpoint and returned."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_io(self, monkeypatch):
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
     def test_characterization_class_names_extracted_from_checkpoint(self, monkeypatch, tmp_path):
         """class_names stored in checkpoint args are returned as a list of strings."""
@@ -356,20 +359,13 @@ class TestLoadPretrainWeightsClassNames:
 # ---------------------------------------------------------------------------
 
 
-class TestLoadPretrainWeightsTrustPropagation:
+class TestLoadPretrainWeightsTrustPropagation(_PatchWeightsIO):
     """Verify the ``trust`` kwarg reaches ``_safe_torch_load`` unchanged.
 
     Regression coverage for a gap where ``RFDETR.from_checkpoint(path, trust_checkpoint=True)`` bypassed the safe-load
     check only for its own metadata read, then silently reverted to ``trust=False`` when the constructed model reloaded
     the same file here — making ``trust_checkpoint=True`` inert for any checkpoint that actually needed it.
     """
-
-    @pytest.fixture(autouse=True)
-    def _patch_io(self, monkeypatch):
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
     def test_trust_true_forwarded_to_safe_torch_load(self):
         """load_pretrain_weights(trust=True) calls _safe_torch_load with trust=True."""
@@ -401,16 +397,8 @@ class TestLoadPretrainWeightsTrustPropagation:
 # ---------------------------------------------------------------------------
 
 
-class TestLoadPretrainWeightsPTLCkptFormat:
+class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
     """Verify that PTL-native .ckpt checkpoints (state_dict, no model key) are handled."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_io(self, monkeypatch):
-        """Suppress all download, file-existence, and validation side effects."""
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
     def _make_ptl_checkpoint(
         self,
@@ -824,15 +812,8 @@ class TestSliceQueryParamPerGroup:
             _slice_query_param_per_group(tensor, ckpt_nq, ckpt_g, tgt_nq, tgt_g)
 
 
-class TestLoadPretrainWeightsPerGroupQuerySlice:
+class TestLoadPretrainWeightsPerGroupQuerySlice(_PatchWeightsIO):
     """End-to-end check that ``load_pretrain_weights`` invokes per-group slicing."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_io(self, monkeypatch):
-        monkeypatch.setattr("rfdetr.models.weights.download_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_pretrain_weights", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.validate_checkpoint_compatibility", lambda *a, **kw: None)
-        monkeypatch.setattr("rfdetr.models.weights.os.path.isfile", lambda _: True)
 
     def _make_args_dict_checkpoint(self, num_queries: int, group_detr: int) -> dict:
         """Build a checkpoint with labelled query weights and dict-style args."""

@@ -875,19 +875,17 @@ class TestMetricsTablePrinting:
         assert "(Epoch" in render_tables.call_args_list[0].args[1]
         assert render_tables.call_args_list[0].args[2] == "overall-1"
 
-    def test_missing_rich_warns_once_and_skips_metric_tables(self) -> None:
+    @patch("rfdetr.training.callbacks.coco_eval._get_rich_console")
+    @patch("rfdetr.training.callbacks.coco_eval.logger.warning")
+    @patch("rfdetr.training.callbacks.coco_eval._IS_RICH_AVAILABLE", False)
+    def test_missing_rich_warns_once_and_skips_metric_tables(self, warning, get_console) -> None:
         """Missing Rich emits one warning and skips noisy table rendering."""
         cb = COCOEvalCallback(in_notebook=False)
         trainer = _make_trainer()
         trainer.is_global_zero = True
 
-        with (
-            patch("rfdetr.training.callbacks.coco_eval._IS_RICH_AVAILABLE", False),
-            patch("rfdetr.training.callbacks.coco_eval.logger.warning") as warning,
-            patch("rfdetr.training.callbacks.coco_eval._get_rich_console") as get_console,
-        ):
-            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
-            cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
+        cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, [])
+        cb._print_metrics_tables(trainer, "val", {"mAP": 0.2}, [])
 
         warning.assert_called_once_with(
             "Rich is not installed; skipping metric table rendering. Install `rich` to enable tables."
@@ -914,7 +912,8 @@ class TestMetricsTablePrinting:
 
         assert cb._output_widget is None
 
-    def test_terminal_prints_through_rich_progress_bar_console(self) -> None:
+    @patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", return_value="overall")
+    def test_terminal_prints_through_rich_progress_bar_console(self, _mock_0) -> None:
         """Metric tables route through RichProgressBar._console when active."""
         # Create a fake callback whose class name is RichProgressBar so
         # _get_rich_console picks it up without importing PTL.
@@ -927,11 +926,7 @@ class TestMetricsTablePrinting:
         trainer = _make_trainer(callbacks=[fake_pb])
         trainer.is_global_zero = True
 
-        with patch(
-            "rfdetr.training.callbacks.coco_eval._render_overall_merged",
-            return_value="overall",
-        ):
-            cb._print_metrics_tables(trainer, "val", {"mAP": 0.5}, [])
+        cb._print_metrics_tables(trainer, "val", {"mAP": 0.5}, [])
 
         rich_console.print.assert_called_once()
 

@@ -160,20 +160,18 @@ class TestBuildRoboflowFromYoloAugConfig:
             f"{transform_fn} was not called with aug_config={aug_config!r}; got {kwargs}"
         )
 
-    def test_data_yml_selected_when_data_yaml_missing(self, tmp_path: Path) -> None:
+    @patch("rfdetr.datasets.yolo.YoloDetection")
+    @patch("rfdetr.datasets.yolo.make_coco_transforms")
+    def test_data_yml_selected_when_data_yaml_missing(self, mock_transform, mock_dataset, tmp_path: Path) -> None:
         """Regression test: build_roboflow_from_yolo picks data.yml when data.yaml is not present."""
         (tmp_path / "data.yml").touch()
         args = self._make_args(square_resize_div_64=False, aug_config=None)
         args.dataset_dir = str(tmp_path)
 
-        with (
-            patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
-            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
-        ):
-            mock_transform.return_value = MagicMock()
-            mock_dataset.return_value = MagicMock()
+        mock_transform.return_value = MagicMock()
+        mock_dataset.return_value = MagicMock()
 
-            build_roboflow_from_yolo("train", args, resolution=640)
+        build_roboflow_from_yolo("train", args, resolution=640)
 
         _, kwargs = mock_dataset.call_args
         assert kwargs["data_file"] == str(tmp_path / "data.yml")
@@ -1161,36 +1159,32 @@ class TestBuildRoboflowFromYoloUltralytics:
             keypoint_flip_pairs=[],
         )
 
-    def test_ultralytics_val_split_resolves_correctly(self, tmp_path: Path) -> None:
+    @patch("rfdetr.datasets.yolo.YoloDetection")
+    @patch("rfdetr.datasets.yolo.make_coco_transforms")
+    def test_ultralytics_val_split_resolves_correctly(self, mock_transform, mock_dataset, tmp_path: Path) -> None:
         """Val split on Ultralytics layout (val/, yaml paths) should not raise."""
         _write_ultralytics_yolo_dataset(tmp_path)
         args = self._make_args(str(tmp_path))
 
-        with (
-            patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
-            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
-        ):
-            mock_transform.return_value = MagicMock()
-            mock_dataset.return_value = MagicMock()
+        mock_transform.return_value = MagicMock()
+        mock_dataset.return_value = MagicMock()
 
-            build_roboflow_from_yolo("val", args, resolution=640)
+        build_roboflow_from_yolo("val", args, resolution=640)
 
         _, kwargs = mock_dataset.call_args
         assert kwargs["img_folder"] == str(tmp_path / "val" / "images")
 
-    def test_roboflow_layout_still_works(self, tmp_path: Path) -> None:
+    @patch("rfdetr.datasets.yolo.YoloDetection")
+    @patch("rfdetr.datasets.yolo.make_coco_transforms")
+    def test_roboflow_layout_still_works(self, mock_transform, mock_dataset, tmp_path: Path) -> None:
         """Roboflow export layout (valid/) must keep working after the change."""
         _write_minimal_roboflow_yolo_dataset(tmp_path)
         args = self._make_args(str(tmp_path))
 
-        with (
-            patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
-            patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
-        ):
-            mock_transform.return_value = MagicMock()
-            mock_dataset.return_value = MagicMock()
+        mock_transform.return_value = MagicMock()
+        mock_dataset.return_value = MagicMock()
 
-            build_roboflow_from_yolo("val", args, resolution=640)
+        build_roboflow_from_yolo("val", args, resolution=640)
 
         _, kwargs = mock_dataset.call_args
         assert "valid" in kwargs["img_folder"]
@@ -1255,25 +1249,25 @@ class TestBuildRoboflowFromYoloUltralytics:
         with pytest.raises(ValueError, match="test split declared"):
             build_roboflow_from_yolo("test", args, resolution=64)
 
-    def test_valid_test_split_builds_real_dataset(self, tmp_path: Path) -> None:
+    @patch("rfdetr.datasets.yolo.make_coco_transforms", return_value=None)
+    def test_valid_test_split_builds_real_dataset(self, _mock_0, tmp_path: Path) -> None:
         """A non-empty labelled test split builds and preserves its sample."""
         self._write_yolo_dataset(tmp_path, label_content="0 0.5 0.5 0.5 0.5\n")
         args = self._make_args(str(tmp_path))
 
-        with patch("rfdetr.datasets.yolo.make_coco_transforms", return_value=None):
-            dataset = build_roboflow_from_yolo("test", args, resolution=64)
+        dataset = build_roboflow_from_yolo("test", args, resolution=64)
 
         assert len(dataset) == 1
         _, target = dataset[0]
         assert target["labels"].tolist() == [0]
 
-    def test_background_only_test_split_is_valid_with_labels_directory(self, tmp_path: Path) -> None:
+    @patch("rfdetr.datasets.yolo.make_coco_transforms", return_value=None)
+    def test_background_only_test_split_is_valid_with_labels_directory(self, _mock_0, tmp_path: Path) -> None:
         """A true-negative test image remains valid when its labels directory exists."""
         self._write_yolo_dataset(tmp_path, image_name="background.png")
         args = self._make_args(str(tmp_path))
 
-        with patch("rfdetr.datasets.yolo.make_coco_transforms", return_value=None):
-            dataset = build_roboflow_from_yolo("test", args, resolution=64)
+        dataset = build_roboflow_from_yolo("test", args, resolution=64)
 
         assert len(dataset) == 1
         _, target = dataset[0]

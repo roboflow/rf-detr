@@ -49,22 +49,12 @@ class _FakeRFDETR(RFDETR):
         return _FakeModelContext()
 
 
-class TestOptimizeForInferenceDeprecatedAlias:
-    """``optimize_for_inference`` forwards to :meth:`RFDETR.inference` with a deprecation warning."""
+class TestOptimizeForInferenceRemoved:
+    """The ``optimize_for_inference`` alias was removed in v1.11.0; only :meth:`RFDETR.inference` remains."""
 
-    def test_forwards_and_warns(self) -> None:
-        """The deprecated alias should warn and forward the selected compilation backend."""
-        rfdetr = _FakeRFDETR()
-
-        with (
-            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
-            patch("torch.compile", side_effect=lambda model, **_: model) as mock_compile,
-            pytest.warns(FutureWarning, match="optimize_for_inference"),
-        ):
-            rfdetr.optimize_for_inference(compile_backend="inductor")
-
-        mock_compile.assert_called_once_with(rfdetr.model.model, mode="reduce-overhead")
-        assert rfdetr._is_optimized_for_inference is True
+    def test_alias_is_gone(self) -> None:
+        """The deprecated alias must no longer exist on the class."""
+        assert not hasattr(RFDETR, "optimize_for_inference")
 
 
 class TestModelInferenceDtype:
@@ -383,13 +373,13 @@ class TestModelInferenceInplace:
         assert rfdetr._is_optimized_for_inference is True
         assert rfdetr.is_optimized_inplace is False
 
-    def test_inplace_true_compile_false_does_not_deepcopy(self) -> None:
+    @patch("rfdetr.detr.deepcopy")
+    def test_inplace_true_compile_false_does_not_deepcopy(self, mock_deepcopy) -> None:
         """Inplace=True with compile=False should use the loaded module directly."""
         rfdetr = _FakeRFDETR()
         original_model = rfdetr.model.model
 
-        with patch("rfdetr.detr.deepcopy") as mock_deepcopy:
-            rfdetr.inference(compile=False, inplace=True)
+        rfdetr.inference(compile=False, inplace=True)
 
         mock_deepcopy.assert_not_called()
         assert rfdetr.model.model is None

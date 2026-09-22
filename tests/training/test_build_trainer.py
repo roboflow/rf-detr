@@ -6,6 +6,7 @@
 """Tests for build_trainer() — PTL Ch3/T5 (callbacks) and Ch4/T1 (precision, loggers, trainer kwargs)."""
 
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -57,6 +58,23 @@ def _find_resume_checkpoints(trainer):
         True
     """
     return [cb for cb in trainer.callbacks if isinstance(cb, ModelCheckpoint) and not isinstance(cb, BestModelCallback)]
+
+
+@pytest.fixture
+def captured_trainer_kwargs() -> Iterator[dict[str, Any]]:
+    """Patch ``rfdetr.training.trainer.Trainer`` and yield the kwargs each call captures.
+
+    Every test in this module calls ``build_trainer()`` and inspects what it passed to ``Trainer(**kwargs)`` instead of
+    constructing a real one; this fixture centralizes that capture in place of a per-test ``_fake_trainer`` closure.
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_trainer(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return MagicMock()
+
+    with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
+        yield captured
 
 
 def _tc(tmp_path, **kwargs):
@@ -197,50 +215,63 @@ class TestBuildTrainerCallbacks:
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert best_cb._skip_best_epochs == 3
 
-    def test_keypoint_best_model_monitors_keypoint_map(self, tmp_path):
-        """Keypoint training checkpoints should rank models by keypoint AP, not bbox mAP."""
-        trainer = build_trainer(_kp_tc(tmp_path, use_ema=True), RFDETRKeypointPreviewConfig(pretrain_weights=None))
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/keypoint_map_50_95"
-        assert best_cb._monitor_ema == "val/ema_keypoint_map_50_95"
+    @pytest.mark.parametrize(
+        "make_tc, make_mc, expected_monitor, expected_monitor_ema",
+        [
+            pytest.param(
+                lambda p: _kp_tc(p, use_ema=True),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_map_50_95",
+                "val/ema_keypoint_map_50_95",
+                id="keypoint-ranks-by-keypoint-ap-not-bbox-map",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True),
+                lambda: _mc(segmentation_head=True),
+                "val/segm_mAP_50_95",
+                "val/ema_segm_mAP_50_95",
+                id="segmentation-ranks-by-segmentation-ap-not-bbox-ap",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, best_model_metric="mar"),
+                lambda: _mc(),
+                "val/mAR",
+                "val/ema_mAR",
+                id="detection-mar-metric-ranks-by-mar-not-map",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=False, best_model_metric="mar"),
+                lambda: _mc(),
+                "val/mAR",
+                None,
+                id="detection-mar-metric-without-ema-has-no-ema-monitor",
+            ),
+            pytest.param(
+                lambda p: _kp_tc(p, use_ema=True, best_model_metric="mar"),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_mAR",
+                "val/ema_keypoint_mAR",
+                id="keypoint-mar-metric-ranks-by-oks-keypoint-mar",
+            ),
+            pytest.param(
+                lambda p: _tc(p, use_ema=True, best_model_metric="mar"),
+                lambda: _mc(segmentation_head=True),
+                "val/mAR",
+                "val/ema_mAR",
+                id="segmentation-mar-metric-has-no-dedicated-mask-mar-falls-back-to-bbox-mar",
+            ),
+        ],
+    )
+    def test_best_model_monitor_selection(self, tmp_path, make_tc, make_mc, expected_monitor, expected_monitor_ema):
+        """BestModelCallback.monitor/._monitor_ema select the metric key matching task and best_model_metric.
 
-    def test_segmentation_best_model_monitors_segmentation_map(self, tmp_path):
-        """Segmentation training checkpoints should rank models by segmentation AP, not bbox AP."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True), _mc(segmentation_head=True))
+        Detection ranks by mAP by default and mAR when best_model_metric='mar'; keypoint and segmentation swap in their
+        own AP/AR metric families; the EMA monitor is only set when EMA is enabled.
+        """
+        trainer = build_trainer(make_tc(tmp_path), make_mc())
         best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/segm_mAP_50_95"
-        assert best_cb._monitor_ema == "val/ema_segm_mAP_50_95"
-
-    def test_best_model_metric_mar_monitors_bbox_mar(self, tmp_path):
-        """best_model_metric='mar' should rank detection checkpoints by mAR, not mAP."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc())
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/mAR"
-        assert best_cb._monitor_ema == "val/ema_mAR"
-
-    def test_best_model_metric_mar_without_ema_monitors_only_regular_bbox_mar(self, tmp_path):
-        """Detection mAR ranking must not configure an EMA monitor when EMA is disabled."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=False, best_model_metric="mar"), _mc())
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/mAR"
-        assert best_cb._monitor_ema is None
-
-    def test_keypoint_best_model_metric_mar_monitors_keypoint_mar(self, tmp_path):
-        """best_model_metric='mar' should rank keypoint checkpoints by the OKS-based keypoint mAR."""
-        trainer = build_trainer(
-            _kp_tc(tmp_path, use_ema=True, best_model_metric="mar"),
-            RFDETRKeypointPreviewConfig(pretrain_weights=None),
-        )
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/keypoint_mAR"
-        assert best_cb._monitor_ema == "val/ema_keypoint_mAR"
-
-    def test_segmentation_best_model_metric_mar_falls_back_to_bbox_mar(self, tmp_path):
-        """best_model_metric='mar' has no dedicated mask mAR, so segmentation falls back to bbox mAR."""
-        trainer = build_trainer(_tc(tmp_path, use_ema=True, best_model_metric="mar"), _mc(segmentation_head=True))
-        best_cb = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
-        assert best_cb.monitor == "val/mAR"
-        assert best_cb._monitor_ema == "val/ema_mAR"
+        assert best_cb.monitor == expected_monitor
+        assert best_cb._monitor_ema == expected_monitor_ema
 
     def test_latest_model_checkpoint_present(self, tmp_path):
         """A ModelCheckpoint (not BestModelCallback) with every_n_epochs==1 is included when checkpoint_interval > 1."""
@@ -351,61 +382,64 @@ class TestBuildTrainerCallbacks:
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
         assert early_stop_cb._skip_best_epochs == 4
 
-    def test_keypoint_early_stopping_monitors_keypoint_map(self, tmp_path):
-        """Keypoint early stopping should use keypoint AP as the regular metric."""
-        trainer = build_trainer(
-            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
-            RFDETRKeypointPreviewConfig(pretrain_weights=None),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/keypoint_map_50_95"
-        assert early_stop_cb._monitor_ema == "val/ema_keypoint_map_50_95"
-
-    def test_segmentation_early_stopping_monitors_segmentation_map(self, tmp_path):
-        """Segmentation early stopping should use segmentation AP as the regular metric."""
-        trainer = build_trainer(
-            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True),
-            _mc(segmentation_head=True),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/segm_mAP_50_95"
-        assert early_stop_cb._monitor_ema == "val/ema_segm_mAP_50_95"
-
-    def test_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
-        """best_model_metric='mar' should make detection early stopping watch mAR, not mAP."""
-        trainer = build_trainer(
-            _tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
-            _mc(),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/mAR"
-        assert early_stop_cb._monitor_ema == "val/ema_mAR"
-
-    def test_keypoint_best_model_metric_mar_early_stopping_monitors_keypoint_mar(self, tmp_path):
-        """best_model_metric='mar' should make keypoint early stopping watch the OKS-based keypoint mAR."""
-        trainer = build_trainer(
-            _kp_tc(tmp_path, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
-            RFDETRKeypointPreviewConfig(pretrain_weights=None),
-        )
-        early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/keypoint_mAR"
-        assert early_stop_cb._monitor_ema == "val/ema_keypoint_mAR"
-
-    def test_segmentation_best_model_metric_mar_early_stopping_monitors_bbox_mar(self, tmp_path):
-        """Segmentation mAR early stopping must use the bbox mAR keys when EMA is enabled."""
-        trainer = build_trainer(
-            _tc(
-                tmp_path,
-                use_ema=True,
-                early_stopping=True,
-                early_stopping_use_ema=True,
-                best_model_metric="mar",
+    @pytest.mark.parametrize(
+        "make_tc, make_mc, expected_monitor_regular, expected_monitor_ema",
+        [
+            pytest.param(
+                lambda p: _kp_tc(p, early_stopping=True, early_stopping_use_ema=True),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_map_50_95",
+                "val/ema_keypoint_map_50_95",
+                id="keypoint-uses-keypoint-ap-as-the-regular-metric",
             ),
-            _mc(segmentation_head=True),
-        )
+            pytest.param(
+                lambda p: _tc(p, early_stopping=True, early_stopping_use_ema=True),
+                lambda: _mc(segmentation_head=True),
+                "val/segm_mAP_50_95",
+                "val/ema_segm_mAP_50_95",
+                id="segmentation-uses-segmentation-ap-as-the-regular-metric",
+            ),
+            pytest.param(
+                lambda p: _tc(p, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+                lambda: _mc(),
+                "val/mAR",
+                "val/ema_mAR",
+                id="detection-mar-metric-watches-mar-not-map",
+            ),
+            pytest.param(
+                lambda p: _kp_tc(p, early_stopping=True, early_stopping_use_ema=True, best_model_metric="mar"),
+                lambda: RFDETRKeypointPreviewConfig(pretrain_weights=None),
+                "val/keypoint_mAR",
+                "val/ema_keypoint_mAR",
+                id="keypoint-mar-metric-watches-oks-keypoint-mar",
+            ),
+            pytest.param(
+                lambda p: _tc(
+                    p,
+                    use_ema=True,
+                    early_stopping=True,
+                    early_stopping_use_ema=True,
+                    best_model_metric="mar",
+                ),
+                lambda: _mc(segmentation_head=True),
+                "val/mAR",
+                "val/ema_mAR",
+                id="segmentation-mar-metric-uses-bbox-mar-keys-when-ema-enabled",
+            ),
+        ],
+    )
+    def test_early_stopping_monitor_selection(
+        self, tmp_path, make_tc, make_mc, expected_monitor_regular, expected_monitor_ema
+    ):
+        """RFDETREarlyStopping's regular/EMA monitors select the metric key matching task and best_model_metric.
+
+        Mirrors BestModelCallback's monitor selection: detection watches mAP by default and mAR when
+        best_model_metric='mar'; keypoint and segmentation swap in their own AP/AR metric families.
+        """
+        trainer = build_trainer(make_tc(tmp_path), make_mc())
         early_stop_cb = next(cb for cb in trainer.callbacks if isinstance(cb, RFDETREarlyStopping))
-        assert early_stop_cb._monitor_regular == "val/mAR"
-        assert early_stop_cb._monitor_ema == "val/ema_mAR"
+        assert early_stop_cb._monitor_regular == expected_monitor_regular
+        assert early_stop_cb._monitor_ema == expected_monitor_ema
 
     def test_no_early_stopping_when_disabled(self, tmp_path):
         """RFDETREarlyStopping is absent when early_stopping=False."""
@@ -529,7 +563,9 @@ class TestBuildTrainerPrecision:
             trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert trainer.precision == "32-true"
 
-    def test_amp_true_explicit_cpu_accelerator_gives_32_true_even_with_mps(self, tmp_path):
+    def test_amp_true_explicit_cpu_accelerator_gives_32_true_even_with_mps(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """Amp=True with explicit accelerator='cpu' must produce '32-true' even when MPS is present.
 
         bf16 autocast on macOS CPU (Apple Silicon) is ~13x slower than fp32 — no hardware support for bfloat16 in CPU
@@ -538,58 +574,39 @@ class TestBuildTrainerPrecision:
         """
         import unittest.mock as mock
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
         with (
             mock.patch("torch.cuda.is_available", return_value=False),
             mock.patch("torch.backends.mps.is_available", return_value=True),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator="cpu")
-        assert captured["precision"] == "32-true"
+        assert captured_trainer_kwargs["precision"] == "32-true"
 
-    def test_amp_true_cuda_no_bf16_gives_16_mixed(self, tmp_path):
+    def test_amp_true_cuda_no_bf16_gives_16_mixed(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Amp=True with CUDA but no bf16 support must produce '16-mixed'."""
         import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=False),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
-        assert captured["precision"] == "16-mixed"
+        assert captured_trainer_kwargs["precision"] == "16-mixed"
 
-    def test_amp_true_cuda_bf16_supported_gives_bf16_mixed(self, tmp_path):
+    def test_amp_true_cuda_bf16_supported_gives_bf16_mixed(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Amp=True with CUDA + bf16 hardware produces 'bf16-mixed'."""
         import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
-        assert captured["precision"] == "bf16-mixed"
+        assert captured_trainer_kwargs["precision"] == "bf16-mixed"
 
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
-    def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(self, tmp_path, accelerator):
+    def test_xla_accelerator_uses_xla_precision_plugin_not_precision_string(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path, accelerator
+    ):
         """An XLA accelerator uses XLAPrecision instead of a precision string.
 
         XLAStrategy's precision_plugin setter only accepts the XLAPrecision plugin and raises TypeError for standard
@@ -600,29 +617,24 @@ class TestBuildTrainerPrecision:
         """
         import unittest.mock as mock
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
         mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
 
-        assert "precision" not in captured
+        assert "precision" not in captured_trainer_kwargs
         expected_precision = "bf16-true" if accelerator == "tpu" else "32-true"
         mock_xla_precision_cls.assert_called_once_with(expected_precision)
-        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+        assert captured_trainer_kwargs["plugins"] == [mock_xla_precision_cls.return_value]
 
     @pytest.mark.parametrize("accelerator", ["tpu"])
     @pytest.mark.parametrize("amp_dtype", ["bf16", "auto"])
-    def test_bf16_or_auto_on_tpu_uses_bf16_true(self, tmp_path: Path, accelerator: str, amp_dtype: str) -> None:
+    def test_bf16_or_auto_on_tpu_uses_bf16_true(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path, accelerator: str, amp_dtype: str
+    ) -> None:
         """Explicit BF16 and the default auto mode select TPU BF16 true precision.
 
         'auto' matters here as much as the explicit case: it is the amp_dtype every caller gets by
@@ -632,17 +644,10 @@ class TestBuildTrainerPrecision:
         """
         import unittest.mock as mock
 
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            captured.update(kwargs)
-            return mock.MagicMock()
-
         mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
         with (
             mock.patch("torch.cuda.is_available", return_value=False),
             mock.patch("torch.backends.mps.is_available", return_value=False),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
             build_trainer(
@@ -651,52 +656,42 @@ class TestBuildTrainerPrecision:
                 accelerator=accelerator,
             )
 
-        assert "precision" not in captured
+        assert "precision" not in captured_trainer_kwargs
         mock_xla_precision_cls.assert_called_once_with("bf16-true")
-        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+        assert captured_trainer_kwargs["plugins"] == [mock_xla_precision_cls.return_value]
 
-    def test_auto_on_available_tpu_uses_bf16_true(self, tmp_path: Path) -> None:
+    def test_auto_on_available_tpu_uses_bf16_true(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path
+    ) -> None:
         """Automatic accelerator selection retains TPU BF16 true precision."""
         import unittest.mock as mock
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
         with (
             mock.patch("pytorch_lightning.accelerators.XLAAccelerator.is_available", return_value=True),
             mock.patch("torch.cuda.is_available", return_value=False),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator="auto")
 
         mock_xla_precision_cls.assert_called_once_with("bf16-true")
-        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+        assert captured_trainer_kwargs["plugins"] == [mock_xla_precision_cls.return_value]
 
-    def test_explicit_xla_bf16_stays_fp32_without_backend_evidence(self, tmp_path: Path) -> None:
+    def test_explicit_xla_bf16_stays_fp32_without_backend_evidence(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path
+    ) -> None:
         """Explicit XLA never assumes GPU PJRT can execute BF16 true precision."""
         import unittest.mock as mock
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         mock_xla_precision_cls = mock.MagicMock(name="XLAPrecision")
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="bf16"), _mc(amp=True), accelerator="xla")
 
         mock_xla_precision_cls.assert_called_once_with("32-true")
-        assert captured["plugins"] == [mock_xla_precision_cls.return_value]
+        assert captured_trainer_kwargs["plugins"] == [mock_xla_precision_cls.return_value]
 
     @pytest.mark.parametrize(
         ("amp", "expected_precision"),
@@ -735,21 +730,12 @@ class TestBuildTrainerPrecision:
         mock_xla_precision_cls.assert_called_once_with(expected_precision)
         assert captured["plugins"] == [caller_plugin, mock_xla_precision_cls.return_value]
 
-    def test_non_xla_accelerator_sets_no_plugins_key(self, tmp_path):
+    def test_non_xla_accelerator_sets_no_plugins_key(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """A non-XLA accelerator does not add a 'plugins' key -- only the XLA path does."""
-        import unittest.mock as mock
+        build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="cpu")
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="cpu")
-
-        assert "plugins" not in captured
-        assert captured["precision"] == "32-true"
+        assert "plugins" not in captured_trainer_kwargs
+        assert captured_trainer_kwargs["precision"] == "32-true"
 
     @pytest.mark.xla
     def test_tpu_accelerator_refuses_to_launch_off_real_tpu(self, tmp_path) -> None:
@@ -805,48 +791,36 @@ class TestBuildTrainerPrecision:
         assert captured["precision"] == "16-mixed"
 
     @pytest.mark.parametrize("strategy_name", ["ddp_notebook", "ddp_spawn"])
-    def test_ddp_notebook_and_spawn_use_interactive_spawn(self, tmp_path, strategy_name):
+    def test_ddp_notebook_and_spawn_use_interactive_spawn(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path, strategy_name
+    ):
         """ddp_notebook and ddp_spawn must be replaced with interactive spawn DDPStrategy.
 
         Fork-based DDP inherits the parent's OpenMP thread pool which is invalid after fork, causing SIGABRT in the
         autograd engine. ddp_spawn is blocked by PTL in notebooks without the override.
         """
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(
-                _tc(tmp_path, use_ema=False, strategy=strategy_name),
-                _mc(amp=True),
-            )
-        strategy_obj = captured["strategy"]
+        build_trainer(
+            _tc(tmp_path, use_ema=False, strategy=strategy_name),
+            _mc(amp=True),
+        )
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._start_method == "spawn"
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     @patch("rfdetr.training.trainer._InteractiveSpawnLauncher", None)
-    def test_ddp_notebook_raises_clear_error_when_private_launcher_is_missing(self, tmp_path):
+    def test_ddp_notebook_raises_clear_error_when_private_launcher_is_missing(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """Missing private PTL launcher should raise a targeted compatibility error."""
-        captured: dict = {}
+        build_trainer(
+            _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
+            _mc(amp=True),
+        )
 
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
-
-        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(
-                _tc(tmp_path, use_ema=False, strategy="ddp_notebook"),
-                _mc(amp=True),
-            )
-
-        strategy = captured["strategy"]
+        strategy = captured_trainer_kwargs["strategy"]
         strategy.cluster_environment = object()
         with pytest.raises(RuntimeError, match="private API"):
             strategy._configure_launcher()
@@ -963,19 +937,10 @@ class TestBuildTrainerAmpDtype:
         resolved = self._resolved_precision(tmp_path, cuda=True, bf16=True, amp_dtype=None, amp=True)
         assert resolved == "32-true"
 
-    def test_cpu_accelerator_ignores_amp_dtype(self, tmp_path):
+    def test_cpu_accelerator_ignores_amp_dtype(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Explicit accelerator='cpu' yields '32-true' regardless of amp_dtype."""
-        import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=True), accelerator="cpu")
-        assert captured["precision"] == "32-true"
+        build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp16"), _mc(amp=True), accelerator="cpu")
+        assert captured_trainer_kwargs["precision"] == "32-true"
 
     def test_fp8_rejects_non_cuda_accelerator(self, tmp_path):
         """FP8 must fail clearly instead of silently falling back on a non-CUDA accelerator."""
@@ -1049,26 +1014,19 @@ class TestBuildTrainerAmpDtype:
         ):
             build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
 
-    def test_fp8_accepts_supported_compute_capability(self, tmp_path):
+    @patch("torch.cuda.get_device_capability", return_value=(8, 9))
+    @patch("torch.cuda.device_count", return_value=1)
+    @patch("torch.cuda.is_available", return_value=True)
+    def test_fp8_accepts_supported_compute_capability(
+        self, _mock_0, _mock_1, _mock_2, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """An Ada-or-newer device must resolve to the Transformer Engine precision string, not raise.
 
         The real ``pytorch_lightning.Trainer`` is mocked (as in ``_resolved_precision`` above) so this only exercises
         the capability gate itself, not Transformer Engine's actual plugin construction, which needs real hardware.
         """
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
-
-        with (
-            patch("torch.cuda.is_available", return_value=True),
-            patch("torch.cuda.device_count", return_value=1),
-            patch("torch.cuda.get_device_capability", return_value=(8, 9)),  # Ada (minimum supported)
-            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
-        ):
-            build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
-        assert captured["precision"] == "transformer-engine"
+        build_trainer(_tc(tmp_path, use_ema=False, amp_dtype="fp8"), _mc(amp=True))
+        assert captured_trainer_kwargs["precision"] == "transformer-engine"
 
     @pytest.mark.parametrize(
         "bad_value",
@@ -1249,7 +1207,7 @@ class TestBuildTrainerEMAXLAGuard:
         ],
     )
     def test_multi_device_xla_disables_ema_and_uses_regular_checkpoint_track(
-        self, tmp_path: Path, devices: int, num_nodes: int
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path, devices: int, num_nodes: int
     ) -> None:
         """Multi-device XLA, one device per host across nodes included, must omit EMA callbacks and metrics.
 
@@ -1257,14 +1215,7 @@ class TestBuildTrainerEMAXLAGuard:
         """
         import unittest.mock as mock
 
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            captured.update(kwargs)
-            return MagicMock()
-
         with (
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision"),
             pytest.warns(UserWarning, match="EMA disabled on multi-device XLA"),
         ):
@@ -1280,14 +1231,16 @@ class TestBuildTrainerEMAXLAGuard:
                 accelerator="xla",
             )
 
-        callbacks = captured["callbacks"]
+        callbacks = captured_trainer_kwargs["callbacks"]
         assert not any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
         best_callback = next(callback for callback in callbacks if isinstance(callback, BestModelCallback))
         assert best_callback._monitor_ema is None
         assert best_callback._evaluates_base_model is True
 
     @pytest.mark.parametrize("accelerator", ["xla", "tpu"])
-    def test_single_device_xla_keeps_ema_enabled(self, tmp_path: Path, accelerator: str) -> None:
+    def test_single_device_xla_keeps_ema_enabled(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path, accelerator: str
+    ) -> None:
         """One-device XLA keeps EMA after the shipped callback completed the one-chip validation runs.
 
         ``"tpu"`` is the accelerator string ``RFDETR.train(device="xla")`` forwards to ``build_trainer`` (see
@@ -1295,20 +1248,7 @@ class TestBuildTrainerEMAXLAGuard:
         """
         import unittest.mock as mock
 
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return MagicMock()
-
         with (
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision"),
         ):
             build_trainer(
@@ -1322,9 +1262,9 @@ class TestBuildTrainerEMAXLAGuard:
                 accelerator=accelerator,
             )
 
-        assert captured["accelerator"] == accelerator
-        assert "precision" not in captured
-        callbacks = captured["callbacks"]
+        assert captured_trainer_kwargs["accelerator"] == accelerator
+        assert "precision" not in captured_trainer_kwargs
+        callbacks = captured_trainer_kwargs["callbacks"]
         assert any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
         best_callback = next(callback for callback in callbacks if isinstance(callback, BestModelCallback))
         assert best_callback._monitor_ema is not None
@@ -1349,24 +1289,13 @@ class TestBuildTrainerEMAXLAGuard:
         assert not any("EMA disabled" in str(warning.message) for warning in caught)
 
     @pytest.mark.parametrize("auto_device_count", [1, 4])
-    def test_auto_devices_on_xla_follows_the_resolved_chip_count(self, tmp_path: Path, auto_device_count: int) -> None:
+    def test_auto_devices_on_xla_follows_the_resolved_chip_count(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path, auto_device_count: int
+    ) -> None:
         """``devices='auto'`` must resolve through the XLA chip count, not CUDA's auto branch."""
         import unittest.mock as mock
 
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return MagicMock()
-
         with (
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision"),
             mock.patch(
                 "pytorch_lightning.accelerators.XLAAccelerator.auto_device_count",
@@ -1381,11 +1310,13 @@ class TestBuildTrainerEMAXLAGuard:
                 accelerator="xla",
             )
 
-        callbacks = captured["callbacks"]
+        callbacks = captured_trainer_kwargs["callbacks"]
         has_ema = any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
         assert has_ema is (auto_device_count == 1)
 
-    def test_xla_device_index_list_keeps_ema_disabled_instead_of_raising(self, tmp_path: Path) -> None:
+    def test_xla_device_index_list_keeps_ema_disabled_instead_of_raising(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path
+    ) -> None:
         """A device-index list, as ``RFDETR.train(device='xla:N')`` forwards it, must not raise in the EMA guard.
 
         A distributed ``strategy`` skips the earlier ``_requests_multiple_devices`` call, so this is the first place the
@@ -1393,20 +1324,7 @@ class TestBuildTrainerEMAXLAGuard:
         """
         import unittest.mock as mock
 
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return MagicMock()
-
         with (
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision"),
             pytest.warns(UserWarning, match="EMA disabled"),
         ):
@@ -1417,7 +1335,7 @@ class TestBuildTrainerEMAXLAGuard:
                 devices=[0],
             )
 
-        callbacks = captured["callbacks"]
+        callbacks = captured_trainer_kwargs["callbacks"]
         assert not any(isinstance(callback, RFDETREMACallback) for callback in callbacks)
         best_callback = next(callback for callback in callbacks if isinstance(callback, BestModelCallback))
         assert best_callback._monitor_ema is None
@@ -1738,37 +1656,21 @@ class TestBuildTrainerKwargs:
         trainer = build_trainer(_tc(tmp_path, output_dir=out, use_ema=False), _mc())
         assert str(trainer.default_root_dir) == out
 
-    def test_trainer_kwargs_can_override_precision(self, tmp_path):
+    def test_trainer_kwargs_can_override_precision(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Explicit trainer kwargs must override default precision without raising."""
-        import unittest.mock as mock
+        build_trainer(
+            _tc(tmp_path, use_ema=False),
+            _mc(amp=True),
+            precision="32-true",
+        )
+        assert captured_trainer_kwargs["precision"] == "32-true"
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(
-                _tc(tmp_path, use_ema=False),
-                _mc(amp=True),
-                precision="32-true",
-            )
-        assert captured["precision"] == "32-true"
-
-    def test_keypoint_trainer_kwargs_cannot_override_manual_optimization_ownership(self, tmp_path):
+    def test_keypoint_trainer_kwargs_cannot_override_manual_optimization_ownership(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """Keypoint accumulation and clipping remain disabled even when passed as trainer kwargs, and the override emits
         a UserWarning so the caller can spot the silent coercion."""
-        import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
         with (
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             pytest.warns(UserWarning, match="manual optimization"),
         ):
             build_trainer(
@@ -1778,29 +1680,20 @@ class TestBuildTrainerKwargs:
                 gradient_clip_val=0.25,
             )
 
-        assert captured["accumulate_grad_batches"] == 1
-        assert captured["gradient_clip_val"] is None
+        assert captured_trainer_kwargs["accumulate_grad_batches"] == 1
+        assert captured_trainer_kwargs["gradient_clip_val"] is None
 
-    def test_detection_trainer_kwargs_override_takes_effect(self, tmp_path):
+    def test_detection_trainer_kwargs_override_takes_effect(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Detection models use automatic optimization; trainer kwargs must override the built-in defaults."""
-        import unittest.mock as mock
+        build_trainer(
+            _tc(tmp_path, use_ema=False),
+            _mc(),
+            accumulate_grad_batches=8,
+            gradient_clip_val=0.25,
+        )
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(
-                _tc(tmp_path, use_ema=False),
-                _mc(),
-                accumulate_grad_batches=8,
-                gradient_clip_val=0.25,
-            )
-
-        assert captured["accumulate_grad_batches"] == 8
-        assert captured["gradient_clip_val"] == pytest.approx(0.25)
+        assert captured_trainer_kwargs["accumulate_grad_batches"] == 8
+        assert captured_trainer_kwargs["gradient_clip_val"] == pytest.approx(0.25)
 
 
 class TestBuildTrainerSeed:
@@ -1820,85 +1713,29 @@ class TestBuildTrainerSeed:
 class TestBuildTrainerDDPFields:
     """build_trainer() must thread devices/num_nodes/strategy from TrainConfig to Trainer."""
 
-    def test_devices_threaded_from_train_config(self, tmp_path):
-        """TrainConfig.devices is forwarded to Trainer(devices=...)."""
-        import unittest.mock as mock
+    @pytest.mark.parametrize(
+        "extra_kwargs, captured_key, expected",
+        [
+            pytest.param({"devices": 4}, "devices", 4, id="devices-forwarded-from-train-config"),
+            pytest.param({"num_nodes": 2}, "num_nodes", 2, id="num-nodes-forwarded-from-train-config"),
+            pytest.param({"strategy": "auto"}, "strategy", "auto", id="strategy-forwarded-from-train-config"),
+            pytest.param({}, "devices", 1, id="default-devices-is-1-single-gpu-default"),
+            pytest.param({}, "num_nodes", 1, id="default-num-nodes-is-1"),
+        ],
+    )
+    def test_ddp_fields_threaded_from_train_config(
+        self,
+        captured_trainer_kwargs: dict[str, Any],
+        tmp_path,
+        extra_kwargs: dict[str, Any],
+        captured_key: str,
+        expected: object,
+    ):
+        """TrainConfig.devices/num_nodes/strategy are forwarded to Trainer(...) unchanged, defaults included."""
+        tc = _tc(tmp_path, use_ema=False, **extra_kwargs)
+        build_trainer(tc, _mc())
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, devices=4)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, _mc())
-
-        assert captured["devices"] == 4
-
-    def test_num_nodes_threaded_from_train_config(self, tmp_path):
-        """TrainConfig.num_nodes is forwarded to Trainer(num_nodes=...)."""
-        import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, num_nodes=2)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, _mc())
-
-        assert captured["num_nodes"] == 2
-
-    def test_strategy_threaded_from_train_config(self, tmp_path):
-        """TrainConfig.strategy is forwarded to Trainer(strategy=...)."""
-        import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, strategy="auto")
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, _mc())
-
-        assert captured["strategy"] == "auto"
-
-    def test_default_devices_is_1(self, tmp_path):
-        """Default TrainConfig.devices must produce devices=1 (single-GPU default)."""
-        import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, _mc())
-
-        assert captured["devices"] == 1
-
-    def test_default_num_nodes_is_1(self, tmp_path):
-        """Default TrainConfig.num_nodes must produce num_nodes=1."""
-        import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, _mc())
-
-        assert captured["num_nodes"] == 1
+        assert captured_trainer_kwargs[captured_key] == expected
 
     def test_devices_string_accepted(self, tmp_path):
         """TrainConfig.devices accepts a string value (e.g. '0,1')."""
@@ -1910,48 +1747,32 @@ class TestBuildTrainerDDPFields:
 class TestBuildTrainerKeypointDistributed:
     """Keypoint mode supports DistributedDataParallel and rejects only sharded strategies."""
 
-    def test_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(self, tmp_path):
+    def test_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """Keypoint mode with strategy='ddp' produces DDPStrategy(find_unused_parameters=True)."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp")
         mc = _mc(use_grouppose_keypoints=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
-    def test_keypoint_multiple_devices_builds_ddp(self, tmp_path):
+    def test_keypoint_multiple_devices_builds_ddp(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Keypoint mode with devices>1 builds a DDP trainer (no error) with find_unused_parameters."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _kp_tc(tmp_path, use_ema=False, strategy="auto", devices=2)
         mc = _mc(use_grouppose_keypoints=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
-        assert captured["devices"] == 2
+        assert captured_trainer_kwargs["devices"] == 2
 
     @pytest.mark.parametrize(
         "strategy",
@@ -1979,17 +1800,11 @@ class TestBuildTrainerKeypointDistributed:
         with pytest.raises(NotImplementedError, match="sharded distributed strategies"):
             build_trainer(tc, mc, strategy=ModelParallelStrategy(), devices=2)
 
-    def test_keypoint_auto_devices_multi_gpu_builds_ddp(self, tmp_path):
+    def test_keypoint_auto_devices_multi_gpu_builds_ddp(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Keypoint mode with devices='auto' resolving to multiple CUDA devices builds DDP (no error)."""
         import unittest.mock as mock
 
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _kp_tc(tmp_path, use_ema=False, strategy="auto", devices="auto", accelerator="cuda")
         mc = _mc(use_grouppose_keypoints=True)
@@ -1997,11 +1812,10 @@ class TestBuildTrainerKeypointDistributed:
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.device_count", return_value=2),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
-            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
@@ -2012,47 +1826,31 @@ class TestBuildTrainerKeypointDistributed:
             pytest.param("ddp_spawn", id="ddp_spawn"),
         ],
     )
-    def test_keypoint_spawn_strategies_use_interactive_spawn(self, tmp_path, strategy_name):
+    def test_keypoint_spawn_strategies_use_interactive_spawn(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path, strategy_name
+    ):
         """Keypoint mode with ddp_spawn/ddp_notebook builds spawn-based DDP with find_unused_parameters."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _kp_tc(tmp_path, use_ema=False, strategy=strategy_name)
         mc = _mc(use_grouppose_keypoints=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._start_method == "spawn"
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
-    def test_keypoint_num_nodes_multiple_builds_ddp(self, tmp_path):
+    def test_keypoint_num_nodes_multiple_builds_ddp(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Keypoint mode with num_nodes>1 builds DDP (no error) and forwards num_nodes."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp", num_nodes=2)
         mc = _mc(use_grouppose_keypoints=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        assert captured["num_nodes"] == 2
-        assert isinstance(captured["strategy"], DDPStrategy)
+        assert captured_trainer_kwargs["num_nodes"] == 2
+        assert isinstance(captured_trainer_kwargs["strategy"], DDPStrategy)
 
     def test_keypoint_ddp_strategy_object_without_find_unused_parameters_raises(self, tmp_path):
         """A supplied DDPStrategy() object lacking find_unused_parameters=True is rejected for keypoint DDP."""
@@ -2064,45 +1862,31 @@ class TestBuildTrainerKeypointDistributed:
         with pytest.raises(ValueError, match="find_unused_parameters=True"):
             build_trainer(tc, mc, strategy=DDPStrategy(), devices=2)
 
-    def test_keypoint_ddp_strategy_object_with_find_unused_parameters_ok(self, tmp_path):
+    def test_keypoint_ddp_strategy_object_with_find_unused_parameters_ok(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """A supplied DDPStrategy(find_unused_parameters=True) object passes through unchanged for keypoint DDP."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         supplied = DDPStrategy(find_unused_parameters=True)
         tc = _kp_tc(tmp_path, use_ema=False)
         mc = _mc(use_grouppose_keypoints=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc, strategy=supplied, devices=2)
+        build_trainer(tc, mc, strategy=supplied, devices=2)
 
-        assert captured["strategy"] is supplied
-        assert captured["strategy"]._ddp_kwargs.get("find_unused_parameters") is True
+        assert captured_trainer_kwargs["strategy"] is supplied
+        assert captured_trainer_kwargs["strategy"]._ddp_kwargs.get("find_unused_parameters") is True
 
-    def test_non_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(self, tmp_path):
+    def test_non_keypoint_ddp_strategy_wrapped_with_find_unused_parameters(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """Non-keypoint mode with strategy='ddp' produces DDPStrategy(find_unused_parameters=True)."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _tc(tmp_path, use_ema=False, strategy="ddp")
         mc = _mc(use_grouppose_keypoints=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
@@ -2110,127 +1894,74 @@ class TestBuildTrainerKeypointDistributed:
 class TestBuildTrainerDDPFindUnusedParameters:
     """build_trainer() must enable find_unused_parameters for strategy='ddp' on both detection and segmentation."""
 
-    def test_auto_strategy_multiple_devices_enables_find_unused_parameters(self, tmp_path):
+    def test_auto_strategy_multiple_devices_enables_find_unused_parameters(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ):
         """Strategy='auto' + devices > 1 must produce DDPStrategy(find_unused_parameters=True).
 
         This covers the default strategy path where Lightning would otherwise select a distributed strategy without RF-
         DETR's unused-parameter guard.
         """
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _tc(tmp_path, use_ema=False, strategy="auto", devices=2)
         mc = _mc(segmentation_head=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
-        assert captured["devices"] == 2
+        assert captured_trainer_kwargs["devices"] == 2
 
-    def test_ddp_segmentation_enables_find_unused_parameters(self, tmp_path):
-        """Strategy='ddp' + segmentation_head=True must produce DDPStrategy(find_unused_parameters=True).
+    @pytest.mark.parametrize(
+        "strategy, segmentation_head",
+        [
+            pytest.param(
+                "ddp",
+                True,
+                id="ddp-segmentation-sparse-forward-is-one-source-of-conditionally-unused-params",
+            ),
+            pytest.param(
+                "ddp",
+                False,
+                id="ddp-detection-two-stage-modulelists-and-aux-loss-branches-regression-1093",
+            ),
+            pytest.param(
+                "ddp_spawn",
+                True,
+                id="ddp-spawn-segmentation-must-not-drop-the-flag-the-interactive-spawn-path-already-sets",
+            ),
+        ],
+    )
+    def test_ddp_variants_enable_find_unused_parameters(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path, strategy: str, segmentation_head: bool
+    ):
+        """strategy='ddp'/'ddp_spawn' must produce DDPStrategy(find_unused_parameters=True) unconditionally.
 
-        One case of the broader unconditional rule: find_unused_parameters is enabled for all strategy='ddp'
-        requests.  The segmentation head's sparse_forward() is one source of conditionally-unused parameters under
-        DDP.
+        find_unused_parameters is enabled for every 'ddp'/'ddp_spawn' request regardless of segmentation_head: detection
+        can leave parameters unused under DDP (two-stage group_detr ModuleLists, conditional aux_loss branches —
+        regression test for
+        https://github.com/roboflow/rf-detr/issues/1093)
+        and segmentation's
+        sparse_forward() is another source.
         """
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
 
-        captured: dict = {}
+        tc = _tc(tmp_path, use_ema=False, strategy=strategy)
+        mc = _mc(segmentation_head=segmentation_head)
+        build_trainer(tc, mc)
 
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
-
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
-    def test_ddp_no_segmentation_enables_find_unused_parameters(self, tmp_path):
-        """Strategy='ddp' for detection-only must produce DDPStrategy(find_unused_parameters=True).
-
-        Detection models can leave parameters unused under DDP (two-stage group_detr ModuleLists, conditional aux_loss
-        branches), so find_unused_parameters is enabled unconditionally for strategy='ddp' regardless of
-        segmentation_head. Regression test for
-        https://github.com/roboflow/rf-detr/issues/1093.
-        """
-        import unittest.mock as mock
-
-        from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
-
-        strategy_obj = captured["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
-
-    def test_ddp_spawn_segmentation_preserves_find_unused_parameters(self, tmp_path):
-        """strategy='ddp_spawn' + segmentation_head=True must keep find_unused_parameters=True.
-
-        ddp_spawn is already replaced with an interactive-spawn DDPStrategy that has find_unused_parameters=True for
-        notebook compatibility.  Segmentation must not accidentally drop that flag when the ddp_spawn path is taken
-        instead of the plain 'ddp' path.
-        """
-        import unittest.mock as mock
-
-        from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp_spawn")
-        mc = _mc(segmentation_head=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
-
-        strategy_obj = captured["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
-
-    def test_non_ddp_strategy_with_segmentation_is_unchanged(self, tmp_path):
+    def test_non_ddp_strategy_with_segmentation_is_unchanged(self, captured_trainer_kwargs: dict[str, Any], tmp_path):
         """Strategies other than 'ddp' must not be wrapped even when segmentation is on."""
-        import unittest.mock as mock
-
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return mock.MagicMock()
-
         tc = _tc(tmp_path, use_ema=False, strategy="auto")
         mc = _mc(segmentation_head=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        assert captured["strategy"] == "auto"
+        assert captured_trainer_kwargs["strategy"] == "auto"
 
 
 class TestBuildTrainerDDPStaticGraph:
@@ -2238,155 +1969,71 @@ class TestBuildTrainerDDPStaticGraph:
     that measurement covered (detection, segmentation, grad_accum_steps<=1), and excludes keypoint models and
     grad_accum_steps>1, which were not exercised by that measurement."""
 
-    def test_ddp_detection_enables_static_graph(self, tmp_path: Path) -> None:
-        """Strategy='ddp' for detection-only enables static_graph and gradient_as_bucket_view."""
-        import unittest.mock as mock
+    @pytest.mark.parametrize(
+        "strategy, segmentation_head",
+        [
+            pytest.param("ddp", False, id="ddp-detection"),
+            pytest.param(
+                "ddp",
+                True,
+                id="ddp-segmentation-sparse-forward-has-the-same-single-always-unused-mask-token-as-detection",
+            ),
+            pytest.param("ddp_spawn", False, id="ddp-spawn-via-the-interactive-spawn-ddpstrategy"),
+        ],
+    )
+    def test_ddp_variants_enable_static_graph(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path, strategy: str, segmentation_head: bool
+    ) -> None:
+        """strategy='ddp'/'ddp_spawn' enables static_graph and gradient_as_bucket_view.
 
-        from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
-
-        strategy_obj = captured["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("static_graph") is True
-        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
-
-    def test_ddp_segmentation_enables_static_graph(self, tmp_path: Path) -> None:
-        """Strategy='ddp' + segmentation_head=True also enables static_graph.
-
-        segmentation_head.sparse_forward() is named in the find_unused_parameters comment as a source of conditionally-
-        unused parameters; an empirical probe (real RFDETRSegNano forward, real/empty-target batches) found the same
-        single always-unused parameter (backbone mask_token) as detection-only, not a segmentation-specific dynamic one,
-        so segmentation stays in scope here too.
+        An empirical probe (real RFDETRSegNano forward, real/empty-target batches) found the same single always-unused
+        parameter (backbone mask_token) for segmentation as for detection-only, not a segmentation-specific dynamic one,
+        so segmentation stays in scope alongside detection here.
         """
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
 
-        captured: dict[str, Any] = {}
+        tc = _tc(tmp_path, use_ema=False, strategy=strategy)
+        mc = _mc(segmentation_head=segmentation_head)
+        build_trainer(tc, mc)
 
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp")
-        mc = _mc(segmentation_head=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
-
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("static_graph") is True
         assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
 
-    def test_auto_strategy_enables_static_graph(self, tmp_path: Path) -> None:
+    def test_auto_strategy_enables_static_graph(self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path) -> None:
         """Strategy='auto' + devices>1 enables static_graph through the same distributed_requested path."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _tc(tmp_path, use_ema=False, strategy="auto", devices=2)
         mc = _mc(segmentation_head=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("static_graph") is True
 
-    def test_ddp_spawn_enables_static_graph(self, tmp_path: Path) -> None:
-        """strategy='ddp_spawn' also enables static_graph through the interactive-spawn DDPStrategy."""
-        import unittest.mock as mock
-
-        from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return mock.MagicMock()
-
-        tc = _tc(tmp_path, use_ema=False, strategy="ddp_spawn")
-        mc = _mc(segmentation_head=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
-
-        strategy_obj = captured["strategy"]
-        assert isinstance(strategy_obj, DDPStrategy)
-        assert strategy_obj._ddp_kwargs.get("static_graph") is True
-        assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is True
-
-    def test_ddp_grad_accum_disables_static_graph(self, tmp_path: Path) -> None:
+    def test_ddp_grad_accum_disables_static_graph(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path
+    ) -> None:
         """grad_accum_steps>1 disables static_graph: not exercised by the throughput measurement, which used no gradient
         accumulation (DDP's no_sync() across multiple backward calls interacts with static_graph's iteration-counted
         structure-learning in a way this change does not claim to have verified)."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _tc(tmp_path, use_ema=False, strategy="ddp", grad_accum_steps=2)
         mc = _mc(segmentation_head=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
         assert strategy_obj._ddp_kwargs.get("static_graph") is False
         assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is False
 
-    def test_ddp_trainer_kwargs_accumulate_grad_batches_disables_static_graph(self, tmp_path: Path) -> None:
+    def test_ddp_trainer_kwargs_accumulate_grad_batches_disables_static_graph(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path
+    ) -> None:
         """A caller passing accumulate_grad_batches= directly (bypassing tc.grad_accum_steps) must also disable
         static_graph.
 
@@ -2396,58 +2043,28 @@ class TestBuildTrainerDDPStaticGraph:
         trainer_kwargs["accumulate_grad_batches"] overrides tc.grad_accum_steps later in this same function
         (see the "accumulate_grad_batches" resolution below) and must be read the same way here.
         """
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _tc(tmp_path, use_ema=False, strategy="ddp")
         assert tc.grad_accum_steps <= 1
         mc = _mc(segmentation_head=False)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc, accumulate_grad_batches=2)
+        build_trainer(tc, mc, accumulate_grad_batches=2)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("static_graph") is False
         assert strategy_obj._ddp_kwargs.get("gradient_as_bucket_view") is False
 
-    def test_keypoint_ddp_disables_static_graph(self, tmp_path: Path) -> None:
+    def test_keypoint_ddp_disables_static_graph(self, captured_trainer_kwargs: dict[str, Any], tmp_path: Path) -> None:
         """Keypoint models disable static_graph: their manual-optimization DDP path was not exercised by the throughput
         measurement, which used only automatic-optimization detection/segmentation models."""
-        import unittest.mock as mock
-
         from pytorch_lightning.strategies import DDPStrategy
-
-        captured: dict[str, Any] = {}
-
-        def _fake_trainer(**kwargs: Any) -> MagicMock:
-            """Capture ``Trainer(**kwargs)`` into the enclosing test's ``captured`` dict.
-
-            Examples:
-                >>> _fake_trainer  # doctest: +SKIP
-                Closes over the enclosing test's local ``captured`` dict; not runnable standalone.
-            """
-            captured.update(kwargs)
-            return mock.MagicMock()
 
         tc = _kp_tc(tmp_path, use_ema=False, strategy="ddp")
         mc = _mc(use_grouppose_keypoints=True)
-        with mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(tc, mc)
+        build_trainer(tc, mc)
 
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
         assert strategy_obj._ddp_kwargs.get("static_graph") is False
@@ -2629,7 +2246,6 @@ class TestFloat32MatmulPrecision:
         torch.set_float32_matmul_precision("highest")
 
         build_trainer(_tc(tmp_path), _mc(), accelerator="cpu")
-
         assert torch.get_float32_matmul_precision() == "high"
 
 
@@ -2678,37 +2294,27 @@ class TestMultiDeviceXLAStrategy:
     """
 
     @pytest.mark.xla
-    def test_multiple_xla_devices_select_the_xla_strategy(self, tmp_path) -> None:
+    def test_multiple_xla_devices_select_the_xla_strategy(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ) -> None:
         """Without this, asking for more than one chip fails with `found DDPStrategy`."""
         pytest.importorskip("torch_xla")
-        captured: dict = {}
 
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
+        build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4)
 
-        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4)
-
-        assert captured["strategy"] == "xla"
+        assert captured_trainer_kwargs["strategy"] == "xla"
 
     @pytest.mark.xla
-    def test_single_xla_device_keeps_auto(self, tmp_path) -> None:
+    def test_single_xla_device_keeps_auto(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """One chip already resolves to SingleDeviceXLAStrategy, so nothing should be overridden."""
         pytest.importorskip("torch_xla")
-        captured: dict = {}
 
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
+        build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1)
 
-        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1)
-
-        assert captured["strategy"] == "auto"
+        assert captured_trainer_kwargs["strategy"] == "auto"
 
     @pytest.mark.xla
-    def test_an_explicit_strategy_is_never_overridden(self, tmp_path) -> None:
+    def test_an_explicit_strategy_is_never_overridden(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """A caller who names a strategy owns that choice, even on multi-device XLA.
 
         The new guard only rewrites ``"auto"``, so an explicit ``"ddp"`` string still reaches the pre-existing,
@@ -2719,21 +2325,16 @@ class TestMultiDeviceXLAStrategy:
         pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
-        captured: dict = {}
+        build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4, strategy="ddp")
 
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
-
-        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4, strategy="ddp")
-
-        strategy_obj = captured["strategy"]
+        strategy_obj = captured_trainer_kwargs["strategy"]
         assert isinstance(strategy_obj, DDPStrategy)
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     @pytest.mark.xla
-    def test_multi_device_xla_strategy_is_not_selected_for_keypoint_models(self, tmp_path) -> None:
+    def test_multi_device_xla_strategy_is_not_selected_for_keypoint_models(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ) -> None:
         """Keypoint models keep resolving to DDPStrategy on multi-device XLA instead of being promoted to `"xla"`.
 
         Keypoint training uses manual optimization and the DDP-specific ``find_unused_parameters=True`` handling a few
@@ -2744,18 +2345,9 @@ class TestMultiDeviceXLAStrategy:
         pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
-        captured: dict = {}
+        build_trainer(_kp_tc(tmp_path, use_ema=False), _mc(use_grouppose_keypoints=True), accelerator="tpu", devices=4)
 
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
-
-        with patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer):
-            build_trainer(
-                _kp_tc(tmp_path, use_ema=False), _mc(use_grouppose_keypoints=True), accelerator="tpu", devices=4
-            )
-
-        assert isinstance(captured["strategy"], DDPStrategy)
+        assert isinstance(captured_trainer_kwargs["strategy"], DDPStrategy)
 
     def test_accelerator_auto_resolves_to_xla_strategy_when_xla_is_available(self, tmp_path) -> None:
         """``accelerator="auto"`` -- TrainConfig's own default -- must be covered too, not just an explicit string.
@@ -2788,7 +2380,9 @@ class TestMultiDeviceXLAStrategy:
         assert "precision" not in captured
         assert captured["plugins"] == [mocked_xla_precision.return_value]
 
-    def test_multi_node_single_device_keeps_the_existing_ddp_strategy(self, tmp_path) -> None:
+    def test_multi_node_single_device_keeps_the_existing_ddp_strategy(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ) -> None:
         """One device per host must not be promoted to unsupported ``XLAStrategy``.
 
         The generic distributed branch still creates ``DDPStrategy`` for ``devices=1, num_nodes=2``. That topology needs
@@ -2798,23 +2392,18 @@ class TestMultiDeviceXLAStrategy:
         """
         import unittest.mock as mock
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
-
         with (
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock.MagicMock(name="XLAPrecision")),
-            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1, num_nodes=2)
 
         from pytorch_lightning.strategies import DDPStrategy
 
-        assert isinstance(captured["strategy"], DDPStrategy)
+        assert isinstance(captured_trainer_kwargs["strategy"], DDPStrategy)
 
-    def test_multi_device_xla_strategy_is_selected_for_segmentation_models(self, tmp_path) -> None:
+    def test_multi_device_xla_strategy_is_selected_for_segmentation_models(
+        self, captured_trainer_kwargs: dict[str, Any], tmp_path
+    ) -> None:
         """A segmentation config reaches the same guard as plain detection, since only ``has_keypoints`` is excluded.
 
         ``segmentation_head.sparse_forward()`` is one of the documented reasons the pre-existing DDP branch a few lines
@@ -2824,18 +2413,11 @@ class TestMultiDeviceXLAStrategy:
         """
         import unittest.mock as mock
 
-        captured: dict = {}
-
-        def _fake_trainer(**kwargs):
-            captured.update(kwargs)
-            return MagicMock()
-
         with (
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock.MagicMock(name="XLAPrecision")),
-            patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
             build_trainer(
                 _tc(tmp_path, use_ema=False), _mc(amp=False, segmentation_head=True), accelerator="tpu", devices=4
             )
 
-        assert captured["strategy"] == "xla"
+        assert captured_trainer_kwargs["strategy"] == "xla"
