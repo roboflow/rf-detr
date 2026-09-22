@@ -22,6 +22,7 @@ from typing import Any, cast
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
+from transformers import PreTrainedModel
 
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig

@@ -101,9 +101,9 @@ class Backbone(BackboneBase):
         assert self.projector_scale is not None and len(self.projector_scale) > 0
         # x[0]
         assert sorted(self.projector_scale) == self.projector_scale, (
-            "only support projector scale P3/P4/P5/P6 in ascending order."
+            "only support projector scale P3/P4/P5 in ascending order."
         )
-        level2scalefactor = dict(P3=2.0, P4=1.0, P5=0.5, P6=0.25)
+        level2scalefactor = dict(P3=2.0, P4=1.0, P5=0.5)
         scale_factors = [level2scalefactor[lvl] for lvl in self.projector_scale]
 
         self.projector = MultiScaleProjector(

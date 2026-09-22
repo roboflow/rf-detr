@@ -336,10 +336,6 @@ class TestTrainConfigT42PromotedFields:
         """optimizer_kwargs defaults to an empty dict."""
         assert self._tc(tmp_path).optimizer_kwargs == {}
 
-    def test_lr_min_factor_default(self, tmp_path):
-        """lr_min_factor defaults to 0.0."""
-        assert self._tc(tmp_path).lr_min_factor == pytest.approx(0.0)
-
     def test_dont_save_weights_default_is_false(self, tmp_path):
         """dont_save_weights defaults to False."""
         assert self._tc(tmp_path).dont_save_weights is False
@@ -460,15 +456,18 @@ class TestTrainConfigT42PromotedFields:
         with pytest.raises((ValueError, ValidationError)):
             self._tc(tmp_path, optimizer="  ")
 
-    def test_optimizer_rejects_unknown_short_name(self, tmp_path):
-        """A bare short name that is not a torch.optim optimizer is rejected at config time."""
+    @pytest.mark.parametrize(
+        "optimizer",
+        [
+            pytest.param("lion", id="unknown_short_name"),
+            # Pytorch-optimizer names are not selectable by short name (use an import path).
+            pytest.param("pytorch_optimizer:lion", id="non_torch_optim_short_name"),
+        ],
+    )
+    def test_optimizer_rejects_non_native_short_name(self, tmp_path, optimizer):
+        """A bare short name that does not resolve to a torch.optim optimizer is rejected at config time."""
         with pytest.raises((ValueError, ValidationError), match="native optimizer"):
-            self._tc(tmp_path, optimizer="lion")
-
-    def test_optimizer_rejects_non_torch_optim_short_name(self, tmp_path):
-        """Pytorch-optimizer names are not selectable by short name (use an import path)."""
-        with pytest.raises((ValueError, ValidationError), match="native optimizer"):
-            self._tc(tmp_path, optimizer="pytorch_optimizer:lion")
+            self._tc(tmp_path, optimizer=optimizer)
 
     def test_optimizer_accepts_native_short_name(self, tmp_path):
         """A native torch.optim short name (e.g. 'sgd') is accepted."""
@@ -869,45 +868,11 @@ class TestTrainConfigLRScheduler:
             tc = self._tc(tmp_path, lr_scheduler=lambda optimizer: torch.optim.lr_scheduler.StepLR(optimizer, 5))
         assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
 
-    def test_deprecated_lr_drop_folds_into_kwargs_with_warning(self, tmp_path):
-        """A non-default lr_drop is folded into lr_scheduler_kwargs and warns (deprecation)."""
-        with pytest.warns(FutureWarning, match="lr_drop is deprecated"):
-            tc = self._tc(tmp_path, lr_drop=80)
-        assert tc.lr_scheduler_kwargs["lr_drop"] == 80
-
-    def test_deprecated_lr_min_factor_folds_into_kwargs_with_warning(self, tmp_path):
-        """A non-default lr_min_factor is folded into lr_scheduler_kwargs['min_factor'] and warns."""
-        with pytest.warns(FutureWarning, match="lr_min_factor is deprecated"):
-            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2)
-        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.2)
-
-    def test_default_deprecated_field_does_not_warn(self, tmp_path):
-        """Passing a deprecated field at its default value (e.g. on config reload) must not warn."""
-        default_lr_drop = TrainConfig.model_fields["lr_drop"].default
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", FutureWarning)
-            self._tc(tmp_path, lr_drop=default_lr_drop)
-
-    def test_migrated_config_reload_does_not_rewarn(self, tmp_path):
-        """Reloading a dumped config that already carries the folded kwarg must not re-warn."""
-        with pytest.warns(FutureWarning):
-            original = self._tc(tmp_path, lr_scheduler="step", lr_drop=8)
-        dumped = original.model_dump()
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", FutureWarning)
-            reloaded = TrainConfig(**dumped)
-        assert reloaded.lr_scheduler_kwargs["lr_drop"] == 8
-
-    def test_deprecated_field_warns_but_not_folded_for_explicit_scheduler(self, tmp_path):
-        """A deprecated field set with an explicit scheduler warns (ignored) and is never folded into kwargs."""
-        with pytest.warns(FutureWarning, match="is ignored for the explicit"):
-            tc = self._tc(
-                tmp_path,
-                lr_scheduler="torch.optim.lr_scheduler.StepLR",
-                lr_scheduler_kwargs={"step_size": 5},
-                lr_drop=80,
-            )
-        assert tc.lr_scheduler_kwargs == {"step_size": 5}
+    @pytest.mark.parametrize("field", ["lr_drop", "lr_min_factor"])
+    def test_removed_lr_fields_are_rejected(self, tmp_path, field):
+        """The v1.9-deprecated top-level LR fields were removed in v1.11 and are now unknown kwargs."""
+        with pytest.raises(ValidationError, match=field):
+            self._tc(tmp_path, **{field: 1})
 
     def test_managed_preset_rejects_unknown_kwargs(self, tmp_path):
         """Managed presets reject lr_scheduler_kwargs keys they do not consume (mirrors optimizer_kwargs)."""
@@ -941,12 +906,6 @@ class TestTrainConfigLRScheduler:
         with pytest.warns(UserWarning, match="cannot be saved"):
             tc = self._tc(tmp_path, lr_scheduler=functools.partial(torch.optim.lr_scheduler.StepLR, gamma=object()))
         assert callable(tc.lr_scheduler) and not isinstance(tc.lr_scheduler, str)
-
-    def test_conflicting_field_and_kwarg_warns_kwarg_wins(self, tmp_path):
-        """When both lr_min_factor and kwargs['min_factor'] are set to different values, the kwarg wins and warns so."""
-        with pytest.warns(FutureWarning, match="the kwarg wins"):
-            tc = self._tc(tmp_path, lr_scheduler="cosine", lr_min_factor=0.2, lr_scheduler_kwargs={"min_factor": 0.3})
-        assert tc.lr_scheduler_kwargs["min_factor"] == pytest.approx(0.3)
 
 
 class TestBuildTrainerUsesRealFields:
@@ -1004,14 +963,12 @@ class TestBuildTrainerUsesRealFields:
         )
         assert trainer.gradient_clip_val is None
 
-    def test_seed_not_applied_in_build_trainer_factory(self, tmp_path):
+    @patch("pytorch_lightning.seed_everything")
+    def test_seed_not_applied_in_build_trainer_factory(self, mock_seed, tmp_path):
         """Seeding is deferred to RFDETRModule.on_fit_start, not build_trainer()."""
-        import unittest.mock as mock
-
         from rfdetr.training import build_trainer
 
-        with mock.patch("pytorch_lightning.seed_everything") as mock_seed:
-            build_trainer(self._tc(tmp_path, seed=99), self._mc())
+        build_trainer(self._tc(tmp_path, seed=99), self._mc())
         mock_seed.assert_not_called()
 
     def test_sync_bn_forwarded_to_trainer(self, tmp_path):
@@ -1223,27 +1180,23 @@ class TestPretrainWeightsCompatibilityWarning:
         assert len(captured) == 1
         assert field in str(captured[0].message)
 
-    def test_mask_downsample_ratio_warns_on_seg_variant(self) -> None:
-        """``mask_downsample_ratio`` change is silently miscalibrating; must warn at config time."""
-        captured = self._capture(RFDETRSegNanoConfig, mask_downsample_ratio=2)
+    @pytest.mark.parametrize(
+        "config_cls, field, value",
+        [
+            pytest.param(RFDETRSegNanoConfig, "mask_downsample_ratio", 2, id="mask_downsample_ratio"),
+            # patch_size already raises in load_pretrain_weights; this warning is defense-in-depth.
+            # Value differs from RFDETRNanoConfig's default (16).
+            pytest.param(RFDETRNanoConfig, "patch_size", 14, id="patch_size"),
+            # RFDETRNanoConfig has segmentation_head=False; flipping it to True is the override,
+            # which also raises at load time but the warning fires first.
+            pytest.param(RFDETRNanoConfig, "segmentation_head", True, id="segmentation_head"),
+        ],
+    )
+    def test_single_field_override_warns(self, config_cls: type, field: str, value: object) -> None:
+        """A single breaking-field override on its variant config fires exactly one warning naming the field."""
+        captured = self._capture(config_cls, **{field: value})
         assert len(captured) == 1
-        assert "mask_downsample_ratio" in str(captured[0].message)
-
-    def test_patch_size_override_warns_defense_in_depth(self) -> None:
-        """patch_size already raises in load_pretrain_weights; the new warning is defense-in-depth.
-
-        We change patch_size to a value that differs from RFDETRNanoConfig's default (16).
-        """
-        captured = self._capture(RFDETRNanoConfig, patch_size=14)
-        assert len(captured) == 1
-        assert "patch_size" in str(captured[0].message)
-
-    def test_segmentation_head_override_warns(self) -> None:
-        """segmentation_head also raises at load time but warning fires first."""
-        # RFDETRNanoConfig has segmentation_head=False; flipping it to True is the override.
-        captured = self._capture(RFDETRNanoConfig, segmentation_head=True)
-        assert len(captured) == 1
-        assert "segmentation_head" in str(captured[0].message)
+        assert field in str(captured[0].message)
 
     @pytest.mark.parametrize(
         "field, value",
