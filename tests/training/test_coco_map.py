@@ -697,7 +697,8 @@ def test_distributed_merge_concatenates_every_metric_state(_initialized: MagicMo
     assert metric.has_updates is True
 
 
-def test_distributed_merge_is_noop_without_process_group() -> None:
+@patch("rfdetr.training.coco_map.all_gather")
+def test_distributed_merge_is_noop_without_process_group(gather) -> None:
     """Single-process use must leave local state untouched and issue no object gathers."""
     metric = OnePassCocoMeanAveragePrecision()
     metric.update(
@@ -711,8 +712,7 @@ def test_distributed_merge_is_noop_without_process_group() -> None:
         [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3])}],
     )
 
-    with patch("rfdetr.training.coco_map.all_gather") as gather:
-        metric.merge_distributed_state()
+    metric.merge_distributed_state()
 
     gather.assert_not_called()
     assert len(metric.detection_box) == 1

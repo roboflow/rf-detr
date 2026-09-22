@@ -539,7 +539,12 @@ class TestExportFormatParameter:
         self._mock_coreml_convert.assert_not_called()
 
     def test_invalid_format_raises_value_error(self) -> None:
-        """Unknown ``format`` must raise ``ValueError`` listing supported formats."""
+        """Unknown ``format`` must raise ``ValueError`` listing supported formats.
+
+        Facade-level: proves ``RFDETR.export()`` validates before any format dispatch, so one instance covers
+        every format (this used to be copy-pasted per exporter test file; ``TestResolveExporter`` in
+        ``test_registry.py`` separately covers the underlying guard, parametrized per registered format).
+        """
         obj = self._make_rfdetr()
         with pytest.raises(ValueError, match="Unsupported export format"):
             obj.export(format="bogus", output_dir=str(self._tmp_path / "out"))

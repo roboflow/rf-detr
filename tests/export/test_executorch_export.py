@@ -446,10 +446,9 @@ class TestExportFormatParameter:
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
         self._mock_executorch_convert.assert_not_called()
 
-    def test_invalid_format_raises_value_error(self) -> None:
-        obj = self._make_rfdetr()
-        with pytest.raises(ValueError, match="Unsupported export format"):
-            obj.export(format="bogus", output_dir=str(self._tmp_path / "out"))
+    # Invalid-format rejection is format-agnostic (RFDETR.export() validates before any dispatch) and is
+    # covered once, facade-level, by TestExportFormatParameter.test_invalid_format_raises_value_error in
+    # test_coreml_export.py; TestResolveExporter in test_registry.py covers the underlying guard per format.
 
     def test_converter_import_error_propagates(self) -> None:
         """If the executorch converter cannot be imported, ``export()`` surfaces an actionable ImportError."""

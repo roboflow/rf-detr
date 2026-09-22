@@ -26,6 +26,7 @@ from torch import Tensor
 from rfdetr.assets.model_weights import download_pretrain_weights, validate_pretrain_weights
 from rfdetr.config import ModelConfig
 from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
@@ -661,6 +662,7 @@ def apply_lora(nn_model: LWDETR) -> None:
     """
     try:
         from peft import LoraConfig, get_peft_model
+        from transformers import PreTrainedModel
     except ImportError as exc:
         raise ImportError(
             "LoRA requires the 'peft' dependency. "
@@ -685,7 +687,8 @@ def apply_lora(nn_model: LWDETR) -> None:
         ],
     )
     backbone = cast(Backbone, nn_model.backbone[0])
-    # peft.get_peft_model() type-hints its first argument as PreTrainedModel, but only actually
-    # needs an nn.Module whose named submodules match target_modules; DinoV2 (a plain nn.Module
-    # wrapper, not itself a PreTrainedModel) satisfies that at runtime.
-    backbone.encoder = get_peft_model(backbone.encoder, lora_config)  # type: ignore[assignment]
+    # PEFT's type signature requires a PreTrainedModel, but DinoV2 is a compatible nn.Module
+    # wrapper at runtime. Cast both sides of this dynamic wrapper boundary instead of relying
+    # on an environment-sensitive ignore for PEFT's evolving type annotations.
+    peft_encoder = get_peft_model(cast(PreTrainedModel, backbone.encoder), lora_config)
+    backbone.encoder = cast(DinoV2, peft_encoder)

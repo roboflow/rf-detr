@@ -64,15 +64,15 @@ class TestDefaultTorchvisionTransforms:
         assert not any(isinstance(step, RandomHorizontalFlip) for step in pipeline.transforms)
 
     @pytest.mark.parametrize("builder", [make_coco_transforms, make_coco_transforms_square_div_64])
-    def test_keypoint_pipeline_without_flip_pairs_warns(self, builder: Callable[..., Compose]) -> None:
+    @patch("rfdetr.datasets.coco.logger")
+    def test_keypoint_pipeline_without_flip_pairs_warns(self, mock_logger, builder: Callable[..., Compose]) -> None:
         """Disabling the default flip for an unpaired keypoint pipeline logs a warning.
 
         The warning must not tell the user to remove the transform "from your augmentation config" — the torchvision-
         native default path (``aug_config=None``) has no such config object; the only actionable remedy here is
         providing ``keypoint_flip_pairs``.
         """
-        with patch("rfdetr.datasets.coco.logger") as mock_logger:
-            builder("train", 640, keypoint_flip_pairs=[])
+        builder("train", 640, keypoint_flip_pairs=[])
 
         mock_logger.warning.assert_called_once()
         message = str(mock_logger.warning.call_args)

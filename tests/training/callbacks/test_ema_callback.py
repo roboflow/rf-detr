@@ -227,13 +227,13 @@ class TestInit:
         cb._average_model.update_parameters(pl_module)
         assert int(cb._average_model.n_averaged) == 2
 
-    def test_xla_keeps_averaged_model_counter_on_cpu(self) -> None:
+    @patch("rfdetr.training.callbacks.ema.AveragedModel")
+    def test_xla_keeps_averaged_model_counter_on_cpu(self, averaged_model) -> None:
         """XLA must not place AveragedModel's Python-control-flow counter on the lazy device."""
         cb = RFDETREMACallback()
         pl_module = MagicMock(device=torch.device("xla"))
 
-        with patch("rfdetr.training.callbacks.ema.AveragedModel") as averaged_model:
-            cb.on_fit_start(MagicMock(), pl_module)
+        cb.on_fit_start(MagicMock(), pl_module)
 
         assert averaged_model.call_args.kwargs["device"] is None
 

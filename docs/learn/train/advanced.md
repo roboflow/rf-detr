@@ -106,6 +106,8 @@ The training loop will automatically load:
 - Learning rate scheduler state
 - Training epoch number
 
+Resuming rewrites `training_config.json` in `output_dir` with the resumed run's own configuration — once when the run starts and again when it finishes — so a previous run's copy in that directory is replaced as soon as the resumed run begins.
+
 !!! warning "Lightweight checkpoints resume without optimizer/scheduler state"
 
     The above applies to the trainer's own full checkpoints (`last.ckpt`, `checkpoint_<epoch>.ckpt`). The best-model tracker also writes four lighter `.pth` files — `checkpoint_best_regular.pth`, `checkpoint_best_ema.pth`, `checkpoint_best_total.pth`, `last_ema.pth` — that intentionally omit optimizer/scheduler state to stay small. New files with matching configured callbacks can restore callback state (EMA and early stopping). Best-score tracking additionally requires `output_dir` to be the exact directory where the checkpoint was written. Files created before callback-state persistence (or with an empty callback section) restart callback state. The optimizer and LR scheduler always start cold. `resume=` logs the applicable warning; pass a full trainer checkpoint instead if you need optimizer/scheduler continuity.
