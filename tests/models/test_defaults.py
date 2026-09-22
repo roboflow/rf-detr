@@ -120,12 +120,15 @@ class TestModelDefaultsImmutability:
     def test_setting_an_undeclared_attribute_raises_type_error(self) -> None:
         """Assigning an attribute the dataclass never declared is also rejected, not silently accepted.
 
-        ``slots=True`` normally raises ``AttributeError`` for an undeclared attribute, but the frozen dataclass's
-        generated ``__setattr__`` intercepts every assignment first; this pins the resulting ``TypeError`` so a future
-        ``dataclasses`` implementation change that instead lets it through (silently growing an instance dict on
-        `ModelDefaults`) fails a test near this module.
+        The frozen dataclass's generated ``__setattr__`` intercepts every assignment before ``slots=True`` would
+        otherwise raise ``AttributeError`` for an undeclared name. Which exception surfaces for an *undeclared* name
+        is CPython-version-dependent: pre-3.13 has a stale-``cls``-reference bug in the generated ``__setattr__`` that
+        raises plain ``TypeError`` instead of the intended ``dataclasses.FrozenInstanceError``; 3.13+ fixes it, so the
+        undeclared-name path raises ``FrozenInstanceError`` just like the declared-field path above. Both are accepted
+        here so the test passes across this project's whole supported range (Python 3.10-3.14); either way, the
+        assignment must not silently grow an instance dict on ``ModelDefaults``.
         """
         defaults = ModelDefaults()
 
-        with pytest.raises(TypeError):
+        with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):
             defaults.not_a_declared_field = "value"  # type: ignore[attr-defined]
