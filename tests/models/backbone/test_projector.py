@@ -47,9 +47,11 @@ class TestMultiScaleProjectorExtraPoolMarker:
             scale_factors=[1.0, 0.25],
             num_blocks=1,
         )
-        features = [torch.zeros(1, c, 8, 8) for c in in_channels]
+        features = [torch.arange(c * 8 * 8, dtype=torch.float32).reshape(1, c, 8, 8) for c in in_channels]
 
         results = projector(features)
 
         assert len(results) == 2
-        assert results[-1].shape[-2:] == (4, 4)
+        expected_pooled_feature = torch.nn.functional.max_pool2d(results[0], kernel_size=1, stride=2)
+        assert results[-1].shape == (1, 4, 4, 4)
+        torch.testing.assert_close(results[-1], expected_pooled_feature)
