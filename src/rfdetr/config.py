@@ -369,9 +369,9 @@ def _desugar_optimizer_callable(
 
 
 _MANAGED_SCHEDULER_PRESETS = {"step", "cosine"}
-# Keys the managed "step" / "cosine" presets actually consume from lr_scheduler_kwargs, and the values they fall back
-# to when a key is absent.
+#: Default values used when managed step/cosine scheduler kwargs are omitted.
 _MANAGED_SCHEDULER_DEFAULTS: dict[str, int | float] = {"lr_drop": 100, "min_factor": 0.0}
+#: Keyword arguments consumed by the managed step/cosine scheduler presets.
 _MANAGED_SCHEDULER_KWARGS = frozenset(_MANAGED_SCHEDULER_DEFAULTS)
 
 # ReduceLROnPlateau does not subclass LRScheduler but is a supported explicit scheduler.
