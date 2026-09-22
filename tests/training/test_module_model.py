@@ -1415,9 +1415,13 @@ class TestTrainingStep:
         optimizer.toggle_model.assert_called_once_with(sync_grad=sync_grad)
         module.manual_backward.assert_called_once()
 
-    def test_detection_loss_uses_lightning_grad_accum_scaling(self, tmp_path):
-        """Detection (automatic optimization) divides loss by ``trainer.accumulate_grad_batches`` so the returned loss
-        matches the legacy non-manual training path."""
+    def test_detection_loss_is_returned_unscaled_for_lightning_accumulation(self, tmp_path: Path) -> None:
+        """Detection (automatic optimization) returns the weighted loss unscaled.
+
+        Lightning's ``ClosureResult.from_training_step_output`` divides the returned loss by
+        ``trainer.accumulate_grad_batches`` before ``backward()``. Dividing here as well would scale every accumulated
+        gradient by ``1/N**2`` (``tests/training/test_grad_accumulation.py`` holds the gradient-level proof).
+        """
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}
         module, samples, targets, _, _ = self._run_step(
@@ -1430,7 +1434,7 @@ class TestTrainingStep:
 
         loss = module.training_step((samples, targets), batch_idx=0)
 
-        assert loss.item() == pytest.approx(1.0)
+        assert loss.item() == pytest.approx(4.0)
         module.manual_backward.assert_not_called()
 
     def _make_keypoint_module(self, tmp_path, grad_accum_steps, num_training_batches):
