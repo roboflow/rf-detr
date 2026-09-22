@@ -525,6 +525,25 @@ class TestDistributedSamplerPaddingFilter:
 
         assert len(cb.map_metric.update.call_args.args[1]) == 3
 
+    def test_each_loader_uses_its_own_padding_rule(self, epoch_start, batch_end, loaders_attr, stage) -> None:
+        """A padded second loader must not inherit the unpadded first loader's sample counter or sampler."""
+        cb = COCOEvalCallback()
+        first_loader = MagicMock(name="first_loader")
+        first_loader.sampler = SequentialSampler(list(range(3)))
+        second_loader = MagicMock(name="second_loader")
+        second_loader.sampler = DistributedSampler(list(range(3)), num_replicas=2, rank=1, shuffle=False)
+        trainer = _make_trainer()
+        setattr(trainer, loaders_attr, [first_loader, second_loader])
+        cb.setup(trainer, _make_pl_module(), stage=stage)
+        cb.map_metric = MagicMock(name="map_metric")
+        getattr(cb, epoch_start)(trainer, _cpu_module())
+
+        outputs = {"results": _detection_preds(0) * 2, "targets": _detection_targets() * 2}
+        getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0, dataloader_idx=0)
+        getattr(cb, batch_end)(trainer, _cpu_module(), outputs, None, 0, dataloader_idx=1)
+
+        assert [len(call.args[1]) for call in cb.map_metric.update.call_args_list] == [2, 1]
+
 
 class TestOnTestBatchEnd:
     """Test-loop-specific behaviour of on_test_batch_end."""

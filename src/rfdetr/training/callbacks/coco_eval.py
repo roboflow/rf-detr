@@ -196,10 +196,10 @@ class COCOEvalCallback(Callback):
         self._train_segm_skip_warned: bool = False
         self._keypoint_oks_metrics: dict[str, MetricKeypointOKS] = {}
         self._keypoint_oks_sigmas = keypoint_oks_sigmas
-        # DistributedSampler padding filter for the current evaluation epoch: ``(rank, num_replicas, dataset_len)``
-        # when the split is padded across ranks, else ``None``; ``_eval_samples_seen`` counts this rank's samples.
-        self._eval_padding: tuple[int, int, int] | None = None
-        self._eval_samples_seen: int = 0
+        # Each evaluation loader may have a distinct padded DistributedSampler. Keep its rule and local position
+        # separate so Lightning's interleaved multi-loader hooks never apply loader 0's state to another split.
+        self._eval_padding: dict[int, tuple[int, int, int]] = {}
+        self._eval_samples_seen: dict[int, int] = {}
         self._in_notebook: bool
         if in_notebook is None:
             self._in_notebook = _is_running_in_notebook()
@@ -480,12 +480,12 @@ class COCOEvalCallback(Callback):
             outputs: Return value of ``validation_step``.
             batch: The device-transferred batch ``(samples, targets)``.
             batch_idx: Batch index within the validation epoch.
-            dataloader_idx: Index of the validation dataloader (unused here).
+            dataloader_idx: Index selecting the validation loader's padding rule.
         """
         if not isinstance(outputs, Mapping):
             return
         batch_targets = outputs["targets"]
-        keep = self._next_real_sample_mask(len(batch_targets))
+        keep = self._next_real_sample_mask(len(batch_targets), dataloader_idx)
         if not all(keep):
             # A batch that is padding through and through (a split smaller than world_size) still flows on as
             # empty lists: the accumulators record the update, so this rank votes like every other in the
@@ -592,11 +592,11 @@ class COCOEvalCallback(Callback):
             outputs: Return value of ``test_step``.
             batch: Raw batch (unused here).
             batch_idx: Batch index within the test epoch.
-            dataloader_idx: Index of the test dataloader (unused here).
+            dataloader_idx: Index selecting the test loader's padding rule.
         """
         if not isinstance(outputs, Mapping):
             return
-        keep = self._next_real_sample_mask(len(outputs["targets"]))
+        keep = self._next_real_sample_mask(len(outputs["targets"]), dataloader_idx)
         if not all(keep):
             # Same as the validation hook: an all-padding batch flows on as empty lists so every rank stays a
             # participant in the epoch-end collectives.
@@ -643,30 +643,33 @@ class COCOEvalCallback(Callback):
         Args:
             dataloaders: ``trainer.val_dataloaders`` or ``trainer.test_dataloaders`` (a loader or a list of them).
         """
-        self._eval_samples_seen = 0
-        self._eval_padding = None
+        self._eval_samples_seen = {}
+        self._eval_padding = {}
         loaders = dataloaders if isinstance(dataloaders, (list, tuple)) else [dataloaders]
-        sampler = getattr(loaders[0], "sampler", None) if loaders else None
-        if not isinstance(sampler, DistributedSampler) or sampler.shuffle or sampler.drop_last:
-            return
-        dataset_len = len(sampler.dataset)  # type: ignore[arg-type]
-        if sampler.total_size > dataset_len:
-            self._eval_padding = (sampler.rank, sampler.num_replicas, dataset_len)
+        for dataloader_idx, loader in enumerate(loaders):
+            sampler = getattr(loader, "sampler", None)
+            if not isinstance(sampler, DistributedSampler) or sampler.shuffle or sampler.drop_last:
+                continue
+            dataset_len = len(sampler.dataset)  # type: ignore[arg-type]
+            if sampler.total_size > dataset_len:
+                self._eval_padding[dataloader_idx] = (sampler.rank, sampler.num_replicas, dataset_len)
 
-    def _next_real_sample_mask(self, count: int) -> list[bool]:
+    def _next_real_sample_mask(self, count: int, dataloader_idx: int) -> list[bool]:
         """Return, for the next ``count`` samples on this rank, whether each is a real image rather than padding.
 
         Args:
             count: Number of samples in the batch being accumulated.
+            dataloader_idx: Index selecting the evaluation loader's independent sample position and sampler rule.
 
         Returns:
             One flag per sample, in batch order; all ``True`` when the split is not padded.
         """
-        first = self._eval_samples_seen
-        self._eval_samples_seen += count
-        if self._eval_padding is None:
+        first = self._eval_samples_seen.get(dataloader_idx, 0)
+        self._eval_samples_seen[dataloader_idx] = first + count
+        padding = self._eval_padding.get(dataloader_idx)
+        if padding is None:
             return [True] * count
-        rank, num_replicas, dataset_len = self._eval_padding
+        rank, num_replicas, dataset_len = padding
         return [rank + (first + offset) * num_replicas < dataset_len for offset in range(count)]
 
     @staticmethod
