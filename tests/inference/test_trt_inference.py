@@ -18,6 +18,7 @@ import rfdetr.export.benchmark as benchmark
 from rfdetr.export._tensorrt.inference import TRTInference
 from rfdetr.export.benchmark import infer_transforms
 
+#: Minimal indexed COCO dataset used to verify evaluator construction.
 _MINIMAL_COCO = {
     "images": [{"id": 1, "file_name": "000000000001.jpg", "width": 64, "height": 48}],
     "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [8, 8, 16, 16], "area": 256, "iscrowd": 0}],
