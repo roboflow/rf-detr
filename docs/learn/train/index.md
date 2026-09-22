@@ -200,6 +200,8 @@ During training, multiple model checkpoints are saved to the output directory:
 
 For detection and segmentation models, the validation score is box mAP (`val/mAP_50_95`). For keypoint preview models, best-checkpoint selection uses COCO keypoint AP (`val/keypoint_map_50_95`) and checkpoints persist the model keypoint schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slots.
 
+The output directory also holds `training_config.json`, a record of how the run was configured: the full `TrainConfig` and `ModelConfig`, the model config class name, and the dataset's class names. It is written when training starts, so a run you interrupt with Ctrl-C still leaves one behind, and rewritten when training finishes — at which point `class_names` is the list you passed as `class_names`, or the dataset's own labels when you passed none. Because the start-of-run copy is written before the first batch, the file's presence does not by itself mean a run reached training, and it replaces any copy an earlier run left in the same `output_dir`.
+
 ??? note "Checkpoint file sizes"
 
     Checkpoint sizes vary based on what they contain:
