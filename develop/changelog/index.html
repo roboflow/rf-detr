@@ -2572,6 +2572,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>Removed <code>RFDETR.optimize_for_inference()</code>, deprecated since v1.9.0. Call <code>RFDETR.inference()</code>; the signature is unchanged.</p>
+</li>
+<li>
+<p>Removed <code>TrainConfig.lr_drop</code> and <code>TrainConfig.lr_min_factor</code>, deprecated since v1.9.0, together with the validator that folded them into <code>lr_scheduler_kwargs</code>. Pass <code>lr_scheduler_kwargs={"lr_drop": ..., "min_factor": ...}</code>; the managed <code>"step"</code> / <code>"cosine"</code> presets fall back to <code>lr_drop=100</code> and <code>min_factor=0.0</code> when a key is absent. <code>TrainConfig</code> rejects unknown fields, so a <code>training_config.json</code> written by v1.9 or v1.10 must have the two keys removed before it is passed back to <code>TrainConfig(**...)</code>; the migrated values are already present in its <code>lr_scheduler_kwargs</code>.</p>
+</li>
+<li>
 <p>Removed <code>rfdetr.datasets.synthetic</code> (<code>generate_coco_dataset</code>, <code>generate_synthetic_sample</code>, <code>draw_synthetic_shape</code>, <code>calculate_boundary_overlap</code>, <code>DatasetSplitRatios</code>, <code>SYNTHETIC_SHAPES</code>, <code>SYNTHETIC_COLORS</code>). The module only ever fed RF-DETR's own test fixtures and is replaced by the <code>fuse-augmentations</code> package, whose <code>fuse_augmentations.data</code> module generates the same shape datasets in COCO or YOLO layout for detection, segmentation, and OBB. Callers migrate to <code>pip install fuse-augmentations</code> plus <code>from fuse_augmentations.data import generate_dataset</code>; note that it writes dense COCO category ids where the removed generator wrote sparse ones, and its shape set adds <code>rectangle</code>.</p>
 </li>
 <li>
