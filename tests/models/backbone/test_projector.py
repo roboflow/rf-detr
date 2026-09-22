@@ -163,9 +163,9 @@ class TestMultiScaleProjectorScale025Branch:
     ``scale_factors`` is caller-supplied and untyped at this layer (the ``Literal["P3","P4","P5"]`` restriction lives
     two layers up, in ``TrainConfig.projector_scale``), so a direct caller can still pass ``0.25`` here. Doing so
     currently produces a stage with an empty ``stages_sampling`` entry, and calling ``forward`` on that stage raises
-    ``IndexError`` (``feat_fuse_list[0]`` on an empty list) — this is a pre-existing construction/forward mismatch, not
-    something these tests attempt to fix. ``TestMultiScaleProjectorExtraPool`` below isolates the *pooling* behaviour
-    the flag is meant to drive, independent of this broken construction path.
+    ``IndexError`` (``feat_fuse_list[0]`` on an empty list) — this is a pre-existing construction/forward mismatch,
+    not something these tests attempt to fix. ``TestMultiScaleProjectorExtraPool`` below isolates the *pooling*
+    behaviour the flag is meant to drive, independent of this broken construction path.
     """
 
     def test_sets_extra_pool_flag_and_builds_no_sampling_layers(self) -> None:
@@ -268,6 +268,7 @@ class TestMultiScaleProjectorForceDropLastNFeatures:
         assert torch.equal(out[:, 0:4], levels[0])
         assert torch.equal(out[:, 4:8], torch.zeros_like(levels[1]))
         assert torch.equal(out[:, 8:12], torch.zeros_like(levels[2]))
+
 
 class TestMultiScaleProjectorExtraPoolMarker:
     """``scale_factors`` entries of ``0.25`` mark an extra max-pool, not a pyramid stage."""
