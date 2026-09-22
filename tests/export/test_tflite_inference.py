@@ -127,6 +127,23 @@ def _save_rgb_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
     PILImage.new("RGB", size, color=(100, 150, 200)).save(path)
 
 
+class _RgbImageFixture:
+    """Mixin providing a small RGB JPEG fixture, shared by the classes below that need one."""
+
+    @pytest.fixture
+    def rgb_image(self, tmp_path: Path) -> Path:
+        """Write a small RGB JPEG to a temp file and return its path.
+
+        Examples:
+            Pytest fixtures cannot be called directly outside fixture injection.
+
+            >>> _RgbImageFixture().rgb_image(None)  # doctest: +SKIP
+        """
+        p = tmp_path / "image.jpg"
+        _save_rgb_image(p)
+        return p
+
+
 def _save_grayscale_image(path: Path, size: tuple[int, int] = (64, 64)) -> None:
     """Write a small solid-colour grayscale PNG to *path*.
 
@@ -332,15 +349,8 @@ class TestCreateInterpreter:
 # ---------------------------------------------------------------------------
 
 
-class TestRunInference:
+class TestRunInference(_RgbImageFixture):
     """Tests for ``_run_inference()``."""
-
-    @pytest.fixture()
-    def rgb_image(self, tmp_path: Path) -> Path:
-        """Write a small RGB JPEG to a temp file and return its path."""
-        p = tmp_path / "image.jpg"
-        _save_rgb_image(p)
-        return p
 
     @pytest.fixture()
     def grayscale_image(self, tmp_path: Path) -> Path:
@@ -477,15 +487,8 @@ class TestRunInference:
 # ---------------------------------------------------------------------------
 
 
-class TestSigmoidScoring:
+class TestSigmoidScoring(_RgbImageFixture):
     """Tests for per-class sigmoid scoring introduced in _run_inference."""
-
-    @pytest.fixture()
-    def rgb_image(self, tmp_path: Path) -> Path:
-        """Write a small RGB JPEG to a temp file and return its path."""
-        p = tmp_path / "image.jpg"
-        _save_rgb_image(p)
-        return p
 
     def test_high_logit_yields_confidence_near_one(self, rgb_image: Path) -> None:
         """Logit of 10.0 produces sigmoid ≈ 0.9999; confidence[0] > 0.99."""
@@ -566,15 +569,8 @@ _GENERIC_DET_OUTPUT = {"shape": [1, 10, 4], "name": "Identity_0", "index": 1}
 _GENERIC_LABEL_OUTPUT = {"shape": [1, 10, 82], "name": "Identity_1", "index": 2}
 
 
-class TestShapeBasedOutputFallback:
+class TestShapeBasedOutputFallback(_RgbImageFixture):
     """Tests for the shape-based output matching fallback in _run_inference."""
-
-    @pytest.fixture()
-    def rgb_image(self, tmp_path: Path) -> Path:
-        """Write a small RGB JPEG to a temp file and return its path."""
-        p = tmp_path / "image.jpg"
-        _save_rgb_image(p)
-        return p
 
     def test_unambiguous_shapes_inferred_correctly(self, rgb_image: Path) -> None:
         """Generic names with shapes [1,10,4] and [1,10,82] resolve without error."""
@@ -727,15 +723,8 @@ def _make_rank4_interp(rank4_tensor: np.ndarray, rank4_name: str = "StatefulPart
     return interp
 
 
-class TestRank4OutputKind:
+class TestRank4OutputKind(_RgbImageFixture):
     """Tests for classifying a rank-4 output whose name does not say what it holds."""
-
-    @pytest.fixture()
-    def rgb_image(self, tmp_path: Path) -> Path:
-        """Write a small RGB JPEG to a temp file and return its path."""
-        p = tmp_path / "image.jpg"
-        _save_rgb_image(p)
-        return p
 
     def test_nameless_rank4_keypoints_are_not_decoded_as_masks_by_default(self, rgb_image: Path) -> None:
         """The safe default does not interpret an anonymous keypoint tensor as segmentation masks."""
@@ -802,15 +791,8 @@ class TestRank4OutputKind:
 # ---------------------------------------------------------------------------
 
 
-class TestMaskDecoding:
+class TestMaskDecoding(_RgbImageFixture):
     """Tests for ``_decode_masks()`` and mask decoding in ``_run_inference()``."""
-
-    @pytest.fixture()
-    def rgb_image(self, tmp_path: Path) -> Path:
-        """Write a small RGB JPEG to a temp file and return its path."""
-        p = tmp_path / "image.jpg"
-        _save_rgb_image(p)
-        return p
 
     def test_decode_masks_shape_and_dtype(self) -> None:
         """Output shape is (K, height, width) from out_size=(width, height); dtype is bool."""

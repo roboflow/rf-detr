@@ -373,13 +373,13 @@ class TestModelInferenceInplace:
         assert rfdetr._is_optimized_for_inference is True
         assert rfdetr.is_optimized_inplace is False
 
-    def test_inplace_true_compile_false_does_not_deepcopy(self) -> None:
+    @patch("rfdetr.detr.deepcopy")
+    def test_inplace_true_compile_false_does_not_deepcopy(self, mock_deepcopy) -> None:
         """Inplace=True with compile=False should use the loaded module directly."""
         rfdetr = _FakeRFDETR()
         original_model = rfdetr.model.model
 
-        with patch("rfdetr.detr.deepcopy") as mock_deepcopy:
-            rfdetr.inference(compile=False, inplace=True)
+        rfdetr.inference(compile=False, inplace=True)
 
         mock_deepcopy.assert_not_called()
         assert rfdetr.model.model is None

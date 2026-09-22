@@ -287,113 +287,100 @@ class TestLoadClassesHierarchy:
     empty list. It should only filter when a Roboflow hierarchical export is detected.
     """
 
-    def test_roboflow_hierarchy_filters_parent(self, tmp_path: Path) -> None:
-        """Roboflow exports include a parent node — only leaf categories kept."""
-        categories = [
-            {"id": 0, "name": "annotations", "supercategory": "none"},
-            {"id": 1, "name": "dog", "supercategory": "annotations"},
-            {"id": 2, "name": "cat", "supercategory": "annotations"},
-        ]
-        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
-        result = RFDETR._load_classes(str(tmp_path))
-        assert result == ["dog", "cat"]
+    @pytest.mark.parametrize(
+        "categories, expected",
+        [
+            pytest.param(
+                [
+                    {"id": 0, "name": "annotations", "supercategory": "none"},
+                    {"id": 1, "name": "dog", "supercategory": "annotations"},
+                    {"id": 2, "name": "cat", "supercategory": "annotations"},
+                ],
+                ["dog", "cat"],
+                id="roboflow-export-includes-a-parent-node-only-leaf-categories-kept",
+            ),
+            pytest.param(
+                [
+                    {"id": 1, "name": "dog", "supercategory": "none"},
+                    {"id": 2, "name": "cat", "supercategory": "none"},
+                ],
+                ["dog", "cat"],
+                id="flat-dataset-every-category-has-supercategory-none-issue-609",
+            ),
+            pytest.param(
+                [
+                    {"id": 1, "name": "dog", "supercategory": "none"},
+                    {"id": 2, "name": "cat", "supercategory": "animal"},
+                ],
+                ["dog", "cat"],
+                # 'animal' is a supercategory but not itself a category name, so has_children is empty and every
+                # category passes the "name not in has_children" filter.
+                id="mixed-supercategories-where-no-category-is-a-parent-of-another",
+            ),
+            pytest.param(
+                [
+                    {"id": 1, "name": "none", "supercategory": "none"},
+                    {"id": 2, "name": "dog", "supercategory": "none"},
+                    {"id": 3, "name": "cat", "supercategory": "none"},
+                ],
+                ["none", "dog", "cat"],
+                id="category-literally-named-none-must-not-empty-the-list",
+            ),
+            pytest.param(
+                [
+                    {"id": 1, "name": "animals", "supercategory": "none"},
+                    {"id": 2, "name": "mammal", "supercategory": "animals"},
+                    {"id": 3, "name": "dog", "supercategory": "mammal"},
+                    {"id": 4, "name": "cat", "supercategory": "mammal"},
+                    {"id": 5, "name": "bird", "supercategory": "animals"},
+                    {"id": 6, "name": "eagle", "supercategory": "bird"},
+                    {"id": 7, "name": "pigeon", "supercategory": "bird"},
+                    {"id": 8, "name": "objects", "supercategory": "none"},
+                    {"id": 9, "name": "vehicle", "supercategory": "objects"},
+                    {"id": 10, "name": "car", "supercategory": "vehicle"},
+                    {"id": 11, "name": "truck", "supercategory": "vehicle"},
+                    {"id": 12, "name": "appliance", "supercategory": "objects"},
+                    {"id": 13, "name": "toaster", "supercategory": "appliance"},
+                    {"id": 14, "name": "microwave", "supercategory": "appliance"},
+                    {"id": 15, "name": "person", "supercategory": "none"},
+                ],
+                ["dog", "cat", "eagle", "pigeon", "car", "truck", "toaster", "microwave", "person"],
+                # Only leaf classes + standalone top-level categories are forwarded; parent/grouping nodes drop.
+                id="mixed-hierarchy-leaf-and-standalone-categories-forwarded-parents-dropped",
+            ),
+            pytest.param(
+                [
+                    {"id": 1, "name": "dog", "supercategory": None},
+                    {"id": 2, "name": "cat", "supercategory": ""},
+                    {"id": 3, "name": "elephant", "supercategory": "null"},
+                ],
+                ["dog", "cat", "elephant"],
+                id="placeholders-none-empty-string-and-literal-null-treated-like-none",
+            ),
+            pytest.param(
+                [
+                    {"id": 30, "name": "truck", "supercategory": "vehicle"},
+                    {"id": 10, "name": "vehicle", "supercategory": "none"},
+                    {"id": 20, "name": "car", "supercategory": "vehicle"},
+                    {"id": 40, "name": "person", "supercategory": "none"},
+                ],
+                ["car", "truck", "person"],
+                id="unsorted-category-ids-return-id-sorted-class-order-for-stable-index-mapping",
+            ),
+        ],
+    )
+    def test_load_classes_hierarchy_filtering(
+        self, tmp_path: Path, categories: list[dict], expected: list[str]
+    ) -> None:
+        """``_load_classes`` filters supercategory hierarchy across flat, nested, and placeholder-value datasets.
 
-    def test_flat_none_supercategory_keeps_all(self, tmp_path: Path) -> None:
-        """Flat datasets where every category has supercategory 'none' (#609)."""
-        categories = [
-            {"id": 1, "name": "dog", "supercategory": "none"},
-            {"id": 2, "name": "cat", "supercategory": "none"},
-        ]
-        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
-        result = RFDETR._load_classes(str(tmp_path))
-        assert result == ["dog", "cat"]
-
-    def test_mixed_supercategories_keeps_all(self, tmp_path: Path) -> None:
-        """Mix of 'none' and non-'none' supercategories where no category is a parent of another.
-
-        'animal' appears as a supercategory but is not itself a category name, so ``has_children`` is empty and all
-        categories pass the ``name not in has_children`` filter — both 'dog' and 'cat' are returned.
+        Regression coverage for #609: when all categories have ``supercategory: "none"`` (flat COCO datasets),
+        ``_load_classes`` previously returned an empty list. It should only filter parent/grouping nodes when a Roboflow
+        hierarchical export is actually detected.
         """
-        categories = [
-            {"id": 1, "name": "dog", "supercategory": "none"},
-            {"id": 2, "name": "cat", "supercategory": "animal"},
-        ]
         _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
         result = RFDETR._load_classes(str(tmp_path))
-        assert result == ["dog", "cat"]
-
-    def test_category_named_none_does_not_empty_list(self, tmp_path: Path) -> None:
-        """If a category is literally named 'none' and all supercategories are placeholders, the loader must return all
-        class names instead of []."""
-
-        categories = [
-            {"id": 1, "name": "none", "supercategory": "none"},
-            {"id": 2, "name": "dog", "supercategory": "none"},
-            {"id": 3, "name": "cat", "supercategory": "none"},
-        ]
-        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
-        result = RFDETR._load_classes(str(tmp_path))
-        assert result == ["none", "dog", "cat"]
-
-    def test_mixed_hierarchy_leaf_and_standalone_forwarding(self, tmp_path: Path) -> None:
-        """Mixed hierarchy: only leaf classes + standalone top-level categories should be forwarded.
-
-        Parent/grouping nodes are dropped.
-        """
-        categories = [
-            {"id": 1, "name": "animals", "supercategory": "none"},
-            {"id": 2, "name": "mammal", "supercategory": "animals"},
-            {"id": 3, "name": "dog", "supercategory": "mammal"},
-            {"id": 4, "name": "cat", "supercategory": "mammal"},
-            {"id": 5, "name": "bird", "supercategory": "animals"},
-            {"id": 6, "name": "eagle", "supercategory": "bird"},
-            {"id": 7, "name": "pigeon", "supercategory": "bird"},
-            {"id": 8, "name": "objects", "supercategory": "none"},
-            {"id": 9, "name": "vehicle", "supercategory": "objects"},
-            {"id": 10, "name": "car", "supercategory": "vehicle"},
-            {"id": 11, "name": "truck", "supercategory": "vehicle"},
-            {"id": 12, "name": "appliance", "supercategory": "objects"},
-            {"id": 13, "name": "toaster", "supercategory": "appliance"},
-            {"id": 14, "name": "microwave", "supercategory": "appliance"},
-            {"id": 15, "name": "person", "supercategory": "none"},
-        ]
-        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
-        result = RFDETR._load_classes(str(tmp_path))
-        expected = [
-            "dog",
-            "cat",
-            "eagle",
-            "pigeon",
-            "car",
-            "truck",
-            "toaster",
-            "microwave",
-            "person",
-        ]
         assert result == expected
-
-    def test_placeholder_values_treated_as_no_parent(self, tmp_path: Path) -> None:
-        """Placeholders like None, '', and 'null' should be treated the same as 'none'."""
-        categories = [
-            {"id": 1, "name": "dog", "supercategory": None},
-            {"id": 2, "name": "cat", "supercategory": ""},
-            {"id": 3, "name": "elephant", "supercategory": "null"},
-        ]
-        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
-        result = RFDETR._load_classes(str(tmp_path))
-        assert result == ["dog", "cat", "elephant"]
-
-    def test_unsorted_category_ids_return_id_sorted_class_order(self, tmp_path: Path) -> None:
-        """Returned class names must follow category-ID order for stable index mapping."""
-        categories = [
-            {"id": 30, "name": "truck", "supercategory": "vehicle"},
-            {"id": 10, "name": "vehicle", "supercategory": "none"},
-            {"id": 20, "name": "car", "supercategory": "vehicle"},
-            {"id": 40, "name": "person", "supercategory": "none"},
-        ]
-        _write_coco_json(tmp_path / "train" / "_annotations.coco.json", categories)
-        result = RFDETR._load_classes(str(tmp_path))
-        assert result == ["car", "truck", "person"]
 
 
 class TestRoboflowCocoKeypointFormat:
