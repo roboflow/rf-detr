@@ -458,11 +458,10 @@ class TestOpenVINOInferenceDeviceAndCache:
 
 
 class TestModelWrapper:
-    """``ModelWrapper`` (module-scope, importable in isolation) normalizes export-mode output to a tuple.
+    """Verify the independently importable ``ModelWrapper`` normalizes export-mode output to a tuple.
 
-    The wrapped model is expected to already be in export mode (``forward_export``), which returns a tuple (full
-    detector) or a plain list (:class:`rfdetr.export._backend._BackboneExport`) — never a dict. A dict output means the
-    caller forgot the mode-switch, which is a caller bug the wrapper must surface loudly rather than silently reshape.
+    The caller must enable export mode first. ``forward_export`` returns a tuple for the full detector and a list for
+    the backbone. A dict indicates a missing mode switch and must raise instead of being silently reshaped.
     """
 
     def test_tuple_output_passes_through_unchanged(self) -> None:
