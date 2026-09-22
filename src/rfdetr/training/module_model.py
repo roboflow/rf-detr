@@ -25,6 +25,7 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import (
+    _MANAGED_SCHEDULER_DEFAULTS,
     ModelConfig,
     MultiScale,
     TrainConfig,
@@ -290,8 +291,8 @@ def _build_managed_scheduler(
 
     Preserves RF-DETR's built-in schedule: a linear warmup ramp over ``warmup_steps`` followed by
     either cosine annealing down to ``min_factor`` or a 10x step decay after ``lr_drop`` epochs. The
-    ``min_factor`` and ``lr_drop`` values are read from ``lr_scheduler_kwargs`` first (the current API),
-    falling back to the deprecated ``lr_min_factor`` / ``lr_drop`` fields.
+    ``min_factor`` and ``lr_drop`` values are read from ``lr_scheduler_kwargs``, falling back to
+    ``_MANAGED_SCHEDULER_DEFAULTS`` when a key is absent.
 
     Args:
         optimizer: The optimizer the scheduler drives.
@@ -306,8 +307,8 @@ def _build_managed_scheduler(
     kwargs = train_config.lr_scheduler_kwargs
     # Managed presets are always strings (guaranteed by the _is_managed_scheduler_name branch at the call site).
     preset = cast(str, train_config.lr_scheduler).strip().lower()
-    min_factor = float(kwargs.get("min_factor", train_config.lr_min_factor))
-    lr_drop = int(kwargs.get("lr_drop", train_config.lr_drop))
+    min_factor = float(kwargs.get("min_factor", _MANAGED_SCHEDULER_DEFAULTS["min_factor"]))
+    lr_drop = int(kwargs.get("lr_drop", _MANAGED_SCHEDULER_DEFAULTS["lr_drop"]))
 
     def lr_lambda(current_step: int) -> float:
         if current_step < warmup_steps:

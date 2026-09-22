@@ -100,6 +100,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Breaking Changes
 
+- Removed `RFDETR.optimize_for_inference()`, deprecated since v1.9.0. Call `RFDETR.inference()`; the signature is unchanged.
+
+- Removed `TrainConfig.lr_drop` and `TrainConfig.lr_min_factor`, deprecated since v1.9.0, together with the validator that folded them into `lr_scheduler_kwargs`. Pass `lr_scheduler_kwargs={"lr_drop": ..., "min_factor": ...}`; the managed `"step"` / `"cosine"` presets fall back to `lr_drop=100` and `min_factor=0.0` when a key is absent. `TrainConfig` rejects unknown fields, so a `training_config.json` written by v1.9 or v1.10 must have the two keys removed before it is passed back to `TrainConfig(**...)`; the migrated values are already present in its `lr_scheduler_kwargs`.
+
 - Removed `rfdetr.datasets.synthetic` (`generate_coco_dataset`, `generate_synthetic_sample`, `draw_synthetic_shape`, `calculate_boundary_overlap`, `DatasetSplitRatios`, `SYNTHETIC_SHAPES`, `SYNTHETIC_COLORS`). The module only ever fed RF-DETR's own test fixtures and is replaced by the `fuse-augmentations` package, whose `fuse_augmentations.data` module generates the same shape datasets in COCO or YOLO layout for detection, segmentation, and OBB. Callers migrate to `pip install fuse-augmentations` plus `from fuse_augmentations.data import generate_dataset`; note that it writes dense COCO category ids where the removed generator wrote sparse ones, and its shape set adds `rectangle`.
 
 - Renamed the optional installation extra from `webdataset` to `data`, without a compatibility alias. Use `pip install "rfdetr[data]"`; `dataset_file="webdataset"` is unchanged.

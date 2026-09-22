@@ -2956,8 +2956,34 @@ class TestConfigureOptimizers:
         scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
         lr_lambda = scheduler.lr_lambdas[0]
 
-        # At the final step, cosine schedule must end at lr_min_factor.
+        # At the final step, cosine schedule must end at min_factor.
         assert lr_lambda(1000) == pytest.approx(0.2)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_lr_lambda_step_default_drop_is_epoch_100(self, mock_get_param_dict, tmp_path):
+        """With no ``lr_drop`` kwarg the step preset falls back to the managed default of 100 epochs."""
+        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=200)
+        module._trainer.estimated_stepping_batches = 20000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+        lr_lambda = scheduler.lr_lambdas[0]
+
+        # steps_per_epoch=100 -> drop at step 10000
+        assert lr_lambda(9999) == pytest.approx(1.0)
+        assert lr_lambda(10000) == pytest.approx(0.1)
+
+    @patch("rfdetr.training.module_model.get_param_dict")
+    def test_lr_lambda_cosine_default_floor_is_zero(self, mock_get_param_dict, tmp_path):
+        """With no ``min_factor`` kwarg the cosine preset anneals to the managed default floor of 0.0."""
+        module, param_dicts = self._setup_module(tmp_path, warmup_epochs=0.0, epochs=10, lr_scheduler="cosine")
+        module._trainer.estimated_stepping_batches = 1000
+        mock_get_param_dict.return_value = param_dicts
+
+        scheduler = module.configure_optimizers()["lr_scheduler"]["scheduler"]
+        lr_lambda = scheduler.lr_lambdas[0]
+
+        assert lr_lambda(1000) == pytest.approx(0.0)
 
     @patch("rfdetr.training.module_model.get_param_dict")
     def test_explicit_dotted_scheduler_builds_from_kwargs(self, mock_get_param_dict, tmp_path):
@@ -3254,21 +3280,21 @@ class TestConfigureOptimizers:
         """Keypoint (manual-opt) path must divide estimated_stepping_batches by grad_accum_steps for LR scheduling.
 
         With microbatches=100, grad_accum_steps=4, epochs=1, warmup_epochs=0 the scheduler should span 25 optimizer
-        steps (ceil(100/4)).  At step 24 (0-indexed last step) a cosine LR schedule should be nearly at lr_min_factor;
-        if total_steps were mistakenly 100 the LR would still be near its peak at step 24.
+        steps (ceil(100/4)).  At step 24 (0-indexed last step) a cosine LR schedule should be nearly at min_factor; if
+        total_steps were mistakenly 100 the LR would still be near its peak at step 24.
         """
         import math
 
         grad_accum_steps = 4
         microbatches = 100
-        lr_min_factor = 0.1
+        min_factor = 0.1
         tc = _base_train_config(
             tmp_path,
             grad_accum_steps=grad_accum_steps,
             warmup_epochs=0,
             epochs=1,
             lr_scheduler="cosine",
-            lr_scheduler_kwargs={"min_factor": lr_min_factor},
+            lr_scheduler_kwargs={"min_factor": min_factor},
         )
         module, _, _, _ = _build_module(
             model_config=_base_model_config(use_grouppose_keypoints=True, num_keypoints_per_class=[17]),
@@ -3286,10 +3312,10 @@ class TestConfigureOptimizers:
         lr_lambda = scheduler.lr_lambdas[0]
 
         expected_total_steps = max(1, math.ceil(microbatches / grad_accum_steps))  # 25
-        # The cosine schedule reaches lr_min_factor exactly at step == total_steps (progress=1.0).
+        # The cosine schedule reaches min_factor exactly at step == total_steps (progress=1.0).
         # If total_steps were wrongly 100, lr at step 25 would still be ~0.87 (near peak).
         lr_at_decay_end = lr_lambda(expected_total_steps)
-        assert lr_at_decay_end == pytest.approx(lr_min_factor, abs=1e-6)
+        assert lr_at_decay_end == pytest.approx(min_factor, abs=1e-6)
 
 
 class TestCudaGraphLifecycle:
