@@ -355,6 +355,11 @@ def _append_training_callbacks(
 
     # Latest resume checkpoint — overwritten every epoch.
     # Skip when checkpoint_interval == 1 to avoid duplicate ModelCheckpoint state_key.
+    # ``save_on_train_epoch_end=True`` on both callbacks: left at its ``None`` default, ModelCheckpoint saves from
+    # ``on_validation_end`` whenever ``check_val_every_n_epoch != 1``, i.e. only on the epochs ``eval_interval``
+    # validates, so ``last.ckpt`` went stale between validations and the interval archives skipped every epoch that
+    # was not also an evaluation epoch. Validation runs inside the training epoch, before ``on_train_epoch_end``, so
+    # the saved callback state still includes that epoch's validation results.
     if tc.checkpoint_interval != 1:
         callbacks.append(
             ModelCheckpoint(
@@ -362,6 +367,7 @@ def _append_training_callbacks(
                 filename="last",
                 every_n_epochs=1,
                 save_top_k=1,
+                save_on_train_epoch_end=True,
                 enable_version_counter=False,
                 auto_insert_metric_name=False,
                 verbose=False,
@@ -375,6 +381,7 @@ def _append_training_callbacks(
             filename="checkpoint_{epoch}",
             every_n_epochs=tc.checkpoint_interval,
             save_top_k=-1,
+            save_on_train_epoch_end=True,
             enable_version_counter=False,
             auto_insert_metric_name=False,
             verbose=False,
