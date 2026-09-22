@@ -22,6 +22,14 @@ from pytorch_lightning import LightningModule, Trainer
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from torch import Tensor
 
+# _MultiProcessingLauncher is a private PTL API (leading underscore) that may change in minor PTL releases within the
+# >=2.6,<3 range; ``rfdetr.training.trainer`` guards the same import the same way. Without it, spawn workers are not
+# detected and ``run_test=True`` falls through to the collective path.
+try:
+    from pytorch_lightning.strategies.launchers.multiprocessing import _MultiProcessingLauncher
+except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
+    _MultiProcessingLauncher = None  # type: ignore[assignment,misc]
+
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_version
@@ -30,6 +38,25 @@ from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
 logger = get_logger()
 
 ptl_version = get_version("pytorch-lightning") or "unknown"
+
+
+def _is_spawned_worker(trainer: Trainer) -> bool:
+    """Return whether *trainer* runs inside a process started by a spawn/fork launcher.
+
+    ``strategy="ddp_spawn"`` / ``"ddp_notebook"`` run ``fit`` in workers created by
+    ``_MultiProcessingLauncher``; a nested ``trainer.test()`` there launches again instead of joining the existing
+    process group. The subprocess launcher behind ``strategy="ddp"`` and single-device strategies run the loop
+    in-process.
+
+    Args:
+        trainer: The Lightning Trainer instance.
+
+    Returns:
+        ``True`` only for a multiprocessing (spawn/fork) launcher.
+    """
+    if _MultiProcessingLauncher is None:
+        return False
+    return isinstance(getattr(trainer.strategy, "launcher", None), _MultiProcessingLauncher)
 
 
 class BestModelCallback(ModelCheckpoint):
@@ -581,17 +608,84 @@ class BestModelCallback(ModelCheckpoint):
     def on_fit_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Select the overall best model and optionally run test evaluation.
 
-        Copies the winner (regular vs EMA, strict ``>`` for EMA) to ``checkpoint_best_total.pth``, strips
-        optimizer/scheduler state, then optionally runs ``trainer.test()``. EMA reload tolerates only missing
-        module extra state; all weight/key mismatches remain errors.
+        On the main process, copies the winner (regular vs EMA, strict ``>`` for EMA) to
+        ``checkpoint_best_total.pth`` and strips optimizer/scheduler state. With ``run_test=True`` every rank then
+        loads those weights and enters ``trainer.test()``: the call is collective under DDP, so the decision to test
+        and the winning source are broadcast from the main process rather than decided per rank. EMA reload tolerates
+        only missing module extra state; all weight/key mismatches remain errors.
 
         Args:
             trainer: The Lightning Trainer instance.
             pl_module: The ``RFDETRModelModule`` being trained.
         """
-        if not trainer.is_global_zero:
-            return
+        total_path = self._output_dir / "checkpoint_best_total.pth"
+        chose_ema = self._promote_best_total(trainer, pl_module, total_path) if trainer.is_global_zero else False
 
+        if not self._run_test:
+            return
+        # Only call trainer.test() when the module actually defines test_step().
+        cls_test_step = getattr(type(pl_module), "test_step", None)
+        has_test_step = cls_test_step is not None and cls_test_step is not LightningModule.test_step
+        if not has_test_step:
+            return
+        if _is_spawned_worker(trainer):
+            # A spawn launcher has no notion of "already inside a worker": trainer.test() here would spawn a second
+            # set of processes and re-initialise the process group on the same port (EADDRINUSE). The subprocess
+            # launcher behind ``strategy="ddp"`` just runs the loop in-process, so only spawn strategies are skipped.
+            if trainer.is_global_zero:
+                logger.warning(
+                    "Skipping trainer.test() at fit end: run_test=True is not supported with spawn-based DDP "
+                    "(strategy='ddp_spawn' / 'ddp_notebook'). To score the best checkpoint afterwards, load it "
+                    f"first: RFDETR.from_checkpoint('{total_path}').evaluate(split='test', dataset_dir=...) "
+                    "(evaluate() scores the weights held in memory, not a checkpoint file)."
+                )
+            return
+        # The barrier orders the main process's checkpoint writes before any rank reads them; the broadcast keeps
+        # every rank on the same branch, since a rank that skips a collective trainer.test() hangs the others.
+        trainer.strategy.barrier()
+        should_test, chose_ema = trainer.strategy.broadcast(
+            (total_path.exists(), chose_ema) if trainer.is_global_zero else (False, False), src=0
+        )
+        if not should_test:
+            if trainer.is_global_zero:
+                logger.warning(
+                    "Skipping trainer.test() because no best checkpoint was produced. "
+                    "Ensure the monitored metric is logged on evaluation epochs, that evaluation "
+                    "runs often enough, and that skip_best_epochs is smaller than the number of "
+                    "training epochs."
+                )
+            return
+        self._load_best_total_weights(pl_module, total_path, chose_ema)
+        if trainer.is_global_zero:
+            logger.info("Loaded best weights from %s for test evaluation.", total_path)
+        # The EMA callback swaps final-EMA weights in for test epochs, which would silently overwrite the
+        # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
+        # so standalone trainer.test() calls keep evaluating EMA weights.
+        ema_callbacks = [
+            cb
+            for cb in trainer.callbacks  # type: ignore[attr-defined]
+            if isinstance(cb, RFDETREMACallback)
+        ]
+        prior_flags = [cb.suppress_test_swap for cb in ema_callbacks]
+        for ema_callback in ema_callbacks:
+            ema_callback.suppress_test_swap = True
+        try:
+            trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)  # type: ignore[attr-defined]
+        finally:
+            for ema_callback, prior in zip(ema_callbacks, prior_flags):
+                ema_callback.suppress_test_swap = prior
+
+    def _promote_best_total(self, trainer: Trainer, pl_module: LightningModule, total_path: Path) -> bool:
+        """Copy the winning best checkpoint to ``total_path`` and refresh ``last_ema.pth``; main process only.
+
+        Args:
+            trainer: The Lightning Trainer instance.
+            pl_module: The ``RFDETRModelModule`` being trained.
+            total_path: Destination of the stripped ``checkpoint_best_total.pth``.
+
+        Returns:
+            Whether the copied source was the EMA checkpoint.
+        """
         # Use _best_raw_regular when smoothing is active: best_model_score tracks the
         # smoothed value, so comparing it directly against raw _best_ema is biased.
         # _best_raw_regular is the raw (un-smoothed) metric value at the epoch where the
@@ -605,7 +699,6 @@ class BestModelCallback(ModelCheckpoint):
         else:
             best_regular = self.best_model_score.item() if self.best_model_score is not None else 0.0
         ema_path = self._output_dir / "checkpoint_best_ema.pth"
-        total_path = self._output_dir / "checkpoint_best_total.pth"
 
         # Backfill before choosing the winner: a valid zero EMA score does not pass the strict improvement check, but
         # EMA-only runs still need a source checkpoint to promote to checkpoint_best_total.pth.
@@ -643,73 +736,54 @@ class BestModelCallback(ModelCheckpoint):
         # When EMA tracking is enabled, always leave last_ema.pth on disk, mirroring last.pth for the live model.
         if self._monitor_ema is not None and ema_state_dict is not None:
             self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "last_ema.pth")
+        return chose_ema
 
-        if self._run_test:
-            # Only call trainer.test() when the module actually defines test_step().
-            cls_test_step = getattr(type(pl_module), "test_step", None)
-            has_test_step = cls_test_step is not None and cls_test_step is not LightningModule.test_step
-            if has_test_step:
-                if not total_path.exists():
-                    logger.warning(
-                        "Skipping trainer.test() because no best checkpoint was produced. "
-                        "Ensure the monitored metric is logged on evaluation epochs, that evaluation "
-                        "runs often enough, and that skip_best_epochs is smaller than the number of "
-                        "training epochs."
-                    )
-                    return
-                # Load best weights before test — mirrors legacy main.py:602-609.
-                # trust=True: checkpoint_best_total.pth is produced locally; allow pickle fallback if needed.
-                from rfdetr.utilities.io import _safe_torch_load
+    @staticmethod
+    def _load_best_total_weights(pl_module: LightningModule, total_path: Path, chose_ema: bool) -> None:
+        """Load ``checkpoint_best_total.pth`` into the unwrapped module before test evaluation.
 
-                ckpt = _safe_torch_load(total_path, trust=True)
-                # Checkpoints always store plain keys; load into the unwrapped module
-                # so compiled (OptimizedModule) and non-compiled models both work.
-                raw = BestModelCallback._unwrap_model(pl_module)
-                if chose_ema:
-                    # EMA exports omit FP8 history; retain the live history without relaxing weight validation.
-                    incompatible = raw.load_state_dict(ckpt["model"], strict=False)
-                    missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
-                    if missing or incompatible.unexpected_keys:
-                        raise RuntimeError(
-                            f"Error loading best EMA weights: Missing keys: {missing}; "
-                            f"Unexpected keys: {incompatible.unexpected_keys}"
-                        )
-                else:
-                    # The regular checkpoint is saved directly from the live model's state_dict
-                    # (``_get_live_model_state_dict``), so under FP8 it still carries Transformer
-                    # Engine's ``_extra_state`` entries. Transformer Engine rejects their pickle
-                    # round-trip via ``set_extra_state()``, so they must be excluded from the dict —
-                    # tolerating them afterward via ``strict=False`` alone is not enough, since the
-                    # setter still runs for any key present in both the checkpoint and the module.
-                    filtered_model = {
-                        key: value
-                        for key, value in ckpt["model"].items()
-                        if not RFDETREMACallback._is_extra_state_key(key)
-                    }
-                    incompatible = raw.load_state_dict(filtered_model, strict=False)
-                    missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
-                    if missing or incompatible.unexpected_keys:
-                        raise RuntimeError(
-                            f"Error loading best regular weights: Missing keys: {missing}; "
-                            f"Unexpected keys: {incompatible.unexpected_keys}"
-                        )
-                logger.info("Loaded best weights from %s for test evaluation.", total_path)
-                # The EMA callback swaps final-EMA weights in for test epochs, which would silently overwrite the
-                # just-loaded best weights — suppress its swap for this run only, restoring the default afterwards
-                # so standalone trainer.test() calls keep evaluating EMA weights.
-                ema_callbacks = [
-                    cb
-                    for cb in trainer.callbacks  # type: ignore[attr-defined]
-                    if isinstance(cb, RFDETREMACallback)
-                ]
-                prior_flags = [cb.suppress_test_swap for cb in ema_callbacks]
-                for ema_callback in ema_callbacks:
-                    ema_callback.suppress_test_swap = True
-                try:
-                    trainer.test(pl_module, datamodule=trainer.datamodule, verbose=False)  # type: ignore[attr-defined]
-                finally:
-                    for ema_callback, prior in zip(ema_callbacks, prior_flags):
-                        ema_callback.suppress_test_swap = prior
+        Mirrors legacy ``main.py:602-609``. ``trust=True``: the checkpoint is produced locally, so the pickle fallback
+        is allowed if needed. Checkpoints always store plain keys, so loading into the unwrapped module works for
+        compiled (``OptimizedModule``) and non-compiled models alike.
+
+        Args:
+            pl_module: The ``RFDETRModelModule`` to load into.
+            total_path: Path of ``checkpoint_best_total.pth``.
+            chose_ema: Whether the checkpoint holds EMA weights, which omit FP8 history.
+
+        Raises:
+            RuntimeError: If any weight key is missing or unexpected (module extra state excepted).
+        """
+        from rfdetr.utilities.io import _safe_torch_load
+
+        ckpt = _safe_torch_load(total_path, trust=True)
+        raw = BestModelCallback._unwrap_model(pl_module)
+        if chose_ema:
+            # EMA exports omit FP8 history; retain the live history without relaxing weight validation.
+            incompatible = raw.load_state_dict(ckpt["model"], strict=False)
+            missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
+            if missing or incompatible.unexpected_keys:
+                raise RuntimeError(
+                    f"Error loading best EMA weights: Missing keys: {missing}; "
+                    f"Unexpected keys: {incompatible.unexpected_keys}"
+                )
+            return
+        # The regular checkpoint is saved directly from the live model's state_dict
+        # (``_get_live_model_state_dict``), so under FP8 it still carries Transformer
+        # Engine's ``_extra_state`` entries. Transformer Engine rejects their pickle
+        # round-trip via ``set_extra_state()``, so they must be excluded from the dict —
+        # tolerating them afterward via ``strict=False`` alone is not enough, since the
+        # setter still runs for any key present in both the checkpoint and the module.
+        filtered_model = {
+            key: value for key, value in ckpt["model"].items() if not RFDETREMACallback._is_extra_state_key(key)
+        }
+        incompatible = raw.load_state_dict(filtered_model, strict=False)
+        missing = [key for key in incompatible.missing_keys if key.rsplit(".", 1)[-1] != "_extra_state"]
+        if missing or incompatible.unexpected_keys:
+            raise RuntimeError(
+                f"Error loading best regular weights: Missing keys: {missing}; "
+                f"Unexpected keys: {incompatible.unexpected_keys}"
+            )
 
 
 class RFDETREarlyStopping(EarlyStopping):
