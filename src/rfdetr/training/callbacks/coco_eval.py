@@ -486,9 +486,10 @@ class COCOEvalCallback(Callback):
             return
         batch_targets = outputs["targets"]
         keep = self._next_real_sample_mask(len(batch_targets))
-        if not any(keep):
-            return
         if not all(keep):
+            # A batch that is padding through and through (a split smaller than world_size) still flows on as
+            # empty lists: the accumulators record the update, so this rank votes like every other in the
+            # epoch-end collectives instead of sitting them out and stalling or vetoing the ranks that have data.
             outputs = {
                 "results": [item for item, real in zip(outputs["results"], keep) if real],
                 "targets": [item for item, real in zip(batch_targets, keep) if real],
@@ -596,9 +597,9 @@ class COCOEvalCallback(Callback):
         if not isinstance(outputs, Mapping):
             return
         keep = self._next_real_sample_mask(len(outputs["targets"]))
-        if not any(keep):
-            return
         if not all(keep):
+            # Same as the validation hook: an all-padding batch flows on as empty lists so every rank stays a
+            # participant in the epoch-end collectives.
             outputs = {
                 "results": [item for item, real in zip(outputs["results"], keep) if real],
                 "targets": [item for item, real in zip(outputs["targets"], keep) if real],
@@ -1189,7 +1190,9 @@ class COCOEvalCallback(Callback):
                 "keypoints": result["keypoints"].detach().cpu(),
             }
 
-        if not predictions:
+        # An all-padding batch (see the DistributedSampler filter) arrives with empty results: register the empty
+        # update so this rank's metric reports updates and its epoch-end vote does not silence the other ranks.
+        if not predictions and results:
             return
         metric.update(predictions)
 

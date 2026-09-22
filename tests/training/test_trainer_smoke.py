@@ -557,18 +557,21 @@ class _DDPValImageCountModule(RFDETRModelModule):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
-def test_ddp_spawn_validation_scores_each_image_once(base_model_config, base_train_config):
+@pytest.mark.parametrize("val_images", [3, 1])
+def test_ddp_spawn_validation_scores_each_image_once(base_model_config, base_train_config, val_images: int):
     """A 3-image validation split on 2 ranks must merge to 3 images, not the 4 the padded sampler forwards.
 
     ``TestDistributedSamplerPaddingFilter`` in ``callbacks/test_coco_eval_callback.py`` covers the arithmetic against a
     real ``DistributedSampler``; this test exercises Lightning's own sampler injection under ``ddp_spawn`` end to end
     and fails (via ``_DDPValImageCountModule.on_validation_epoch_end``) if a padded repeat reaches the accumulator.
+    The 1-image case gives rank 1 nothing but padding; it must still take part in the epoch-end collectives so the
+    run neither hangs nor drops the metrics rank 0 computed.
     """
     mc = base_model_config()
     tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn", epochs=1)
 
     train_dataset = _FakeDataset(length=20)
-    val_dataset = _FakeDataset(length=3)
+    val_dataset = _FakeDataset(length=val_images)
 
     with (
         patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
