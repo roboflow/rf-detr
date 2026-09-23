@@ -49,6 +49,15 @@ nav:
           - Training Loggers: learn/train/loggers.md
       - Export Model:
           - Overview: learn/export.md
+          - Export Formats:
+              - docs/exports/index.md
+              - ONNX: exports/onnx.md
+              - TensorRT: exports/tensorrt.md
+              - TFLite: exports/tflite.md
+              - LiteRT: exports/litert.md
+              - OpenVINO: exports/openvino.md
+              - ExecuTorch: exports/executorch.md
+              - CoreML: exports/coreml.md
           - Exporter Blueprint: learn/export-blueprint.md
       - Deploy Model: learn/deploy.md
       - Benchmarks: learn/benchmarks.md
