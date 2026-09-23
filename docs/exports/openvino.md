@@ -59,7 +59,7 @@ model.export(format="openvino", openvino_precision="float32")
 
 ## OpenVINO Inference Example
 
-`OpenVINOInference` loads an exported IR and runs it. It takes already-preprocessed NCHW tensors and returns the model's raw output tensors — decoding those into detections is up to you (see [Using the Exported ONNX Model](../learn/export.md#using-the-exported-model) for the decode steps).
+`OpenVINOInference` loads an exported IR and runs it. It takes already-preprocessed NCHW tensors and returns the model's raw output tensors — decoding those into detections is up to you (see [ONNX Inference](onnx.md) for the decode steps).
 
 !!! warning "The input array must be float32 and contiguous"
 
