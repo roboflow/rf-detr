@@ -116,11 +116,20 @@ def _run_onnx_export(
         Path to the exported ``.onnx`` file.
 
     Examples:
-        >>> _run_onnx_export(  # doctest: +SKIP
-        ...     output_dir="out", model=torch.nn.Identity(), input_names=["input"],
-        ...     input_tensors=torch.randn(1, 3, 8, 8), output_names=["dets"], dynamic_axes=None,
-        ... )
-        PosixPath('out/inference_model.onnx')
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory:  # doctest: +ELLIPSIS
+        ...     path = _run_onnx_export(
+        ...         output_dir=directory,
+        ...         model=torch.nn.Identity(),
+        ...         input_names=["input"],
+        ...         input_tensors=torch.zeros(1, 3, 8, 8),
+        ...         output_names=["dets"],
+        ...         dynamic_axes=None,
+        ...         verbose=False,
+        ...     )
+        ...     path.name
+        [...] [INFO] rf-detr - Successfully exported ONNX model to: .../inference_model.onnx
+        'inference_model.onnx'
     """
     config = OnnxConfig(
         output_dir=Path(output_dir),
@@ -1192,8 +1201,12 @@ def _stub_export_dependencies(
         Mapping of patch target to the mock installed there.
 
     Examples:
-        >>> _stub_export_dependencies(monkeypatch, tmp_path, export_format="onnx")  # doctest: +SKIP
-        {'rfdetr.detr.deepcopy': <MagicMock ...>, ...}
+        >>> from pathlib import Path
+        >>> from tempfile import TemporaryDirectory
+        >>> with TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as monkeypatch:
+        ...     stubs = _stub_export_dependencies(monkeypatch, Path(directory), export_format="onnx")
+        ...     "rfdetr.export._onnx.exporter.OnnxExporter._convert" in stubs
+        True
     """
     onnx_path = str(tmp_path / "inference_model.onnx")
     stubs: dict[str, MagicMock] = {
@@ -1292,7 +1305,8 @@ def _keypoint_axis_broadcasts(model: "onnx.ModelProto") -> list[str]:
         The names of the offending nodes, in graph order.
 
     Raises:
-        ValueError: If no rank-4 elementwise output has a known, non-singleton keypoint axis, so nothing was checked.
+        ValueError: If a possible keypoint-axis broadcast has an unknown keypoint
+            dimension, or no eligible node was checked.
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -1330,7 +1344,20 @@ def _keypoint_axis_broadcasts(model: "onnx.ModelProto") -> list[str]:
         if node.op_type not in ("Mul", "Add", "Sub", "Div"):
             continue
         output_shape = shapes.get(node.output[0])
-        if not output_shape or len(output_shape) != 4 or output_shape[-2] in (None, 1):
+        if not output_shape or len(output_shape) != 4 or output_shape[-2] == 1:
+            continue
+        if output_shape[-2] is None:
+            for name in node.input:
+                input_shape = shapes.get(name) or []
+                if (
+                    2 < len(input_shape) <= 4
+                    and input_shape[-2] == 1
+                    and output_shape[-3] not in (None, 1)
+                    and input_shape[-3] == output_shape[-3]
+                ):
+                    raise ValueError(
+                        f"unknown keypoint axis at elementwise node {node.name!r}; shape check is incomplete"
+                    )
             continue
         checked += 1
         for name in node.input:
@@ -1389,12 +1416,6 @@ class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
 
         Returns:
             The exported ONNX model, with a ``dets``/``labels``/``keypoints`` output contract.
-
-        Examples:
-            Skipped: a pytest fixture, so it cannot run standalone.
-
-            >>> keypoint_onnx.graph.output[2].name  # doctest: +SKIP
-            'keypoints'
         """
         import onnx
 
@@ -1422,3 +1443,28 @@ class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
     ) -> None:
         """No node in the exported keypoint graph matches a construct onnx2tf fails to convert."""
         assert find_blockers(keypoint_onnx) == []
+
+    def test_unknown_keypoint_axis_does_not_pass_after_checking_an_unrelated_node(self) -> None:
+        """A symbolic keypoint dimension must not be hidden by an unrelated eligible elementwise node."""
+        from onnx import TensorProto, helper
+
+        checked_node = helper.make_node("Add", ["left", "right"], ["checked"], name="unrelated")
+        keypoint_node = helper.make_node("Mul", ["delta", "reference"], ["keypoints"], name="decode")
+        graph = helper.make_graph(
+            [checked_node, keypoint_node],
+            "keypoint_unknown_axis",
+            [
+                helper.make_tensor_value_info("left", TensorProto.FLOAT, [1, 4, 3, 2]),
+                helper.make_tensor_value_info("right", TensorProto.FLOAT, [1, 4, 3, 2]),
+                helper.make_tensor_value_info("delta", TensorProto.FLOAT, [1, 4, "keypoints", 2]),
+                helper.make_tensor_value_info("reference", TensorProto.FLOAT, [1, 4, 1, 2]),
+            ],
+            [
+                helper.make_tensor_value_info("checked", TensorProto.FLOAT, [1, 4, 3, 2]),
+                helper.make_tensor_value_info("keypoints", TensorProto.FLOAT, [1, 4, "keypoints", 2]),
+            ],
+        )
+        model = helper.make_model(graph)
+
+        with pytest.raises(ValueError, match="unknown keypoint axis"):
+            _keypoint_axis_broadcasts(model)
