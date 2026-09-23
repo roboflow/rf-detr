@@ -34,25 +34,41 @@ This page covers the shared export API, parameters, output-file naming, and the 
 
 Install the export dependencies you need:
 
-```bash
-# ONNX export only
-pip install "rfdetr[onnx]"
+=== "ONNX"
 
-# OpenVINO IR export
-pip install "rfdetr[openvino]"
+    ```bash
+    pip install "rfdetr[onnx]"
+    ```
 
-# TFLite export
-pip install "rfdetr[tflite]"
+=== "OpenVINO"
 
-# LiteRT export (.tflite straight from PyTorch via litert-torch)
-pip install "rfdetr[litert]"
+    ```bash
+    pip install "rfdetr[openvino]"
+    ```
 
-# ExecuTorch export (on-device inference: XNNPACK/CoreML/QNN)
-pip install "rfdetr[executorch]"
+=== "TFLite"
 
-# Native CoreML export (.mlpackage; macOS only)
-pip install "rfdetr[coreml]"
-```
+    ```bash
+    pip install "rfdetr[tflite]"
+    ```
+
+=== "LiteRT"
+
+    ```bash
+    pip install "rfdetr[litert]"
+    ```
+
+=== "ExecuTorch"
+
+    ```bash
+    pip install "rfdetr[executorch]"
+    ```
+
+=== "Native CoreML (macOS)"
+
+    ```bash
+    pip install "rfdetr[coreml]"
+    ```
 
 ## Basic Export
 
@@ -246,15 +262,9 @@ Once exported, you can use the ONNX model with various inference frameworks. See
 After exporting your model, you may want to:
 
 - [Deploy to Roboflow](../learn/deploy.md) for cloud-based inference and workflow integration
-
 - Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
-
 - Deploy TFLite and LiteRT `.tflite` models on mobile/edge devices with the LiteRT runtime
-
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
-
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
-
 - Read the [Exporter Blueprint](blueprint.md) to add a new export format
-
 - Browse the format guides above for per-format details
