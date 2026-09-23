@@ -1871,3 +1871,44 @@ def test_bbox_only_run_buckets_by_box_area_and_carries_no_masks() -> None:
     detection_columns, target_columns = metric._vernier_columns()
     assert "rles" not in detection_columns
     assert "rles" not in target_columns
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_autocast_dtypes_survive_the_round_trip_to_vernier(dtype: torch.dtype) -> None:
+    """State stored under autocast must evaluate, whatever dtype the autocast ran in.
+
+    ``bfloat16`` has no numpy dtype, so it used to raise ``TypeError`` out of ``np.asarray`` before vernier's f64 ingest
+    boundary was reached; ``vernier>=0.5.3`` widens it there instead. Columns are handed over at their stored dtype on
+    purpose — a cast here would hide that. Every value below is exactly representable in both dtypes, so the float32 run
+    is a bit-exact oracle.
+    """
+    _require_backend("vernier")
+    boxes = [[0.0, 0.0, 16.0, 16.0], [32.0, 32.0, 64.0, 64.0]]
+    scores = [0.75, 0.5]
+
+    def build(tensor_dtype: torch.dtype) -> OnePassCocoMeanAveragePrecision:
+        metric = OnePassCocoMeanAveragePrecision(box_format="xyxy", iou_type=("bbox",), backend="vernier")
+        metric.update(
+            [
+                {
+                    "boxes": torch.tensor(boxes, dtype=tensor_dtype),
+                    "scores": torch.tensor(scores, dtype=tensor_dtype),
+                    "labels": torch.tensor([0, 1]),
+                }
+            ],
+            [{"boxes": torch.tensor(boxes, dtype=tensor_dtype), "labels": torch.tensor([0, 1])}],
+        )
+        return metric
+
+    metric = build(dtype)
+    # The stored dtype reaches vernier unchanged; widening is vernier's job, not this metric's.
+    assert metric._vernier_columns()[0]["scores"].dtype == dtype
+
+    result = metric.compute()
+    reference = build(torch.float32).compute()
+    # Anti-vacuity: a perfect match scores 1.0, so a silently emptied run would not pass this.
+    assert float(result["map"]) == 1.0
+    for key in result:
+        if key == "classes":
+            continue
+        assert torch.equal(result[key], reference[key]), key

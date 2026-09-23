@@ -661,6 +661,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
         ``rles`` is written only if ``segm`` is in ``self.iou_type``.
 
+        Columns are handed over at their stored dtype; vernier widens them at its own ingest boundary,
+        including the ``bfloat16`` an autocast run holds (needs ``vernier>=0.5.3``).
+
         Returns:
             The detection columns and the target columns.
         """
