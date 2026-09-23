@@ -316,6 +316,35 @@ class TestTRTInferenceDynamicBatch:
         assert runtime.bindings["input"].shape == (2, 3, 8, 8)
         assert runtime.bindings["input"].dynamic is False
 
+    def test_raises_when_a_dynamic_tensor_has_no_profile(self) -> None:
+        """A dynamic tensor with no dynamic-batch input anywhere in the engine cannot be sized.
+
+        ``_profile_max_batch`` only reads bounds off input tensors, so an engine whose only ``-1`` batch axis sits on an
+        output (never produced by ``build_engine``, but not ruled out for an engine loaded from elsewhere) must fail
+        loudly instead of allocating a bogus buffer size.
+        """
+        engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (-1, 5, 4))})
+        runtime = TRTInference.__new__(TRTInference)
+
+        with pytest.raises(ValueError, match="no input carries a profile"):
+            runtime.get_bindings(engine, Mock(), device="cpu")
+
+    def test_get_dummy_input_uses_the_runtime_device(self) -> None:
+        """Dummy input tensors land on ``self.device``, not a hardcoded ``cuda:0``.
+
+        Regression guard: ``get_dummy_input`` used to build every tensor with ``.to("cuda:0")``
+        regardless of the device the runtime was constructed with.
+        """
+        engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (2, 5, 4))})
+        runtime = _runtime_around(engine, context=Mock())
+        runtime.device = "cpu"
+
+        blob = runtime.get_dummy_input(batch_size=3)
+
+        assert set(blob) == {"input"}
+        assert blob["input"].shape == (3, 3, 8, 8)
+        assert blob["input"].device.type == "cpu"
+
     def test_run_sync_declares_the_input_shape_and_trims_outputs(self) -> None:
         """Each call sets the real input shape on the context and returns only the rows the engine produced."""
         engine = _FakeEngine(

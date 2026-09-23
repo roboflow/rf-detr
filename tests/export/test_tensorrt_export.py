@@ -49,6 +49,7 @@ __doctest_requires__ = {
     (
         "_opset17_model",
         "_float32_model_with_cast",
+        "_float32_model_with_dynamic_batch",
         "_float32_model_with_topk",
         "_model_with_a_consumed_output",
         "_model_with_an_initializer_output",
@@ -92,8 +93,15 @@ def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
         True
     """
     config_kwargs: dict = {}
+
+    def _create_config(*, fp16: bool) -> str:
+        # Signature-bound (not **kwargs) so a real ``CreateConfig`` keyword rename in ``_compile`` fails
+        # this stub with a TypeError instead of silently swallowing it.
+        config_kwargs["fp16"] = fp16
+        return "config"
+
     monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
-    monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: config_kwargs.update(kwargs) or "config")
+    monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
     monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: "engine")
     monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
     return config_kwargs
@@ -242,6 +250,27 @@ def _float32_model_with_cast() -> "onnx.ModelProto":
         [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [1, 3, 8, 8])],
         [helper.make_tensor_value_info("output", onnx.TensorProto.FLOAT, [1, 2, 8, 8])],
         [helper.make_tensor("weight", onnx.TensorProto.FLOAT, weight.shape, weight.tobytes(), raw=True)],
+    )
+    return _opset17_model(graph)
+
+
+def _float32_model_with_dynamic_batch() -> "onnx.ModelProto":
+    """Build a tiny float32 model whose input carries a symbolic ``"batch"`` dim_param, as a
+    ``dynamic_batch`` ONNX export does.
+
+    Returns:
+        A valid float32 ONNX model with one ``Relu`` and a symbolic batch axis on both input and output.
+
+    Examples:
+        >>> model = _float32_model_with_dynamic_batch()
+        >>> model.graph.input[0].type.tensor_type.shape.dim[0].dim_param
+        'batch'
+    """
+    graph = helper.make_graph(
+        [helper.make_node("Relu", ["input"], ["output"], name="relu")],
+        "dynamic_batch",
+        [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, ["batch", 3, 8, 8])],
+        [helper.make_tensor_value_info("output", onnx.TensorProto.FLOAT, ["batch", 3, 8, 8])],
     )
     return _opset17_model(graph)
 
@@ -613,10 +642,16 @@ def _patch_dynamic_polygraphy_chain(monkeypatch: pytest.MonkeyPatch, network: _F
         captured["network"] = parsed
         return "engine"
 
+    def _create_config(*, fp16: bool, profiles: list) -> str:
+        # Signature-bound (not **kwargs) so a real ``CreateConfig`` keyword rename in ``_compile`` fails
+        # this stub with a TypeError instead of silently swallowing it.
+        captured["config"] = {"fp16": fp16, "profiles": profiles}
+        return "config"
+
     monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
     monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("builder", network, "parser"))
     monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
-    monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: captured.update(config=kwargs) or "config")
+    monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
     monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
     monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
     return captured
@@ -774,6 +809,43 @@ class TestBuildEngineDynamicBatch:
         TensorRTExporter(TensorRTConfig(fp16=False)).build_engine("/tmp/model.onnx")
 
         assert "profiles" not in config_kwargs
+
+    def test_strongly_typed_fp16_still_builds_the_profile(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``fp16=True`` + ``dynamic_batch=True`` is the documented default call.
+
+        Every other case in this class pins ``fp16=False``, so the cast-graph branch (TensorRT >= 11) had no coverage of
+        the profile surviving alongside it. It must parse the profile from the cast source, not silently drop it.
+        """
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)))
+        cast_path = tmp_path / "model.fp16-abcd1234.onnx"
+        captured: dict = {}
+
+        def _network_from_onnx_path(path: str) -> tuple:
+            captured["source"] = path
+            return ("builder", network, "parser")
+
+        def _create_config(*, fp16: bool, profiles: list) -> str:
+            captured["config"] = {"fp16": fp16, "profiles": profiles}
+            return "config"
+
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("11.2.1.2", has_fp16_flag=False))
+        monkeypatch.setattr(tensorrt_export, "_cast_onnx_to_fp16", lambda path: str(cast_path))
+        monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
+        monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
+        monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda parsed, config: "engine")
+        monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=True, dynamic_batch=True, opt_batch_size=2, max_batch_size=8))
+
+        exporter.build_engine(str(tmp_path / "model.onnx"))
+
+        (profile,) = captured["config"]["profiles"]
+        expected = {"input": {"min": (1, 3, 384, 384), "opt": (2, 3, 384, 384), "max": (8, 3, 384, 384)}}
+        assert profile.entries == expected
+        assert captured["config"]["fp16"] is False, "strong typing takes precision from the cast graph, not the flag"
+        assert captured["source"] == str(cast_path)
 
 
 @pytest.fixture
@@ -1097,6 +1169,23 @@ class TestCastOnnxToFp16:
     def test_model_is_valid(self, fp16_cast_graph: onnx.GraphProto) -> None:
         """The rewritten graph must still pass ONNX's own checker."""
         onnx.checker.check_model(helper.make_model(fp16_cast_graph, opset_imports=[helper.make_opsetid("", 17)]))
+
+    def test_dynamic_batch_axis_survives_the_cast(self, tmp_path: Path) -> None:
+        """A symbolic batch ``dim_param`` must survive the cast, not just the input's ``elem_type``.
+
+        ``dynamic_batch`` exports carry a ``"batch"`` dim_param on the graph's batch axis instead of a
+        fixed dim_value; ``_restore_fp32_inputs`` only rewrites ``elem_type`` in place and never touches
+        ``shape.dim``, but that is worth asserting directly rather than trusting by omission -- a fp16=True
+        + dynamic_batch=True build is the documented default call and would silently lose the profile's
+        dynamic axis if this ever regressed.
+        """
+        source = tmp_path / "dynamic.onnx"
+        onnx.save(_float32_model_with_dynamic_batch(), source)
+
+        cast_model = onnx.load(tensorrt_export._cast_onnx_to_fp16(str(source)))
+
+        input_dim = cast_model.graph.input[0].type.tensor_type.shape.dim[0]
+        assert input_dim.dim_param == "batch"
 
     def test_raises_without_caster(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The ImportError must name both remedies: install the extra, or pin an older TensorRT."""
