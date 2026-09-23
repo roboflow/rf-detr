@@ -13,6 +13,7 @@ Chapter 1 gate: these must pass before Chapter 2 begins.
 """
 
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ from pytorch_lightning import Trainer
 
 from rfdetr.config import SegmentationTrainConfig
 from rfdetr.training import build_trainer
+from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
 
@@ -405,6 +407,43 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@pytest.mark.timeout(300)
+def test_ddp_spawn_run_test_completes(base_model_config, base_train_config):
+    """``run_test=True`` under ``ddp_spawn`` must finish ``fit`` and leave the best checkpoint behind.
+
+    ``BestModelCallback.on_fit_end`` used to call ``trainer.test()`` from the main rank's spawned worker, which made the
+    spawn launcher start a second set of processes and re-initialise the process group on the same port
+    (``DistNetworkError: EADDRINUSE``). Spawn workers now skip the fit-end test with a warning instead; the subprocess
+    launcher behind ``strategy="ddp"`` runs it on every rank. The 300 s timeout turns a hang into a failure should the
+    collective path ever regress into a rank-0-only call.
+    """
+    mc = base_model_config()
+    tc = base_train_config(use_ema=False, run_test=True, devices=2, strategy="ddp_spawn", epochs=1)
+
+    fake_dataset = _FakeDataset(length=20)
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), _FakePostProcess()),
+        ),
+    ):
+        module = _DDPModule(mc, tc)
+
+    datamodule = RFDETRDataModule(mc, tc)
+    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
+    datamodule._dataset_train = fake_dataset
+    datamodule._dataset_val = fake_dataset
+    datamodule._dataset_test = fake_dataset
+
+    trainer = build_trainer(tc, mc, accelerator="cpu", limit_train_batches=2, limit_val_batches=2, limit_test_batches=2)
+    trainer.fit(module, datamodule=datamodule)
+
+    assert (Path(tc.output_dir) / "checkpoint_best_total.pth").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train_config):
     """ddp_spawn with multi_scale=True must propagate on_train_batch_start resize to training_step.
 
@@ -506,4 +545,86 @@ def test_ddp_spawn_preserves_minimum_optimizer_steps(
         accelerator="cpu",
         accumulate_grad_batches=trainer_grad_accum_steps,
     )
+    trainer.fit(module, datamodule=datamodule)
+
+
+class _DDPValImageCountModule(RFDETRModelModule):
+    """RFDETRModelModule subclass that asserts, in the child, that DDP validation scores each image exactly once.
+
+    See ``_DDPModule``'s docstring above for why this lives at module level and overrides ``configure_optimizers``.
+
+    Regression guard for DistributedSampler padding: Lightning pads the validation split to a multiple of
+    ``world_size`` by repeating leading images, and ``COCOEvalCallback`` must not accumulate those repeats. The
+    module wraps the mAP accumulator's ``merge_distributed_state`` to record how many images the merged state
+    holds and raises at epoch end if that is not the dataset length.
+    """
+
+    expected_images: int = 0
+
+    def configure_optimizers(self):
+        """Minimal single-group AdamW — bypasses get_param_dict."""
+        return torch.optim.AdamW(self.parameters(), lr=1e-4)
+
+    def on_validation_epoch_start(self) -> None:
+        """Record the merged image count on this epoch's accumulator (callbacks' epoch-start hooks ran already)."""
+        super().on_validation_epoch_start()
+        coco_callback = next(cb for cb in self.trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        metric = coco_callback.map_metric
+        # Bind the class method rather than the instance attribute so the sanity-check epoch's wrapper is replaced,
+        # not nested.
+        original_merge = type(metric).merge_distributed_state.__get__(metric)
+        counts: list[int] = []
+        self._merged_image_counts = counts
+
+        def _merge_and_record() -> None:
+            original_merge()
+            counts.append(len(metric.groundtruth_labels))
+
+        metric.merge_distributed_state = _merge_and_record
+
+    def on_validation_epoch_end(self) -> None:
+        """Raise in the child process if the merged validation state does not hold each image exactly once."""
+        super().on_validation_epoch_end()
+        if self.trainer.sanity_checking:
+            return
+        if self._merged_image_counts != [self.expected_images]:
+            raise AssertionError(
+                f"rank {self.global_rank} merged validation state over {self._merged_image_counts} images, "
+                f"expected [{self.expected_images}]. DistributedSampler padding was scored."
+            )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
+@pytest.mark.parametrize("val_images", [3, 1])
+def test_ddp_spawn_validation_scores_each_image_once(base_model_config, base_train_config, val_images: int):
+    """A 3-image validation split on 2 ranks must merge to 3 images, not the 4 the padded sampler forwards.
+
+    ``TestDistributedSamplerPaddingFilter`` in ``callbacks/test_coco_eval_callback.py`` covers the arithmetic against a
+    real ``DistributedSampler``; this test exercises Lightning's own sampler injection under ``ddp_spawn`` end to end
+    and fails (via ``_DDPValImageCountModule.on_validation_epoch_end``) if a padded repeat reaches the accumulator.
+    The 1-image case gives rank 1 nothing but padding; it must still take part in the epoch-end collectives so the
+    run neither hangs nor drops the metrics rank 0 computed.
+    """
+    mc = base_model_config()
+    tc = base_train_config(use_ema=False, run_test=False, devices=2, strategy="ddp_spawn", epochs=1)
+
+    train_dataset = _FakeDataset(length=20)
+    val_dataset = _FakeDataset(length=val_images)
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_FakeCriterion(), _FakePostProcess()),
+        ),
+    ):
+        module = _DDPValImageCountModule(mc, tc)
+    module.expected_images = len(val_dataset)
+
+    datamodule = RFDETRDataModule(mc, tc)
+    # Pre-set datasets: build_dataset mock doesn't survive the spawn boundary.
+    datamodule._dataset_train = train_dataset
+    datamodule._dataset_val = val_dataset
+
+    trainer = build_trainer(tc, mc, accelerator="cpu", limit_train_batches=2)
     trainer.fit(module, datamodule=datamodule)
