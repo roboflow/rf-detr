@@ -148,6 +148,8 @@ The capability attributes:
 | `experimental`           | Whether constructing the exporter warns that the format is work-in-progress                     |
 | `pip_extra`              | The `rfdetr[...]` extra that installs your dependencies                                         |
 
+If your format needs cross-field validation the class attributes above cannot express — TensorRT's dynamic-batch optimization-profile bounds (`opt_batch_size <= max_batch_size`, both present and integer) are the one existing example — override `_check_capabilities`, call `super()._check_capabilities()` first, and raise `ValueError` for your own rejections (distinct from the base class's `NotImplementedError` for an unsupported class-attribute capability).
+
 Three rules for `_convert`:
 
 - **Import the heavy dependency inside a method, never at module scope of a file the registry might import early.** Raise `ImportError` with the exact `pip install "rfdetr[myformat]"` command; the other formats route this through a small `_check_<dep>_available()` helper so tests can monkeypatch one choke point.

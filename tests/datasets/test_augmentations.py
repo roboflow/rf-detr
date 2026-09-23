@@ -1211,7 +1211,7 @@ class TestAlbumentationsWrapperNestedConfig:
         assert wrapper._is_geometric is True
 
     def test_from_config_nested_one_of(self):
-        """from_config builds a OneOf wrapper from nested config; p is ignored."""
+        """from_config builds a OneOf wrapper from nested config."""
         config = {
             "OneOf": {
                 "transforms": [
@@ -1386,12 +1386,24 @@ class TestAlbumentationsWrapperNestedConfig:
         assert isinstance(aug_image, Image.Image)
         torch.testing.assert_close(aug_target["boxes"], original_boxes)
 
-    def test_one_of_p_in_config_is_ignored(self):
-        """Any p supplied for OneOf in config is ignored; container always fires."""
+    def test_one_of_explicit_p_is_respected(self):
+        """Explicit p supplied for OneOf in config is preserved."""
         config = {
             "OneOf": {
                 "transforms": [{"HorizontalFlip": {"p": 1.0}}],
-                "p": 0.0,  # would suppress the container if respected
+                "p": 0.0,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, alb.OneOf)
+        assert inner.p == pytest.approx(0.0)
+
+    def test_one_of_default_p_is_one_when_omitted(self):
+        """OneOf defaults to p=1.0 when no container-level p is supplied."""
+        config = {
+            "OneOf": {
+                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)
@@ -1404,12 +1416,24 @@ class TestAlbumentationsWrapperNestedConfig:
         with pytest.raises(ValueError, match="at least one"):
             _build_albu_transform("OneOf", {"transforms": []})
 
-    def test_sequential_p_in_config_is_ignored(self):
-        """Any p supplied for Sequential in config is ignored; container always fires."""
+    def test_sequential_explicit_p_is_respected(self):
+        """Explicit p supplied for Sequential in config is preserved."""
         config = {
             "Sequential": {
                 "transforms": [{"HorizontalFlip": {"p": 1.0}}],
-                "p": 0.0,  # would suppress the container if respected
+                "p": 0.0,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config)
+        inner = transforms[0].transform.transforms[0]
+        assert isinstance(inner, alb.Sequential)
+        assert inner.p == pytest.approx(0.0)
+
+    def test_sequential_default_p_is_one_when_omitted(self):
+        """Sequential defaults to p=1.0 when no container-level p is supplied."""
+        config = {
+            "Sequential": {
+                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
             }
         }
         transforms = AlbumentationsWrapper.from_config(config)

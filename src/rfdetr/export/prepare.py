@@ -38,6 +38,12 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+#: The one axis an export marks dynamic when ``dynamic_batch`` is requested. Only axis 0 is named "batch"; every
+#: spatial axis stays fixed. Each consumer downstream depends on that -- the TensorRT optimization profile varies this
+#: axis alone, and the reference runtime allocates its buffers and trims its outputs along it -- so it is spelled once
+#: here rather than as a bare ``0`` in each of them.
+BATCH_AXIS = 0
+
 
 class ExportModelConfig(Protocol):
     """The subset of a model config the export preparation reads.
@@ -290,7 +296,7 @@ def prepare_export_graph(
     input_names = ("input",)
     output_names = tuple(resolve_output_names(model_config, backbone_only=backbone_only, backbone=backbone))
     dynamic_axes: Mapping[str, Mapping[int, str]] | None = (
-        {name: {0: "batch"} for name in input_names + output_names} if dynamic_batch else None
+        {name: {BATCH_AXIS: "batch"} for name in input_names + output_names} if dynamic_batch else None
     )
 
     # Run the sanity pass on the device resolved above — not a hard-coded "cuda" — so CPU-only export paths work.

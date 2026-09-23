@@ -36,7 +36,7 @@ from typing import Any
 
 from rfdetr.export._naming import resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
-from rfdetr.export.prepare import ExportGraph
+from rfdetr.export.prepare import BATCH_AXIS, ExportGraph
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -48,6 +48,7 @@ logger = get_logger()
 try:
     from polygraphy.backend.trt import (
         CreateConfig,
+        Profile,
         engine_from_network,
         network_from_onnx_path,
         save_engine,
@@ -56,6 +57,7 @@ try:
     _IS_TENSORRT_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised via TensorRTExporter._require_tensorrt
     CreateConfig = None
+    Profile = None
     engine_from_network = None
     network_from_onnx_path = None
     save_engine = None
@@ -621,10 +623,17 @@ class TensorRTConfig(ExportConfig):
             expose the flag, where no graph-level alternative exists; the engine filename then reflects
             the precision actually built (except under :meth:`TensorRTExporter.build_engine`'s *dry_run*,
             where nothing is built or probed, so the requested value is used as-is).
+        opt_batch_size: With ``dynamic_batch``, the batch size the engine's optimization profile is tuned for
+            (TensorRT picks kernels for this shape; other sizes within the profile run but may be slower). Fed
+            from :meth:`rfdetr.detr.RFDETR.export`'s ``batch_size``, the same value the ONNX graph is traced at.
+        max_batch_size: With ``dynamic_batch``, the largest batch the engine accepts; the profile spans
+            ``1 .. max_batch_size``. Required when ``dynamic_batch`` is set, ignored otherwise.
     """
 
     opset_version: int = 17
     fp16: bool = True
+    opt_batch_size: int = 1
+    max_batch_size: int | None = None
 
     def onnx_stage(self) -> Any:
         """Return the configuration for the ONNX export this format builds from.
@@ -647,6 +656,10 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     Unlike the portable formats, the engine is compiled for the machine that builds it: it is tied to that GPU and
     TensorRT version and does not move to another host.
 
+    With ``dynamic_batch`` the intermediate ONNX graph carries a dynamic batch axis and the engine is built with one
+    optimization profile spanning batch ``1 .. max_batch_size`` (tuned for ``opt_batch_size``); without it the engine
+    accepts only the traced batch size.
+
     Examples:
         Requires the optional ``tensorrt`` dependency and a prepared graph, so this is documentation only
         (not a doctest):
@@ -658,15 +671,46 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     """
 
     config_class = TensorRTConfig
-    setting_names = {"opset_version": "opset_version", "fp16": "fp16"}
+    setting_names = {
+        "opset_version": "opset_version",
+        "fp16": "fp16",
+        "opt_batch_size": "batch_size",
+        "max_batch_size": "max_batch_size",
+    }
     format = "tensorrt"
     display_name = "TensorRT"
-    dynamic_batch_reason = (
-        "(the engine is compiled without a TensorRT optimization profile, so it accepts only the exported batch"
-        " size). Export one engine per batch size instead."
-    )
+    supports_dynamic_batch = True
     supports_notes = True
     pip_extra = "tensorrt"
+
+    def _check_capabilities(self) -> None:
+        """Reject a dynamic-batch request whose optimization profile bounds are missing, non-integer, or inconsistent.
+
+        Raises:
+            ValueError: If ``dynamic_batch`` is set without ``max_batch_size``; with a ``batch_size`` or
+                ``max_batch_size`` that is not a plain ``int`` (``bool`` included, since ``bool`` is a
+                subclass of ``int``); or with ``max_batch_size < opt_batch_size`` or ``opt_batch_size < 1``.
+        """
+        super()._check_capabilities()
+        if not self.config.dynamic_batch:
+            return
+        if self.config.max_batch_size is None:
+            raise ValueError(
+                "TensorRT export with dynamic_batch=True needs max_batch_size: the engine is built with one "
+                "optimization profile spanning batch 1 .. max_batch_size (tuned for batch_size). Pass "
+                "max_batch_size=<largest batch the engine must accept>."
+            )
+        # A float (or float('nan')) compares fine against int bounds below -- nan is neither < nor >= anything,
+        # so it silently clears every check here and only fails deep inside the TensorRT build, after a full
+        # DINOv2 forward pass and an ONNX export have already run.
+        for name, value in (("batch_size", self.config.opt_batch_size), ("max_batch_size", self.config.max_batch_size)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"TensorRT dynamic_batch profile bounds must be integers, got {name}={value!r}.")
+        if self.config.opt_batch_size < 1 or self.config.max_batch_size < self.config.opt_batch_size:
+            raise ValueError(
+                f"TensorRT dynamic_batch profile must satisfy 1 <= batch_size <= max_batch_size, got "
+                f"batch_size={self.config.opt_batch_size} and max_batch_size={self.config.max_batch_size}."
+            )
 
     def _convert(self, graph: ExportGraph) -> str:
         """Export to ONNX, build the engine from it, and return the engine's path."""
@@ -829,10 +873,65 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             if self.config.verbose:
                 logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
 
-            engine = engine_from_network(
-                network_from_onnx_path(build_source),
-                config=CreateConfig(fp16=builder_fp16),
-            )
+            if self.config.dynamic_batch:
+                # A profile needs every dynamic input's full shape, so the parsed (builder, network, parser) tuple
+                # is inspected first and then handed on, rather than letting engine_from_network parse it again.
+                parsed = network_from_onnx_path(build_source)
+                try:
+                    profile = self._batch_profile(parsed[1])
+                except Exception:
+                    # _batch_profile can raise (e.g. no dynamic-batch input) before engine_from_network ever takes
+                    # ownership of `parsed`. Only that call frees the parsed builder/network/parser on success, so
+                    # release them here explicitly rather than leaking them on this error path; adding `parsed` to
+                    # `cleanup` unconditionally would double-close it once engine_from_network also releases it.
+                    del parsed
+                    raise
+                engine = engine_from_network(parsed, config=CreateConfig(fp16=builder_fp16, profiles=[profile]))
+            else:
+                engine = engine_from_network(
+                    network_from_onnx_path(build_source),
+                    config=CreateConfig(fp16=builder_fp16),
+                )
             save_engine(engine, path=engine_path)
 
         logger.info(f"Successfully built TensorRT engine: {engine_path}")
+
+    def _batch_profile(self, network: Any) -> Any:
+        """Build the batch optimization profile for every dynamic input.
+
+        The profile spans batch 1 to ``max_batch_size`` and is tuned for ``opt_batch_size``; the spatial dimensions
+        stay fixed at what the graph was traced at.
+
+        Args:
+            network: The parsed TensorRT network, whose inputs carry ``-1`` in the batch position when the ONNX
+                graph was exported with a dynamic batch axis.
+
+        Returns:
+            A polygraphy ``Profile`` with one entry per dynamic-batch input.
+
+        Raises:
+            ValueError: If no input carries a dynamic batch axis, which means the ONNX graph was exported without
+                ``dynamic_batch`` and a profile would be meaningless.
+        """
+        opt = self.config.opt_batch_size
+        max_batch = self.config.max_batch_size
+        profile = Profile()
+        dynamic_inputs = []
+        for index in range(network.num_inputs):
+            tensor = network.get_input(index)
+            shape = tuple(int(dim) for dim in tensor.shape)
+            if shape[BATCH_AXIS] != -1:
+                continue
+            dynamic_inputs.append(tensor.name)
+            # BATCH_AXIS is the only dynamic axis, so everything past it is the fixed shape each bound repeats.
+            trailing = shape[BATCH_AXIS + 1 :]
+            profile.add(tensor.name, min=(1, *trailing), opt=(opt, *trailing), max=(max_batch, *trailing))
+        if not dynamic_inputs:
+            raise ValueError(
+                "dynamic_batch=True was requested but no network input has a dynamic batch axis; export the ONNX "
+                "graph with dynamic_batch=True first."
+            )
+        logger.info(
+            f"Building TensorRT engine with a batch profile min=1 opt={opt} max={max_batch} on {dynamic_inputs}"
+        )
+        return profile
