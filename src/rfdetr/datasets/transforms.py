@@ -219,9 +219,11 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
     Handles container transforms (``OneOf``, ``SomeOf``, ``Sequential``) by recursively building the nested
     ``transforms`` list.  Leaf transforms are instantiated directly from the ``albumentations`` namespace.
 
-    Both ``OneOf`` and ``Sequential`` always fire (``p=1.0`` is forced, ignoring any user-supplied ``p``).  For
-    ``OneOf``, which child is applied is determined by the children's own ``p`` values; at least one nested transform is
-    required.  ``Sequential`` runs all transforms in order.
+    For ``OneOf`` and ``Sequential``, the container-level ``p`` is respected when
+    explicitly provided. When omitted, RF-DETR defaults it to ``1.0`` to preserve
+    existing behavior. For ``OneOf``, which child is applied (when the container fires)
+    is determined by the children's own ``p`` values; at least one nested transform is required.
+    ``Sequential`` runs all transforms in order when the container fires.
 
     Args:
         name: Transform name (e.g. ``"HorizontalFlip"``, ``"OneOf"``).
@@ -272,11 +274,11 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
         if name == "OneOf":
             if not nested_transforms:
                 raise ValueError("'OneOf' requires at least one transform")
-            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
-            other_params["p"] = 1.0  # OneOf always fires; selection is via per-child p
+            other_params = {k: v for k, v in params.items() if k != "transforms"}
+            other_params.setdefault("p", 1.0)
         elif name == "Sequential":
-            other_params = {k: v for k, v in params.items() if k not in ("transforms", "p")}
-            other_params["p"] = 1.0  # Sequential always runs all transforms
+            other_params = {k: v for k, v in params.items() if k != "transforms"}
+            other_params.setdefault("p", 1.0)
         else:
             other_params = {k: v for k, v in params.items() if k != "transforms"}
 

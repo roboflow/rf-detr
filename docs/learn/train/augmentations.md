@@ -101,7 +101,7 @@ aug_config = {
 }
 ```
 
-Each child's `p` controls its relative selection weight. The container itself always fires.
+Each child's `p` controls its relative selection weight when the container fires. The container-level `p` controls whether the whole container is applied; RF-DETR defaults an omitted value to `1.0` for backward compatibility, while explicit values follow standard Albumentations semantics.
 
 If you need the same transform twice, or want explicit ordering, pass a list instead of a dict:
 
