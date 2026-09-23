@@ -76,10 +76,7 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "TensorRTExporter",
         "tensorrt",
         "TensorRT",
-        dynamic_batch_reason=(
-            "(the engine is compiled without a TensorRT optimization profile, so it accepts only the exported batch"
-            " size). Export one engine per batch size instead."
-        ),
+        supports_dynamic_batch=True,
     ),
     "executorch": ExporterEntry(
         "rfdetr.export._executorch.exporter",
