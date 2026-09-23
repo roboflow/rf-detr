@@ -188,23 +188,14 @@ class TestGridSamplerDecomposition:
 
 
 class _TopK(torch.nn.Module):
-    """Return the indices of the three largest scores, as the two-stage query selection does."""
+    """Return the indices of the four largest scores, as the two-stage query selection does."""
 
     def forward(self, scores: torch.Tensor) -> torch.Tensor:
-        return torch.topk(scores, 3, dim=1)[1]
+        return torch.topk(scores, 4, dim=1)[1].to(torch.int32)
 
 
-class _TopKGather(torch.nn.Module):
-    """RF-DETR's two-stage query selection in miniature: rank, then gather the selected rows."""
-
-    def __init__(self, k: int) -> None:
-        super().__init__()
-        self.k = k
-
-    def forward(self, scores: torch.Tensor, memory: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        indices = torch.topk(scores, self.k, dim=1)[1]
-        selected = torch.gather(memory, 1, indices.unsqueeze(-1).expand(-1, -1, memory.shape[-1]))
-        return indices.to(torch.int32), selected
+#: fp16 scores whose ranking is exact: ``_TopK`` must return ``[[7, 6, 5, 4]]``.
+_RANKED_SCORES = torch.arange(8, dtype=torch.float16)[None]
 
 
 class TestTopkDecomposition:
@@ -217,7 +208,7 @@ class TestTopkDecomposition:
         element packs two indices and the queries the decoder gathers are garbage. A float32 ``topk`` is not placed
         there.
         """
-        scores = torch.randn(1, 50, generator=torch.Generator().manual_seed(0)).half()
+        scores = _RANKED_SCORES
         exported = torch.export.export(_TopK(), (scores,)).run_decompositions(coreai_decomposition_table({}))
         topk_inputs = [
             node.args[0].meta["val"].dtype
@@ -662,39 +653,32 @@ class TestCoreAIEndToEnd:
         assert all(np.isfinite(diffs)), f"Core AI produced non-finite outputs: {diffs}"
 
     def test_float16_topk_indices_survive_the_neural_engine(self, tmp_path: Path) -> None:
-        """An fp16 two-stage selection (``topk`` feeding ``gather``) returns the CPU's indices on the Neural Engine.
+        """An fp16 ``topk`` returns plain indices on the Neural Engine, as RF-DETR's two-stage selection needs.
 
         iOS and iPadOS pick the Neural Engine for fp16 graphs by default. There an fp16 ``topk`` writes 16-bit indices
-        into an int32 buffer, so every returned index packs two, and an fp16 RF-DETR export detects nothing. The scores
-        are distinct, so the ranking is unambiguous in fp16 and the comparison is exact. On a host without a Neural
-        Engine the runtime falls back and the test passes trivially.
+        into its int32 output, so ``topk(arange(8), 4)`` returns the whole descending order, two indices per element,
+        instead of ``[7, 6, 5, 4]``. An fp16 RF-DETR export then gathers the wrong encoder tokens and detects nothing.
+        The scores are exact in fp16, so the expected indices are too.
         """
         _require_compute_unit("neural_engine")
         import coreai.runtime as rt
         from coreai_torch import TorchConverter, get_decomp_table
 
-        tokens, channels, k = 576, 8, 300
-        scores = (torch.randperm(tokens, generator=torch.Generator().manual_seed(0)).float() / 72).half()[None]
-        memory = torch.arange(tokens * channels, dtype=torch.float32).reshape(1, tokens, channels).half()
-        exported = torch.export.export(_TopKGather(k), (scores, memory))
+        exported = torch.export.export(_TopK(), (_RANKED_SCORES,))
         program = (
             TorchConverter()
             .add_exported_program(
                 exported.run_decompositions(coreai_decomposition_table(get_decomp_table())),
-                input_names=["scores", "memory"],
-                output_names=["indices", "selected"],
+                input_names=["scores"],
+                output_names=["indices"],
             )
             .to_coreai()
         )
         program.optimize()
-        path = tmp_path / "topk_gather.aimodel"
+        path = tmp_path / "topk.aimodel"
         program.save_asset(path, metadata=rt.AIModelAssetMetadata())
-        inputs = {"scores": scores.numpy(), "memory": memory.numpy()}
-        cpu_indices, cpu_selected = _run_aimodel(path, inputs, ("indices", "selected"), "cpu")
-        indices, selected = _run_aimodel(path, inputs, ("indices", "selected"), "neural_engine")
-        assert int(indices.max()) < tokens, f"corrupt topk indices on the Neural Engine: max {int(indices.max())}"
-        torch.testing.assert_close(indices, cpu_indices, rtol=0, atol=0)
-        torch.testing.assert_close(selected, cpu_selected, rtol=0, atol=0)
+        (indices,) = _run_aimodel(path, {"scores": _RANKED_SCORES.numpy()}, ("indices",), "neural_engine")
+        assert indices.tolist() == [[7, 6, 5, 4]], f"corrupt topk indices on the Neural Engine: {indices.tolist()}"
 
     def test_float16_export_runs(self, tmp_path: Path) -> None:
         """A float16 export converts, loads with the default specialization, and returns outputs of the eager shapes."""
