@@ -17,7 +17,7 @@ description: Export RF-DETR models to ONNX, TensorRT, TFLite, LiteRT, ExecuTorch
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment — see [Native CoreML Export](#native-coreml-export-mlpackage)
     - Adding a format is an in-tree contribution — see [Exporter Blueprint](export-blueprint.md)
 
-RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
+RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native CoreML, Apple Core AI and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
 ## Installation
 
@@ -41,6 +41,9 @@ pip install "rfdetr[executorch]"
 
 # Native CoreML export (.mlpackage; macOS only)
 pip install "rfdetr[coreml]"
+
+# Apple Core AI export (.aimodel; Python 3.11-3.13, runs on iOS/iPadOS/macOS 27+)
+pip install "rfdetr[coreai]"
 ```
 
 ## Basic Export
@@ -907,6 +910,92 @@ At fp32 there is no boundary to speak of, because there is no ANE: the plan repo
 **`ALL` is not always the fastest choice.** With `ALL`, Core ML is free to put part of the graph on the GPU, and for `RFDETRSegNano` it does: the plan splits 79% ANE / 21% GPU, and the transfers between them cost real time — 34.5 ms under `ALL` against 23.5 ms under `CPU_AND_NE` (p50, same methodology as the table above). Detection models are unaffected; their plan is the same under both. Measure both on your target device rather than assuming the default is best.
 
 The [ExecuTorch CoreML delegate](#coreml-backend-apple-neural-engine-fp16) lowers RF-DETR to a single Core ML model inside the `.pte`, and that model does reach the Neural Engine. Its internal split is not measurable with `MLComputePlan`, which needs an `.mlpackage`, so the table above is not a statement about the `.pte`.
+
+## Apple Core AI Export (`.aimodel`)
+
+!!! warning "Experimental — Use with Caution"
+
+    Core AI export is **experimental and work-in-progress**. The `.aimodel` runs on iOS, iPadOS and macOS 27 or later, and `dynamic_batch=True` is not supported: export one `.aimodel` per batch size instead.
+
+[Core AI](https://developer.apple.com/documentation/coreai) is Apple's on-device inference framework from iOS, iPadOS and macOS 27. `format="coreai"` traces the model with `torch.export` and converts it with [coreai-torch](https://github.com/apple/coreai-torch) into an `.aimodel` asset — no ONNX step. Core AI decides at load time whether the CPU, the GPU or the Neural Engine runs it.
+
+### Prerequisites
+
+```bash
+pip install "rfdetr[coreai]"
+```
+
+`coreai-torch` supports Python 3.11 to 3.13 and installs on macOS (Apple silicon) and Linux x86-64, so an `.aimodel` can be exported on either. Running it needs the Core AI runtime of iOS, iPadOS or macOS 27.
+
+### Basic Core AI Export
+
+```python
+from rfdetr import RFDETRNano
+
+model = RFDETRNano(pretrain_weights="<path/to/checkpoint.pth>")
+
+model.export(format="coreai")
+```
+
+This produces `output/rfdetr-nano_fp32.aimodel`. Segmentation and keypoint models export the same way. Pass `coreai_precision="float16"` for a half-size `rfdetr-nano_fp16.aimodel` whose input and outputs are float16 as well.
+
+The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` input, resized without antialiasing and ImageNet-normalized, as in the ONNX example below. Unlike CoreML, the tensors keep their names — `input`, then `dets` and `labels`, plus `masks` or `keypoints` — and any `notes` are stored in the asset metadata under `rfdetr_notes`.
+
+### Core AI Inference Example
+
+=== "Python"
+
+    ```python
+    import asyncio
+
+    import coreai.runtime as rt
+    import numpy as np
+
+
+    async def run(image: np.ndarray) -> dict[str, np.ndarray]:
+        model = await rt.AIModel.load("output/rfdetr-nano_fp32.aimodel", rt.SpecializationOptions.default())
+        outputs = await model.load_function("main")({"input": rt.NDArray(image)})
+        return {name: outputs[name].numpy() for name in ("dets", "labels")}
+
+
+    # image: (1, 3, H, W) float32, preprocessed as in the ONNX Runtime example below
+    outputs = asyncio.run(run(image))
+    ```
+
+=== "Swift"
+
+    ```swift
+    import CoreAI
+
+    let model = try await AIModel(contentsOf: url)  // SpecializationOptions.default
+    let main = try model.loadFunction(named: "main")!
+    var outputs = try await main.run(inputs: ["input": input])  // input: NDArray [1, 3, H, W]
+    let dets = outputs.remove("dets")!.ndArray!
+    let labels = outputs.remove("labels")!.ndArray!
+    ```
+
+### Precision, Compute Units and Latency
+
+**Prefer float32.** With the default specialization Core AI runs a float32 `.aimodel` on the GPU, where it matches eager PyTorch detection for detection. Single-image latency of pretrained models with public test images (batch 1; M5 Pro Mac: macOS 27.0, Python runtime, median of 100 runs after 10 warm-ups; M4 iPad Air: iPadOS 27.0, native Swift runtime in a release-profile app, median of three runs of 20 after 2 warm-ups):
+
+| Model, precision          | Core AI default | Core AI CPU | CoreML `ALL` | CoreML `CPU_ONLY` |
+| ------------------------- | --------------- | ----------- | ------------ | ----------------- |
+| `RFDETRNano` fp32, Mac    | 7.4 ms          | 30.6 ms     | 7.7 ms       | 28.0 ms           |
+| `RFDETRNano` fp16, Mac    | 3.6 ms          | 20.0 ms     | 3.4 ms       | 14.2 ms           |
+| `RFDETRMedium` fp32, Mac  | 15.7 ms         | 68.4 ms     | 16.0 ms      | 64.8 ms           |
+| `RFDETRSegNano` fp32, Mac | 11.1 ms         | 47.4 ms     | 10.8 ms      | 45.1 ms           |
+| `RFDETRNano` fp32, iPad   | 19.0 ms         | —           | 18.6 ms      | —                 |
+| `RFDETRNano` fp16, iPad   | 24.3 ms         | 20.2 ms     | —            | —                 |
+
+Core AI and CoreML run RF-DETR at the same speed; choose by the framework your application targets. On iOS and iPadOS the default specialization places a float16 `.aimodel` on the Neural Engine, which is slower than the float32 GPU path for RF-DETR, costs about 5 s to compile on the first load, and adds float16 drift.
+
+!!! note "float16 and the Neural Engine"
+
+    On the Neural Engine a float16 `topk` returns corrupt indices, which would make RF-DETR's two-stage query selection gather the wrong encoder tokens and detect nothing (see [apple/coreai-torch#115](https://github.com/apple/coreai-torch/issues/115)). The exporter therefore runs that one `topk` in float32; the rest of a float16 graph stays float16.
+
+### How the Conversion Works
+
+`coreai-torch` has no lowering for `aten.grid_sampler_2d`, which the deformable attention uses, so the exporter decomposes it into gathers. Its in-bounds masks use float arithmetic rather than a comparison-to-bool chain, which the Core AI runtime can mishandle ([apple/coreai-torch#11](https://github.com/apple/coreai-torch/issues/11)). The approach follows the RF-DETR port in the community [coreai-model-zoo](https://github.com/john-rocky/coreai-model-zoo).
 
 ## How Export Works
 
