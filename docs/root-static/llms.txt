@@ -34,7 +34,7 @@
 - [Training Loggers](https://rfdetr.roboflow.com/latest/learn/train/loggers/): TensorBoard, Weights and Biases, MLflow, and a ClearML workaround
 
 ## Export and Deploy
-- [Export](https://rfdetr.roboflow.com/latest/learn/export/): ONNX, TFLite, TensorRT
+- [Export](https://rfdetr.roboflow.com/latest/exports/): ONNX, TFLite, TensorRT
 - [Deploy](https://rfdetr.roboflow.com/latest/learn/deploy/): deploy_to_roboflow() API
 
 ## Benchmarks

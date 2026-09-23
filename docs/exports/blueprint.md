@@ -12,7 +12,7 @@ description: How RF-DETR's export pipeline is put together, and the step-by-step
     - Adding a format touches its own package, the registry, and `pyproject.toml` — never the base class
     - This is an in-tree contribution recipe, not a plugin API: there is no public `register()` hook
 
-This page describes how the export pipeline is assembled and what it takes to add a format to it. If you only want to export a model, read [Export RF-DETR Model](export.md) instead — everything here is internal API.
+This page describes how the export pipeline is assembled and what it takes to add a format to it. If you only want to export a model, read [Export RF-DETR Model](index.md) instead — everything here is internal API.
 
 !!! warning "Internal API"
 
@@ -205,7 +205,7 @@ Add `myformat = [...]` under `[project.optional-dependencies]` in `pyproject.tom
 
 ### 6. Document the format
 
-Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to [Export RF-DETR Model](export.md) — installation extra, a basic example, output files, and an inference snippet.
+Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to [Export RF-DETR Model](index.md) — installation extra, a basic example, output files, and an inference snippet.
 
 ### 7. Test it
 
@@ -257,6 +257,6 @@ def _format_settings(cls, settings: Mapping[str, Any]) -> dict[str, Any]:
 
 ## Next Steps
 
-- [Export RF-DETR Model](export.md) — the user-facing export guide
-- [Deploy a Trained RF-DETR Model](deploy.md) — deployment paths for exported artifacts
+- [Export RF-DETR Model](index.md) — the user-facing export guide
+- [Deploy a Trained RF-DETR Model](../learn/deploy.md) — deployment paths for exported artifacts
 - [Migration Guide](../getting-started/migration.md) — what moved when the exporter classes landed

@@ -1710,7 +1710,7 @@ class RFDETR:
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
-        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
+        See the `export documentation <https://rfdetr.roboflow.com/exports/>`_ for more information.
 
         Args:
             output_dir: Directory to write the exported model to.
