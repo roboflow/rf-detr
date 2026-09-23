@@ -17,10 +17,10 @@ import importlib.util
 import inspect
 import types
 import warnings
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,6 +35,9 @@ from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.export.registry import resolve_exporter
 from rfdetr.models.backbone.dinov2 import DinoV2
+
+if TYPE_CHECKING:
+    import onnx
 
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
@@ -1188,3 +1191,149 @@ class TestExportSeamInventory:
         )
 
         assert Path(result).name == expected_name
+
+
+def _keypoint_axis_broadcasts(model: "onnx.ModelProto") -> list[str]:
+    """Name every elementwise node that broadcasts one input over axis -2 only, the keypoint axis of the decode.
+
+    That is the pattern onnx2tf mis-transposes: a ``(B, Q, 1, 2)`` box reference broadcast against ``(B, Q, K, 2)``
+    keypoint deltas made the TFLite conversion of keypoint models fail (#1514). Shapes are right-aligned, so a
+    rank-3 ``(Q, 1, 2)`` input counts too. A full broadcast such as ``(1, 1, 1, 2)``, which onnx2tf converts, does not.
+
+    Args:
+        model: The ONNX model; shapes are inferred before the scan.
+
+    Returns:
+        The names of the offending nodes, in graph order.
+
+    Raises:
+        ValueError: If no rank-4 elementwise output has a known, non-singleton keypoint axis, so nothing was checked.
+
+    Examples:
+        >>> from onnx import TensorProto, helper
+        >>> def _elementwise(ref_shape: list[int]) -> "onnx.ModelProto":
+        ...     graph = helper.make_graph(
+        ...         [helper.make_node("Mul", ["delta", "ref"], ["out"], name="decode")],
+        ...         "g",
+        ...         [
+        ...             helper.make_tensor_value_info("delta", TensorProto.FLOAT, [1, 4, 3, 2]),
+        ...             helper.make_tensor_value_info("ref", TensorProto.FLOAT, ref_shape),
+        ...         ],
+        ...         [helper.make_tensor_value_info("out", TensorProto.FLOAT, None)],
+        ...     )
+        ...     return helper.make_model(graph)
+        >>> _keypoint_axis_broadcasts(_elementwise([1, 4, 1, 2]))
+        ['decode']
+        >>> _keypoint_axis_broadcasts(_elementwise([4, 1, 2]))
+        ['decode']
+        >>> _keypoint_axis_broadcasts(_elementwise([1, 1, 1, 2]))
+        []
+        >>> _keypoint_axis_broadcasts(_elementwise([1, 4, 3, 2]))
+        []
+    """
+    from onnx import shape_inference
+
+    graph = shape_inference.infer_shapes(model).graph
+    shapes = {
+        value.name: [dim.dim_value if dim.HasField("dim_value") else None for dim in value.type.tensor_type.shape.dim]
+        for value in [*graph.input, *graph.value_info, *graph.output]
+    }
+    shapes.update({initializer.name: list(initializer.dims) for initializer in graph.initializer})
+    offenders = []
+    checked = 0
+    for node in graph.node:
+        if node.op_type not in ("Mul", "Add", "Sub", "Div"):
+            continue
+        output_shape = shapes.get(node.output[0])
+        if not output_shape or len(output_shape) != 4 or output_shape[-2] in (None, 1):
+            continue
+        checked += 1
+        for name in node.input:
+            input_shape = shapes.get(name) or []
+            if not 2 < len(input_shape) <= 4:
+                continue
+            if input_shape[-2] == 1 and output_shape[-3] not in (None, 1) and input_shape[-3] == output_shape[-3]:
+                offenders.append(node.name)
+                break
+    if not checked:
+        raise ValueError(
+            "no rank-4 elementwise node with a known keypoint axis; shape inference found nothing to check"
+        )
+    return offenders
+
+
+def _if_nodes(model: "onnx.ModelProto") -> list[str]:
+    """Name every ``If`` node; onnx2tf's onnxsim pass cannot simplify one, and conversion then fails on ``Expand``.
+
+    Args:
+        model: The ONNX model.
+
+    Returns:
+        The names of the ``If`` nodes, in graph order.
+
+    Examples:
+        >>> from onnx import TensorProto, helper
+        >>> branch = helper.make_graph([], "branch", [], [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])])
+        >>> node = helper.make_node("If", ["cond"], ["y"], name="rank_check", then_branch=branch, else_branch=branch)
+        >>> graph = helper.make_graph(
+        ...     [node],
+        ...     "g",
+        ...     [helper.make_tensor_value_info("cond", TensorProto.BOOL, [])],
+        ...     [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+        ... )
+        >>> _if_nodes(helper.make_model(graph))
+        ['rank_check']
+    """
+    return [node.name for node in model.graph.node if node.op_type == "If"]
+
+
+@pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
+    """The keypoint ONNX graph must avoid the constructs that broke its onnx2tf/TFLite conversion (#1514).
+
+    A real onnx2tf conversion of a keypoint model takes over ten minutes on CPU, so these tests pin the graph constructs
+    onnx2tf could not handle instead.
+    """
+
+    @pytest.fixture(scope="class")
+    def keypoint_onnx(self, tmp_path_factory: pytest.TempPathFactory) -> "onnx.ModelProto":
+        """Export a small, randomly initialized keypoint model to ONNX once and load the graph.
+
+        Args:
+            tmp_path_factory: Pytest's session-scoped temporary directory factory.
+
+        Returns:
+            The exported ONNX model, with a ``dets``/``labels``/``keypoints`` output contract.
+
+        Examples:
+            Skipped: a pytest fixture, so it cannot run standalone.
+
+            >>> keypoint_onnx.graph.output[2].name  # doctest: +SKIP
+            'keypoints'
+        """
+        import onnx
+
+        model = RFDETRKeypointPreview(
+            pretrain_weights=None,
+            device="cpu",
+            resolution=96,
+            num_queries=4,
+            num_classes=2,
+            num_keypoints_per_class=[3],
+        )
+        with ignore_tracer_warnings():
+            path = model.export(output_dir=str(tmp_path_factory.mktemp("keypoint_onnx")), verbose=False)
+        return onnx.load(str(path))
+
+    @pytest.mark.parametrize(
+        "find_blockers",
+        [
+            pytest.param(_keypoint_axis_broadcasts, id="keypoint_axis_broadcast"),
+            pytest.param(_if_nodes, id="if_node"),
+        ],
+    )
+    def test_graph_has_no_onnx2tf_blockers(
+        self, keypoint_onnx: "onnx.ModelProto", find_blockers: Callable[["onnx.ModelProto"], list[str]]
+    ) -> None:
+        """No node in the exported keypoint graph matches a construct onnx2tf fails to convert."""
+        assert find_blockers(keypoint_onnx) == []
