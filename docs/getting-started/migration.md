@@ -274,9 +274,9 @@ You can apply all changes in one go; working through sections one release at a t
 
 !!! warning "Breaking: default resize interpolation changed — pixel values and mAP may shift"
 
-    The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous versions, and mAP may drift on existing benchmarks. **This affects training as well as validation and test preprocessing** — not just the training split.
+    The default resize backend changed from Albumentations (cv2 `INTER_LINEAR`, no antialias) to torchvision (`BILINEAR` + `antialias=True`). Resized pixel values differ slightly from previous versions, and mAP may drift on existing benchmarks. **This affects the training split only** — `_route_transforms` (`rfdetr.datasets.coco`) routes to Albumentations only when `image_set == "train"`; validation, test, prediction and export always resize through torchvision, unaffected by `aug_config` or `augmentation_backend`.
 
-    To restore the previous pixel-exact behaviour:
+    To restore the previous pixel-exact behaviour for training:
 
     ```bash
     pip install 'rfdetr[augment]'
@@ -288,11 +288,13 @@ You can apply all changes in one go; working through sections one release at a t
     train_config = TrainConfig(aug_config=AUG_CONFIG)
     ```
 
-    Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects Albumentations for you, but identical code on a machine without `[augment]` installed silently falls back to torchvision instead. The only setting that pins resize behaviour regardless of what is installed is:
+    Installing `rfdetr[augment]` alone is **not** sufficient to pin this behaviour — with Albumentations installed, `augmentation_backend="auto"`/`"cpu"` (the default) auto-selects Albumentations for you, but identical code on a machine without `[augment]` installed silently falls back to torchvision instead. The only setting that pins the *training* resize backend regardless of what is installed is:
 
     ```python
     train_config = TrainConfig(augmentation_backend="torchvision")
     ```
+
+    No setting restores Albumentations for validation/test/predict/export — that path is torchvision-only by design, not a configurable default.
 
 ### Removed
 

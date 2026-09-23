@@ -164,7 +164,7 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 
 - Install the TensorRT extra: `pip install rfdetr[tensorrt]` (provides `tensorrt`, `polygraphy`, `onnx`, and `onnxconverter-common`; the latter two cast the ONNX graph to FP16 on TensorRT 11+; no `trtexec` binary needed)
 - A CUDA GPU (the engine is built for the local GPU architecture)
-- Export an ONNX model first (for example: `output/inference_model.onnx`)
+- Export an ONNX model first (for example: `output/rfdetr-medium.onnx`, named after the model variant — see [Output Files](#output-files))
 
 ### Export Directly to TensorRT
 
@@ -178,7 +178,7 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="tensorrt")
 ```
 
-This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](#export-parameters) — unless `output_name` is set).
+This exports `output/rfdetr-medium.onnx` first and then produces `output/rfdetr-medium_fp16.trt` (the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](#export-parameters) — unless `output_name` is set).
 
 !!! note "Dynamic batch"
 
@@ -330,7 +330,7 @@ pip install "rfdetr[tflite]"
     model.export(format="tflite", output_dir="output")
     ```
 
-This produces both `output/inference_model_fp32.tflite` and `output/inference_model_fp16.tflite`.
+This produces both `output/rfdetr-small_fp32.tflite` and `output/rfdetr-small_fp16.tflite` — named after the model variant, like the other export formats (`onnx2tf` names its own output files after the input ONNX stem).
 
 ### INT8 Quantization
 
@@ -347,7 +347,7 @@ model = RFDETRSmall()
 model.export(format="tflite", quantization="int8", output_dir="output")
 ```
 
-This writes `output/inference_model_dynamic_range_quant.tflite` alongside the FP32 and FP16 models. When GridSample ops are patched, the filename includes a `_gs_patched` infix: `output/inference_model_gs_patched_dynamic_range_quant.tflite` (the standard RF-DETR path).
+This writes `output/rfdetr-small_dynamic_range_quant.tflite` alongside the FP32 and FP16 models. When GridSample ops are patched, the filename includes a `_gs_patched` infix: `output/rfdetr-small_gs_patched_dynamic_range_quant.tflite` (the standard RF-DETR path).
 
 ### FP16 Export
 
@@ -361,11 +361,13 @@ model.export(format="tflite", quantization="fp16", output_dir="output")
 
 The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, regardless of the requested quantization mode. When `quantization="int8"` is specified, it additionally produces the INT8-quantized model.
 
-| File                                         | Description                             |
-| -------------------------------------------- | --------------------------------------- |
-| `inference_model_fp32.tflite`                | FP32 model (always produced)            |
-| `inference_model_fp16.tflite`                | FP16 model (always produced)            |
-| `inference_model_dynamic_range_quant.tflite` | INT8 model (when `quantization="int8"`) |
+| File                                   | Description                             |
+| -------------------------------------- | --------------------------------------- |
+| `{variant}_fp32.tflite`                | FP32 model (always produced)            |
+| `{variant}_fp16.tflite`                | FP16 model (always produced)            |
+| `{variant}_dynamic_range_quant.tflite` | INT8 model (when `quantization="int8"`) |
+
+Without a variant or `output_name`, `{variant}` falls back to `inference_model`, same as the other formats.
 
 !!! note
 
@@ -388,7 +390,7 @@ import torchvision.transforms.functional as F
 import tflite_runtime.interpreter as tflite
 
 # Load model
-interpreter = tflite.Interpreter(model_path="output/inference_model_fp32.tflite")
+interpreter = tflite.Interpreter(model_path="output/rfdetr-small_fp32.tflite")
 interpreter.allocate_tensors()
 
 input_details = interpreter.get_input_details()
