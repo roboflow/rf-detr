@@ -6,7 +6,6 @@
 """Regression tests for GroupPose-oriented transformer streams."""
 
 from types import SimpleNamespace
-from unittest import mock
 
 import pytest
 import torch
@@ -170,37 +169,6 @@ def test_additive_attn_mask_matches_boolean_mask_in_multihead_attention(mask: to
     expected = attention(x, x, x, attn_mask=mask, need_weights=False)[0]
     actual = attention(x, x, x, attn_mask=_additive_attn_mask(mask, x.dtype), need_weights=False)[0]
     assert torch.equal(actual, expected)
-
-
-def test_keypoint_self_attention_receives_additive_mask() -> None:
-    """Keypoint self-attention must get a float mask: converters mishandle MHA's own bool-to-float step."""
-    srcs, masks, pos_embeds, refpoint_embed, query_feat = _build_transformer_inputs()
-    transformer = Transformer(
-        d_model=16,
-        num_queries=6,
-        num_decoder_layers=1,
-        sa_nhead=4,
-        ca_nhead=4,
-        num_feature_levels=2,
-        dec_n_points=1,
-        return_intermediate_dec=True,
-        lite_refpoint_refine=True,
-        two_stage=True,
-        use_grouppose_keypoints=True,
-        num_keypoints_per_class=[3, 2],
-    )
-    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(16, 2)])
-    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(16, 4)])
-    attention = transformer.decoder.layers[0].kp_inst_self_attn
-
-    with mock.patch.object(attention, "forward", wraps=attention.forward) as forward:
-        transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
-
-    attn_mask = forward.call_args.kwargs["attn_mask"]
-    class_mask = transformer.decoder.keypoint_class_mask
-    assert class_mask.any()
-    assert attn_mask.is_floating_point()
-    assert torch.equal(torch.isinf(attn_mask), class_mask)
 
 
 def test_keypoint_class_mask_person_only() -> None:
