@@ -1772,6 +1772,13 @@ def _straddling_disc_records() -> tuple[list[dict[str, Any]], list[dict[str, Any
 
     A disc of radius 17 has a 34x34 = 1156 box (*medium*) and a ~901 mask (*small*), so which area the
     ground truth is built from is visible in the AP buckets rather than only in the fourth decimal.
+    
+    Examples:
+        >>> predictions, targets = _straddling_disc_records()
+        >>> len(predictions), len(targets)
+        (30, 30)
+        >>> targets[0]["masks"].shape
+        torch.Size([1, 128, 128])
     """
     size = 128
     rows, columns = np.ogrid[:size, :size]
