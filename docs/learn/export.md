@@ -976,7 +976,7 @@ The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` 
 
 ### Precision, Compute Units and Latency
 
-**Prefer float32.** With the default specialization Core AI runs a float32 `.aimodel` on the GPU, where it matches eager PyTorch detection for detection. Single-image latency of pretrained models with public test images (batch 1; M5 Pro Mac: macOS 27.0, Python runtime, median of 100 runs after 10 warm-ups; M4 iPad Air: iPadOS 27.0, native Swift runtime in a release-profile app, median of three runs of 20 after 2 warm-ups):
+**Start with float32.** With the default specialization Core AI runs a float32 `.aimodel` on the GPU, where it matches eager PyTorch detection for detection. Single-image latency of pretrained models with public test images (batch 1; M5 Pro Mac: macOS 27.0, Python runtime, median of 100 runs after 10 warm-ups; M4 iPad Air and A15 iPhone 13: 27.0, native Swift runtime in a release-profile app, median of three runs of 20 after 2 warm-ups):
 
 | Model, precision          | Core AI default | Core AI CPU | CoreML `ALL` | CoreML `CPU_ONLY` |
 | ------------------------- | --------------- | ----------- | ------------ | ----------------- |
@@ -984,10 +984,17 @@ The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` 
 | `RFDETRNano` fp16, Mac    | 3.6 ms          | 20.0 ms     | 3.4 ms       | 14.2 ms           |
 | `RFDETRMedium` fp32, Mac  | 15.7 ms         | 68.4 ms     | 16.0 ms      | 64.8 ms           |
 | `RFDETRSegNano` fp32, Mac | 11.1 ms         | 47.4 ms     | 10.8 ms      | 45.1 ms           |
-| `RFDETRNano` fp32, iPad   | 19.0 ms         | —           | 18.6 ms      | —                 |
-| `RFDETRNano` fp16, iPad   | 24.3 ms         | 20.2 ms     | —            | —                 |
+| `RFDETRNano` fp32, iPad   | 18.2 ms         | —           | 18.6 ms      | —                 |
+| `RFDETRNano` fp16, iPad   | 24.1 ms         | 20.2 ms     | —            | —                 |
+| `RFDETRNano` fp32, iPhone | 52.3 ms         | —           | 44.2 ms      | —                 |
+| `RFDETRNano` fp16, iPhone | 30.5 ms         | 32.6 ms     | —            | —                 |
 
-Core AI and CoreML run RF-DETR at the same speed; choose by the framework your application targets. On iOS and iPadOS the default specialization places a float16 `.aimodel` on the Neural Engine, which is slower than the float32 GPU path for RF-DETR, costs about 5 s to compile on the first load, and adds float16 drift.
+On Macs and M-series iPads Core AI and CoreML run RF-DETR at the same speed; choose by the framework your application targets. On iOS and iPadOS the default specialization places a float16 `.aimodel` on the Neural Engine. Whether that pays off depends on the chip:
+
+- On the M4 iPad it is slower than the float32 GPU path.
+- On the A15 iPhone 13 it is the fastest option, 1.4× faster than CoreML float32.
+
+The first load compiles the asset for the Neural Engine (5 to 9 s on these devices; cached afterwards), so measure on your target devices before choosing float16.
 
 !!! note "float16 and the Neural Engine"
 
