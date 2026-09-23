@@ -143,7 +143,15 @@ def test_build_transformer_defaults_inter_instance_keypoint_attention_to_config_
 
 
 def _cross_class_mask() -> torch.Tensor:
-    """Keypoint class mask of a ``[3, 2]`` schema: token 0 is the instance, 1-3 and 4-5 the two classes."""
+    """Return the keypoint class mask for a ``[3, 2]`` schema.
+
+    Token 0 is the instance; tokens 1-3 and 4-5 are the two keypoint classes.
+
+    Examples:
+        >>> mask = _cross_class_mask()
+        >>> mask.shape, int(mask.sum())
+        (torch.Size([6, 6]), 12)
+    """
     blocked = torch.zeros(6, 6, dtype=torch.bool)
     blocked[1:4, 4:] = True
     blocked[4:, 1:4] = True
