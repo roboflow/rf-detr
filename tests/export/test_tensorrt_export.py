@@ -49,6 +49,7 @@ __doctest_requires__ = {
     (
         "_opset17_model",
         "_float32_model_with_cast",
+        "_float32_model_with_dynamic_batch",
         "_float32_model_with_topk",
         "_model_with_a_consumed_output",
         "_model_with_an_initializer_output",
@@ -92,8 +93,15 @@ def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
         True
     """
     config_kwargs: dict = {}
+
+    def _create_config(*, fp16: bool) -> str:
+        # Signature-bound (not **kwargs) so a real ``CreateConfig`` keyword rename in ``_compile`` fails
+        # this stub with a TypeError instead of silently swallowing it.
+        config_kwargs["fp16"] = fp16
+        return "config"
+
     monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
-    monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: config_kwargs.update(kwargs) or "config")
+    monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
     monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: "engine")
     monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
     return config_kwargs
@@ -242,6 +250,27 @@ def _float32_model_with_cast() -> "onnx.ModelProto":
         [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, [1, 3, 8, 8])],
         [helper.make_tensor_value_info("output", onnx.TensorProto.FLOAT, [1, 2, 8, 8])],
         [helper.make_tensor("weight", onnx.TensorProto.FLOAT, weight.shape, weight.tobytes(), raw=True)],
+    )
+    return _opset17_model(graph)
+
+
+def _float32_model_with_dynamic_batch() -> "onnx.ModelProto":
+    """Build a tiny float32 model whose input carries a symbolic ``"batch"`` dim_param, as a
+    ``dynamic_batch`` ONNX export does.
+
+    Returns:
+        A valid float32 ONNX model with one ``Relu`` and a symbolic batch axis on both input and output.
+
+    Examples:
+        >>> model = _float32_model_with_dynamic_batch()
+        >>> model.graph.input[0].type.tensor_type.shape.dim[0].dim_param
+        'batch'
+    """
+    graph = helper.make_graph(
+        [helper.make_node("Relu", ["input"], ["output"], name="relu")],
+        "dynamic_batch",
+        [helper.make_tensor_value_info("input", onnx.TensorProto.FLOAT, ["batch", 3, 8, 8])],
+        [helper.make_tensor_value_info("output", onnx.TensorProto.FLOAT, ["batch", 3, 8, 8])],
     )
     return _opset17_model(graph)
 
@@ -551,6 +580,286 @@ class TestBuildEngineWiring:
         assert config_kwargs == {"fp16": fp16}
         assert build_args == {"network": ("network", "/tmp/model.onnx"), "config": "config-sentinel"}
         assert saved == {"engine": "engine-sentinel", "path": expected_path}
+
+
+class _FakeNetworkInput:
+    """One parsed network input: a name and a TensorRT-style shape (``-1`` marks the dynamic batch axis)."""
+
+    def __init__(self, name: str, shape: tuple[int, ...]) -> None:
+        self.name = name
+        self.shape = shape
+
+
+class _FakeNetwork:
+    """Stand-in for a parsed ``trt.INetworkDefinition`` exposing only ``num_inputs`` / ``get_input``."""
+
+    def __init__(self, *inputs: _FakeNetworkInput) -> None:
+        self._inputs = inputs
+
+    @property
+    def num_inputs(self) -> int:
+        return len(self._inputs)
+
+    def get_input(self, index: int) -> _FakeNetworkInput:
+        return self._inputs[index]
+
+
+class _FakeProfile:
+    """Stand-in for ``polygraphy.backend.trt.Profile`` recording every ``add`` call."""
+
+    def __init__(self) -> None:
+        self.entries: dict[str, dict[str, tuple[int, ...]]] = {}
+
+    def add(self, name: str, min: tuple[int, ...], opt: tuple[int, ...], max: tuple[int, ...]) -> _FakeProfile:
+        self.entries[name] = {"min": min, "opt": opt, "max": max}
+        return self
+
+
+def _patch_dynamic_polygraphy_chain(monkeypatch: pytest.MonkeyPatch, network: _FakeNetwork) -> dict:
+    """Stub the polygraphy chain for a dynamic-batch build and capture what reaches ``CreateConfig`` / the build.
+
+    ``network_from_onnx_path`` (polygraphy's immediately-evaluated form) returns ``(builder, network, parser)``
+    around *network*, which is what the exporter inspects to read input shapes before building.
+
+    Args:
+        monkeypatch: Fixture used to replace the polygraphy entry points on the module under test.
+        network: The parsed-network stand-in the loader hands back.
+
+    Returns:
+        Dict with the ``CreateConfig`` kwargs under ``"config"`` and the tuple passed to ``engine_from_network``
+        under ``"network"``.
+
+    Examples:
+        Cannot be called directly — it requires a live ``pytest.MonkeyPatch`` instance supplied by
+        pytest's fixture machinery. See ``TestBuildEngineDynamicBatch`` for real invocations.
+
+        >>> callable(_patch_dynamic_polygraphy_chain)  # doctest: +SKIP
+        True
+    """
+    captured: dict = {}
+
+    def _engine_from_network(parsed, config):
+        captured["network"] = parsed
+        return "engine"
+
+    def _create_config(*, fp16: bool, profiles: list) -> str:
+        # Signature-bound (not **kwargs) so a real ``CreateConfig`` keyword rename in ``_compile`` fails
+        # this stub with a TypeError instead of silently swallowing it.
+        captured["config"] = {"fp16": fp16, "profiles": profiles}
+        return "config"
+
+    monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
+    monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("builder", network, "parser"))
+    monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
+    monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
+    monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
+    monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+    return captured
+
+
+class TestDynamicBatchConfig:
+    """``dynamic_batch`` on TensorRT needs the profile bounds, and the registry advertises the capability."""
+
+    def test_registry_advertises_dynamic_batch(self) -> None:
+        """The pre-import guard lets ``dynamic_batch=True`` through for TensorRT."""
+        from rfdetr.export.base import reject_unsupported_dynamic_batch
+
+        reject_unsupported_dynamic_batch("tensorrt", dynamic_batch=True)
+
+    def test_requires_max_batch_size(self) -> None:
+        """A dynamic request without an upper bound cannot build a profile and is refused before any work."""
+        with pytest.raises(ValueError, match="max_batch_size"):
+            TensorRTExporter(TensorRTConfig(dynamic_batch=True))
+
+    @pytest.mark.parametrize("opt_batch_size,max_batch_size", [(4, 2), (0, 4)])
+    def test_rejects_inconsistent_bounds(self, opt_batch_size: int, max_batch_size: int) -> None:
+        """The profile must satisfy ``1 <= opt <= max``."""
+        with pytest.raises(ValueError, match="1 <= batch_size <= max_batch_size"):
+            TensorRTExporter(
+                TensorRTConfig(dynamic_batch=True, opt_batch_size=opt_batch_size, max_batch_size=max_batch_size)
+            )
+
+    @pytest.mark.parametrize(
+        "opt_batch_size,max_batch_size",
+        [
+            pytest.param(4.5, 8, id="float-batch-size"),
+            pytest.param(float("nan"), 8, id="nan-batch-size"),
+            pytest.param(4, 8.0, id="float-max-batch-size"),
+            pytest.param(4, float("nan"), id="nan-max-batch-size"),
+            pytest.param(True, 8, id="bool-batch-size"),
+            pytest.param(4, True, id="bool-max-batch-size"),
+        ],
+    )
+    def test_rejects_non_integer_bounds(self, opt_batch_size: object, max_batch_size: object) -> None:
+        """A non-``int`` bound (``float``, ``nan``, or ``bool``) is refused before any work, not deep in the build.
+
+        ``nan`` compares false against every ``<``/``>=`` bound, so the pre-existing numeric checks silently let it
+        through; a plain ``float`` does too, since Python allows ``4.5 < 1`` and ``8.0 < 4`` comparisons. Both used to
+        fail only after a full DINOv2 forward pass and an ONNX export.
+        """
+        with pytest.raises(ValueError, match="must be integers"):
+            TensorRTExporter(
+                TensorRTConfig(dynamic_batch=True, opt_batch_size=opt_batch_size, max_batch_size=max_batch_size)
+            )
+
+    def test_allows_a_degenerate_profile_where_opt_equals_max(self) -> None:
+        """``opt_batch_size == max_batch_size`` is a legal, if degenerate, profile and must not be rejected.
+
+        ``_check_capabilities`` only rejects ``max_batch_size < opt_batch_size``, so the equal-bounds edge is permitted
+        by construction; this pins that down explicitly instead of leaving it implied.
+        """
+        TensorRTExporter(TensorRTConfig(dynamic_batch=True, opt_batch_size=4, max_batch_size=4))
+
+    def test_rejects_a_negative_max_batch_size(self) -> None:
+        """A negative ``max_batch_size`` is refused.
+
+        Matched on the shared ``"max_batch_size"`` substring rather than the full ``1 <= batch_size <= max_batch_size``
+        bound message, which the existing bounds check in ``_check_capabilities`` raises.
+        """
+        with pytest.raises(ValueError, match="max_batch_size"):
+            TensorRTExporter(TensorRTConfig(dynamic_batch=True, max_batch_size=-1))
+
+    def test_static_request_ignores_the_bounds(self) -> None:
+        """Without ``dynamic_batch`` the profile fields are inert, so a missing ``max_batch_size`` is fine."""
+        TensorRTExporter(TensorRTConfig(dynamic_batch=False, opt_batch_size=8))
+
+    def test_export_keywords_reach_the_configuration(self) -> None:
+        """``RFDETR.export(batch_size=..., max_batch_size=...)`` lands on ``opt_batch_size`` / ``max_batch_size``."""
+        config = TensorRTExporter.build_config(
+            output_dir=Path("out"), dynamic_batch=True, batch_size=4, max_batch_size=16
+        )
+        assert (config.opt_batch_size, config.max_batch_size) == (4, 16)
+
+
+class TestBuildEngineDynamicBatch:
+    """A dynamic-batch build hands polygraphy one optimization profile spanning batch 1 through ``max_batch_size``."""
+
+    def test_profile_spans_one_to_max_on_the_dynamic_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Min/opt/max keep the traced spatial shape and vary only the batch axis."""
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)))
+        captured = _patch_dynamic_polygraphy_chain(monkeypatch, network)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, opt_batch_size=4, max_batch_size=16))
+
+        exporter.build_engine("/tmp/model.onnx")
+
+        (profile,) = captured["config"]["profiles"]
+        assert profile.entries == {
+            "input": {"min": (1, 3, 384, 384), "opt": (4, 3, 384, 384), "max": (16, 3, 384, 384)}
+        }
+        assert captured["config"]["fp16"] is False
+
+    def test_parsed_network_is_built_rather_than_reparsed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The tuple the loader produced for shape inspection is what ``engine_from_network`` receives."""
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)))
+        captured = _patch_dynamic_polygraphy_chain(monkeypatch, network)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, max_batch_size=8))
+
+        exporter.build_engine("/tmp/model.onnx")
+
+        assert captured["network"] == ("builder", network, "parser")
+
+    def test_static_inputs_are_left_out_of_the_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Only inputs with a dynamic batch axis get a profile entry."""
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)), _FakeNetworkInput("orig_size", (1, 2)))
+        captured = _patch_dynamic_polygraphy_chain(monkeypatch, network)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, max_batch_size=8))
+
+        exporter.build_engine("/tmp/model.onnx")
+
+        (profile,) = captured["config"]["profiles"]
+        assert set(profile.entries) == {"input"}
+
+    def test_static_graph_under_dynamic_request_is_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An ONNX graph with no dynamic batch axis cannot honour the request and says so."""
+        network = _FakeNetwork(_FakeNetworkInput("input", (1, 3, 384, 384)))
+        _patch_dynamic_polygraphy_chain(monkeypatch, network)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, max_batch_size=8))
+
+        with pytest.raises(ValueError, match="no network input has a dynamic batch axis"):
+            exporter.build_engine("/tmp/model.onnx")
+
+    def test_batch_profile_failure_releases_the_parsed_network(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A `_batch_profile` failure must release the parsed builder/network/parser rather than leak them.
+
+        `_batch_profile` can raise between `network_from_onnx_path` (which owns TensorRT resources) and
+        `engine_from_network` (which only takes ownership of them on success). Regression test for that gap.
+        """
+        released: list[str] = []
+
+        class _RefCountedSentinel:
+            def __init__(self, name: str) -> None:
+                self._name = name
+
+            def __del__(self) -> None:
+                released.append(self._name)
+
+        network = _FakeNetwork(_FakeNetworkInput("input", (1, 3, 384, 384)))  # no dynamic axis -> raises
+
+        def _fake_network_from_onnx_path(path: str) -> tuple:
+            # A fresh tuple per call, so the only reference once returned lives in `_compile`'s frame -- the
+            # production `del` on the error path is what must drop it, not a reference this closure retains.
+            return (_RefCountedSentinel("builder"), network, _RefCountedSentinel("parser"))
+
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
+        monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _fake_network_from_onnx_path)
+        monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
+        # `_batch_profile` raises before these are reached; only present so `_require_tensorrt`'s
+        # `engine_from_network is None` guard (checked before `_compile` runs) does not itself fail the build.
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda *args, **kwargs: "engine")
+        monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
+        monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, max_batch_size=8))
+
+        with pytest.raises(ValueError, match="no network input has a dynamic batch axis"):
+            exporter.build_engine("/tmp/model.onnx")
+
+        assert set(released) == {"builder", "parser"}
+
+    def test_static_build_passes_no_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without ``dynamic_batch`` the builder configuration carries no ``profiles`` key at all."""
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
+        config_kwargs = _patch_polygraphy_chain(monkeypatch)
+
+        TensorRTExporter(TensorRTConfig(fp16=False)).build_engine("/tmp/model.onnx")
+
+        assert "profiles" not in config_kwargs
+
+    def test_strongly_typed_fp16_still_builds_the_profile(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``fp16=True`` + ``dynamic_batch=True`` is the documented default call.
+
+        Every other case in this class pins ``fp16=False``, so the cast-graph branch (TensorRT >= 11) had no coverage of
+        the profile surviving alongside it. It must parse the profile from the cast source, not silently drop it.
+        """
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)))
+        cast_path = tmp_path / "model.fp16-abcd1234.onnx"
+        captured: dict = {}
+
+        def _network_from_onnx_path(path: str) -> tuple:
+            captured["source"] = path
+            return ("builder", network, "parser")
+
+        def _create_config(*, fp16: bool, profiles: list) -> str:
+            captured["config"] = {"fp16": fp16, "profiles": profiles}
+            return "config"
+
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("11.2.1.2", has_fp16_flag=False))
+        monkeypatch.setattr(tensorrt_export, "_cast_onnx_to_fp16", lambda path: str(cast_path))
+        monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
+        monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
+        monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda parsed, config: "engine")
+        monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=True, dynamic_batch=True, opt_batch_size=2, max_batch_size=8))
+
+        exporter.build_engine(str(tmp_path / "model.onnx"))
+
+        (profile,) = captured["config"]["profiles"]
+        expected = {"input": {"min": (1, 3, 384, 384), "opt": (2, 3, 384, 384), "max": (8, 3, 384, 384)}}
+        assert profile.entries == expected
+        assert captured["config"]["fp16"] is False, "strong typing takes precision from the cast graph, not the flag"
+        assert captured["source"] == str(cast_path)
 
 
 @pytest.fixture
@@ -874,6 +1183,23 @@ class TestCastOnnxToFp16:
     def test_model_is_valid(self, fp16_cast_graph: onnx.GraphProto) -> None:
         """The rewritten graph must still pass ONNX's own checker."""
         onnx.checker.check_model(helper.make_model(fp16_cast_graph, opset_imports=[helper.make_opsetid("", 17)]))
+
+    def test_dynamic_batch_axis_survives_the_cast(self, tmp_path: Path) -> None:
+        """A symbolic batch ``dim_param`` must survive the cast, not just the input's ``elem_type``.
+
+        ``dynamic_batch`` exports carry a ``"batch"`` dim_param on the graph's batch axis instead of a
+        fixed dim_value; ``_restore_fp32_inputs`` only rewrites ``elem_type`` in place and never touches
+        ``shape.dim``, but that is worth asserting directly rather than trusting by omission -- a fp16=True
+        + dynamic_batch=True build is the documented default call and would silently lose the profile's
+        dynamic axis if this ever regressed.
+        """
+        source = tmp_path / "dynamic.onnx"
+        onnx.save(_float32_model_with_dynamic_batch(), source)
+
+        cast_model = onnx.load(tensorrt_export._cast_onnx_to_fp16(str(source)))
+
+        input_dim = cast_model.graph.input[0].type.tensor_type.shape.dim[0]
+        assert input_dim.dim_param == "batch"
 
     def test_raises_without_caster(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The ImportError must name both remedies: install the extra, or pin an older TensorRT."""
@@ -1213,6 +1539,31 @@ class TestBenchmarkBuildEngine:
         assert result is None
 
 
+def _distinct_batch(batch: int, resolution: int) -> torch.Tensor:
+    """Stack *batch* structured inputs with different per-image scaling, so batch positions are not interchangeable.
+
+    ``_structured_parity_input`` repeats one sample across the batch; a dynamic-batch engine that mixed up or
+    duplicated batch positions would still pass on that. Scaling each image differently makes every position
+    distinguishable.
+
+    Args:
+        batch: Number of images to stack.
+        resolution: Square spatial size of each image.
+
+    Returns:
+        Contiguous float tensor shaped ``(batch, 3, resolution, resolution)``.
+
+    Examples:
+        >>> t = _distinct_batch(3, 8)
+        >>> t.shape
+        torch.Size([3, 3, 8, 8])
+        >>> bool(torch.equal(t[0], t[1]))
+        False
+    """
+    base = _structured_parity_input(1, 3, resolution, resolution)
+    return torch.cat([base * (1.0 + 0.15 * index) for index in range(batch)], dim=0).contiguous()
+
+
 @tensorrt_only
 @pytest.mark.gpu
 @pytest.mark.integration
@@ -1330,3 +1681,146 @@ class TestTensorRTEndToEnd:
             f"FP16 TensorRT outputs diverge from PyTorch: max abs diff {max(diffs)} "
             f"(dets={diffs[0]}, labels={diffs[1]}, bound={_TENSORRT_FP16_MAX_ABS_DIFF})"
         )
+
+    @pytest.fixture(scope="class")
+    def trt_dynamic_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, int, Path]:
+        """Export RFDETRNano with a dynamic batch axis and build one FP32 engine spanning batch 1 through 4.
+
+        Built through ``RFDETR.export(format="tensorrt", ...)`` rather than ``build_engine`` directly, so the
+        ``batch_size`` / ``max_batch_size`` keywords are exercised end to end.
+        """
+        from rfdetr import RFDETRNano
+
+        torch.manual_seed(42)
+        out_dir = tmp_path_factory.mktemp("tensorrt_dynamic")
+        detector = RFDETRNano(pretrain_weights=None)
+        engine_path = detector.export(
+            output_dir=str(out_dir),
+            format="tensorrt",
+            fp16=False,
+            dynamic_batch=True,
+            batch_size=2,
+            max_batch_size=4,
+            verbose=False,
+        )
+
+        model = detector.model.model.to("cpu").eval()
+        model.export()
+        return model, int(detector.model.resolution), Path(engine_path)
+
+    @pytest.mark.parametrize("batch", [1, 3, 4])
+    def test_dynamic_engine_matches_pytorch_at_each_batch(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path], batch: int
+    ) -> None:
+        """One engine must serve every batch inside its profile, each image matching eager PyTorch.
+
+        The batch repeats the same structured image the static parity tests use: on this randomly initialised
+        fixture the two-stage top-k sits on near-ties for other inputs, where a rank swap turns a healthy engine
+        into an O(1) positional diff (see ``test_fp16_runtime_output_matches_pytorch``). Whether distinct images
+        stay independent inside a batch is ``test_dynamic_engine_batch_positions_are_independent``'s job.
+        """
+        import numpy as np
+        from polygraphy.backend.common import BytesFromPath
+        from polygraphy.backend.trt import EngineFromBytes, TrtRunner
+
+        model, resolution, engine_path = trt_dynamic_engine
+        example = _structured_parity_input(batch, 3, resolution, resolution)
+        eager_tensors = eager_reference_tensors(model, example)
+
+        feed = {"input": np.ascontiguousarray(example.numpy())}
+        load_engine = EngineFromBytes(BytesFromPath(str(engine_path)))
+        with TrtRunner(load_engine) as runner:
+            outputs = runner.infer(feed_dict=feed)
+        output_names = ["dets", "labels"]
+        trt_tensors = [torch.from_numpy(np.array(outputs[name], dtype=np.float32)) for name in output_names]
+
+        diffs = max_abs_output_diffs(eager_tensors, trt_tensors, check_shape=True, names=output_names)
+        assert max(diffs) < _TENSORRT_MAX_ABS_DIFF, (
+            f"dynamic TensorRT outputs at batch {batch} diverge from PyTorch: max abs diff {max(diffs)} "
+            f"(dets={diffs[0]}, labels={diffs[1]}, bound={_TENSORRT_MAX_ABS_DIFF})"
+        )
+
+    def test_dynamic_engine_batch_positions_are_independent(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """Four distinct images run as one batch must each equal the same image run alone through the same engine.
+
+        ``TrtRunner.infer`` reuses its host output buffers between calls, so every result is copied out before the next
+        call.
+        """
+        import numpy as np
+        from polygraphy.backend.common import BytesFromPath
+        from polygraphy.backend.trt import EngineFromBytes, TrtRunner
+
+        _, resolution, engine_path = trt_dynamic_engine
+        example = np.ascontiguousarray(_distinct_batch(4, resolution).numpy())
+        load_engine = EngineFromBytes(BytesFromPath(str(engine_path)))
+        with TrtRunner(load_engine) as runner:
+            batched = {name: np.array(value) for name, value in runner.infer(feed_dict={"input": example}).items()}
+            alone = [
+                {name: np.array(value) for name, value in runner.infer(feed_dict={"input": example[i : i + 1]}).items()}
+                for i in range(4)
+            ]
+
+        for name in ("dets", "labels"):
+            for index in range(4):
+                diff = float(np.abs(batched[name][index] - alone[index][name][0]).max())
+                assert diff < 1e-4, f"{name} for image {index} differs between batch 4 and batch 1: {diff}"
+
+    def test_dynamic_engine_rejects_a_batch_beyond_the_profile(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """A batch above ``max_batch_size`` is outside the profile and must not silently run.
+
+        Polygraphy's ``TrtRunner.infer`` reports an out-of-profile shape by having ``G_LOGGER.critical`` raise a
+        ``PolygraphyException`` naming the failed ``set_input_shape`` call -- narrower than a bare ``Exception``, which
+        would also swallow an unrelated crash (OOM, a driver error) as a false pass.
+        """
+        import numpy as np
+        from polygraphy.backend.common import BytesFromPath
+        from polygraphy.backend.trt import EngineFromBytes, TrtRunner
+        from polygraphy.exception import PolygraphyException
+
+        _, resolution, engine_path = trt_dynamic_engine
+        feed = {"input": np.ascontiguousarray(_distinct_batch(5, resolution).numpy())}
+        load_engine = EngineFromBytes(BytesFromPath(str(engine_path)))
+        with TrtRunner(load_engine) as runner, pytest.raises(PolygraphyException, match="failed to set shape"):
+            runner.infer(feed_dict=feed)
+
+    def test_trt_inference_helper_serves_the_dynamic_engine(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """``TRTInference`` allocates at the profile's max batch, trims outputs to the batch run, and agrees with
+        polygraphy."""
+        import numpy as np
+        from polygraphy.backend.common import BytesFromPath
+        from polygraphy.backend.trt import EngineFromBytes, TrtRunner
+
+        _, resolution, engine_path = trt_dynamic_engine
+        example = _distinct_batch(3, resolution)
+        load_engine = EngineFromBytes(BytesFromPath(str(engine_path)))
+        with TrtRunner(load_engine) as runner:
+            reference = {
+                name: np.array(value)
+                for name, value in runner.infer(feed_dict={"input": np.ascontiguousarray(example.numpy())}).items()
+            }
+
+        runtime = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        assert runtime.bindings["input"].shape[0] == 4
+        outputs = runtime({"input": example.to("cuda:0")})
+
+        for name in ("dets", "labels"):
+            got = outputs[name].detach().float().cpu().numpy()
+            assert got.shape == reference[name].shape
+            diff = float(np.abs(got - reference[name]).max())
+            assert diff < 1e-4, f"TRTInference {name} differs from polygraphy on the same engine: {diff}"
+
+    def test_trt_inference_helper_refuses_a_batch_beyond_the_profile(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """A real context returns ``False`` from ``set_input_shape`` for batch 5; the helper must raise, not run."""
+        _, resolution, engine_path = trt_dynamic_engine
+        runtime = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+
+        with pytest.raises(ValueError, match="outside the engine's optimization profile"):
+            runtime({"input": _distinct_batch(5, resolution).to("cuda:0")})

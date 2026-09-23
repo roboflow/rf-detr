@@ -148,7 +148,10 @@ class Exporter(ABC, Generic[_ConfigT]):
 
     Subclasses declare what their format can do as class attributes and implement :meth:`_convert`. Constructing
     an exporter validates the configuration against those capabilities, so an unsupported combination is rejected
-    before the caller pays for a full forward pass through the model.
+    before the caller pays for a full forward pass through the model. A subclass may also override
+    :meth:`_check_capabilities` (calling ``super()`` first) to validate settings the class attributes cannot
+    express on their own — cross-field consistency within the format's own configuration, for example — raising
+    ``ValueError`` for that kind of rejection, distinct from the base class's own ``NotImplementedError``.
 
     A subclass also owns its configuration: :attr:`config_class` names the dataclass it is constructed from, and
     :attr:`setting_names` maps that dataclass's format-specific fields onto the keyword arguments
@@ -226,6 +229,9 @@ class Exporter(ABC, Generic[_ConfigT]):
 
         Raises:
             NotImplementedError: If the configuration asks for a capability the format does not have.
+            ValueError: If a subclass's :meth:`_check_capabilities` override rejects the configuration for a
+                format-specific reason the class attributes alone cannot express (e.g. TensorRT's dynamic-batch
+                optimization-profile bounds).
         """
         self.config = config
         self._check_capabilities()
@@ -233,8 +239,13 @@ class Exporter(ABC, Generic[_ConfigT]):
     def _check_capabilities(self) -> None:
         """Reject or warn about settings this format cannot honour.
 
+        A subclass override should call ``super()._check_capabilities()`` first, then add its own format-specific
+        checks — see :class:`~rfdetr.export._tensorrt.exporter.TensorRTExporter` for the one existing example.
+
         Raises:
             NotImplementedError: If ``dynamic_batch`` was requested and the format bakes a fixed shape.
+            ValueError: A subclass override may raise this for its own format-specific validation failures; the
+                base implementation never raises it itself.
         """
         if self.config.dynamic_batch and not self.supports_dynamic_batch:
             raise NotImplementedError(
