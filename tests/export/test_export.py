@@ -128,7 +128,7 @@ def _run_onnx_export(
         ...         verbose=False,
         ...     )
         ...     path.name
-        [...] [INFO] rf-detr - Successfully exported ONNX model to: .../inference_model.onnx
+        [...] [INFO] rf-detr - Successfully exported ONNX model to: ...inference_model.onnx
         'inference_model.onnx'
     """
     config = OnnxConfig(
