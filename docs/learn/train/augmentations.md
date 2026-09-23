@@ -180,4 +180,4 @@ model.train(
 
 - [Monitor training with TensorBoard](loggers.md#tensorboard)
 - [Use early stopping](advanced.md#early-stopping) to prevent overfitting
-- [Export your trained model](../export.md) for deployment
+- [Export your trained model](../../exports/index.md) for deployment

@@ -238,7 +238,7 @@ uv run twine check --strict dist/*
 - `src/rfdetr/export/base.py` names no format. It holds `ExportConfig` and `Exporter` only; per-format configs and their `RFDETR.export()` keyword mapping (`setting_names`) live with the exporter that reads them.
 - `src/rfdetr/export/registry.py` is data: format name → exporter dotted path, plus the facts needed *before* the heavy optional dependency is imported (`label`, `pip_extra`, `supports_dynamic_batch`, `dynamic_batch_reason`). Those mirror the exporter's class attributes; `tests/export/test_registry.py` is the only thing enforcing that.
 - `src/rfdetr/export/prepare.py` does the format-independent graph work once and returns an `ExportGraph`. Never duplicate it into a format.
-- Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/exports/export-blueprint.md](docs/exports/export-blueprint.md).
+- Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/exports/blueprint.md](docs/exports/blueprint.md).
 
 **Model Selection (examples, docs, CI, tests, defaults):**
 

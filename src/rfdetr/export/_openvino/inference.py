@@ -29,7 +29,7 @@ class OpenVINOInference:
 
     Session-tier by design: it takes already-preprocessed NCHW tensors and returns the model's raw
     output tensors. Decoding those into detections is the caller's job (see
-    :doc:`the export guide </learn/export>`).
+    :doc:`the export guide </exports/index>`).
 
     A single instance is safe to call from multiple threads: ``infer()`` is guarded by an
     internal lock, since OpenVINO's ``InferRequest.infer()`` is not thread-safe on a shared
