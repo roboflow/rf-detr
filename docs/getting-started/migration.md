@@ -40,6 +40,50 @@ You can apply all changes in one go; working through sections one release at a t
 
     The engine is named `{output_name}-backbone.trt` instead of `{output_name}.trt`, matching what `RFDETR.export()`'s documentation already described and what every other format does. Without the marker a backbone engine silently overwrites a full-detector engine exported under the same name. Scripts that rebuilt the path from `output_name` need the suffix added.
 
+!!! warning "Breaking: the WebDataset streaming extra is now `data`, not `webdataset`"
+
+    `pip install rfdetr[webdataset]` never shipped — the extra bundling `webdataset` (for `dataset_file="webdataset"` streaming training input) is named `data`.
+
+    ```bash
+    # Before (never worked)
+    pip install rfdetr[webdataset]
+
+    # After
+    pip install rfdetr[data]
+    ```
+
+!!! warning "Breaking: `TrainConfig.multi_scale` is now a three-state enum, `do_random_resize_via_padding` is gone"
+
+    `multi_scale` accepts `MultiScale.OFF` / `PER_BATCH` / `PER_SAMPLE` (or the equivalent strings `"off"` / `"per-batch"` / `"per-sample"`) instead of a plain `bool`; the default is `PER_BATCH`. Booleans still work as input — `True` normalizes to `PER_BATCH` (the old default's behavior), `False` to `OFF` — so an existing `multi_scale=True`/`False` config keeps its behavior unchanged. `do_random_resize_via_padding` is removed: its `True` setting is now `multi_scale="per-sample"`.
+
+    ```python
+    # Before
+    TrainConfig(multi_scale=True, do_random_resize_via_padding=True)
+
+    # After
+    TrainConfig(multi_scale="per-sample")
+    ```
+
+    A `training_config.json` written by v1.10 or earlier carries `do_random_resize_via_padding` explicitly; `TrainConfig` rejects unknown fields, so drop it before reloading (same pattern as the `lr_drop`/`lr_min_factor` removal below).
+
+### Deprecated
+
+!!! info "Deprecated: `ModelConfig.amp`, removal in v1.14"
+
+    `TrainConfig.amp_dtype` is now the sole authority for enabling and choosing mixed precision; it accepts `None` to disable autocast entirely, which `ModelConfig.amp=False` used to do alone. An explicit (non-default) `amp_dtype` always wins over the deprecated `amp` flag; `amp` is only consulted when `amp_dtype` is left at its default `"auto"` and `amp=False`.
+
+    ```python
+    # Before (still works, now deprecated)
+    ModelConfig(amp=False)
+
+    # After
+    TrainConfig(amp_dtype=None)
+    ```
+
+!!! info "Deprecated: `TrainConfig.fp16_eval`, removal in v1.14"
+
+    Has had no runtime consumer since the PyTorch Lightning migration — evaluation precision now follows `amp_dtype`. Setting it emits a `FutureWarning`; drop it from configs.
+
 ### Removed
 
 !!! warning "Removed: `rfdetr.datasets.synthetic`"
@@ -110,19 +154,19 @@ You can apply all changes in one go; working through sections one release at a t
     TrainConfig(lr_scheduler="step", lr_scheduler_kwargs={"lr_drop": 80, "min_factor": 0.1})
     ```
 
-    `TrainConfig` rejects unknown fields, so a `training_config.json` written by v1.9 or v1.10 no longer loads as-is — it carries both keys explicitly. Drop them before reloading:
+    `TrainConfig` rejects unknown fields, so a `training_config.json` written by v1.9 or v1.10 no longer loads as-is — its `train_config` section carries both keys explicitly. Drop them before reloading:
 
     ```python
     import json
 
     with open("training_config.json") as f:
         saved = json.load(f)
-    saved.pop("lr_drop", None)
-    saved.pop("lr_min_factor", None)
-    train_config = TrainConfig(**saved)
+    saved["train_config"].pop("lr_drop", None)
+    saved["train_config"].pop("lr_min_factor", None)
+    train_config = TrainConfig(**saved["train_config"])
     ```
 
-    A config saved by v1.9+ already carries the migrated values in `lr_scheduler_kwargs`, so nothing is lost by dropping the two keys.
+    `training_config.json`'s top level is `{"train_config": ..., "model_config": ..., "model_config_type": ..., "class_names": ..., "num_classes": ...}` (see `rfdetr.detr._save_training_config`); `TrainConfig`'s own fields live under the `train_config` key, not at the top level. A config saved by v1.9+ already carries the migrated values in `lr_scheduler_kwargs`, so nothing is lost by dropping the two keys.
 
 ---
 
@@ -636,7 +680,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     from rfdetr.training.param_groups import get_param_dict
     from rfdetr.training.drop_schedule import drop_scheduler
     from rfdetr.visualize.data import save_gt_predictions_visualization
-    from rfdetr.export._onnx.exporter import OnnxExporter  # export_onnx in v1.9; see Upgrade 1.10 → 1.11
+    from rfdetr.export._onnx.exporter import export_onnx  # became OnnxExporter in 1.11; see Upgrade 1.10 → 1.11
     from rfdetr.models.heads.segmentation import SegmentationHead
     ```
 
