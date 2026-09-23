@@ -12,6 +12,7 @@ import warnings
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -442,9 +443,10 @@ class TestInit:
             patch("rfdetr.config.DEVICE", "cuda"),
             patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
         ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+            _, _, criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
         assert mock_compile.call_args.kwargs["dynamic"] is True
+        criterion.enable_compiled_detection_losses.assert_not_called()
 
     def test_compile_does_not_enable_global_error_suppression(self, tmp_path: Path) -> None:
         """RF-DETR must not hide compiler failures or change unrelated models' fallback policy."""
@@ -494,6 +496,65 @@ class TestInit:
             model.zero_grad(set_to_none=True)
 
         assert len(resized_shapes) == 2
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="static compiled-loss regression requires CUDA")
+    def test_static_compile_runs_compiled_batched_losses_through_training_step(self, tmp_path: Path) -> None:
+        """A real RF-DETR Nano training step statically compiles the model and reaches the compiled loss graph.
+
+        The shipped builders create the detector, the criterion (``group_detr=13``) and the matcher. Only the whole-
+        model ``torch.compile`` is replaced by a recorder, because compiling the detector takes minutes; the loss graph
+        is compiled for real, and the step's loss matches the per-layer path on the same weights.
+        """
+        torch.manual_seed(0)
+        real_compile = torch.compile
+        model_config = RFDETRNanoConfig(num_classes=5, pretrain_weights=None, compile=True, device="cuda")
+        train_config = _base_train_config(tmp_path, multi_scale=False)
+
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch(
+                "rfdetr.training.module_model.torch.compile",
+                side_effect=lambda target, **kwargs: (
+                    target if isinstance(target, nn.Module) else real_compile(target, **kwargs)
+                ),
+            ) as compiler,
+        ):
+            module = RFDETRModelModule(model_config, train_config).cuda().train()
+
+        model_compiles = [call for call in compiler.call_args_list if isinstance(call.args[0], nn.Module)]
+        assert len(model_compiles) == 1
+        assert model_compiles[0].kwargs["dynamic"] is False
+        criterion = module.criterion
+        assert type(criterion) is SetCriterion
+        assert criterion._compile_batched_detection_losses is True
+
+        resolution = model_config.resolution
+        samples, _ = _make_batch(batch_size=2, h=resolution, w=resolution)
+        samples.tensors = samples.tensors.cuda()
+        samples.mask = samples.mask.cuda()
+        targets = [
+            {
+                "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.2], [0.3, 0.6, 0.1, 0.2]][:count], device="cuda"),
+                "labels": torch.tensor([1, 3][:count], device="cuda"),
+            }
+            for count in (2, 1)
+        ]
+        module.log = MagicMock()
+        module.log_dict = MagicMock()
+        trainer = SimpleNamespace(accumulate_grad_batches=1)
+        with patch.object(type(module), "trainer", new_callable=PropertyMock, return_value=trainer):
+            loss = module.training_step((samples, targets), batch_idx=0)
+            loss.backward()
+            with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
+                fallback_loss = module.training_step((samples, targets), batch_idx=0)
+
+        assert criterion._compiled_batched_detection_losses is not None, "the compiled loss graph never ran"
+        assert torch.isfinite(loss)
+        gradients = [parameter.grad for parameter in module.model.parameters() if parameter.grad is not None]
+        assert gradients
+        assert all(torch.isfinite(gradient).all() for gradient in gradients)
+        assert torch.allclose(loss.detach(), fallback_loss.detach(), rtol=1e-4, atol=1e-6)
 
     @pytest.mark.gpu
     @pytest.mark.skipif(
@@ -579,8 +640,41 @@ class TestInit:
             patch("rfdetr.config.DEVICE", "cuda"),
             patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
         ):
-            _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+            _, _, criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
         mock_compile.assert_called_once()
+        assert mock_compile.call_args.kwargs["dynamic"] is False
+        criterion.enable_compiled_detection_losses.assert_called_once_with()
+
+    @pytest.mark.parametrize(
+        ("model_overrides", "train_overrides"),
+        [
+            pytest.param({}, {"square_resize_div_64": False}, id="aspect-ratio-resize"),
+            pytest.param({"cuda_graphs": True}, {}, id="inductor-cuda-graphs"),
+            pytest.param({"segmentation_head": True}, {}, id="segmentation"),
+            pytest.param({"use_grouppose_keypoints": True}, {}, id="keypoints"),
+        ],
+    )
+    def test_compile_keeps_dynamic_shapes_when_batch_shape_can_vary(
+        self, model_overrides: dict[str, Any], train_overrides: dict[str, Any], tmp_path: Path
+    ) -> None:
+        """A fixed ``multi_scale=False`` run still keeps the dynamic recipe outside the measured detection route.
+
+        Aspect-preserving resize pads each batch to its own per-axis maximum, so distinct batches reach the model with
+        distinct ``(H, W)`` even without multi-scale; a static graph would recompile for each of them. Inductor CUDA
+        graph trees keep their established recipe, and segmentation and keypoint models were not measured. None of these
+        routes enables the batched loss graph.
+        """
+        mc = _base_model_config(compile=True, **model_overrides)
+        tc = _base_train_config(tmp_path, multi_scale=False, **train_overrides)
+        with (
+            patch("rfdetr.config.DEVICE", "cuda"),
+            patch("torch._inductor.config", SimpleNamespace(triton=SimpleNamespace())),
+            patch("rfdetr.training.module_model.torch.compile", side_effect=lambda m, **_: m) as mock_compile,
+        ):
+            _, _, criterion, _ = _build_module(model_config=mc, train_config=tc, tmp_path=tmp_path)
+        mock_compile.assert_called_once()
+        assert mock_compile.call_args.kwargs["dynamic"] is True
+        criterion.enable_compiled_detection_losses.assert_not_called()
 
     def test_compile_tolerates_criterion_without_matcher(self, tmp_path: Path) -> None:
         """A criterion that exposes no ``matcher`` attribute must not break compiled construction.
