@@ -173,6 +173,14 @@ class TRTInference:
         an engine is free to emit an output whose batch axis does not track its input's. :meth:`run_sync` /
         :meth:`run_async` then set the real input shape per call and return the outputs trimmed to it.
 
+        Args:
+            engine: A deserialized TensorRT engine.
+            context: The execution context whose dynamic inputs get declared at their profile maximum.
+            device: The device output buffers are allocated on. Defaults to this instance's own device.
+
+        Returns:
+            One :class:`Binding` per engine tensor, keyed by tensor name, in engine iteration order.
+
         Raises:
             ValueError: If a tensor still carries an unresolved dimension after the inputs were declared, which
                 ``np.empty`` would otherwise report as a bare "negative dimensions are not allowed".
@@ -245,22 +253,49 @@ class TRTInference:
         return outputs
 
     def run_sync(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
+        """Run inference synchronously and return the outputs, trimmed to the produced batch.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+
+        Returns:
+            One tensor per engine output. A dynamic output is a view into a buffer the next call
+            overwrites -- copy it before the next call if it needs to outlive that call.
+
+        Raises:
+            RuntimeError: If TensorRT reports the launch failed.
+        """
         self._bind_inputs(blob)
         # Not migrated to v3 alongside run_async: TensorRT exposes no synchronous v3 call -- execute_async_v3 is
         # the only v3 entry point, and it needs a CUDA stream and an explicit sync per launch. The sync path is
         # deliberately stream-free; __init__ only builds a stream, and only then requires pycuda, for async mode.
-        self.context.execute_v2(list(self.bindings_addr.values()))
+        if not self.context.execute_v2(list(self.bindings_addr.values())):
+            raise RuntimeError("TensorRT execute_v2 reported a launch failure.")
         return self._collect_outputs()
 
     def run_async(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
+        """Run inference on this engine's CUDA stream and return the outputs, trimmed to the produced batch.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+
+        Returns:
+            One tensor per engine output. A dynamic output is a view into a buffer the next call
+            overwrites -- copy it before the next call if it needs to outlive that call.
+
+        Raises:
+            RuntimeError: If no CUDA stream is available, or TensorRT reports the launch failed.
+        """
         self._bind_inputs(blob)
         if self.stream is None:
             raise RuntimeError("Async TensorRT inference requires a CUDA stream.")
         # execute_async_v2 (binding lists) is gone from TensorRT 11; the tensor-address API exists since 8.5. Only
         # the inputs are registered here -- the output addresses were set once in _prime_context and never move.
         for name in self.input_names:
-            self.context.set_tensor_address(name, int(self.bindings_addr[name]))
-        self.context.execute_async_v3(stream_handle=self.stream.handle)
+            if not self.context.set_tensor_address(name, int(self.bindings_addr[name])):
+                raise RuntimeError(f"TensorRT refused the tensor address for input {name!r}.")
+        if not self.context.execute_async_v3(stream_handle=self.stream.handle):
+            raise RuntimeError("TensorRT execute_async_v3 reported a launch failure.")
         # Drain the stream before reading the produced shapes: execute_async_v3 only enqueues the work, so until it
         # completes the context still reports the previous call's batch and _collect_outputs would trim to that.
         self.stream.synchronize()

@@ -732,10 +732,7 @@ class TestDynamicBatchConfig:
 
 
 class TestBuildEngineDynamicBatch:
-    """A dynamic-batch build hands polygraphy one optimization profile spanning ``1 ..
-
-    max_batch_size``.
-    """
+    """A dynamic-batch build hands polygraphy one optimization profile spanning batch 1 through ``max_batch_size``."""
 
     def test_profile_spans_one_to_max_on_the_dynamic_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Min/opt/max keep the traced spatial shape and vary only the batch axis."""
@@ -1687,11 +1684,10 @@ class TestTensorRTEndToEnd:
 
     @pytest.fixture(scope="class")
     def trt_dynamic_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, int, Path]:
-        """Export RFDETRNano with a dynamic batch axis and build one FP32 engine spanning batch 1 ..
+        """Export RFDETRNano with a dynamic batch axis and build one FP32 engine spanning batch 1 through 4.
 
-        4.
-                Built through ``RFDETR.export(format="tensorrt", ...)`` rather than ``build_engine`` directly, so the
-                ``batch_size`` / ``max_batch_size`` keywords are exercised end to end.
+        Built through ``RFDETR.export(format="tensorrt", ...)`` rather than ``build_engine`` directly, so the
+        ``batch_size`` / ``max_batch_size`` keywords are exercised end to end.
         """
         from rfdetr import RFDETRNano
 
