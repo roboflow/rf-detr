@@ -131,7 +131,7 @@ plugins:
   - redirects:
       redirect_maps:
         learn/export.md: exports/index.md
-        exports/export-blueprint.md: exports/blueprint.md
+        learn/export-blueprint.md: exports/blueprint.md
   - mkdocs-jupyter:
       kernel_name: python3
       execute: false
