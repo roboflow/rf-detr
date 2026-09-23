@@ -991,7 +991,11 @@ Core AI and CoreML run RF-DETR at the same speed; choose by the framework your a
 
 !!! note "float16 and the Neural Engine"
 
-    On the Neural Engine a float16 `topk` returns corrupt indices, which would make RF-DETR's two-stage query selection gather the wrong encoder tokens and detect nothing (see [apple/coreai-torch#115](https://github.com/apple/coreai-torch/issues/115)). The exporter therefore runs that one `topk` in float32; the rest of a float16 graph stays float16.
+    On the Neural Engine a float16 `topk` returns corrupt indices, which would make RF-DETR's two-stage query selection gather the wrong encoder tokens and detect nothing (a float16 failure with the same symptom is reported in [apple/coreai-torch#115](https://github.com/apple/coreai-torch/issues/115)). The exporter therefore runs that one `topk` in float32; the rest of a float16 graph stays float16. With it, float16 `RFDETRNano` on the Neural Engine scores 47.97 box AP on COCO val2017, against 48.02 for float32.
+
+!!! warning "Keypoint models: do not run float16 on the Neural Engine"
+
+    A float16 `RFDETRKeypointPreview` `.aimodel` terminates the process when Core AI runs it on the Neural Engine: the first inference aborts inside MPSGraph (`ANERegion.mm:414: ANE inference operation failed`), and no error reaches the caller. iOS and iPadOS choose the Neural Engine for float16 by default. Measured on macOS 27.0 (26A428), M5 Pro, with a Neural Engine preference; the same asset is correct with `SpecializationOptions.cpu_only()` or a GPU preference, and float32 is correct on every compute unit. Export keypoint models in float32, which is the default.
 
 ### How the Conversion Works
 
