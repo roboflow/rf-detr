@@ -219,9 +219,9 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
     Handles container transforms (``OneOf``, ``SomeOf``, ``Sequential``) by recursively building the nested
     ``transforms`` list.  Leaf transforms are instantiated directly from the ``albumentations`` namespace.
 
-    For ``OneOf`` and ``Sequential``, the container-level ``p`` is respected when explicitly provided and defaults to
-    ``1.0`` when omitted, matching standard Albumentations semantics.  For ``OneOf``, which child is applied (when the
-    container fires) is determined by the children's own ``p`` values; at least one nested transform is required.
+    For ``OneOf`` and ``Sequential``, the container-level ``p`` is respected when explicitly provided. When omitted, RF-DETR
+    defaults it to ``1.0`` to preserve existing behavior. For ``OneOf``, which child is applied (when the container fires)
+    is determined by the children's own ``p`` values; at least one nested transform is required.
     ``Sequential`` runs all transforms in order when the container fires.
 
     Args:
