@@ -50,7 +50,7 @@ nav:
       - Export Model:
           - Overview: learn/export.md
           - Export Formats:
-              - docs/exports/index.md
+              - Overview: exports/index.md
               - ONNX: exports/onnx.md
               - TensorRT: exports/tensorrt.md
               - TFLite: exports/tflite.md
