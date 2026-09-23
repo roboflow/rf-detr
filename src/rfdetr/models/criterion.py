@@ -44,6 +44,40 @@ _MIN_DIRECT_MASK_ELEMENTS_PER_POINT = 16
 _MIN_DIRECT_MATCHES_PER_GROUP = 2
 
 
+def _sample_tied_points(masks: Tensor, mask_indices: Tensor, coords: Tensor) -> Tensor:
+    """Sample points through ``point_sample``, converting each distinct mask to float once.
+
+    Ties are spread across rows, and rows repeat the same few targets across query groups, so indexing one mask per
+    tied point would copy a full-resolution float mask per point. Points are grouped by mask instead and padded to the
+    largest group, so the float copy is bounded by the number of distinct targets.
+
+    Args:
+        masks: Boolean or float masks, shape ``(num_masks, H, W)``.
+        mask_indices: Mask index of each point, shape ``(num_points,)``.
+        coords: Normalized ``(x, y)`` coordinates of each point, shape ``(num_points, 2)``.
+
+    Returns:
+        Sampled values, shape ``(num_points,)``.
+    """
+    unique_indices, group = torch.unique(mask_indices, return_inverse=True)
+    order = torch.argsort(group, stable=True)
+    group_sorted = group[order]
+    counts = torch.bincount(group_sorted, minlength=unique_indices.numel())
+    starts = torch.cumsum(counts, 0) - counts
+    slot = torch.arange(order.numel(), device=order.device) - starts[group_sorted]
+    padded = coords.new_zeros(unique_indices.numel(), int(counts.max()), 2)
+    padded[group_sorted, slot] = coords[order]
+    sampled = point_sample(
+        masks[unique_indices].unsqueeze(1).float(),
+        padded,
+        align_corners=False,
+        mode="nearest",
+    ).squeeze(1)
+    result = sampled.new_empty(order.numel())
+    result[order] = sampled[group_sorted, slot]
+    return result
+
+
 def _sample_target_masks_at_points(
     targets: list[dict[str, Tensor]],
     indices: list[tuple[Tensor, Tensor]],
@@ -191,20 +225,10 @@ def _sample_target_masks_at_points(
             is_tie |= torch.isnan(unnorm_x) | torch.isnan(unnorm_y)
             if bool(is_tie.any()):
                 tie_rows, tie_cols = is_tie.nonzero(as_tuple=True)
-                tie_masks = masks[target_indices_device[tie_rows]]
-                tie_coords = coords[tie_rows, tie_cols]
-                corrected = (
-                    point_sample(
-                        tie_masks.unsqueeze(1).float(),
-                        tie_coords.unsqueeze(1),
-                        align_corners=False,
-                        mode="nearest",
-                    )
-                    .squeeze(1)
-                    .squeeze(1)
-                )
-                sampled = sampled.clone()
-                sampled[tie_rows, tie_cols] = corrected.to(device=sampled.device)
+                # ``gather`` returned a fresh tensor, so it can be corrected in place.
+                sampled[tie_rows, tie_cols] = _sample_tied_points(
+                    masks, target_indices_device[tie_rows], coords[tie_rows, tie_cols]
+                ).to(device=sampled.device)
 
             sampled_masks.append(sampled)
             offset += count
