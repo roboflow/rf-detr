@@ -524,6 +524,41 @@ def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.Monk
     )
 
 
+def test_rfdetr_export_tensorrt_dynamic_batch_requires_max_batch_size(tmp_path: Path) -> None:
+    """`RFDETR.export(format="tensorrt", dynamic_batch=True)` without `max_batch_size` must raise.
+
+    Covers the public facade users actually call (as opposed to `TestDynamicBatchConfig` in `test_tensorrt_export.py`,
+    which only exercises `TensorRTExporter`/`TensorRTConfig` directly). The exporter is constructed — and validated —
+    before any ONNX conversion work starts, so no conversion-chain monkeypatching is needed here.
+    """
+    model = _make_tensorrt_export_model()
+
+    with pytest.raises(ValueError, match="max_batch_size"):
+        _detr_module.RFDETR.export(
+            model, output_dir=str(tmp_path), format="tensorrt", dynamic_batch=True, shape=(14, 14)
+        )
+
+
+def test_rfdetr_export_tensorrt_dynamic_batch_rejects_batch_size_over_max(tmp_path: Path) -> None:
+    """`RFDETR.export(format="tensorrt", dynamic_batch=True, batch_size=..., max_batch_size=...)` enforces the bound.
+
+    `batch_size > max_batch_size` cannot form a valid optimization profile, and the facade must refuse it at the same
+    surface users call rather than only inside `TensorRTConfig` construction tests.
+    """
+    model = _make_tensorrt_export_model()
+
+    with pytest.raises(ValueError, match="1 <= batch_size <= max_batch_size"):
+        _detr_module.RFDETR.export(
+            model,
+            output_dir=str(tmp_path),
+            format="tensorrt",
+            dynamic_batch=True,
+            batch_size=8,
+            max_batch_size=4,
+            shape=(14, 14),
+        )
+
+
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 @pytest.mark.parametrize("mode", [pytest.param("train", id="train_mode"), pytest.param("eval", id="eval_mode")])

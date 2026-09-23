@@ -702,6 +702,23 @@ class TestDynamicBatchConfig:
                 TensorRTConfig(dynamic_batch=True, opt_batch_size=opt_batch_size, max_batch_size=max_batch_size)
             )
 
+    def test_allows_a_degenerate_profile_where_opt_equals_max(self) -> None:
+        """``opt_batch_size == max_batch_size`` is a legal, if degenerate, profile and must not be rejected.
+
+        ``_check_capabilities`` only rejects ``max_batch_size < opt_batch_size``, so the equal-bounds edge is permitted
+        by construction; this pins that down explicitly instead of leaving it implied.
+        """
+        TensorRTExporter(TensorRTConfig(dynamic_batch=True, opt_batch_size=4, max_batch_size=4))
+
+    def test_rejects_a_negative_max_batch_size(self) -> None:
+        """A negative ``max_batch_size`` is refused.
+
+        Matched on the shared ``"max_batch_size"`` substring rather than the full ``1 <= batch_size <= max_batch_size``
+        bound message, which the existing bounds check in ``_check_capabilities`` raises.
+        """
+        with pytest.raises(ValueError, match="max_batch_size"):
+            TensorRTExporter(TensorRTConfig(dynamic_batch=True, max_batch_size=-1))
+
     def test_static_request_ignores_the_bounds(self) -> None:
         """Without ``dynamic_batch`` the profile fields are inert, so a missing ``max_batch_size`` is fine."""
         TensorRTExporter(TensorRTConfig(dynamic_batch=False, opt_batch_size=8))
@@ -1757,15 +1774,21 @@ class TestTensorRTEndToEnd:
     def test_dynamic_engine_rejects_a_batch_beyond_the_profile(
         self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
     ) -> None:
-        """A batch above ``max_batch_size`` is outside the profile and must not silently run."""
+        """A batch above ``max_batch_size`` is outside the profile and must not silently run.
+
+        Polygraphy's ``TrtRunner.infer`` reports an out-of-profile shape by having ``G_LOGGER.critical`` raise a
+        ``PolygraphyException`` naming the failed ``set_input_shape`` call -- narrower than a bare ``Exception``, which
+        would also swallow an unrelated crash (OOM, a driver error) as a false pass.
+        """
         import numpy as np
         from polygraphy.backend.common import BytesFromPath
         from polygraphy.backend.trt import EngineFromBytes, TrtRunner
+        from polygraphy.exception import PolygraphyException
 
         _, resolution, engine_path = trt_dynamic_engine
         feed = {"input": np.ascontiguousarray(_distinct_batch(5, resolution).numpy())}
         load_engine = EngineFromBytes(BytesFromPath(str(engine_path)))
-        with TrtRunner(load_engine) as runner, pytest.raises(Exception):
+        with TrtRunner(load_engine) as runner, pytest.raises(PolygraphyException, match="failed to set shape"):
             runner.infer(feed_dict=feed)
 
     def test_trt_inference_helper_serves_the_dynamic_engine(

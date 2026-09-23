@@ -434,6 +434,60 @@ class TestTRTInferenceDynamicBatch:
         runtime.stream.synchronize.assert_called_once()
         assert tuple(outputs["dets"].shape) == (3, 5, 4)
 
+    def test_serves_a_sequence_of_differing_batches_on_one_long_lived_runtime(self) -> None:
+        """One ``TRTInference`` instance must serve batch 4 -> 1 -> 3 in sequence without cross-call contamination.
+
+        Reproduces the DeepStream/Triton usage from issue #376: one engine, one process, one runtime object reused call
+        after call with a different batch each time. Every other test in this class constructs a fresh runtime or
+        exercises exactly one batch per instance; this is the only test that keeps one ``TRTInference`` alive across a
+        batch sequence and checks both shape and values survive it.
+        """
+        engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
+        context = Mock()
+        runtime = _runtime_around(engine, context)
+
+        # Step 1: batch 4 -- fills the whole profile-max buffer.
+        context.get_tensor_shape.return_value = (4, 5, 4)
+        context.execute_v2.side_effect = lambda *_a: runtime.bindings["dets"].data[:4].fill_(4.0)
+        outputs = runtime({"input": torch.full((4, 3, 8, 8), 4.0)})
+        assert tuple(outputs["dets"].shape) == (4, 5, 4)
+        assert torch.equal(outputs["dets"], torch.full((4, 5, 4), 4.0))
+
+        # Step 2: batch 1 -- the smallest legal batch, right after the largest.
+        context.get_tensor_shape.return_value = (1, 5, 4)
+        context.execute_v2.side_effect = lambda *_a: runtime.bindings["dets"].data[:1].fill_(1.0)
+        outputs = runtime({"input": torch.full((1, 3, 8, 8), 1.0)})
+        assert tuple(outputs["dets"].shape) == (1, 5, 4)
+        assert torch.equal(outputs["dets"], torch.full((1, 5, 4), 1.0))
+
+        # Step 3: batch 3 -- a third, different size, still on the same runtime object.
+        context.get_tensor_shape.return_value = (3, 5, 4)
+        context.execute_v2.side_effect = lambda *_a: runtime.bindings["dets"].data[:3].fill_(3.0)
+        outputs = runtime({"input": torch.full((3, 3, 8, 8), 3.0)})
+        assert tuple(outputs["dets"].shape) == (3, 5, 4)
+        assert torch.equal(outputs["dets"], torch.full((3, 5, 4), 3.0))
+
+        assert context.set_input_shape.call_args_list == [
+            call("input", (4, 3, 8, 8)),
+            call("input", (1, 3, 8, 8)),
+            call("input", (3, 3, 8, 8)),
+        ]
+
+    def test_get_dummy_input_uses_the_configured_device(self) -> None:
+        """The dummy input must land on the runtime's own configured device, not a hardcoded ``"cuda:0"``.
+
+        Regression guard: ``get_dummy_input`` used to hardcode ``.to("cuda:0")``, so a runtime built for the CPU (as
+        every fake-engine test in this module is) would still hand back a CUDA tensor.
+        """
+        engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
+        runtime = _runtime_around(engine, context=Mock())
+        runtime.device = "cpu"
+
+        blob = runtime.get_dummy_input(batch_size=2)
+
+        assert blob["input"].shape == (2, 3, 8, 8)
+        assert torch.device(blob["input"].device) == torch.device("cpu")
+
 
 class TestBenchmarkMain:
     @pytest.mark.parametrize(
