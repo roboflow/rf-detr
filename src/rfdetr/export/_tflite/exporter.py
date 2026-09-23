@@ -63,6 +63,11 @@ Note:
     Segmentation models additionally emit a ``masks`` output.  FP32, FP16, and dynamic-range INT8 all match the PyTorch
     baseline closely (INT8 mask fidelity is marginally lower).  Verified on the non-plus segmentation
     variants: Nano, Small, Medium, Large, and Preview.
+
+Note:
+    Keypoint models additionally emit a rank-4 ``keypoints`` output.  FP32 matches the ONNX model within ``3.2e-3`` on
+    every output, verified with a static batch of 1 at 576x576 on ``RFDETRKeypointPreview`` (pretrained, and a
+    1-class, 4-keypoint schema).
 """
 
 from __future__ import annotations

@@ -157,7 +157,7 @@ def _compute_plan(mlpackage_path: Path) -> Any:
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLNeuralEngineFallbackBoundary:
-    """The ANE fallback boundary documented in ``docs/learn/export.md`` must stay where it is."""
+    """The ANE fallback boundary documented in ``docs/exports/coreml.md`` must stay where it is."""
 
     def test_only_two_stage_selection_ops_leave_the_neural_engine(
         self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
@@ -176,7 +176,7 @@ class TestCoreMLNeuralEngineFallbackBoundary:
 
         assert unsupported <= _ANE_UNSUPPORTED_OPS, (
             f"ops newly unsupported on the Neural Engine: {sorted(unsupported - _ANE_UNSUPPORTED_OPS)}; "
-            "update docs/learn/export.md's fallback boundary if this is intended"
+            "update docs/exports/coreml.md's fallback boundary if this is intended"
         )
 
     def test_neural_engine_keeps_nearly_all_of_the_estimated_work(
