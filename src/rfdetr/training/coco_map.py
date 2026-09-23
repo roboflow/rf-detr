@@ -612,7 +612,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         inputs = None
         if self.groundtruth_labels:
             detection_columns, target_columns = self._vernier_columns()
-            # Built once for every IoU type: the inputs do not name a kernel, so
+            # Built once for the whole run: the inputs do not name a kernel, so
             # one set serves both passes of a bbox+segm run.
             inputs = vernier.adapters.coco_inputs_from_columns(
                 detection_columns,
