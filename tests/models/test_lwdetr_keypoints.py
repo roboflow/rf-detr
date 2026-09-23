@@ -419,3 +419,88 @@ def test_lwdetr_default_detection_contract_unchanged() -> None:
     assert outputs["pred_boxes"].shape == (batch_size, num_queries, 4)
     assert "pred_keypoints" not in outputs
     assert "keypoint_hidden_states" not in outputs
+
+
+class TestForwardExportKeypointDecode:
+    """``forward_export`` must decode keypoints exactly as the training-path ``forward`` does.
+
+    ``forward_export`` decodes keypoint xy on a flattened ``(..., K * 2)`` layout instead of broadcasting the box
+    reference over the keypoint axis, because onnx2tf cannot convert that rank-4 broadcast (#1514).
+    """
+
+    @pytest.mark.parametrize(
+        "num_keypoints_per_class",
+        [
+            pytest.param([1], id="one_keypoint"),
+            pytest.param([4], id="four_keypoints"),
+            pytest.param([17], id="coco_person"),
+            pytest.param([3, 2], id="two_classes_padded"),
+        ],
+    )
+    def test_keypoints_match_forward(self, num_keypoints_per_class: list[int]) -> None:
+        """For finite keypoint deltas, the flattened export decode equals the broadcast decode, per keypoint schema."""
+        torch.manual_seed(0)
+        batch_size = 2
+        num_queries = 3
+        hidden_dim = 8
+        num_compact_keypoints = sum(num_keypoints_per_class)
+
+        features = _build_feature_batch(batch_size=batch_size, hidden_dim=hidden_dim)
+        poss = [torch.zeros(batch_size, hidden_dim, 4, 4)]
+        hs = torch.randn(batch_size, num_queries, hidden_dim)
+        ref_unsigmoid = torch.rand(batch_size, num_queries, 4)
+        keypoint_hs = torch.randn(batch_size, num_queries, num_compact_keypoints, hidden_dim)
+        hs_enc = torch.zeros(batch_size, num_queries, hidden_dim)
+        ref_enc = torch.zeros(batch_size, num_queries, 4)
+        enc_kp_predictions = torch.zeros(batch_size, num_queries, num_compact_keypoints, 8)
+
+        backbone = MagicMock()
+        transformer = MagicMock()
+        transformer.d_model = hidden_dim
+        model = LWDETR(
+            backbone=backbone,
+            transformer=transformer,
+            segmentation_head=None,
+            num_classes=len(num_keypoints_per_class) + 1,
+            num_queries=num_queries,
+            aux_loss=False,
+            group_detr=1,
+            two_stage=False,
+            lite_refpoint_refine=False,
+            bbox_reparam=True,
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=num_keypoints_per_class,
+            grouppose_keypoint_dim_downscale=1,
+        ).eval()
+        # The keypoint head is zero-initialized; randomize it so the decode sees non-trivial deltas.
+        for layer in model.keypoint_embed.layers:
+            nn.init.normal_(layer.weight)
+            nn.init.normal_(layer.bias)
+
+        backbone.return_value = (features, poss, None)
+        transformer.return_value = (
+            hs.unsqueeze(0),
+            ref_unsigmoid.unsqueeze(0),
+            hs_enc,
+            ref_enc,
+            keypoint_hs.unsqueeze(0),
+            enc_kp_predictions,
+            torch.zeros_like(keypoint_hs),
+        )
+        with torch.no_grad():
+            expected = model(torch.ones(batch_size, 3, 8, 8))["pred_keypoints"]
+
+        backbone.return_value = ([features[0].tensors], None, poss, None)
+        transformer.return_value = (
+            hs,
+            ref_unsigmoid,
+            hs_enc,
+            ref_enc,
+            keypoint_hs,
+            enc_kp_predictions,
+            torch.zeros_like(keypoint_hs),
+        )
+        with torch.no_grad():
+            _, _, actual = model.forward_export(torch.ones(batch_size, 3, 8, 8))
+
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
