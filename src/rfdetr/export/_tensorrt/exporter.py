@@ -36,7 +36,7 @@ from typing import Any
 
 from rfdetr.export._naming import resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
-from rfdetr.export.prepare import ExportGraph
+from rfdetr.export.prepare import BATCH_AXIS, ExportGraph
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -920,10 +920,11 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         for index in range(network.num_inputs):
             tensor = network.get_input(index)
             shape = tuple(int(dim) for dim in tensor.shape)
-            if shape[0] != -1:
+            if shape[BATCH_AXIS] != -1:
                 continue
             dynamic_inputs.append(tensor.name)
-            trailing = shape[1:]
+            # BATCH_AXIS is the only dynamic axis, so everything past it is the fixed shape each bound repeats.
+            trailing = shape[BATCH_AXIS + 1 :]
             profile.add(tensor.name, min=(1, *trailing), opt=(opt, *trailing), max=(max_batch, *trailing))
         if not dynamic_inputs:
             raise ValueError(
