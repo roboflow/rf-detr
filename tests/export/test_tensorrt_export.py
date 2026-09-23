@@ -644,6 +644,29 @@ class TestDynamicBatchConfig:
                 TensorRTConfig(dynamic_batch=True, opt_batch_size=opt_batch_size, max_batch_size=max_batch_size)
             )
 
+    @pytest.mark.parametrize(
+        "opt_batch_size,max_batch_size",
+        [
+            pytest.param(4.5, 8, id="float-batch-size"),
+            pytest.param(float("nan"), 8, id="nan-batch-size"),
+            pytest.param(4, 8.0, id="float-max-batch-size"),
+            pytest.param(4, float("nan"), id="nan-max-batch-size"),
+            pytest.param(True, 8, id="bool-batch-size"),
+            pytest.param(4, True, id="bool-max-batch-size"),
+        ],
+    )
+    def test_rejects_non_integer_bounds(self, opt_batch_size: object, max_batch_size: object) -> None:
+        """A non-``int`` bound (``float``, ``nan``, or ``bool``) is refused before any work, not deep in the build.
+
+        ``nan`` compares false against every ``<``/``>=`` bound, so the pre-existing numeric checks silently let it
+        through; a plain ``float`` does too, since Python allows ``4.5 < 1`` and ``8.0 < 4`` comparisons. Both used to
+        fail only after a full DINOv2 forward pass and an ONNX export.
+        """
+        with pytest.raises(ValueError, match="must be integers"):
+            TensorRTExporter(
+                TensorRTConfig(dynamic_batch=True, opt_batch_size=opt_batch_size, max_batch_size=max_batch_size)
+            )
+
     def test_static_request_ignores_the_bounds(self) -> None:
         """Without ``dynamic_batch`` the profile fields are inert, so a missing ``max_batch_size`` is fine."""
         TensorRTExporter(TensorRTConfig(dynamic_batch=False, opt_batch_size=8))
@@ -705,6 +728,43 @@ class TestBuildEngineDynamicBatch:
 
         with pytest.raises(ValueError, match="no network input has a dynamic batch axis"):
             exporter.build_engine("/tmp/model.onnx")
+
+    def test_batch_profile_failure_releases_the_parsed_network(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A `_batch_profile` failure must release the parsed builder/network/parser rather than leak them.
+
+        `_batch_profile` can raise between `network_from_onnx_path` (which owns TensorRT resources) and
+        `engine_from_network` (which only takes ownership of them on success). Regression test for that gap.
+        """
+        released: list[str] = []
+
+        class _RefCountedSentinel:
+            def __init__(self, name: str) -> None:
+                self._name = name
+
+            def __del__(self) -> None:
+                released.append(self._name)
+
+        network = _FakeNetwork(_FakeNetworkInput("input", (1, 3, 384, 384)))  # no dynamic axis -> raises
+
+        def _fake_network_from_onnx_path(path: str) -> tuple:
+            # A fresh tuple per call, so the only reference once returned lives in `_compile`'s frame -- the
+            # production `del` on the error path is what must drop it, not a reference this closure retains.
+            return (_RefCountedSentinel("builder"), network, _RefCountedSentinel("parser"))
+
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
+        monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _fake_network_from_onnx_path)
+        monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
+        # `_batch_profile` raises before these are reached; only present so `_require_tensorrt`'s
+        # `engine_from_network is None` guard (checked before `_compile` runs) does not itself fail the build.
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda *args, **kwargs: "engine")
+        monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
+        monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, max_batch_size=8))
+
+        with pytest.raises(ValueError, match="no network input has a dynamic batch axis"):
+            exporter.build_engine("/tmp/model.onnx")
+
+        assert set(released) == {"builder", "parser"}
 
     def test_static_build_passes_no_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Without ``dynamic_batch`` the builder configuration carries no ``profiles`` key at all."""

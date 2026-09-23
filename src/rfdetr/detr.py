@@ -1828,7 +1828,8 @@ class RFDETR:
             max_batch_size: Largest batch a dynamic TensorRT engine must accept.  Only read when
                 ``format="tensorrt"`` and ``dynamic_batch=True``, where it is required: the engine is built with
                 one optimization profile spanning batch ``1 .. max_batch_size`` and tuned for *batch_size*
-                (``batch_size <= max_batch_size``).  Ignored for every other format.
+                (``batch_size <= max_batch_size``).  Ignored for every other format or combination; passing a
+                non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -1901,6 +1902,13 @@ class RFDETR:
         from rfdetr.export.registry import normalize_format, resolve_exporter
 
         format = normalize_format(format)
+        if max_batch_size is not None and (format != "tensorrt" or not dynamic_batch):
+            warnings.warn(
+                f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
+                f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
         backend, soc = _resolve_export_backend(format, backend, soc)
         # Refuse a statically impossible request from the registry's own capability data, before resolving the
         # exporter imports the format's heavy optional dependency (coremltools, executorch, openvino, ...) and long

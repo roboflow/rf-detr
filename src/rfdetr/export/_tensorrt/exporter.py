@@ -684,11 +684,12 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     pip_extra = "tensorrt"
 
     def _check_capabilities(self) -> None:
-        """Reject a dynamic-batch request whose optimization profile bounds are missing or inconsistent.
+        """Reject a dynamic-batch request whose optimization profile bounds are missing, non-integer, or inconsistent.
 
         Raises:
-            ValueError: If ``dynamic_batch`` is set without ``max_batch_size``, or with
-                ``max_batch_size < opt_batch_size`` or ``opt_batch_size < 1``.
+            ValueError: If ``dynamic_batch`` is set without ``max_batch_size``; with a ``batch_size`` or
+                ``max_batch_size`` that is not a plain ``int`` (``bool`` included, since ``bool`` is a
+                subclass of ``int``); or with ``max_batch_size < opt_batch_size`` or ``opt_batch_size < 1``.
         """
         super()._check_capabilities()
         if not self.config.dynamic_batch:
@@ -699,6 +700,12 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 "optimization profile spanning batch 1 .. max_batch_size (tuned for batch_size). Pass "
                 "max_batch_size=<largest batch the engine must accept>."
             )
+        # A float (or float('nan')) compares fine against int bounds below -- nan is neither < nor >= anything,
+        # so it silently clears every check here and only fails deep inside the TensorRT build, after a full
+        # DINOv2 forward pass and an ONNX export have already run.
+        for name, value in (("batch_size", self.config.opt_batch_size), ("max_batch_size", self.config.max_batch_size)):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"TensorRT dynamic_batch profile bounds must be integers, got {name}={value!r}.")
         if self.config.opt_batch_size < 1 or self.config.max_batch_size < self.config.opt_batch_size:
             raise ValueError(
                 f"TensorRT dynamic_batch profile must satisfy 1 <= batch_size <= max_batch_size, got "
@@ -870,7 +877,15 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 # A profile needs every dynamic input's full shape, so the parsed (builder, network, parser) tuple
                 # is inspected first and then handed on, rather than letting engine_from_network parse it again.
                 parsed = network_from_onnx_path(build_source)
-                profile = self._batch_profile(parsed[1])
+                try:
+                    profile = self._batch_profile(parsed[1])
+                except Exception:
+                    # _batch_profile can raise (e.g. no dynamic-batch input) before engine_from_network ever takes
+                    # ownership of `parsed`. Only that call frees the parsed builder/network/parser on success, so
+                    # release them here explicitly rather than leaking them on this error path; adding `parsed` to
+                    # `cleanup` unconditionally would double-close it once engine_from_network also releases it.
+                    del parsed
+                    raise
                 engine = engine_from_network(parsed, config=CreateConfig(fp16=builder_fp16, profiles=[profile]))
             else:
                 engine = engine_from_network(

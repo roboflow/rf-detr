@@ -418,6 +418,56 @@ def test_rfdetr_export_tensorrt_calls_build_engine_with_onnx_path(
     assert str(result) == str(tmp_path / "inference_model.trt")
 
 
+def test_rfdetr_export_warns_when_max_batch_size_used_without_tensorrt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`max_batch_size` outside `format="tensorrt"` is ignored and must warn rather than silently no-op.
+
+    `format="onnx"` with `dynamic_batch=True` accepts a dynamic batch axis but has no optimization-profile concept for
+    `max_batch_size` to tune, so passing it there previously vanished with no signal at all.
+    """
+    model = types.SimpleNamespace(
+        model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
+        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
+        size=None,
+    )
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    with pytest.warns(UserWarning, match=r"`max_batch_size`.*ignored"):
+        _detr_module.RFDETR.export(
+            model, output_dir=str(tmp_path), format="onnx", dynamic_batch=True, max_batch_size=8, shape=(14, 14)
+        )
+
+
+def test_rfdetr_export_warns_when_max_batch_size_used_without_dynamic_batch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`max_batch_size` on a static (`dynamic_batch=False`) TensorRT export is ignored and must warn.
+
+    A static export builds the engine with the exact call it always made -- there is no optimization profile for
+    `max_batch_size` to bound -- so a value passed there is inert and should not vanish silently.
+    """
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    monkeypatch.setattr(
+        "rfdetr.export._tensorrt.exporter.TensorRTExporter.build_engine",
+        lambda _self, *args, **kwargs: str(tmp_path / "inference_model.trt"),
+    )
+
+    with pytest.warns(UserWarning, match=r"`max_batch_size`.*ignored"):
+        _detr_module.RFDETR.export(
+            model, output_dir=str(tmp_path), format="tensorrt", dynamic_batch=False, max_batch_size=8, shape=(14, 14)
+        )
+
+
 @pytest.mark.parametrize("fp16", [pytest.param(True, id="fp16"), pytest.param(False, id="fp32")])
 def test_rfdetr_export_tensorrt_forwards_fp16(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fp16: bool) -> None:
     """`RFDETR.export(format="tensorrt", fp16=...)` must reach the exporter that builds the engine.
