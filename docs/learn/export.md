@@ -15,7 +15,7 @@ description: Overview of exporting RF-DETR models to ONNX, TensorRT, TFLite, Lit
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment
-    - Adding a format is an in-tree contribution — see [Exporter Blueprint](export-blueprint.md)
+    - Adding a format is an in-tree contribution — see [Exporter Blueprint](../exports/export-blueprint.md)
     - Per-format details live in the [Export Formats](../exports/index.md) subpages
 
 RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native CoreML and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
@@ -243,7 +243,7 @@ predictions = model(image)
 
 Every format is written by an `Exporter` class built from that format's own configuration, and `model.export()` is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent `ExportGraph`, and hands the graph to the exporter. The signature and return value on this page are the supported surface; the classes behind it are internal.
 
-If you want to add a format, or you are reading the export code, see [Exporter Blueprint](export-blueprint.md) for the contract each format implements and the steps a new one takes.
+If you want to add a format, or you are reading the export code, see [Exporter Blueprint](../exports/export-blueprint.md) for the contract each format implements and the steps a new one takes.
 
 ## Using the Exported Model
 
@@ -263,6 +263,6 @@ After exporting your model, you may want to:
 
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
 
-- Read the [Exporter Blueprint](export-blueprint.md) to add a new export format
+- Read the [Exporter Blueprint](../exports/export-blueprint.md) to add a new export format
 
 - Browse the [Export Formats](../exports/index.md) guides for per-format details
