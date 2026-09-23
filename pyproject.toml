@@ -522,6 +522,8 @@ overrides = [
     "tensorflow", "tensorflow.*",
     "executorch", "executorch.*",
     "coremltools", "coremltools.*",
+    "coreai", "coreai.*",
+    "coreai_torch", "coreai_torch.*",
     "openvino", "openvino.*",
     "litert_torch", "litert_torch.*",
     "ai_edge_litert", "ai_edge_litert.*",
