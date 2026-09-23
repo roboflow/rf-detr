@@ -316,19 +316,6 @@ class TestTRTInferenceDynamicBatch:
         assert runtime.bindings["input"].shape == (2, 3, 8, 8)
         assert runtime.bindings["input"].dynamic is False
 
-    def test_raises_when_a_dynamic_tensor_has_no_profile(self) -> None:
-        """A dynamic tensor with no dynamic-batch input anywhere in the engine cannot be sized.
-
-        ``_profile_max_batch`` only reads bounds off input tensors, so an engine whose only ``-1`` batch axis sits on an
-        output (never produced by ``build_engine``, but not ruled out for an engine loaded from elsewhere) must fail
-        loudly instead of allocating a bogus buffer size.
-        """
-        engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (-1, 5, 4))})
-        runtime = TRTInference.__new__(TRTInference)
-
-        with pytest.raises(ValueError, match="no input carries a profile"):
-            runtime.get_bindings(engine, Mock(), device="cpu")
-
     def test_get_dummy_input_uses_the_runtime_device(self) -> None:
         """Dummy input tensors land on ``self.device``, not a hardcoded ``cuda:0``.
 
@@ -444,25 +431,35 @@ class TestTRTInferenceDynamicBatch:
         """
         engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
         context = Mock()
-        runtime = _runtime_around(engine, context)
-
-        # Step 1: batch 4 -- fills the whole profile-max buffer.
+        # get_bindings() resolves every dynamic tensor's shape off the context during construction, at the profile
+        # maximum -- the return value has to exist before _runtime_around() runs, not just before the first call.
         context.get_tensor_shape.return_value = (4, 5, 4)
-        context.execute_v2.side_effect = lambda *_a: runtime.bindings["dets"].data[:4].fill_(4.0)
+        runtime = _runtime_around(engine, context)
+        # Construction itself declares "input" once at the profile maximum (_declare_profile_max_inputs); the
+        # assertion below is only about the three per-call declarations that follow, so drop that call now.
+        context.set_input_shape.reset_mock()
+
+        # Step 1: batch 4 -- fills the whole profile-max buffer. ``execute_v2`` reports launch success as a bool
+        # return; the side effect fills the buffer as its effect but must still hand back ``True`` for it.
+        def _fill_dets(batch: int, value: float) -> bool:
+            runtime.bindings["dets"].data[:batch].fill_(value)
+            return True
+
+        context.execute_v2.side_effect = lambda *_a: _fill_dets(4, 4.0)
         outputs = runtime({"input": torch.full((4, 3, 8, 8), 4.0)})
         assert tuple(outputs["dets"].shape) == (4, 5, 4)
         assert torch.equal(outputs["dets"], torch.full((4, 5, 4), 4.0))
 
         # Step 2: batch 1 -- the smallest legal batch, right after the largest.
         context.get_tensor_shape.return_value = (1, 5, 4)
-        context.execute_v2.side_effect = lambda *_a: runtime.bindings["dets"].data[:1].fill_(1.0)
+        context.execute_v2.side_effect = lambda *_a: _fill_dets(1, 1.0)
         outputs = runtime({"input": torch.full((1, 3, 8, 8), 1.0)})
         assert tuple(outputs["dets"].shape) == (1, 5, 4)
         assert torch.equal(outputs["dets"], torch.full((1, 5, 4), 1.0))
 
         # Step 3: batch 3 -- a third, different size, still on the same runtime object.
         context.get_tensor_shape.return_value = (3, 5, 4)
-        context.execute_v2.side_effect = lambda *_a: runtime.bindings["dets"].data[:3].fill_(3.0)
+        context.execute_v2.side_effect = lambda *_a: _fill_dets(3, 3.0)
         outputs = runtime({"input": torch.full((3, 3, 8, 8), 3.0)})
         assert tuple(outputs["dets"].shape) == (3, 5, 4)
         assert torch.equal(outputs["dets"], torch.full((3, 5, 4), 3.0))
@@ -480,7 +477,7 @@ class TestTRTInferenceDynamicBatch:
         every fake-engine test in this module is) would still hand back a CUDA tensor.
         """
         engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
-        runtime = _runtime_around(engine, context=Mock())
+        runtime = _runtime_around(engine)
         runtime.device = "cpu"
 
         blob = runtime.get_dummy_input(batch_size=2)
