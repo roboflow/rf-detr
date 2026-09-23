@@ -6,11 +6,19 @@
 """Regression tests for GroupPose-oriented transformer streams."""
 
 from types import SimpleNamespace
+from unittest import mock
 
+import pytest
 import torch
 from torch import nn
 
-from rfdetr.models.transformer import Transformer, TransformerDecoder, TransformerDecoderLayer, build_transformer
+from rfdetr.models.transformer import (
+    Transformer,
+    TransformerDecoder,
+    TransformerDecoderLayer,
+    _additive_attn_mask,
+    build_transformer,
+)
 
 
 def _build_transformer_inputs(
@@ -132,6 +140,59 @@ def test_build_transformer_defaults_inter_instance_keypoint_attention_to_config_
     assert isinstance(decoder_layer, TransformerDecoderLayer)
     assert decoder_layer.enable_keypoint_processing
     assert not decoder_layer.inter_instance_kp_attn
+
+
+def _cross_class_mask() -> torch.Tensor:
+    """Keypoint class mask of a ``[3, 2]`` schema: token 0 is the instance, 1-3 and 4-5 the two classes."""
+    blocked = torch.zeros(6, 6, dtype=torch.bool)
+    blocked[1:4, 4:] = True
+    blocked[4:, 1:4] = True
+    return blocked
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [pytest.param(_cross_class_mask(), id="cross_class"), pytest.param(torch.zeros(6, 6, dtype=torch.bool), id="none")],
+)
+def test_additive_attn_mask_matches_boolean_mask_in_multihead_attention(mask: torch.Tensor) -> None:
+    """The float mask handed to ``nn.MultiheadAttention`` must give exactly what its boolean form gives."""
+    torch.manual_seed(0)
+    attention = nn.MultiheadAttention(16, 4, batch_first=True).eval()
+    x = torch.randn(3, 6, 16)
+    expected = attention(x, x, x, attn_mask=mask, need_weights=False)[0]
+    actual = attention(x, x, x, attn_mask=_additive_attn_mask(mask, x.dtype), need_weights=False)[0]
+    assert torch.equal(actual, expected)
+
+
+def test_keypoint_self_attention_receives_additive_mask() -> None:
+    """Keypoint self-attention must get a float mask: converters mishandle MHA's own bool-to-float step."""
+    srcs, masks, pos_embeds, refpoint_embed, query_feat = _build_transformer_inputs()
+    transformer = Transformer(
+        d_model=16,
+        num_queries=6,
+        num_decoder_layers=1,
+        sa_nhead=4,
+        ca_nhead=4,
+        num_feature_levels=2,
+        dec_n_points=1,
+        return_intermediate_dec=True,
+        lite_refpoint_refine=True,
+        two_stage=True,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[3, 2],
+    )
+    transformer.enc_out_class_embed = nn.ModuleList([nn.Linear(16, 2)])
+    transformer.enc_out_bbox_embed = nn.ModuleList([nn.Linear(16, 4)])
+    attention = transformer.decoder.layers[0].kp_inst_self_attn
+
+    with mock.patch.object(attention, "forward", wraps=attention.forward) as forward:
+        transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    attn_mask = forward.call_args.kwargs["attn_mask"]
+    class_mask = transformer.decoder.keypoint_class_mask
+    assert class_mask.any()
+    assert attn_mask.is_floating_point()
+    assert torch.equal(torch.isinf(attn_mask), class_mask)
 
 
 def test_keypoint_class_mask_person_only() -> None:
