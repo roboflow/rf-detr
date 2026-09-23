@@ -998,7 +998,7 @@ The first load compiles the asset for the Neural Engine (5 to 9 s on these devic
 
 !!! note "float16 and the Neural Engine"
 
-    On the Neural Engine a float16 `topk` returns corrupt indices, which would make RF-DETR's two-stage query selection gather the wrong encoder tokens and detect nothing (a float16 failure with the same symptom is reported in [apple/coreai-torch#115](https://github.com/apple/coreai-torch/issues/115)). The exporter therefore runs that one `topk` in float32; the rest of a float16 graph stays float16. With it, float16 `RFDETRNano` on the Neural Engine scores 47.97 box AP on COCO val2017, against 48.02 for float32.
+    On the Neural Engine a float16 `topk` returns corrupt indices, which would make RF-DETR's two-stage query selection gather the wrong encoder tokens and detect nothing (a float16 failure with the same symptom is reported in [apple/coreai-torch#115](https://github.com/apple/coreai-torch/issues/115)). The exporter therefore runs that one `topk` in float32; the rest of a float16 graph stays float16. With it, float16 `RFDETRNano` on the Neural Engine of an M5 Pro Mac scores 47.97 box AP on COCO val2017, against 48.02 for float32.
 
 !!! warning "Keypoint models: do not run float16 on the Neural Engine"
 
