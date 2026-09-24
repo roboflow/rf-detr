@@ -1275,6 +1275,76 @@ def _padding_criterion(num_classes: int = 5, losses: list[str] | None = None, **
     )
 
 
+def _layered_detection_batch(
+    target_counts: tuple[int, ...],
+    *,
+    device: torch.device | str = "cpu",
+    dtype: torch.dtype = torch.float32,
+    seed: int = 904,
+    mask_side: int | None = None,
+    requires_grad: bool = False,
+) -> tuple[dict[str, Any], list[dict[str, Tensor]], list[dict[str, Tensor]]]:
+    """Build three detection output layers and their per-image targets.
+
+    Optional masks cover the segmentation case. Target boxes stay float32 to match training, and a local generator
+    keeps cases reproducible without changing the caller's global RNG state.
+
+    Args:
+        target_counts: Ground-truth label count for each image in the batch.
+        device: Device for predictions and targets.
+        dtype: Prediction dtype; target boxes remain float32.
+        seed: Seed for this case's local random generator.
+        mask_side: Mask height and width when testing segmentation losses.
+        requires_grad: Whether prediction tensors require gradients.
+
+    Returns:
+        Model outputs, individual output layers, and per-image targets.
+
+    Examples:
+        >>> outputs, _, targets = _layered_detection_batch((3, 0))
+        >>> tuple(outputs["pred_logits"].shape), [len(target["labels"]) for target in targets]
+        ((2, 16, 5), [3, 0])
+        >>> masked, _, targets = _layered_detection_batch((3, 0), mask_side=8)
+        >>> tuple(masked["pred_masks"].shape), [len(target["masks"]) for target in targets]
+        ((2, 16, 8, 8), [3, 0])
+    """
+    device = torch.device(device)
+    generator = torch.Generator(device=device).manual_seed(seed)
+    batch_size, queries, classes = len(target_counts), 16, 5
+    layers: list[dict[str, Tensor]] = []
+    for _ in range(3):
+        layer = {
+            "pred_logits": torch.randn(
+                batch_size,
+                queries,
+                classes,
+                device=device,
+                dtype=dtype,
+                generator=generator,
+                requires_grad=requires_grad,
+            ),
+            "pred_boxes": (
+                (torch.rand(batch_size, queries, 4, device=device, generator=generator) * 0.5 + 0.25).to(dtype)
+            ).requires_grad_(requires_grad),
+        }
+        if mask_side is not None:
+            layer["pred_masks"] = torch.randn(
+                batch_size, queries, mask_side, mask_side, device=device, dtype=dtype, generator=generator
+            ).requires_grad_(requires_grad)
+        layers.append(layer)
+    outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
+    targets: list[dict[str, Tensor]] = []
+    for count in target_counts:
+        target = {
+            "labels": torch.randint(0, classes, (count,), device=device, generator=generator),
+            "boxes": torch.rand(count, 4, device=device, generator=generator) * 0.5 + 0.25,
+        }
+        if mask_side is not None:
+            target["masks"] = torch.rand(count, mask_side, mask_side, device=device, generator=generator) > 0.5
+        targets.append(target)
+    return outputs, layers, targets
+
+
 class TestBatchedDetectionLosses:
     """The default IA-BCE criterion batches equivalent work across output layers."""
 
@@ -1455,23 +1525,7 @@ class TestBatchedDetectionLosses:
     @pytest.mark.parametrize("target_counts", [(3, 0), (0, 0)])
     def test_compiled_cuda_losses_and_gradients_match_fallback(self, target_counts: tuple[int, int]) -> None:
         """The real lazy CUDA compilation preserves losses and gradients, including an empty batch."""
-        torch.manual_seed(904)
-        batch_size, queries, classes = 2, 16, 5
-        layers = [
-            {
-                "pred_logits": torch.randn(batch_size, queries, classes, device="cuda", requires_grad=True),
-                "pred_boxes": (torch.rand(batch_size, queries, 4, device="cuda") * 0.5 + 0.25).requires_grad_(True),
-            }
-            for _ in range(3)
-        ]
-        outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
-        targets = [
-            {
-                "labels": torch.randint(0, classes, (count,), device="cuda"),
-                "boxes": torch.rand(count, 4, device="cuda") * 0.5 + 0.25,
-            }
-            for count in target_counts
-        ]
+        outputs, layers, targets = _layered_detection_batch(target_counts, device="cuda", requires_grad=True)
         criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
 
         with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
@@ -1506,26 +1560,9 @@ class TestBatchedDetectionLosses:
         Under autocast the model emits BF16 logits and boxes while targets stay float32, so the loss dtypes, values and
         gradients must follow the per-layer path with BF16 rounding tolerance.
         """
-        torch.manual_seed(906)
-        batch_size, queries, classes = 2, 16, 5
-        layers = [
-            {
-                "pred_logits": torch.randn(batch_size, queries, classes, device="cuda", dtype=torch.bfloat16),
-                "pred_boxes": (torch.rand(batch_size, queries, 4, device="cuda") * 0.5 + 0.25).to(torch.bfloat16),
-            }
-            for _ in range(3)
-        ]
-        for layer in layers:
-            layer["pred_logits"].requires_grad_(True)
-            layer["pred_boxes"].requires_grad_(True)
-        outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
-        targets = [
-            {
-                "labels": torch.randint(0, classes, (count,), device="cuda"),
-                "boxes": torch.rand(count, 4, device="cuda") * 0.5 + 0.25,
-            }
-            for count in target_counts
-        ]
+        outputs, layers, targets = _layered_detection_batch(
+            target_counts, device="cuda", dtype=torch.bfloat16, seed=906, requires_grad=True
+        )
         criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
 
         with (
@@ -1658,24 +1695,7 @@ class TestBatchedDetectionLosses:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_segmentation_losses_survive_enabled_batching(self) -> None:
         """A segmentation criterion on CUDA still returns its mask losses for every layer once batching is enabled."""
-        batch_size, queries, classes, side = 2, 16, 5, 8
-        layers = [
-            {
-                "pred_logits": torch.randn(batch_size, queries, classes, device="cuda"),
-                "pred_boxes": torch.rand(batch_size, queries, 4, device="cuda") * 0.5 + 0.25,
-                "pred_masks": torch.randn(batch_size, queries, side, side, device="cuda"),
-            }
-            for _ in range(3)
-        ]
-        outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
-        targets = [
-            {
-                "labels": torch.randint(0, classes, (count,), device="cuda"),
-                "boxes": torch.rand(count, 4, device="cuda") * 0.5 + 0.25,
-                "masks": torch.rand(count, side, side, device="cuda") > 0.5,
-            }
-            for count in (3, 2)
-        ]
+        outputs, _, targets = _layered_detection_batch((3, 2), device="cuda", mask_side=8)
         criterion = _padding_criterion(losses=["labels", "boxes", "cardinality", "masks"]).cuda()
         criterion.enable_compiled_detection_losses()
 
@@ -1709,21 +1729,7 @@ class TestBatchedDetectionLosses:
             ia_bce_loss=True,
         ).cuda()
         criterion.enable_compiled_detection_losses()
-        layers = [
-            {
-                "pred_logits": torch.randn(2, 16, 5, device="cuda"),
-                "pred_boxes": torch.rand(2, 16, 4, device="cuda") * 0.5 + 0.25,
-            }
-            for _ in range(3)
-        ]
-        outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
-        targets = [
-            {
-                "labels": torch.randint(0, 5, (count,), device="cuda"),
-                "boxes": torch.rand(count, 4, device="cuda") * 0.5 + 0.25,
-            }
-            for count in (3, 2)
-        ]
+        outputs, _, targets = _layered_detection_batch((3, 2), device="cuda")
 
         losses = criterion(outputs, targets, num_boxes=1.0)
 
@@ -1748,21 +1754,7 @@ class TestBatchedDetectionLosses:
         criterion.enable_compiled_detection_losses()
         batches = []
         for counts in [(3, 4), (5, 2), (1, 1), (6, 5), (2, 3)]:  # matched pairs per layer: 7, 7, 2, 11, 5
-            layers = [
-                {
-                    "pred_logits": torch.randn(2, 16, 5, device="cuda", requires_grad=True),
-                    "pred_boxes": (torch.rand(2, 16, 4, device="cuda") * 0.5 + 0.25).requires_grad_(True),
-                }
-                for _ in range(3)
-            ]
-            outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
-            targets = [
-                {
-                    "labels": torch.randint(0, 5, (count,), device="cuda"),
-                    "boxes": torch.rand(count, 4, device="cuda") * 0.5 + 0.25,
-                }
-                for count in counts
-            ]
+            outputs, _, targets = _layered_detection_batch(counts, device="cuda", requires_grad=True)
             batches.append((outputs, targets))
 
         for index, (outputs, targets) in enumerate(batches):
@@ -1802,21 +1794,7 @@ class TestBatchedDetectionLosses:
         reference = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
         # Matched pairs per layer: generic, one, none (the overflow), generic again (reuses the first graph).
         for counts, overflows in [((3, 4), False), ((1, 0), False), ((0, 0), True), ((2, 5), False)]:
-            layers = [
-                {
-                    "pred_logits": torch.randn(2, 16, 5, device="cuda"),
-                    "pred_boxes": torch.rand(2, 16, 4, device="cuda") * 0.5 + 0.25,
-                }
-                for _ in range(3)
-            ]
-            outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
-            targets = [
-                {
-                    "labels": torch.randint(0, 5, (count,), device="cuda"),
-                    "boxes": torch.rand(count, 4, device="cuda") * 0.5 + 0.25,
-                }
-                for count in counts
-            ]
+            outputs, _, targets = _layered_detection_batch(counts, device="cuda")
 
             caplog.clear()
             with torch._dynamo.config.patch(cache_size_limit=2):
