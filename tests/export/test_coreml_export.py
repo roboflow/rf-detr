@@ -746,6 +746,48 @@ def coreml_default_queries_export(
     return model, example, Path(mlpackage_path), few_queries_path, output_labels
 
 
+#: Two keypoint classes, so the keypoint self-attention mask blocks the cross-class pairs (one class blocks nothing).
+_MULTICLASS_KEYPOINT_SCHEMA = [9, 8]
+
+
+@pytest.fixture(scope="module")
+def coreml_multiclass_keypoint_export(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Any, torch.Tensor, Path]:
+    """Export a KeypointPreview with two keypoint classes, whose keypoint self-attention mask blocks pairs.
+
+    The keypoint output heads start at zero, which makes the keypoints of an untrained model independent of the
+    keypoint attention; they get small seeded weights so a wrong mask shows up in the outputs.
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``coremltools`` conversion, so it cannot run standalone.
+
+        >>> model, example, mlpackage_path = coreml_multiclass_keypoint_export  # doctest: +SKIP
+        >>> bool(model.transformer.decoder.keypoint_class_mask.any())  # doctest: +SKIP
+        True
+    """
+    out_dir = tmp_path_factory.mktemp("coreml_multiclass_keypoint")
+    seed_all(_COREML_EXPORT_SEED)
+    detector = rfdetr.RFDETRKeypointPreview(
+        pretrain_weights=None,
+        num_queries=_COREML_E2E_NUM_QUERIES,
+        num_classes=len(_MULTICLASS_KEYPOINT_SCHEMA),
+    )
+    module = detector.model.model
+    module.reinitialize_keypoint_head(_MULTICLASS_KEYPOINT_SCHEMA)
+    generator = torch.Generator().manual_seed(_COREML_EXPORT_SEED)
+    with torch.no_grad():
+        for name, param in module.named_parameters():
+            if "keypoint_embed" in name and not param.any():
+                param.copy_(0.02 * torch.randn(param.shape, generator=generator))
+    mlpackage_path = detector.export(output_dir=str(out_dir), format="coreml", verbose=False)
+    model = module.to("cpu").eval()
+    model.export()
+    resolution = int(detector.model.resolution)
+    example = _structured_parity_input(1, 3, resolution, resolution)
+    return model, example, Path(mlpackage_path)
+
+
 @coreml_only
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
@@ -768,6 +810,15 @@ class TestCoreMLEndToEnd:
         _, model, example, mlpackage_path, output_labels = coreml_export
         _assert_well_conditioned(model, example)
         _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=output_labels)
+
+    def test_multiclass_keypoint_mask_matches_pytorch(
+        self, coreml_multiclass_keypoint_export: tuple[Any, torch.Tensor, Path]
+    ) -> None:
+        """A keypoint self-attention mask that blocks cross-class pairs must convert with its meaning intact."""
+        model, example, mlpackage_path = coreml_multiclass_keypoint_export
+        assert bool(model.transformer.decoder.keypoint_class_mask.any())
+        _assert_well_conditioned(model, example)
+        _validate_coreml_vs_pytorch(mlpackage_path, model, example, output_labels=("boxes", "logits", "keypoints"))
 
     def test_outputs_match_pytorch_supervision_image(
         self,
