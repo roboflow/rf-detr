@@ -64,12 +64,19 @@ jobs:
           fi
           uv pip install -e ".[$EXTRAS]" --group tests
 
+      - name: 🍎 Deselect DDP tests on macOS
+        # Spawning gloo worker processes costs ~110 s per test on macOS under Python 3.13, against ~10 s on 3.10 and on
+        # every Linux interpreter; those tests alone pushed this job past its 25-minute cap. macOS also cannot run real
+        # distributed training (no NCCL, single integrated GPU), so the Linux and Windows legs own that coverage.
+        if: runner.os == 'macOS'
+        run: echo "EXTRA_MARKERS= and not ddp" >> "$GITHUB_ENV"
+
       - name: 🧪 Run the Test
         # `scripts/` holds no test modules; it is listed so pytest-doctestplus collects the doctests in
         # repository maintenance scripts, which `pyproject.toml` alone cannot reach because paths are explicit here.
         run: |
           uv run --no-sync pytest src/ tests/ scripts/ \
-            -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu" \
+            -n 2 -m "not gpu and not coco17 and not integration and not xla and not tpu$EXTRA_MARKERS" \
             --ignore=tests/run_smoke_all_models.py \
             --ignore=tests/legacy/test_checkpoint_compat.py \
             --cov=rfdetr --cov-report=xml \

@@ -768,6 +768,7 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str, b
 
 # Windows CI currently cannot run this spawn test because gloo DDP spawn fails with
 # makeDeviceForHostname unsupported-device errors (see tests/training/test_trainer_smoke.py).
+@pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.parametrize("backend", _ALL_BACKENDS)
 def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path, backend: str) -> None:

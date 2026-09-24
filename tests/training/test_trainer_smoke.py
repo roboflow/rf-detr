@@ -375,6 +375,7 @@ class TestMultiScaleHookPropagation:
 
 # Windows CI currently cannot run this smoke test because gloo DDP spawn fails
 # with makeDeviceForHostname unsupported-device errors.
+@pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
     """ddp_spawn with 2 CPU workers must run fast_dev_run=2 without error.
@@ -406,6 +407,7 @@ def test_ddp_spawn_fit_runs_without_error(base_model_config, base_train_config):
     trainer.fit(module, datamodule=datamodule)
 
 
+@pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.timeout(300)
 def test_ddp_spawn_run_test_completes(base_model_config, base_train_config):
@@ -443,6 +445,7 @@ def test_ddp_spawn_run_test_completes(base_model_config, base_train_config):
     assert (Path(tc.output_dir) / "checkpoint_best_total.pth").exists()
 
 
+@pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 def test_ddp_spawn_multi_scale_mutation_propagates(base_model_config, base_train_config):
     """ddp_spawn with multi_scale=True must propagate on_train_batch_start resize to training_step.
@@ -506,6 +509,7 @@ class _DDPMinStepsModule(RFDETRModelModule):
             )
 
 
+@pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.parametrize("trainer_grad_accum_steps", [1, 2])
 def test_ddp_spawn_preserves_minimum_optimizer_steps(
@@ -594,6 +598,7 @@ class _DDPValImageCountModule(RFDETRModelModule):
             )
 
 
+@pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
 @pytest.mark.parametrize("val_images", [3, 1])
 def test_ddp_spawn_validation_scores_each_image_once(base_model_config, base_train_config, val_images: int):
