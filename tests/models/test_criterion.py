@@ -6,6 +6,8 @@
 """Unit tests for SetCriterion edge paths: _output_device and num_boxes_for_targets."""
 
 import logging
+import pickle
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1271,6 +1273,526 @@ def _padding_criterion(num_classes: int = 5, losses: list[str] | None = None, **
         group_detr=1,
         **options,
     )
+
+
+def _layered_detection_batch(
+    target_counts: tuple[int, ...],
+    *,
+    device: torch.device | str = "cpu",
+    dtype: torch.dtype = torch.float32,
+    seed: int = 904,
+    queries: int = 16,
+    layer_count: int = 3,
+    mask_side: int | None = None,
+    requires_grad: bool = False,
+) -> tuple[dict[str, Any], list[dict[str, Tensor]], list[dict[str, Tensor]]]:
+    """Build detection output layers and their per-image targets.
+
+    Optional masks cover the segmentation case. Target boxes stay float32 to match training, and a local generator
+    keeps cases reproducible without changing the caller's global RNG state.
+
+    Args:
+        target_counts: Ground-truth label count for each image in the batch.
+        device: Device for predictions and targets.
+        dtype: Prediction dtype; target boxes remain float32.
+        seed: Seed for this case's local random generator.
+        queries: Number of decoder queries per image.
+        layer_count: Number of output layers, including the encoder output.
+        mask_side: Mask height and width when testing segmentation losses.
+        requires_grad: Whether prediction tensors require gradients.
+
+    Returns:
+        Model outputs, individual output layers, and per-image targets.
+
+    Examples:
+        >>> outputs, _, targets = _layered_detection_batch((3, 0))
+        >>> tuple(outputs["pred_logits"].shape), [len(target["labels"]) for target in targets]
+        ((2, 16, 5), [3, 0])
+        >>> masked, _, targets = _layered_detection_batch((3, 0), mask_side=8)
+        >>> tuple(masked["pred_masks"].shape), [len(target["masks"]) for target in targets]
+        ((2, 16, 8, 8), [3, 0])
+        >>> outputs, layers, _ = _layered_detection_batch((3, 0, 7), queries=24, layer_count=4)
+        >>> len(layers), len(outputs["aux_outputs"]), tuple(outputs["enc_outputs"]["pred_logits"].shape)
+        (4, 2, (3, 24, 5))
+    """
+    device = torch.device(device)
+    generator = torch.Generator(device=device).manual_seed(seed)
+    batch_size, classes = len(target_counts), 5
+    layers: list[dict[str, Tensor]] = []
+    for _ in range(layer_count):
+        layer = {
+            "pred_logits": torch.randn(
+                batch_size,
+                queries,
+                classes,
+                device=device,
+                dtype=dtype,
+                generator=generator,
+                requires_grad=requires_grad,
+            ),
+            "pred_boxes": (
+                (torch.rand(batch_size, queries, 4, device=device, generator=generator) * 0.5 + 0.25).to(dtype)
+            ).requires_grad_(requires_grad),
+        }
+        if mask_side is not None:
+            layer["pred_masks"] = torch.randn(
+                batch_size, queries, mask_side, mask_side, device=device, dtype=dtype, generator=generator
+            ).requires_grad_(requires_grad)
+        layers.append(layer)
+    outputs = {**layers[0], "aux_outputs": layers[1:-1], "enc_outputs": layers[-1]}
+    targets: list[dict[str, Tensor]] = []
+    for count in target_counts:
+        target = {
+            "labels": torch.randint(0, classes, (count,), device=device, generator=generator),
+            "boxes": torch.rand(count, 4, device=device, generator=generator) * 0.5 + 0.25,
+        }
+        if mask_side is not None:
+            target["masks"] = torch.rand(count, mask_side, mask_side, device=device, generator=generator) > 0.5
+        targets.append(target)
+    return outputs, layers, targets
+
+
+class TestBatchedDetectionLosses:
+    """The default IA-BCE criterion batches equivalent work across output layers."""
+
+    def test_cpu_outputs_stay_on_the_per_layer_path_after_enabling(self) -> None:
+        """CPU outputs never batch: every other condition is stock, so only the device can decline."""
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
+        criterion.enable_compiled_detection_losses()
+        matched = [
+            criterion_module._MatchedTargets(
+                (torch.arange(2), torch.arange(2)),
+                torch.arange(2),
+                torch.rand(2, 4),
+            )
+            for _ in range(2)
+        ]
+        outputs = [{"pred_logits": torch.rand(1, 2, 5), "pred_boxes": torch.rand(1, 2, 4)} for _ in range(2)]
+
+        assert not criterion._can_batch_detection_losses(outputs, matched)
+
+    def test_cuda_batcher_compiles_lazily_once(self) -> None:
+        """CUDA resolves one cached dynamic compiler wrapper instead of recompiling each step."""
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
+        compiled = MagicMock(wraps=criterion_module._batched_detection_loss_tensors)
+
+        with patch.object(torch, "compile", return_value=compiled) as compile_mock:
+            first = criterion._resolve_batched_detection_losses(torch.device("cuda"))
+            second = criterion._resolve_batched_detection_losses(torch.device("cuda"))
+
+        assert first is compiled
+        assert second is compiled
+        compile_mock.assert_called_once_with(criterion_module._batched_detection_loss_tensors, dynamic=True)
+
+    def test_enabled_criterion_pickles_before_first_use(self) -> None:
+        """Spawn-based training pickles the criterion before any CUDA work, so the compiled wrapper stays lazy."""
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
+        criterion.enable_compiled_detection_losses()
+
+        restored = pickle.loads(pickle.dumps(criterion))
+
+        assert restored._compile_batched_detection_losses is True
+        assert restored._compiled_batched_detection_losses is None
+
+    def test_cpu_batcher_stays_eager(self) -> None:
+        """CPU compatibility never initializes Inductor for the CUDA-only fast path."""
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
+
+        with patch.object(torch, "compile") as compile_mock:
+            resolved = criterion._resolve_batched_detection_losses(torch.device("cpu"))
+
+        assert resolved is criterion_module._batched_detection_loss_tensors
+        compile_mock.assert_not_called()
+
+    @pytest.mark.parametrize("padded", [False, True])
+    @pytest.mark.parametrize("target_counts", [(3, 0, 7), (0, 0, 0)])
+    def test_losses_and_gradients_match_per_layer_fallback(
+        self, padded: bool, target_counts: tuple[int, int, int]
+    ) -> None:
+        """Batching preserves every diagnostic, optimized loss and output gradient, including padding masks."""
+        outputs, layers, targets = _layered_detection_batch(
+            target_counts, queries=24, layer_count=4, seed=903, requires_grad=True
+        )
+        if padded:
+            targets = list(pad_targets_to_fixed_count(targets, 8))
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
+
+        with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
+            fallback_losses = criterion(outputs, targets, num_boxes=1.0)
+        sum(fallback_losses.values()).backward()
+        fallback_gradients = [(layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in layers]
+        for layer in layers:
+            layer["pred_logits"].grad = None
+            layer["pred_boxes"].grad = None
+
+        with (
+            patch.object(criterion, "_can_batch_detection_losses", return_value=True),
+            patch.object(
+                criterion, "_get_batched_detection_losses", wraps=criterion._get_batched_detection_losses
+            ) as batched,
+            patch.object(
+                criterion_module.box_ops,
+                "elementwise_box_iou",
+                wraps=criterion_module.box_ops.elementwise_box_iou,
+            ) as box_iou,
+            patch.object(
+                criterion_module.box_ops,
+                "elementwise_generalized_box_iou",
+                wraps=criterion_module.box_ops.elementwise_generalized_box_iou,
+            ) as generalized_box_iou,
+        ):
+            batched_losses = criterion(outputs, targets, num_boxes=1.0)
+        batched.assert_called_once()
+        assert box_iou.call_count == 2  # one direct call plus generalized IoU's internal elementwise IoU
+        generalized_box_iou.assert_called_once()
+        sum(batched_losses.values()).backward()
+
+        assert fallback_losses.keys() == batched_losses.keys()
+        for key in fallback_losses:
+            assert torch.allclose(fallback_losses[key], batched_losses[key], rtol=1e-5, atol=1e-6), key
+        for layer, (logit_gradient, box_gradient) in zip(layers, fallback_gradients, strict=True):
+            assert torch.allclose(logit_gradient, layer["pred_logits"].grad, rtol=1e-5, atol=1e-6)
+            assert torch.allclose(box_gradient, layer["pred_boxes"].grad, rtol=1e-5, atol=1e-6)
+
+    @pytest.mark.parametrize("padded", [False, True])
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+    def test_low_precision_losses_keep_per_layer_dtype_and_values(self, dtype: torch.dtype, padded: bool) -> None:
+        """BF16/FP16 outputs return the per-layer path's dtypes, values and gradients, not low-precision quotients.
+
+        The per-layer path divides a 0-dim sum by ``num_boxes``, which promotes to float32; a per-layer vector of sums
+        divided by the same scalar would silently keep the BF16/FP16 dtype instead.
+        """
+        outputs, layers, targets = _layered_detection_batch(
+            (3, 0, 7), queries=24, layer_count=4, dtype=dtype, seed=905, requires_grad=True
+        )
+        if padded:
+            targets = list(pad_targets_to_fixed_count(targets, 8))
+        criterion = SetCriterion(
+            num_classes=5,
+            matcher=_MatcherStub(),
+            weight_dict={"loss_bbox": 5.0, "loss_giou": 2.0, "loss_ce": 1.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+            group_detr=1,
+            ia_bce_loss=True,
+        )
+
+        with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
+            fallback_losses = criterion(outputs, targets, num_boxes=10.0)
+        sum(fallback_losses[key] for key in fallback_losses if key.startswith("loss_")).backward()
+        fallback_gradients = [(layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in layers]
+        for layer in layers:
+            layer["pred_logits"].grad = None
+            layer["pred_boxes"].grad = None
+
+        with patch.object(criterion, "_can_batch_detection_losses", return_value=True):
+            batched_losses = criterion(outputs, targets, num_boxes=10.0)
+        sum(batched_losses[key] for key in batched_losses if key.startswith("loss_")).backward()
+
+        tolerance = 4 * torch.finfo(dtype).eps
+        assert fallback_losses.keys() == batched_losses.keys()
+        for key in fallback_losses:
+            assert batched_losses[key].dtype == fallback_losses[key].dtype, key
+            assert torch.allclose(batched_losses[key], fallback_losses[key], rtol=tolerance, atol=tolerance), key
+        for layer, (logit_gradient, box_gradient) in zip(layers, fallback_gradients, strict=True):
+            for actual, expected in (
+                (layer["pred_logits"].grad, logit_gradient),
+                (layer["pred_boxes"].grad, box_gradient),
+            ):
+                assert actual.dtype == expected.dtype
+                assert (actual.float() - expected.float()).abs().max() <= tolerance * expected.float().abs().max()
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize("target_counts", [(3, 0), (0, 0)])
+    def test_compiled_cuda_losses_and_gradients_match_fallback(self, target_counts: tuple[int, int]) -> None:
+        """The real lazy CUDA compilation preserves losses and gradients, including an empty batch."""
+        outputs, layers, targets = _layered_detection_batch(target_counts, device="cuda", requires_grad=True)
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
+
+        with patch.object(criterion, "_can_batch_detection_losses", return_value=False):
+            fallback_losses = criterion(outputs, targets, num_boxes=1.0)
+        sum(fallback_losses.values()).backward()
+        fallback_gradients = [(layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in layers]
+        for layer in layers:
+            layer["pred_logits"].grad = None
+            layer["pred_boxes"].grad = None
+
+        criterion.enable_compiled_detection_losses()
+        compiled_losses = criterion(outputs, targets, num_boxes=1.0)
+        sum(compiled_losses.values()).backward()
+
+        assert criterion._compiled_batched_detection_losses is not None, "the batched CUDA graph never ran"
+        assert fallback_losses.keys() == compiled_losses.keys()
+        for key in fallback_losses:
+            assert torch.allclose(fallback_losses[key], compiled_losses[key], rtol=1e-5, atol=1e-6), key
+        for layer, (logit_gradient, box_gradient) in zip(layers, fallback_gradients, strict=True):
+            assert torch.allclose(logit_gradient, layer["pred_logits"].grad, rtol=1e-5, atol=1e-6)
+            assert torch.allclose(box_gradient, layer["pred_boxes"].grad, rtol=1e-5, atol=1e-6)
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(), reason="BF16 CUDA not available"
+    )
+    @pytest.mark.parametrize("target_counts", [(3, 0), (0, 0)])
+    def test_compiled_cuda_bf16_autocast_matches_fallback(self, target_counts: tuple[int, int]) -> None:
+        """The compiled graph matches the per-layer path in the BF16 autocast regime training actually runs.
+
+        Under autocast the model emits BF16 logits and boxes while targets stay float32, so the loss dtypes, values and
+        gradients must follow the per-layer path with BF16 rounding tolerance.
+        """
+        outputs, layers, targets = _layered_detection_batch(
+            target_counts, device="cuda", dtype=torch.bfloat16, seed=906, requires_grad=True
+        )
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
+
+        with (
+            torch.autocast("cuda", dtype=torch.bfloat16),
+            patch.object(criterion, "_can_batch_detection_losses", return_value=False),
+        ):
+            fallback_losses = criterion(outputs, targets, num_boxes=10.0)
+        sum(value for key, value in fallback_losses.items() if key.startswith("loss_")).backward()
+        fallback_gradients = [(layer["pred_logits"].grad.clone(), layer["pred_boxes"].grad.clone()) for layer in layers]
+        for layer in layers:
+            layer["pred_logits"].grad = None
+            layer["pred_boxes"].grad = None
+
+        criterion.enable_compiled_detection_losses()
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            compiled_losses = criterion(outputs, targets, num_boxes=10.0)
+        sum(value for key, value in compiled_losses.items() if key.startswith("loss_")).backward()
+
+        assert criterion._compiled_batched_detection_losses is not None, "the batched CUDA graph never ran"
+        tolerance = 4 * torch.finfo(torch.bfloat16).eps
+        assert fallback_losses.keys() == compiled_losses.keys()
+        for key in fallback_losses:
+            assert compiled_losses[key].dtype == fallback_losses[key].dtype, key
+            assert torch.allclose(compiled_losses[key], fallback_losses[key], rtol=tolerance, atol=tolerance), key
+        for layer, (logit_gradient, box_gradient) in zip(layers, fallback_gradients, strict=True):
+            for actual, expected in (
+                (layer["pred_logits"].grad, logit_gradient),
+                (layer["pred_boxes"].grad, box_gradient),
+            ):
+                assert actual.dtype == expected.dtype
+                assert (actual.float() - expected.float()).abs().max() <= tolerance * expected.float().abs().max()
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize(
+        ("losses", "overrides", "enabled", "layer_count", "batched"),
+        [
+            pytest.param(["labels", "boxes", "cardinality"], {}, True, 3, True, id="stock-control"),
+            pytest.param(["labels", "boxes", "cardinality"], {}, False, 3, False, id="not-enabled-by-the-model"),
+            pytest.param(["labels", "boxes", "cardinality", "masks"], {}, True, 3, False, id="segmentation-masks"),
+            pytest.param(["labels", "boxes", "cardinality", "keypoints"], {}, True, 3, False, id="keypoints"),
+            pytest.param(["labels", "boxes"], {}, True, 3, False, id="no-cardinality-loss"),
+            pytest.param(["labels", "boxes", "cardinality"], {"ia_bce_loss": False}, True, 3, False, id="plain-focal"),
+            pytest.param(
+                ["labels", "boxes", "cardinality"],
+                {"ia_bce_loss": False, "use_varifocal_loss": True},
+                True,
+                3,
+                False,
+                id="varifocal",
+            ),
+            pytest.param(
+                ["labels", "boxes", "cardinality"],
+                {"ia_bce_loss": False, "use_position_supervised_loss": True},
+                True,
+                3,
+                False,
+                id="position-supervised",
+            ),
+            pytest.param(["labels", "boxes", "cardinality"], {}, True, 1, False, id="single-output-layer"),
+        ],
+    )
+    def test_guard_batches_only_the_stock_detection_configuration(
+        self, losses: list[str], overrides: dict[str, Any], enabled: bool, layer_count: int, batched: bool
+    ) -> None:
+        """Each non-stock configuration declines batching; the stock control proves the guard can admit it.
+
+        Every row differs from ``stock-control`` in exactly one guard condition, so a row only passes while that
+        condition is enforced. A declined criterion keeps its own loss code, so no configured loss is silently dropped.
+        """
+        criterion = _padding_criterion(losses=losses, **overrides).cuda()
+        if enabled:
+            criterion.enable_compiled_detection_losses()
+        matched = [
+            criterion_module._MatchedTargets(
+                (torch.arange(2, device="cuda"), torch.arange(2, device="cuda")),
+                torch.arange(2, device="cuda"),
+                torch.rand(2, 4, device="cuda"),
+            )
+            for _ in range(layer_count)
+        ]
+        outputs = [
+            {"pred_logits": torch.rand(1, 2, 5, device="cuda"), "pred_boxes": torch.rand(1, 2, 4, device="cuda")}
+            for _ in range(layer_count)
+        ]
+
+        assert criterion._can_batch_detection_losses(outputs, matched) is batched
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.parametrize(
+        ("queries", "logits_dtype", "boxes_dtype", "matches", "batched"),
+        [
+            pytest.param(2, torch.float32, torch.float32, 2, True, id="identical-layers-control"),
+            pytest.param(3, torch.float32, torch.float32, 2, False, id="query-count"),
+            pytest.param(2, torch.float16, torch.float32, 2, False, id="logits-dtype"),
+            pytest.param(2, torch.float32, torch.float16, 2, False, id="boxes-dtype"),
+            pytest.param(2, torch.float32, torch.float32, 3, False, id="matched-count"),
+        ],
+    )
+    def test_layers_that_disagree_keep_per_layer_path(
+        self, queries: int, logits_dtype: torch.dtype, boxes_dtype: torch.dtype, matches: int, batched: bool
+    ) -> None:
+        """A non-stock layer declines batching instead of failing in, or silently promoting through, ``torch.stack``.
+
+        The second output layer differs from the first in one property per row; the control row proves that identical
+        layers are admitted.
+        """
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
+        criterion.enable_compiled_detection_losses()
+        matched = [
+            criterion_module._MatchedTargets(
+                (torch.arange(count, device="cuda"), torch.arange(count, device="cuda")),
+                torch.arange(count, device="cuda"),
+                torch.rand(count, 4, device="cuda"),
+            )
+            for count in (2, matches)
+        ]
+        outputs = [
+            {"pred_logits": torch.rand(1, 2, 5, device="cuda"), "pred_boxes": torch.rand(1, 2, 4, device="cuda")},
+            {
+                "pred_logits": torch.rand(1, queries, 5, device="cuda", dtype=logits_dtype),
+                "pred_boxes": torch.rand(1, queries, 4, device="cuda", dtype=boxes_dtype),
+            },
+        ]
+
+        assert criterion._can_batch_detection_losses(outputs, matched) is batched
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_segmentation_losses_survive_enabled_batching(self) -> None:
+        """A segmentation criterion on CUDA still returns its mask losses for every layer once batching is enabled."""
+        outputs, _, targets = _layered_detection_batch((3, 2), device="cuda", mask_side=8)
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality", "masks"]).cuda()
+        criterion.enable_compiled_detection_losses()
+
+        losses = criterion(outputs, targets, num_boxes=1.0)
+
+        expected = {
+            f"{name}{suffix}"
+            for name in ("loss_ce", "loss_bbox", "loss_giou", "loss_mask_ce", "loss_mask_dice")
+            for suffix in ("", "_0", "_enc")
+        }
+        assert expected <= losses.keys()
+        assert criterion._compiled_batched_detection_losses is None, "the segmentation criterion was batched"
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_criterion_subclass_keeps_its_own_box_loss(self) -> None:
+        """An overridden loss on a ``SetCriterion`` subclass is not answered by the batched base implementation."""
+        sentinel = torch.tensor(123.0, device="cuda")
+        custom_class = type(
+            "_CustomCriterion",
+            (SetCriterion,),
+            {"loss_boxes": lambda self, *args, **kwargs: {"loss_bbox": sentinel, "loss_giou": sentinel}},
+        )
+        criterion = custom_class(
+            num_classes=5,
+            matcher=HungarianMatcher(),
+            weight_dict={"loss_bbox": 5.0, "loss_giou": 2.0, "loss_ce": 1.0},
+            focal_alpha=0.25,
+            losses=["labels", "boxes", "cardinality"],
+            group_detr=1,
+            ia_bce_loss=True,
+        ).cuda()
+        criterion.enable_compiled_detection_losses()
+        outputs, _, targets = _layered_detection_batch((3, 2), device="cuda")
+
+        losses = criterion(outputs, targets, num_boxes=1.0)
+
+        for suffix in ("", "_0", "_enc"):
+            assert losses[f"loss_bbox{suffix}"] is sentinel
+            assert losses[f"loss_giou{suffix}"] is sentinel
+        assert criterion._compiled_batched_detection_losses is None, "the subclass was batched"
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_compiled_graph_is_reused_across_matched_pair_counts(self) -> None:
+        """After warm-up, batches with another number of matched pairs must not recompile the loss graph.
+
+        The matched-pair count changes on every batch of a real run. ``dynamic=True`` keeps one graph for every count of
+        two or more (Dynamo specializes 0 and 1, which are deliberately outside this stream); a static compile would
+        rebuild the graph for each new count, which ``error_on_recompile`` turns into a failure. The stream is one
+        stateful compiled wrapper, so it is a single scenario rather than parametrized cases.
+        """
+        torch._dynamo.reset()
+        torch._dynamo.utils.counters.clear()
+        criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
+        criterion.enable_compiled_detection_losses()
+        batches = []
+        for counts in [(3, 4), (5, 2), (1, 1), (6, 5), (2, 3)]:  # matched pairs per layer: 7, 7, 2, 11, 5
+            outputs, _, targets = _layered_detection_batch(counts, device="cuda", requires_grad=True)
+            batches.append((outputs, targets))
+
+        for index, (outputs, targets) in enumerate(batches):
+            with torch._dynamo.config.patch(error_on_recompile=index > 0):
+                losses = criterion(outputs, targets, num_boxes=1.0)
+                sum(losses.values()).backward()
+
+        assert criterion._compiled_batched_detection_losses is not None, "the batched CUDA graph never ran"
+        # Without ``fullgraph=True`` a graph break would silently split the graph instead of raising.
+        assert torch._dynamo.utils.counters["stats"]["unique_graphs"] == 1
+        assert not torch._dynamo.utils.counters["graph_break"]
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    def test_compiled_loss_falls_back_to_eager_past_the_recompile_limit(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exhausting Dynamo's recompile cache degrades to the eager function instead of aborting the run.
+
+        Validation drives the same wrapper under ``inference_mode`` and with partial batches, and matched-pair counts of
+        0 and 1 each specialize their own graph, so a long run can accumulate more guard sets than the recompile limit.
+        ``fullgraph=True`` turns that into ``FailOnRecompileLimitHit``; the default calls the numerically identical
+        eager function, as the matcher's compiled L1 cost does. A limit of two makes the third guard set (no matched
+        pairs) the overflow: Dynamo reports the limit for that call alone and compiles no third graph, and the result
+        still matches the per-layer path, which never uses the compiled function and is the oracle. The four calls share
+        one stateful compiled wrapper and one recompile budget, so they are a single scenario rather than parametrized
+        cases.
+        """
+        # Dynamo's loggers set propagate=False, so caplog's root-level handler only sees them while it is re-enabled.
+        monkeypatch.setattr(logging.getLogger("torch"), "propagate", True)
+        monkeypatch.setattr(logging.getLogger("torch._dynamo"), "propagate", True)
+        caplog.set_level(logging.WARNING, logger="torch._dynamo")
+        torch._dynamo.reset()
+        torch._dynamo.utils.counters.clear()
+        batched = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
+        batched.enable_compiled_detection_losses()
+        reference = _padding_criterion(losses=["labels", "boxes", "cardinality"]).cuda()
+        # Matched pairs per layer: generic, one, none (the overflow), generic again (reuses the first graph).
+        for counts, overflows in [((3, 4), False), ((1, 0), False), ((0, 0), True), ((2, 5), False)]:
+            outputs, _, targets = _layered_detection_batch(counts, device="cuda")
+
+            caplog.clear()
+            with torch._dynamo.config.patch(cache_size_limit=2):
+                losses = batched(outputs, targets, num_boxes=1.0)
+            limit_reports = [record.getMessage() for record in caplog.records if "hit config." in record.getMessage()]
+            assert bool(limit_reports) == overflows, (counts, limit_reports)
+            if overflows:
+                assert "_batched_detection_loss_tensors" in limit_reports[0], limit_reports
+
+            expected = reference(outputs, targets, num_boxes=1.0)
+            assert losses.keys() == expected.keys()
+            for key in expected:
+                assert torch.allclose(losses[key], expected[key], rtol=1e-4, atol=1e-6), (counts, key)
+        assert batched._compiled_batched_detection_losses is not None, "the batched CUDA graph never ran"
+        # Two guard sets fit under the limit; the overflow ran the eager function instead of compiling a third graph.
+        assert torch._dynamo.utils.counters["stats"]["unique_graphs"] == 2
 
 
 class TestPaddedTargets:
