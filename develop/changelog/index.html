@@ -1545,6 +1545,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../exports/coreai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2689,6 +2717,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><code>RFDETR.export(format="coreai")</code> writes an Apple Core AI <code>.aimodel</code> for iOS, iPadOS and macOS 27 through <code>torch.export</code> and <code>coreai-torch</code>, installed with the new <code>[coreai]</code> extra, with <code>coreai_precision="float16"</code> for a half-size asset and <code>notes</code> stored in the asset metadata. Detection, segmentation and keypoint models match eager PyTorch within 1e-4 on the CPU in the new <code>e2e_coreai</code> suite, which runs on GitHub's macOS 27 (<code>xcode-27</code>) runner. The export decomposes <code>aten.grid_sampler_2d</code>, which <code>coreai-torch</code> cannot lower, and runs float16 two-stage <code>topk</code> in float32 because the Neural Engine returns corrupt float16 <code>topk</code> indices.</p>
+</li>
 <li>
 <p><code>RFDETR.export(format="tensorrt", dynamic_batch=True, max_batch_size=N)</code> now builds one engine that accepts any batch from 1 to <code>N</code>. The intermediate ONNX graph already carried a dynamic batch axis; the engine was refused only because no TensorRT optimization profile was passed to the build, so it accepted the traced batch alone. The exporter now reads every dynamic input off the parsed network and hands polygraphy a profile with <code>min=1</code>, <code>opt=batch_size</code> (the existing export keyword, so the traced batch is also the batch TensorRT tunes its kernels for) and <code>max=max_batch_size</code>; <code>max_batch_size</code> is required with <code>dynamic_batch</code> on this format and a <code>batch_size</code> above it is rejected before any work. A static export keeps the exact build call it made before. <code>TRTInference</code>, the reference runtime behind <code>rfdetr.export.benchmark</code>, allocates a dynamic engine's bindings at the profile's maximum batch, declares the real input shape per call and trims the outputs to it instead of raising <code>NotImplementedError</code> on a <code>-1</code> dimension; its async path moves from <code>execute_async_v2</code>, which TensorRT 11 removed, to <code>set_tensor_address</code> + <code>execute_async_v3</code>. Correctness on an RTX 4090 (TensorRT 11.3, polygraphy 0.53, FP32, randomly initialised RF-DETR Nano): one engine built with <code>batch_size=2, max_batch_size=4</code> matches eager PyTorch at batch 1, 3 and 4 within the same <code>1e-2</code> bound the static engine test uses, four distinct images run as one batch equal the same images run alone through the same engine to better than <code>1e-4</code>, a batch of 5 is refused, and <code>TRTInference</code> agrees with polygraphy's runner on the same engine. Latency on the same GPU, FP16, median of 5x100 runs measured with <code>TRTInference</code> in sync mode and CUDA events, one dynamic engine (<code>opt=4, max=8</code>) against a static engine built per batch: RF-DETR Nano at 384 px, static 0.88 / 1.49 / 2.25 ms at batch 1 / 4 / 8 versus dynamic 1.30 / 1.52 / 2.60 ms; RF-DETR Medium at 576 px, static 1.31 / 2.66 / 4.67 ms versus dynamic 1.70 / 2.69 / 5.06 ms. On a Colab Tesla T4 (TensorRT 10.16, torch 2.11) the same script gives Nano static 3.15 / 9.99 / 20.68 ms versus dynamic 3.54 / 10.51 / 20.99 ms and Medium static 6.15 / 25.13 / 50.60 ms versus dynamic 7.37 / 24.97 / 53.59 ms. On the 4090, at the profile's <code>opt</code> batch the dynamic engine is within ~2% of the static one; on the T4, up to ~5%. At the other batch sizes it pays 1-48% for serving them from one file, which is the trade for not building an engine per batch size. Documented in <code>docs/learn/export.md</code>. (<a href="https://github.com/roboflow/rf-detr/issues/376">#376</a>)</p>
 </li>
