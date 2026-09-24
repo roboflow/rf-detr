@@ -12,6 +12,7 @@ import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 
+from rfdetr.models.heads import segmentation as segmentation_module
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead, point_sample
 from rfdetr.utilities.tensors import _nearest_grid_sample
 
@@ -264,6 +265,75 @@ def test_depthwise_conv_block_layer_scale(layer_scale_init_value: float) -> None
     if layer_scale_init_value > 0:
         assert block.gamma is not None
         assert block.gamma.grad is not None
+
+
+class TestCudnnDepthwiseGate:
+    """The issue #731 workaround is limited to the GPUs where cuDNN depthwise selection fails."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_gate_cache(self) -> None:
+        segmentation_module._cudnn_depthwise_is_safe.cache_clear()
+        yield
+        segmentation_module._cudnn_depthwise_is_safe.cache_clear()
+
+    @pytest.mark.parametrize(
+        ("capability", "expected"), [((6, 0), False), ((7, 5), False), ((8, 0), True), ((12, 0), True)]
+    )
+    def test_auto_decides_by_compute_capability(
+        self, monkeypatch: pytest.MonkeyPatch, capability: tuple[int, int], expected: bool
+    ) -> None:
+        """Pre-Ampere devices (P100, T4) keep the workaround; Ampere and newer use cuDNN."""
+        monkeypatch.delenv("RFDETR_DEPTHWISE_CUDNN", raising=False)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _index: capability)
+
+        assert segmentation_module._cudnn_depthwise_is_safe(0) is expected
+
+    @pytest.mark.parametrize(("value", "expected"), [("1", True), ("0", False), (" AUTO ", True)])
+    def test_environment_overrides_detection(self, monkeypatch: pytest.MonkeyPatch, value: str, expected: bool) -> None:
+        """``RFDETR_DEPTHWISE_CUDNN`` forces either route regardless of the device."""
+        monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", value)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda _index: (8, 6))
+
+        assert segmentation_module._cudnn_depthwise_is_safe(0) is expected
+
+    def test_invalid_environment_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A typo in the override fails loudly instead of silently picking a route."""
+        monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", "yes")
+
+        with pytest.raises(ValueError, match="RFDETR_DEPTHWISE_CUDNN"):
+            segmentation_module._cudnn_depthwise_is_safe(0)
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+    def test_cudnn_route_matches_workaround(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Both routes compute the same forward output and gradients."""
+        block = DepthwiseConvBlock(dim=16).cuda()
+        x = torch.randn(1, 16, 24, 24, device="cuda")
+        results = {}
+        for mode in ("0", "1"):
+            segmentation_module._cudnn_depthwise_is_safe.cache_clear()
+            monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", mode)
+            block.zero_grad()
+            inputs = x.clone().requires_grad_()
+            out = block(inputs)
+            out.square().sum().backward()
+            results[mode] = (out.detach(), inputs.grad, block.dwconv.weight.grad.clone())
+
+        for workaround, cudnn in zip(results["0"], results["1"]):
+            torch.testing.assert_close(cudnn, workaround, rtol=1e-4, atol=1e-4)
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+    def test_cudnn_route_skips_the_workaround(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With cuDNN allowed, the depthwise conv runs as the plain module, without toggling cuDNN."""
+        monkeypatch.setenv("RFDETR_DEPTHWISE_CUDNN", "1")
+        workaround = mock.MagicMock(wraps=segmentation_module._DepthwiseConvWithoutCuDNN.apply)
+        monkeypatch.setattr(segmentation_module._DepthwiseConvWithoutCuDNN, "apply", workaround)
+        block = DepthwiseConvBlock(dim=8).cuda()
+
+        block(torch.randn(1, 8, 4, 4, device="cuda"))
+
+        workaround.assert_not_called()
 
 
 class TestSegmentationHeadSkipBlocksAppliesProjection:

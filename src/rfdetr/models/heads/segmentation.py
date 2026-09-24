@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import functools
+import os
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -140,6 +142,40 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         return grad_input, grad_weight, grad_bias, None, None, None, None
 
 
+_DEPTHWISE_CUDNN_ENV = "RFDETR_DEPTHWISE_CUDNN"
+
+
+@functools.lru_cache(maxsize=None)
+def _cudnn_depthwise_is_safe(device_index: int) -> bool:
+    """Whether the depthwise conv may run through cuDNN on a CUDA device.
+
+    The cuDNN engine-selection failure behind issue #731 was reported on T4 and P100 (compute capability 7.5 and 6.0).
+    Routing every GPU around cuDNN is expensive at segmentation resolution: the fallback kernels are slow and the
+    backward upcasts to fp32, which at 1104 px input makes this block the largest single cost of a training step. The
+    workaround is therefore kept for pre-Ampere devices only (capability < 8.0), where the failure was seen.
+
+    ``RFDETR_DEPTHWISE_CUDNN`` overrides the detection: ``1`` always uses cuDNN, ``0`` always uses the workaround, and
+    ``auto`` (the default) decides by compute capability.
+
+    Args:
+        device_index: CUDA device index.
+
+    Returns:
+        ``True`` when the plain cuDNN convolution should be used.
+
+    Raises:
+        ValueError: If ``RFDETR_DEPTHWISE_CUDNN`` is not ``auto``, ``1`` or ``0``.
+    """
+    mode = os.environ.get(_DEPTHWISE_CUDNN_ENV, "auto").strip().lower()
+    if mode == "1":
+        return True
+    if mode == "0":
+        return False
+    if mode != "auto":
+        raise ValueError(f"{_DEPTHWISE_CUDNN_ENV} must be 'auto', '1' or '0', got {mode!r}")
+    return torch.cuda.get_device_capability(device_index) >= (8, 0)
+
+
 class DepthwiseConvBlock(nn.Module):
     r"""Simplified ConvNeXt block without the MLP subnet."""
 
@@ -156,6 +192,8 @@ class DepthwiseConvBlock(nn.Module):
         )
 
     def _depthwise_conv(self, x: Tensor) -> Tensor:
+        if x.is_cuda and _cudnn_depthwise_is_safe(x.device.index if x.device.index is not None else 0):
+            return cast(Tensor, self.dwconv(x))
         # Custom autograd Function so cuDNN is disabled in both forward AND
         # backward.  A plain context-manager only covers forward; the backward
         # for nn.Conv2d runs outside that scope and re-enables cuDNN,
