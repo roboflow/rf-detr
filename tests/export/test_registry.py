@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from rfdetr.export import registry as registry_module
+from rfdetr.export._coreai.exporter import CoreAIConfig
 from rfdetr.export._coreml.exporter import CoreMLConfig
 from rfdetr.export._executorch.exporter import ExecuTorchExporter
 from rfdetr.export._litert.exporter import LiteRTConfig
@@ -158,6 +159,7 @@ class TestBuildConfig:
             pytest.param("onnx", OnnxConfig, id="onnx"),
             pytest.param("openvino", OpenVINOConfig, id="openvino"),
             pytest.param("coreml", CoreMLConfig, id="coreml"),
+            pytest.param("coreai", CoreAIConfig, id="coreai"),
             pytest.param("tflite", TFLiteConfig, id="tflite"),
             pytest.param("tensorrt", TensorRTConfig, id="tensorrt"),
             pytest.param("litert", LiteRTConfig, id="litert"),
@@ -188,6 +190,7 @@ class TestBuildConfig:
             pytest.param("onnx", {"opset_version": 18}, "opset_version", 18, id="onnx_opset"),
             pytest.param("openvino", {"openvino_precision": "float32"}, "precision", "float32", id="openvino"),
             pytest.param("coreml", {"coreml_precision": "float16"}, "compute_precision", "float16", id="coreml"),
+            pytest.param("coreai", {"coreai_precision": "float16"}, "precision", "float16", id="coreai"),
             pytest.param("tflite", {"quantization": "int8"}, "quantization", "int8", id="tflite"),
             pytest.param("tensorrt", {"fp16": False}, "fp16", False, id="tensorrt"),
         ],

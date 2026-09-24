@@ -5,11 +5,11 @@
 # ------------------------------------------------------------------------
 """Which exporter class implements which export format, and how to reach it without importing the others.
 
-Every format except ONNX sits behind an optional dependency — ``executorch``, ``coremltools``, ``openvino``,
-``onnx2tf``/``tensorflow``, ``tensorrt``, ``litert_torch`` — and none of them may be imported by ``import rfdetr``. The
-registry is therefore *data*: a format maps to the dotted path of its exporter class, and only :func:`resolve_exporter`
-imports it. Adding a format is one entry here plus the module it names, which owns both the exporter class and the
-configuration dataclass it is built from.
+Every format except ONNX sits behind an optional dependency — ``executorch``, ``coremltools``, ``coreai-torch``,
+``openvino``, ``onnx2tf``/``tensorflow``, ``tensorrt``, ``litert_torch`` — and none of them may be imported by ``import
+rfdetr``. The registry is therefore *data*: a format maps to the dotted path of its exporter class, and only
+:func:`resolve_exporter` imports it. Adding a format is one entry here plus the module it names, which owns both the
+exporter class and the configuration dataclass it is built from.
 """
 
 from __future__ import annotations
@@ -95,6 +95,13 @@ REGISTRY: Mapping[str, ExporterEntry] = {
             " Export one .mlpackage per batch size instead."
         ),
     ),
+    "coreai": ExporterEntry(
+        "rfdetr.export._coreai.exporter",
+        "CoreAIExporter",
+        "coreai",
+        "Core AI",
+        dynamic_batch_reason="(the asset bakes a fixed input shape). Export one .aimodel per batch size instead.",
+    ),
     "openvino": ExporterEntry(
         "rfdetr.export._openvino.exporter",
         "OpenVINOExporter",
@@ -150,7 +157,7 @@ def resolve_exporter(format: str) -> type[Exporter[Any]]:
         >>> resolve_exporter("onnx").format
         'onnx'
         >>> sorted(REGISTRY)
-        ['coreml', 'executorch', 'litert', 'onnx', 'openvino', 'tensorrt', 'tflite']
+        ['coreai', 'coreml', 'executorch', 'litert', 'onnx', 'openvino', 'tensorrt', 'tflite']
         >>> resolve_exporter("nonesuch")  # doctest: +IGNORE_EXCEPTION_DETAIL
         Traceback (most recent call last):
         ...

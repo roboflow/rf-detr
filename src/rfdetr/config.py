@@ -519,8 +519,14 @@ class ModelConfig(BaseConfig):
         compile: Compile the model and matcher L1 box cost with ``torch.compile`` on CUDA.
             Under BF16/FP16 AMP the compiled cost serves the decoder (and auxiliary) layers;
             encoder-stage matching stays on the eager ``torch.cdist`` path because its predicted
-            boxes are emitted in the reduced precision while targets stay float32. Target
-            packing, assignment, and remaining losses stay eager. Defaults to ``False``.
+            boxes are emitted in the reduced precision while targets stay float32. For detection
+            models with ``TrainConfig.multi_scale=False`` (and the defaults
+            ``TrainConfig.square_resize_div_64=True`` and ``cuda_graphs=False``) the model is compiled
+            for the fixed training batch shape (a validation batch of another shape, such as a partial
+            final batch or a different ``TrainConfig.eval_batch_size``, recompiles once) and the default
+            IA-BCE detection losses run layer-batched in one compiled function. Target packing and
+            assignment stay eager, and every other configuration, including segmentation and keypoint
+            models, keeps its dynamic model compile and eager per-layer losses. Defaults to ``False``.
         cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
             graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
             sizes it matches eager and ``compile`` is the better lever. Combined with

@@ -44,6 +44,76 @@ _MIN_DIRECT_MASK_ELEMENTS_PER_POINT = 16
 _MIN_DIRECT_MATCHES_PER_GROUP = 2
 
 
+def _batched_detection_loss_tensors(
+    logits: Tensor,
+    boxes: Tensor,
+    batch_indices: Tensor,
+    source_indices: Tensor,
+    target_labels: Tensor,
+    target_boxes: Tensor,
+    valid_mask: Tensor,
+    target_lengths: Tensor,
+    num_boxes: Tensor,
+    focal_alpha: float,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Compute layer-batched IA-BCE classification, box, GIoU, and cardinality losses.
+
+    This tensor-only boundary is suitable for one dynamic-shape ``torch.compile`` function; Python target dictionaries,
+    matcher results, suffix bookkeeping, and diagnostics stay outside it.
+
+    Args:
+        logits: Layer-major class logits with shape ``(layers, batch, queries, classes)``.
+        boxes: Layer-major boxes with shape ``(layers, batch, queries, 4)``.
+        batch_indices: Matched batch indices with shape ``(layers, matches)``.
+        source_indices: Matched query indices with shape ``(layers, matches)``.
+        target_labels: Matched class labels with shape ``(layers, matches)``.
+        target_boxes: Matched target boxes with shape ``(layers, matches, 4)``.
+        valid_mask: Float mask with shape ``(layers, matches)``; all ones for unpadded targets.
+        target_lengths: Number of real targets in each batch item.
+        num_boxes: Shared loss-normalization denominator.
+        focal_alpha: IA-BCE interpolation exponent.
+
+    Returns:
+        Per-layer classification, L1 box, GIoU, and cardinality losses.
+    """
+    layer_indices = torch.arange(logits.shape[0], device=logits.device)[:, None]
+    selected_boxes = boxes[layer_indices, batch_indices, source_indices]
+    flat_selected_xyxy = box_ops.box_cxcywh_to_xyxy(selected_boxes.reshape(-1, 4))
+    flat_target_xyxy = box_ops.box_cxcywh_to_xyxy(target_boxes.reshape(-1, 4))
+    iou_targets, _ = box_ops.elementwise_box_iou(flat_selected_xyxy.detach(), flat_target_xyxy)
+    iou_targets = iou_targets.reshape(selected_boxes.shape[:2]).detach()
+
+    probability = logits.sigmoid()
+    positive_weights = torch.zeros_like(logits)
+    negative_weights = probability.square()
+    positive_indices = (layer_indices, batch_indices, source_indices, target_labels)
+    target_scores = torch.clamp(
+        probability[positive_indices].pow(focal_alpha) * iou_targets.pow(1 - focal_alpha), 0.01
+    ).detach()
+    positive_weights[positive_indices] = (target_scores * valid_mask).to(positive_weights.dtype)
+    negative_weights[positive_indices] = torch.where(
+        valid_mask.bool(),
+        (1 - target_scores).to(negative_weights.dtype),
+        negative_weights[positive_indices],
+    )
+    # The per-layer path divides a 0-dim sum by the 0-dim ``num_boxes``, so a BF16/FP16 sum promotes to float32.
+    # Dividing a per-layer vector by a 0-dim tensor would keep the low-precision dtype, so ``num_boxes`` becomes
+    # a vector too.
+    num_boxes = num_boxes.reshape(1)
+    classification = negative_weights * logits - F.logsigmoid(logits) * (positive_weights + negative_weights)
+    loss_ce = classification.sum(dim=(1, 2, 3)) / num_boxes
+
+    loss_bbox_values = F.l1_loss(selected_boxes, target_boxes, reduction="none") * valid_mask[:, :, None]
+    loss_giou_values = 1 - box_ops.elementwise_generalized_box_iou(flat_selected_xyxy, flat_target_xyxy)
+    loss_giou_values = loss_giou_values.reshape(selected_boxes.shape[:2]) * valid_mask
+    loss_bbox = loss_bbox_values.sum(dim=(1, 2)) / num_boxes
+    loss_giou = loss_giou_values.sum(dim=1) / num_boxes
+
+    cardinality = (probability.max(-1).values > 0.5).sum(2)
+    cardinality_error = (cardinality.float() - target_lengths.float()).abs().mean(1)
+    return loss_ce, loss_bbox, loss_giou, cardinality_error
+
+
 def _sample_target_masks_at_points(
     targets: list[dict[str, Tensor]],
     indices: list[tuple[Tensor, Tensor]],
@@ -457,6 +527,8 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.num_keypoints_per_class = num_keypoints_per_class or []
+        self._compile_batched_detection_losses = False
+        self._compiled_batched_detection_losses: Callable[..., tuple[Tensor, Tensor, Tensor, Tensor]] | None = None
 
     @staticmethod
     def _output_device(outputs: dict[str, Any]) -> torch.device:
@@ -993,6 +1065,147 @@ class SetCriterion(nn.Module):
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
+    def _can_batch_detection_losses(
+        self,
+        matched_outputs: list[dict[str, Any]],
+        matched_targets: list[_MatchedTargets],
+    ) -> bool:
+        """Return whether the stock IA-BCE detection losses can share one layer-batched execution.
+
+        Args:
+            matched_outputs: Final, auxiliary, and encoder output dictionaries.
+            matched_targets: Target tensors already gathered for each output layer.
+
+        Returns:
+            Whether every layer satisfies the stock detection fast path's shape, dtype, and ownership constraints.
+        """
+        if (
+            type(self) is not SetCriterion
+            or not getattr(self, "_compile_batched_detection_losses", False)
+            or not getattr(self, "ia_bce_loss", False)
+            or getattr(self, "losses", []) != ["labels", "boxes", "cardinality"]
+            or len(matched_outputs) < 2
+            or len(matched_targets) != len(matched_outputs)
+        ):
+            return False
+        logits = matched_outputs[0].get("pred_logits")
+        boxes = matched_outputs[0].get("pred_boxes")
+        if (
+            not isinstance(logits, Tensor)
+            or not isinstance(boxes, Tensor)
+            or logits.device.type != "cuda"
+            or boxes.device.type != "cuda"
+        ):
+            return False
+        matched_shape = matched_targets[0].labels.shape
+        return all(
+            isinstance(layer.get("pred_logits"), Tensor)
+            and isinstance(layer.get("pred_boxes"), Tensor)
+            and layer["pred_logits"].shape == logits.shape
+            and layer["pred_logits"].dtype == logits.dtype
+            and layer["pred_logits"].device == logits.device
+            and layer["pred_boxes"].shape == boxes.shape
+            and layer["pred_boxes"].dtype == boxes.dtype
+            and layer["pred_boxes"].device == boxes.device
+            and targets.labels.shape == matched_shape
+            for layer, targets in zip(matched_outputs, matched_targets, strict=True)
+        )
+
+    def _get_batched_detection_losses(
+        self,
+        matched_outputs: list[dict[str, Any]],
+        targets: list[dict[str, Tensor]],
+        all_indices: list[list[tuple[Tensor, Tensor]]],
+        matched_targets: list[_MatchedTargets],
+        num_boxes: Tensor,
+    ) -> list[dict[str, Tensor]]:
+        """Evaluate the default IA-BCE detection losses across output layers in one set of kernels.
+
+        Args:
+            matched_outputs: Shape-compatible final, auxiliary, and encoder outputs.
+            targets: Per-image target dictionaries shared by every output layer.
+            all_indices: Per-layer matcher results in the same order as ``matched_outputs``.
+            matched_targets: Per-layer target tensors gathered from ``all_indices``.
+            num_boxes: Shared normalization denominator for every layer.
+
+        Returns:
+            One unsuffixed loss dictionary per output layer. The caller adds the layer suffixes.
+        """
+        logits = torch.stack([layer["pred_logits"] for layer in matched_outputs])
+        boxes = torch.stack([layer["pred_boxes"] for layer in matched_outputs])
+        batch_indices = torch.stack([matched.source_indices[0] for matched in matched_targets])
+        source_indices = torch.stack([matched.source_indices[1] for matched in matched_targets])
+        target_labels = torch.stack([matched.labels for matched in matched_targets])
+        target_boxes = torch.stack([matched.boxes for matched in matched_targets])
+        valid_masks = [self._matched_valid_mask(targets, indices) for indices in all_indices]
+        if valid_masks[0] is None:
+            stacked_valid_mask = torch.ones_like(target_labels, dtype=boxes.dtype)
+        else:
+            stacked_valid_mask = torch.stack([mask for mask in valid_masks if mask is not None])
+        if targets and "valid" in targets[0]:
+            target_lengths = torch.stack([target["valid"].sum() for target in targets]).to(device=logits.device)
+        else:
+            target_lengths = torch.as_tensor([len(target["labels"]) for target in targets], device=logits.device)
+        loss_tensor_fn = self._resolve_batched_detection_losses(logits.device)
+        loss_ce, loss_bbox, loss_giou, cardinality_error = loss_tensor_fn(
+            logits,
+            boxes,
+            batch_indices,
+            source_indices,
+            target_labels,
+            target_boxes,
+            stacked_valid_mask,
+            target_lengths,
+            num_boxes,
+            self.focal_alpha,
+        )
+
+        layer_losses = []
+        for layer_index, (layer_outputs, matched) in enumerate(zip(matched_outputs, matched_targets, strict=True)):
+            losses = {
+                "loss_ce": loss_ce[layer_index],
+                "loss_bbox": loss_bbox[layer_index],
+                "loss_giou": loss_giou[layer_index],
+                "cardinality_error": cardinality_error[layer_index],
+            }
+            if layer_index == 0:
+                valid_mask = valid_masks[0]
+                if valid_mask is None:
+                    losses["class_error"] = (
+                        100 - accuracy(layer_outputs["pred_logits"][matched.source_indices], matched.labels)[0]
+                    )
+                else:
+                    correct = (
+                        layer_outputs["pred_logits"][matched.source_indices].argmax(dim=-1) == matched.labels
+                    ).to(valid_mask.dtype)
+                    losses["class_error"] = 100 - 100 * (correct * valid_mask).sum() / valid_mask.sum().clamp(min=1)
+            layer_losses.append(losses)
+        return layer_losses
+
+    def enable_compiled_detection_losses(self) -> None:
+        """Enable the CUDA layer-batched loss graph for a compiled model."""
+        self._compile_batched_detection_losses = True
+
+    def _resolve_batched_detection_losses(
+        self, device: torch.device
+    ) -> Callable[..., tuple[Tensor, Tensor, Tensor, Tensor]]:
+        """Return the eager tensor kernel off CUDA and a lazily compiled function on CUDA.
+
+        Args:
+            device: Device holding the stacked output layers.
+
+        Returns:
+            The eager tensor function, or its cached dynamic-shape Inductor wrapper on CUDA.
+        """
+        if device.type != "cuda":
+            return _batched_detection_loss_tensors
+        if self._compiled_batched_detection_losses is None:
+            # Deliberately not ``fullgraph=True``, like the matcher's compiled L1 cost: matched-pair counts of 0 and 1,
+            # batch size 1, and validation under ``inference_mode`` each add a guard set, and past Dynamo's recompile
+            # limit ``fullgraph=True`` raises ``FailOnRecompileLimitHit`` where the default runs the eager function.
+            self._compiled_batched_detection_losses = torch.compile(_batched_detection_loss_tensors, dynamic=True)
+        return self._compiled_batched_detection_losses
+
     def get_loss(
         self,
         loss: str,
@@ -1132,13 +1345,26 @@ class SetCriterion(nn.Module):
         else:
             num_boxes = num_boxes.to(device=self._output_device(outputs), dtype=torch.float)
 
-        losses = {}
-        for suffix, layer_outputs, indices in zip(layer_suffixes, matched_outputs, all_indices, strict=True):
-            # Labels and boxes are both requested by every detection configuration, so build their
-            # shared matched tensors once per output layer before either loss consumes them.
-            matched_targets = (
-                self._get_matched_targets(targets, indices) if {"labels", "boxes"} <= set(self.losses) else None
+        # Labels and boxes are both requested by every detection configuration, so build their
+        # shared matched tensors once per output layer before either loss consumes them.
+        has_detection_targets = {"labels", "boxes"} <= set(self.losses)
+        matched_targets_by_layer = (
+            [self._get_matched_targets(targets, indices) for indices in all_indices] if has_detection_targets else []
+        )
+        if self._can_batch_detection_losses(matched_outputs, matched_targets_by_layer):
+            batched_losses = self._get_batched_detection_losses(
+                matched_outputs, targets, all_indices, matched_targets_by_layer, num_boxes
             )
+            losses = {}
+            for suffix, layer_losses in zip(layer_suffixes, batched_losses, strict=True):
+                losses.update({key + suffix: value for key, value in layer_losses.items()})
+            return losses
+
+        losses = {}
+        for layer_index, (suffix, layer_outputs, indices) in enumerate(
+            zip(layer_suffixes, matched_outputs, all_indices, strict=True)
+        ):
+            matched_targets = matched_targets_by_layer[layer_index] if has_detection_targets else None
             for loss in self.losses:
                 # Only the final layer carries an empty suffix, so a non-empty one marks the
                 # auxiliary and encoder layers whose classification stats are not logged.

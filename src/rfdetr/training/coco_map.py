@@ -591,18 +591,13 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         return result
 
     def _vernier_results(self, classes: list[int]) -> dict[str, Tensor]:
-        """Return aggregate and compact per-class metrics from vernier's native evaluator, one grid per IoU type.
+        """Evaluate on vernier's native grid, one per IoU type, keyed for TorchMetrics.
 
-        Both sides go over as arrays for boxes, labels and scores, so neither builds a Python dict per annotation
-        for those fields the way ``compute()`` does at validation scale, and a two-IoU-type run parses its ground
-        truth once rather than once per grid. Under ``segm`` each mask still carries one RLE dictionary per
-        annotation, since that is how vernier's API takes them. The evaluated datasets stay the ones the other
-        backends see: TorchMetrics' COCO format, detection areas following its per-IoU-type switch.
+        ``vernier.adapters.coco_inputs_from_columns`` builds the inputs from
+        :meth:`_vernier_columns`, once for the whole call, reusing the already concatenated stored state.
 
-        The ``corrected`` parity mode of :data:`_VERNIER_PARITY_MODE` reads ``map`` at the largest ``maxDets`` as
-        the other backends do, where ``strict`` reports pycocotools' ``-1`` whenever 100 is not among the limits --
-        which at RF-DETR's default ``eval_max_dets`` it is not. ``retain_meta`` and ``retain_iou`` stay at their
-        default ``False``: nothing here reads that metadata, and at validation scale it is millions of allocations.
+        ``iou_thresholds`` / ``rec_thresholds`` are forwarded because TorchMetrics builds them with
+        ``torch.linspace`` in ``float32``, unlike vernier.
 
         Args:
             classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
@@ -610,19 +605,35 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         Returns:
             TorchMetrics-compatible aggregate metrics and per-class AP/AR vectors, without ``classes``.
         """
-        instance = _vernier().instance
-        ground_truth = self._vernier_ground_truth(classes) if self.groundtruth_labels else None
-        detection_columns = self._vernier_detection_columns() if ground_truth is not None else None
+        vernier = _vernier()
+        # Built once, not once per IoU type: the records do not depend on which
+        # grid reads them, and at validation scale rebuilding them is the most
+        # expensive thing on this path.
+        inputs = None
+        if self.groundtruth_labels:
+            detection_columns, target_columns = self._vernier_columns()
+            # Built once for the whole run: the inputs do not name a kernel, so
+            # one set serves both passes of a bbox+segm run.
+            inputs = vernier.adapters.coco_inputs_from_columns(
+                detection_columns,
+                target_columns,
+                box_format="xywh",
+                categories=classes,
+                area="auto",
+            )
         result: dict[str, Tensor] = {}
         for iou_type in self.iou_type:
             prefix = "" if len(self.iou_type) == 1 else f"{iou_type}_"
-            if ground_truth is None or detection_columns is None:
+            if inputs is None:
                 result.update(self._empty_iou_type_results(prefix, classes))
                 continue
-            evaluate_grid = instance.evaluate_bbox_grid if iou_type == "bbox" else instance.evaluate_segm_grid
+            ground_truth, detections = inputs
+            evaluate_grid = (
+                vernier.instance.evaluate_bbox_grid if iou_type == "bbox" else vernier.instance.evaluate_segm_grid
+            )
             grid = evaluate_grid(
                 ground_truth,
-                self._vernier_detections(iou_type, *detection_columns),
+                detections,
                 parity_mode=_VERNIER_PARITY_MODE,
                 max_dets_per_image=self.max_detection_thresholds[-1],
                 use_cats=True,
@@ -645,186 +656,41 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             result.update(self._reduce_per_class(evaluation, prefix, classes))
         return result
 
-    def _vernier_ground_truth(self, classes: list[int]) -> Any:
-        """Return the stored ground truth as a vernier ``CocoDataset`` built from columns, with no JSON in between.
+    def _vernier_columns(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return the stored state as the whole columns ``coco_inputs_from_columns`` reads.
 
-        This is the document TorchMetrics' ``_get_coco_format`` produces, without one Python dictionary per
-        annotation: ``CocoDataset.from_arrays`` converges on the same constructor the JSON loader ends at, so the
-        dataset is identical rather than equivalent, which
-        ``test_vernier_columnar_ground_truth_is_the_same_document`` pins by ``dataset_hash``.
+        ``rles`` is written only if ``segm`` is in ``self.iou_type``.
 
-        The columns reproduce those semantics vectorized. Four rules are easy to get wrong:
-
-        * *every* image gets an entry, even with no annotations -- upstream skips one only when it has neither masks
-          nor boxes -- and annotation IDs start at 1, since COCOeval results are wrong from 0;
-        * ``area`` falls back per element (hence :func:`torch.where`), to the mask's area or the box's as upstream's
-          switch on the whole ``iou_type`` dictates;
-        * ``iscrowd`` stays ``int64``: vernier reads any non-zero value as a crowd, and ``uint8`` would wrap 256 to 0
-          and evaluate that annotation as a normal one;
-        * image sizes resolve as :func:`vernier.adapters.with_mask_image_sizes` resolves them -- the image's own
-          first mask, else the size its detections carry, else the ``0x0`` nothing reads.
-
-        Args:
-            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+        Columns are handed over at their stored dtype; vernier widens them at its own ingest boundary,
+        including the ``bfloat16`` an autocast run holds (needs ``vernier>=0.5.3``).
 
         Returns:
-            The ground truth as a parsed ``vernier.CocoDataset`` handle.
+            The detection columns and the target columns.
         """
-        counts = torch.tensor([len(image_labels) for image_labels in self.groundtruth_labels])
-        n_images = len(self.groundtruth_labels)
-        total = int(counts.sum())
-
-        if total:
-            # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
-            # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
-            # another image. `.reshape(-1, 4)` is a no-op on an already-`(N, 4)` tensor and turns a `(1, 0)` one
-            # back into `(0, 4)` before the concatenation.
-            boxes = torch.cat([image_boxes.reshape(-1, 4) for image_boxes in self.groundtruth_box]).double()
-            raw_labels = torch.cat(self.groundtruth_labels)
-            self._validate_integral_labels(raw_labels)
-            labels = raw_labels.long()
-        else:
-            boxes = torch.zeros((0, 4), dtype=torch.float64)
-            labels = torch.zeros((0,), dtype=torch.int64)
-
-        # Upstream falls back to a computed area only where the supplied one is not positive, element by element.
-        masked = "segm" in self.iou_type
-        rles: list[dict[str, Any]] | None = None
-        if masked:
-            rles = [{"size": size, "counts": rle} for image in self.groundtruth_mask for size, rle in image]
-            mask_utils = cast(Any, self._coco_backend.mask_utils)
-            computed = torch.from_numpy(np.asarray(mask_utils.area(rles), dtype=np.float64))
-        else:
-            computed = boxes[:, 2] * boxes[:, 3]
-        # `update()` appends to both for every label it appends, defaulting to zeros, so neither can be absent here.
-        supplied = torch.cat(self.groundtruth_area).double()
-        area = torch.where(supplied > 0, supplied, computed)
-        crowds = torch.cat(self.groundtruth_crowds).to(torch.int64)
-
-        if masked:
-            detection_sizes = self._vernier_detection_image_sizes()
-            sizes = np.array(
-                [
-                    image_masks[0][0] if len(image_masks) > 0 else detection_sizes.get(image_id, (0, 0))
-                    for image_id, image_masks in enumerate(self.groundtruth_mask)
-                ],
-                dtype=np.int64,
-            )
-        else:
-            sizes = np.zeros((n_images, 2), dtype=np.int64)
-
-        images = {
-            "id": np.arange(n_images, dtype=np.int64),
-            "height": sizes[:, 0].copy(),
-            "width": sizes[:, 1].copy(),
+        detection_columns: dict[str, Any] = {
+            # `_fix_empty_tensors` reshapes an empty per-image box tensor to `(1, 0)` rather than `(0, 4)` to
+            # avoid a DDP all-reduce hang, which `torch.cat` rejects against a `(N, 4)` tensor from another
+            # image and whose `len()` would miscount that image as holding one detection.
+            "boxes": torch.cat([image.reshape(-1, 4) for image in self.detection_box]),
+            "scores": torch.cat(self.detection_scores),
+            "labels": torch.cat(self.detection_labels),
+            "counts": torch.tensor([len(image) for image in self.detection_scores]),
         }
-        annotations: dict[str, Any] = {
-            "id": torch.arange(1, total + 1, dtype=torch.int64).numpy(),
-            "image_id": torch.repeat_interleave(torch.arange(n_images, dtype=torch.int64), counts).numpy(),
-            "category_id": labels.numpy(),
-            "bbox": boxes.contiguous().numpy(),
-            "area": area.numpy(),
-            "iscrowd": crowds.numpy(),
+        target_columns: dict[str, Any] = {
+            "boxes": torch.cat([image.reshape(-1, 4) for image in self.groundtruth_box]),
+            "labels": torch.cat(self.groundtruth_labels),
+            "iscrowd": torch.cat(self.groundtruth_crowds),
+            "area": torch.cat(self.groundtruth_area),
+            "counts": torch.tensor([len(image) for image in self.groundtruth_labels]),
         }
-        if masked:
-            annotations["segmentation"] = rles
-        categories = [{"id": int(label), "name": str(int(label))} for label in classes]
-        return _vernier().instance.CocoDataset.from_arrays(images, annotations, categories)
-
-    def _vernier_detection_image_sizes(self) -> dict[int, tuple[int, int]]:
-        """Return the image sizes the *detection* side knows, for the images the ground truth cannot size.
-
-        vernier checks every detection RLE against its image's size, so the first detection mask on an image is the
-        only size consistent with the masks about to be evaluated on it. An image with neither a ground-truth nor a
-        detected mask is absent here and sized ``0x0``: nothing reads it.
-
-        Returns:
-            ``{image_id: (height, width)}`` over the images with at least one detected mask.
-        """
-        return {
-            image_id: tuple(image_masks[0][0])
-            for image_id, image_masks in enumerate(self.detection_mask)
-            if len(image_masks) > 0
-        }
-
-    def _vernier_detection_columns(
-        self,
-    ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-        """Return every stored detection's boxes, scores and labels as one set of arrays, converted once.
-
-        Both ingest routes :meth:`_vernier_detections` takes -- the ``(N, 7)`` matrix ``bbox`` needs and the
-        per-image columnar slices ``segm`` needs -- read the same validated, concatenated arrays, so a
-        two-IoU-type evaluation converts each stored tensor once instead of once per IoU type.
-
-        Returns:
-            Boxes, scores and class labels concatenated in stored-state order across every detection, and each
-            image's ``[start, end)`` row bounds into them (``n_images + 1`` entries).
-
-        Raises:
-            ValueError: If stored detection scores are not one-dimensional floating-point tensors, or any label
-                is floating-point with a non-integral value.
-        """
-        self._validate_detection_scores()
-        # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
-        # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
-        # another image. `.reshape(-1, 4)` is a no-op on an already-`(N, 4)` tensor and turns a `(1, 0)` one
-        # back into `(0, 4)` before the concatenation; `bounds` below is sliced from `detection_scores`, which
-        # `_fix_empty_tensors` never touches, so it needs no such reshape.
-        boxes = torch.cat([image_boxes.reshape(-1, 4) for image_boxes in self.detection_box]).double().numpy()
-        scores = torch.cat(self.detection_scores).double().numpy()
-        raw_labels = torch.cat(self.detection_labels)
-        self._validate_integral_labels(raw_labels)
-        labels = raw_labels.long().numpy()
-        bounds = np.cumsum([0, *(len(image_scores) for image_scores in self.detection_scores)])
-        return boxes, scores, labels, bounds
-
-    def _vernier_detections(
-        self,
-        iou_type: str,
-        boxes: np.ndarray[Any, Any],
-        scores: np.ndarray[Any, Any],
-        labels: np.ndarray[Any, Any],
-        bounds: np.ndarray[Any, Any],
-    ) -> Any:
-        """Return the stored detections on the fastest vernier ingest route that can express them.
-
-        vernier takes detections three ways and the fastest differs per IoU type. ``bbox`` takes the ``(N, 7)``
-        matrix, the only route that hands the whole state over without a Python object per detection; what it
-        cannot express is exactly what this pass does not use -- a segmentation, an explicit annotation ``id``, a
-        supplied ``area`` (the grid derives it, ``dt_area="bbox"``).
-
-        ``segm`` takes the columnar route, per-image slices of the same once-converted columns: the only route
-        that carries a mask *and* keeps the arrays whole. The third, a list of COCO result dicts, costs more
-        per-detection Python than the whole rest of the ingest.
-
-        Args:
-            iou_type: The IoU type the detections are evaluated under.
-            boxes: Every detection's box, from :meth:`_vernier_detection_columns`.
-            scores: Every detection's score, from :meth:`_vernier_detection_columns`.
-            labels: Every detection's class label, from :meth:`_vernier_detection_columns`.
-            bounds: Each image's ``[start, end)`` row bounds into the arrays above, from
-                :meth:`_vernier_detection_columns`.
-
-        Returns:
-            The ``(N, 7)`` detection matrix under ``bbox``, or one ``vernier.instance.Detections`` mapping per image
-            under ``segm``.
-        """
-        if iou_type == "bbox":
-            # `column_stack` lays the seven columns -- image_id, x, y, width, height, score, category_id -- into
-            # one fresh, C-contiguous float64 buffer, matching `_detection_results_array`'s matrix layout, which
-            # vernier's matrix route requires of the caller rather than copying silently.
-            image_ids = np.repeat(np.arange(len(bounds) - 1), np.diff(bounds))
-            return np.column_stack([image_ids, boxes, scores, labels]).astype(np.float64)
-        return [
-            {
-                "image_id": image_id,
-                "boxes": boxes[start:end],
-                "scores": scores[start:end],
-                "labels": labels[start:end],
-                "rles": [{"size": size, "counts": counts} for size, counts in self.detection_mask[image_id]],
-            }
-            for image_id, (start, end) in enumerate(zip(bounds, bounds[1:]))
-        ]
+        if "segm" in self.iou_type:
+            detection_columns["rles"] = [
+                {"size": size, "counts": counts} for image in self.detection_mask for size, counts in image
+            ]
+            target_columns["rles"] = [
+                {"size": size, "counts": counts} for image in self.groundtruth_mask for size, counts in image
+            ]
+        return detection_columns, target_columns
 
     def _coco_datasets(self, classes: list[int]) -> tuple[Any, Any, dict[str, Any] | None]:
         """Return the COCO prediction and target datasets, hoisting prediction scores out of the annotation loop.
@@ -992,26 +858,6 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 raise ValueError(
                     f"Invalid input score of sample {image_id} (expected floating point, got {image_scores.dtype})"
                 )
-
-    @staticmethod
-    def _validate_integral_labels(labels: Tensor) -> None:
-        """Reject fractional class labels before a ``.long()`` cast that would otherwise silently truncate them.
-
-        Only a floating-point tensor is checked: an integer dtype cannot hold a fractional value, and
-        :meth:`Tensor.floor` is undefined for it. An empty floating-point tensor passes through untouched, since
-        :func:`torch.equal` on two empty tensors of the same shape is ``True``.
-
-        Args:
-            labels: The whole label tensor gathered across every image, still in its original dtype.
-
-        Raises:
-            ValueError: If ``labels`` is floating-point and holds a non-integral value.
-        """
-        if torch.is_floating_point(labels) and not torch.equal(labels, labels.floor()):
-            raise ValueError(
-                "OnePassCocoMeanAveragePrecision requires integral class labels for vernier, got fractional "
-                f"values in dtype {labels.dtype}"
-            )
 
     def _build_coco(self, dataset: dict[str, Any]) -> Any:
         """Return an indexed backend COCO dataset for a TorchMetrics COCO-format dictionary.

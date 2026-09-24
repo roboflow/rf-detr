@@ -144,6 +144,7 @@ class _CheckWindows(Callback):
             (self.output_dir / f"rank-{trainer.global_rank}.json").write_text(json.dumps(self.observations))
 
 
+@pytest.mark.ddp
 @pytest.mark.parametrize("accumulation", [1, 2, 4])
 def test_keypoint_ddp_reduces_only_at_window_boundaries(tmp_path: Path, accumulation: int) -> None:
     """Real Lightning backward must suppress intermediate reductions and flush a final partial window."""

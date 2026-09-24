@@ -1705,12 +1705,13 @@ class RFDETR:
         max_batch_size: int | None = None,
         notes: object = None,
         coreml_precision: str | None = None,
+        coreai_precision: str | None = None,
         openvino_precision: str | None = None,
         output_name: str | None = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
-        See the `export documentation <https://rfdetr.roboflow.com/learn/export/>`_ for more information.
+        See the `export documentation <https://rfdetr.roboflow.com/exports/>`_ for more information.
 
         Args:
             output_dir: Directory to write the exported model to.
@@ -1744,7 +1745,7 @@ class RFDETR:
                 patch size. Shape divisibility is validated against
                 ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``),
-                ``"executorch"`` (alias: ``"pte"``), ``"coreml"``, ``"openvino"`` or ``"litert"``.
+                ``"executorch"`` (alias: ``"pte"``), ``"coreml"``, ``"coreai"``, ``"openvino"`` or ``"litert"``.
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX,
                 then convert: ``"tflite"`` via ``onnx2tf`` (requires
                 ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the
@@ -1778,6 +1779,9 @@ class RFDETR:
                 Detection, segmentation and keypoint models all have registry-clean and numerical-parity
                 test coverage for this format (see ``tests/export/test_coreml_op_coverage.py`` /
                 ``test_coreml_export.py``).
+                When ``"coreai"`` is selected the model is exported via ``torch.export`` + ``coreai-torch`` to an
+                Apple Core AI ``.aimodel`` (requires ``pip install rfdetr[coreai]``; the asset runs on iOS,
+                iPadOS and macOS 27 or later).
 
                 .. warning::
                     TFLite, ExecuTorch, CoreML, and LiteRT export are experimental
@@ -1846,6 +1850,9 @@ class RFDETR:
                 ``"float32"`` selects FP32 (tight CPU parity with eager
                 PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
+            coreai_precision: Precision the graph is traced and stored in for ``format="coreai"`` — ``None``
+                (default) or ``"float32"``, or ``"float16"`` for a half-size asset whose input and outputs are
+                float16 too. Ignored for every other format.
             openvino_precision: ``"float32"``, ``"float16"``, or ``None`` (default) for ``format="openvino"``
                 — ``None`` keeps OpenVINO's own ``compress_to_fp16=True`` default; ``"float32"`` disables
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
@@ -1870,7 +1877,7 @@ class RFDETR:
 
         Returns:
             Path to the exported model file (``.onnx``, ``.tflite`` for both TFLite and LiteRT, ``.trt``,
-            ``.pte``, ``.mlpackage`` or ``.xml`` for OpenVINO).
+            ``.pte``, ``.mlpackage``, ``.aimodel`` or ``.xml`` for OpenVINO).
 
         Raises:
             ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
@@ -1930,6 +1937,7 @@ class RFDETR:
             soc=soc,
             fp16=fp16,
             coreml_precision=coreml_precision,
+            coreai_precision=coreai_precision,
             openvino_precision=openvino_precision,
             quantization=quantization,
             calibration_data=calibration_data,

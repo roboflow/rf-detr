@@ -258,5 +258,5 @@ print(metrics["test/mAP_50_95"])
 
 After training your model, you can:
 
-- [Export your model to ONNX](../export.md) for deployment with various inference frameworks
+- [Export your model to ONNX](../../exports/index.md) for deployment with various inference frameworks
 - [Deploy to Roboflow](../deploy.md) for cloud-based inference and workflow integration

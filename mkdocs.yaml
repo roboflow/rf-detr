@@ -48,8 +48,17 @@ nav:
           - Augmentations: learn/train/augmentations.md
           - Training Loggers: learn/train/loggers.md
       - Export Model:
-          - Overview: learn/export.md
-          - Exporter Blueprint: learn/export-blueprint.md
+          - Overview: exports/index.md
+          - Export Formats:
+              - ONNX: exports/onnx.md
+              - TensorRT: exports/tensorrt.md
+              - TFLite: exports/tflite.md
+              - LiteRT: exports/litert.md
+              - OpenVINO: exports/openvino.md
+              - ExecuTorch: exports/executorch.md
+              - CoreML: exports/coreml.md
+              - Core AI: exports/coreai.md
+          - Exporter Blueprint: exports/blueprint.md
       - Deploy Model: learn/deploy.md
       - Benchmarks: learn/benchmarks.md
   - API Reference:
@@ -120,6 +129,10 @@ theme:
 
 plugins:
   - search
+  - redirects:
+      redirect_maps:
+        learn/export.md: exports/index.md
+        learn/export-blueprint.md: exports/blueprint.md
   - mkdocs-jupyter:
       kernel_name: python3
       execute: false

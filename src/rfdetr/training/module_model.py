@@ -447,15 +447,17 @@ class RFDETRModelModule(LightningModule):
                 accelerator,
             )
         if compile_enabled:
-            # dynamic=True: one compiled graph handles all multi-scale input sizes instead
-            # of recompiling per (H, W) pair. Positional interpolation has its own eager
-            # boundary for unsupported symbolic bicubic backward. Do not suppress other
-            # compiler errors: nested retries can flood logs and conceal lost acceleration.
-            # capture_scalar_outputs=True: include Tensor.item() calls
-            # (gen_encoder_output_proposals / ms_deform_attn use spatial-shape .item()
-            # as Python slice indices). Safe with dynamic=True because item() results
-            # are backed symbols derived from input shapes — not unbacked symbols that
-            # would cause PendingUnbackedSymbolNotFound (which only occurs without dynamic).
+            # Dynamic shapes let one graph handle all multi-scale input sizes instead of
+            # recompiling per (H, W) pair. Fixed-resolution training uses a static graph so
+            # Inductor can specialize dimensions that stay fixed across training batches
+            # (a validation batch of another shape recompiles once). Positional
+            # interpolation has its own eager boundary for unsupported symbolic bicubic backward.
+            # Do not suppress other compiler errors: nested retries can flood logs and conceal
+            # lost acceleration.
+            # capture_scalar_outputs=True: include Tensor.item() calls. The per-level spatial
+            # shapes reach gen_encoder_output_proposals and ms_deform_attn as Python ints
+            # (spatial_shapes_hw), which are symbols under dynamic tracing and constants in a
+            # static specialization.
             torch._dynamo.config.capture_scalar_outputs = True
             # Inductor's coalesce tiling analysis is unsupported on the dynamic-shape path
             # (torch/_inductor/config.py: "coalesce_tiling_analysis does not yet apply to
@@ -505,8 +507,23 @@ class RFDETRModelModule(LightningModule):
                 logger.info("Matcher L1 compilation enabled (dynamic shapes, no CUDA graphs; kernels compile on use).")
             # OptimizedModule forwards attribute access to the wrapped LWDETR via
             # __getattr__ at runtime, so self.model keeps working everywhere it's used below.
+            # Static specialization is measured only for the ordinary fixed-resolution detection compile path.
+            # Aspect-preserving resize (square_resize_div_64=False) pads each batch to its own (H, W),
+            # Inductor CUDA graphs keep their established recipe, and segmentation and keypoint models
+            # were not measured, so all of them stay on the dynamic compile.
+            dynamic_shapes = (
+                train_config.multi_scale is not MultiScale.OFF
+                or not train_config.square_resize_div_64
+                or bool(train_config.aug_config)
+                or model_config.cuda_graphs
+                or model_config.segmentation_head
+                or model_config.use_grouppose_keypoints
+            )
+            enable_compiled_losses = getattr(self.criterion, "enable_compiled_detection_losses", None)
+            if enable_compiled_losses is not None and not dynamic_shapes:
+                enable_compiled_losses()
             self.model = torch.compile(  # type: ignore[assignment]
-                self.model, dynamic=True, options=compile_options or None
+                self.model, dynamic=dynamic_shapes, options=compile_options or None
             )
             self._compile_active = True
 

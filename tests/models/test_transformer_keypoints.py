@@ -7,10 +7,17 @@
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 from torch import nn
 
-from rfdetr.models.transformer import Transformer, TransformerDecoder, TransformerDecoderLayer, build_transformer
+from rfdetr.models.transformer import (
+    Transformer,
+    TransformerDecoder,
+    TransformerDecoderLayer,
+    _additive_attn_mask,
+    build_transformer,
+)
 
 
 def _build_transformer_inputs(
@@ -132,6 +139,36 @@ def test_build_transformer_defaults_inter_instance_keypoint_attention_to_config_
     assert isinstance(decoder_layer, TransformerDecoderLayer)
     assert decoder_layer.enable_keypoint_processing
     assert not decoder_layer.inter_instance_kp_attn
+
+
+def _cross_class_mask() -> torch.Tensor:
+    """Return the keypoint class mask for a ``[3, 2]`` schema.
+
+    Token 0 is the instance; tokens 1-3 and 4-5 are the two keypoint classes.
+
+    Examples:
+        >>> mask = _cross_class_mask()
+        >>> mask.shape, int(mask.sum())
+        (torch.Size([6, 6]), 12)
+    """
+    blocked = torch.zeros(6, 6, dtype=torch.bool)
+    blocked[1:4, 4:] = True
+    blocked[4:, 1:4] = True
+    return blocked
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [pytest.param(_cross_class_mask(), id="cross_class"), pytest.param(torch.zeros(6, 6, dtype=torch.bool), id="none")],
+)
+def test_additive_attn_mask_matches_boolean_mask_in_multihead_attention(mask: torch.Tensor) -> None:
+    """The float mask handed to ``nn.MultiheadAttention`` must give exactly what its boolean form gives."""
+    torch.manual_seed(0)
+    attention = nn.MultiheadAttention(16, 4, batch_first=True).eval()
+    x = torch.randn(3, 6, 16)
+    expected = attention(x, x, x, attn_mask=mask, need_weights=False)[0]
+    actual = attention(x, x, x, attn_mask=_additive_attn_mask(mask, x.dtype), need_weights=False)[0]
+    assert torch.equal(actual, expected)
 
 
 def test_keypoint_class_mask_person_only() -> None:

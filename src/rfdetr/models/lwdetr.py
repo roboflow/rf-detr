@@ -631,6 +631,15 @@ class LWDETR(nn.Module):
         return out
 
     def forward_export(self, tensors: Tensor) -> tuple[Tensor, ...]:
+        """Run the export graph on a plain image batch.
+
+        Args:
+            tensors: Normalized images of shape ``(B, 3, H, W)``.
+
+        Returns:
+            ``(boxes, logits)`` for detection, ``(boxes, logits, masks)`` for segmentation, or
+            ``(boxes, logits, keypoints)`` for keypoint models.
+        """
         srcs, _, poss, cross_attn_srcs = self.backbone(tensors)
         # only use one group in inference
         refpoint_embed_weight = self.refpoint_embed.weight[: self.num_queries]
@@ -667,9 +676,15 @@ class LWDETR(nn.Module):
                 if keypoint_hs is None:
                     raise ValueError("use_grouppose_keypoints=True requires keypoint_hs from transformer outputs.")
                 outputs_keypoints_delta = self.keypoint_embed(keypoint_hs)
-                ref_wh = ref_unsigmoid[..., 2:].unsqueeze(-2)
-                ref_xy = ref_unsigmoid[..., :2].unsqueeze(-2)
-                keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy
+                # Same math as ``forward``'s ``delta_xy * ref_wh.unsqueeze(-2) + ref_xy.unsqueeze(-2)``, but on the
+                # flattened ``(..., K * 2)`` layout: onnx2tf mis-transposes the rank-4 broadcast over the keypoint
+                # axis and the TFLite conversion fails (#1514). ``repeat`` with a full-rank argument, not ``tile``: the
+                # ONNX lowering of ``tile`` adds ``If`` nodes that onnxsim cannot simplify.
+                delta_xy = outputs_keypoints_delta[..., :2]
+                repeats = (*([1] * (ref_unsigmoid.dim() - 1)), delta_xy.shape[-2])
+                ref_wh = ref_unsigmoid[..., 2:].repeat(repeats)
+                ref_xy = ref_unsigmoid[..., :2].repeat(repeats)
+                keypoints_xy = (delta_xy.flatten(-2) * ref_wh + ref_xy).view(delta_xy.shape)
                 keypoints_other = outputs_keypoints_delta[..., 2:]
                 outputs_keypoints = torch.cat([keypoints_xy, keypoints_other], dim=-1)
                 if outputs_keypoints.dim() == 5:
