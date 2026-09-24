@@ -431,10 +431,10 @@ RF-DETR computes validation and test mAP through a pluggable COCO evaluator, sel
 
 | `eval_backend`        | Notes                                                                                                                                                                                          |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"vernier"` (default) | Fastest measured backend, several times faster than `"faster_coco_eval"`. Requires a box on every annotation — an `iou_type` without `"bbox"` is rejected at construction, not at `compute()`. |
-| `"hotcoco"`           | Rust evaluator, several times faster than `"faster_coco_eval"`.                                                                                                                                |
-| `"ufcoco"`            | [ultrafast-pycocotools](https://github.com/developer0hye/ultrafast-pycocotools) — reproduces pycocotools' precision/recall/score arrays byte for byte, at Rust speed.                          |
-| `"faster_coco_eval"`  | The previous default evaluator. Slowest of the four; kept as the parity baseline the other three are tested against.                                                                           |
+| `"vernier"` (default) | [vernier](https://pypi.org/project/vernier/) — fastest measured backend, several times faster than `"faster_coco_eval"`. Requires a box on every annotation — an `iou_type` without `"bbox"` is rejected at construction, not at `compute()`. |
+| `"hotcoco"`           | [hotcoco](https://pypi.org/project/hotcoco/) — Rust evaluator, several times faster than `"faster_coco_eval"`.                                                                                 |
+| `"ufcoco"`            | [ultrafast-pycocotools](https://pypi.org/project/ultrafast-pycocotools/) — reproduces pycocotools' precision/recall/score arrays byte for byte, at Rust speed.                                 |
+| `"faster_coco_eval"`  | [faster-coco-eval](https://pypi.org/project/faster-coco-eval/) — the previous default evaluator. Slowest of the four; kept as the parity baseline the other three are tested against.            |
 
 ```python
 model.train(dataset_dir="path/to/dataset", eval_backend="hotcoco")
