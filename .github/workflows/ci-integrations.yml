@@ -173,6 +173,64 @@ jobs:
         continue-on-error: true
         run: uv cache prune --ci
 
+  coreai-parity:
+    name: Core AI parity
+    # Running an .aimodel needs the Core AI runtime of macOS 27. GitHub's Xcode 27 image is the only hosted runner
+    # on macOS 27 (arm64 only, public preview), so this job inherits that image's availability: it gates merges
+    # through export-priority-guardian, and a preview-queue outage blocks them with it.
+    # It gates because the unit tests in test_coreai_export.py pin the decomposition table itself but not its
+    # effect on a device: only this job exercises the Neural Engine float16 topk corruption and the GPU/NE
+    # compute-unit behaviour the two decompositions exist for. Removing it, or either table entry, needs a
+    # re-measurement on real hardware rather than a green CPU suite.
+    runs-on: xcode-27
+    concurrency:
+      group: pytest-coreai-${{ matrix.python-version }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # coreai-torch requires Python >= 3.11 and coreai-core ships cp311-cp313 wheels, so 3.11 and 3.13 bracket
+        # the range the [coreai] extra installs on.
+        python-version: ["3.11", "3.13"]
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: ${{ matrix.python-version }}
+          activate-environment: true
+
+      - name: 🚀 Install Packages (coreai extra)
+        timeout-minutes: 8
+        run: uv pip install -e ".[coreai,train,augment,cli,visual]" --group tests
+
+      - name: 🔎 Verify the Core AI runtime
+        # Guard against a silently-skipped parity test: TestCoreAIEndToEnd skips without coreai-torch or the macOS 27
+        # runtime, so a broken wheel or an older image would turn the job green instead of red.
+        run: |
+          import coreai.runtime as rt
+
+          from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
+
+          assert _IS_COREAI_TORCH_AVAILABLE, "coreai-torch installed but not detected as available"
+          print("Core AI compute units:", rt.ComputeUnitKind.available_kinds())
+        shell: python
+
+      - name: 🧪 Run Core AI end-to-end parity tests
+        run: |
+          uv run --no-sync pytest tests/export/test_coreai_export.py \
+            -m e2e_coreai -n 1 \
+            --timeout=600 \
+            --durations=20
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
   executorch-coreml-parity:
     name: ExecuTorch CoreML parity
     # The CoreML delegate lowers through coremltools and runs through Core ML itself, so unlike the
@@ -568,6 +626,7 @@ jobs:
         executorch-parity,
         executorch-coreml-parity,
         coreml-parity,
+        coreai-parity,
         openvino-parity,
         tensorrt-parity,
         litert-parity,
@@ -580,6 +639,7 @@ jobs:
           echo "executorch-parity:        ${{ needs.executorch-parity.result }}"
           echo "executorch-coreml-parity: ${{ needs.executorch-coreml-parity.result }}"
           echo "coreml-parity:            ${{ needs.coreml-parity.result }}"
+          echo "coreai-parity:            ${{ needs.coreai-parity.result }}"
           echo "openvino-parity:          ${{ needs.openvino-parity.result }}"
           echo "tensorrt-parity:          ${{ needs.tensorrt-parity.result }}"
           echo "litert-parity:            ${{ needs.litert-parity.result }}"
@@ -591,6 +651,7 @@ jobs:
           needs.executorch-parity.result != 'success' ||
           needs.executorch-coreml-parity.result != 'success' ||
           needs.coreml-parity.result != 'success' ||
+          needs.coreai-parity.result != 'success' ||
           needs.openvino-parity.result != 'success' ||
           needs.tensorrt-parity.result != 'success' ||
           needs.litert-parity.result != 'success' ||
@@ -599,4 +660,4 @@ jobs:
           echo "One or more export jobs did not succeed; failing explicitly."
           exit 1
       - name: ✅ all export jobs succeeded
-        run: echo "All export jobs (executorch, executorch-coreml, coreml, openvino, tensorrt, litert parity, onnxruntime session) completed successfully."
+        run: echo "All export jobs (executorch, executorch-coreml, coreml, coreai, openvino, tensorrt, litert parity, onnxruntime session) completed successfully."
