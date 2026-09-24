@@ -6,8 +6,11 @@
 """ATen decompositions RF-DETR needs on top of ``coreai_torch.get_decomp_table()``.
 
 RF-DETR's deformable attention samples its value maps with :func:`torch.nn.functional.grid_sample`, which exports as
-``aten.grid_sampler_2d``. coreai-torch has no lowering for that op, so :func:`grid_sampler_2d_gather` decomposes it
-into floor, clamp, one flat ``gather`` per bilinear corner, and a weighted sum — ops every Core AI compute unit runs.
+the rank-agnostic ``aten.grid_sampler``; a base decomposition table is what rewrites that into the 4-D
+``aten.grid_sampler_2d``. coreai-torch lowers neither, so :func:`grid_sampler_2d_gather` is registered for both — its
+5-argument signature is the one both ops take, and RF-DETR only ever samples 4-D inputs — and decomposes them into
+floor, clamp, one flat ``gather`` per bilinear corner, and a weighted sum: ops every Core AI compute unit runs.
+Registering both keeps the table self-sufficient, whichever form the base table leaves behind.
 
 The in-bounds masks are computed with float arithmetic on integer-valued coordinates instead of the usual
 ``(x >= 0) & (x < W)`` comparison chain: the Core AI runtime can overwrite an unrelated, still-live tensor when such a
@@ -58,10 +61,11 @@ def grid_sampler_2d_gather(
     padding_mode: int = _ZEROS,
     align_corners: bool = False,
 ) -> Tensor:
-    """Bilinear ``aten.grid_sampler_2d`` built from gathers, for converters that cannot lower the op itself.
+    """Bilinear grid sampling built from gathers, for converters that cannot lower the op itself.
 
     Matches ``F.grid_sample(input, grid, mode="bilinear", padding_mode=..., align_corners=...)`` for the
-    ``"zeros"`` and ``"border"`` padding modes, the only ones RF-DETR uses.
+    ``"zeros"`` and ``"border"`` padding modes, the only ones RF-DETR uses. It stands in for ``aten.grid_sampler_2d``
+    and for the rank-agnostic ``aten.grid_sampler``, which takes the same five arguments and is always 4-D here.
 
     Args:
         input: Feature map of shape ``(N, C, H, W)``.
@@ -102,30 +106,37 @@ def grid_sampler_2d_gather(
 
     x0 = torch.floor(x)
     y0 = torch.floor(y)
-    wx1 = (x - x0).unsqueeze(1)
-    wy1 = (y - y0).unsqueeze(1)
+    x1 = x0 + 1.0
+    y1 = y0 + 1.0
+    # Clamped once per axis, not once per corner: the four corners reuse two clamped coordinates each.
+    xc0 = x0.clamp(0, width - 1)
+    xc1 = x1.clamp(0, width - 1)
+    yc0 = y0.clamp(0, height - 1)
+    yc1 = y1.clamp(0, height - 1)
+    wx1 = x - x0
+    wy1 = y - y0
     wx0 = 1.0 - wx1
     wy0 = 1.0 - wy1
+    if padding_mode == _ZEROS:
+        # Folding the mask into the per-axis weight, on (N, Hg, Wg), leaves one multiply against the (N, C, Hg, Wg)
+        # gather instead of two. The masks are exactly 0.0 or 1.0, so the reassociation is bit-exact.
+        wx0 = wx0 * _inside_mask(x0, xc0)
+        wx1 = wx1 * _inside_mask(x1, xc1)
+        wy0 = wy0 * _inside_mask(y0, yc0)
+        wy1 = wy1 * _inside_mask(y1, yc1)
     flat = input.reshape(batch, channels, height * width)
 
-    def corner(yi: Tensor, xi: Tensor) -> Tensor:
-        xc = xi.clamp(0, width - 1)
-        yc = yi.clamp(0, height - 1)
+    def gather_corner(yc: Tensor, xc: Tensor) -> Tensor:
         # Flat indices are computed in float32 so a float16 graph stays exact beyond 2048 pixels.
         index = (yc.float() * width + xc.float()).to(torch.int64)
         index = index.reshape(batch, 1, grid_height * grid_width).expand(batch, channels, grid_height * grid_width)
-        value = flat.gather(2, index).reshape(batch, channels, grid_height, grid_width)
-        if padding_mode == _ZEROS:
-            value = value * (_inside_mask(xi, xc) * _inside_mask(yi, yc)).unsqueeze(1)
-        return value
+        return flat.gather(2, index).reshape(batch, channels, grid_height, grid_width)
 
-    x1 = x0 + 1.0
-    y1 = y0 + 1.0
     return (
-        corner(y0, x0) * (wy0 * wx0)
-        + corner(y0, x1) * (wy0 * wx1)
-        + corner(y1, x0) * (wy1 * wx0)
-        + corner(y1, x1) * (wy1 * wx1)
+        gather_corner(yc0, xc0) * (wy0 * wx0).unsqueeze(1)
+        + gather_corner(yc0, xc1) * (wy0 * wx1).unsqueeze(1)
+        + gather_corner(yc1, xc0) * (wy1 * wx0).unsqueeze(1)
+        + gather_corner(yc1, xc1) * (wy1 * wx1).unsqueeze(1)
     )
 
 
@@ -163,6 +174,9 @@ def topk_in_float32(
 def coreai_decomposition_table(base: Mapping[Any, Callable[..., Any]]) -> dict[Any, Callable[..., Any]]:
     """Return *base* (normally ``coreai_torch.get_decomp_table()``) extended with RF-DETR's Core AI decompositions.
 
+    The sampler is registered for ``aten.grid_sampler`` as well as ``aten.grid_sampler_2d``, so the table lowers the
+    deformable attention's sampling whether or not *base* rewrites the rank-agnostic op into its 4-D form first.
+
     Args:
         base: Decomposition table to extend. It is copied, not modified.
 
@@ -173,8 +187,11 @@ def coreai_decomposition_table(base: Mapping[Any, Callable[..., Any]]) -> dict[A
         >>> table = coreai_decomposition_table({})
         >>> table[torch.ops.aten.grid_sampler_2d.default] is grid_sampler_2d_gather
         True
+        >>> table[torch.ops.aten.grid_sampler.default] is grid_sampler_2d_gather
+        True
     """
     table = dict(base)
+    table[torch.ops.aten.grid_sampler.default] = grid_sampler_2d_gather
     table[torch.ops.aten.grid_sampler_2d.default] = grid_sampler_2d_gather
     table[torch.ops.aten.topk.default] = topk_in_float32
     return table

@@ -9,8 +9,9 @@ Core AI is Apple's on-device inference framework for iOS, iPadOS and macOS 27 an
 it consumes a :func:`torch.export.export` graph directly — no ONNX step — and ``coreai-torch`` lowers it to an
 ``.aimodel`` asset that the Core AI runtime specializes for the CPU, GPU or Neural Engine when it is loaded.
 
-The graph needs one decomposition on top of ``coreai_torch.get_decomp_table()``: ``aten.grid_sampler_2d`` from the
-deformable attention has no Core AI lowering, see :mod:`rfdetr.export._coreai.decompositions`.
+The graph needs a decomposition on top of ``coreai_torch.get_decomp_table()``: the deformable attention's
+``aten.grid_sampler`` — and the ``aten.grid_sampler_2d`` a base table rewrites it into — has no Core AI lowering, see
+:mod:`rfdetr.export._coreai.decompositions`.
 
 Note:
     The ``.aimodel`` keeps the contract of the other formats: a fixed ``[batch, 3, H, W]`` float input named
@@ -119,9 +120,11 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
             Path to the ``.aimodel`` asset directory.
 
         Raises:
-            ImportError: If ``coreai-torch`` is not installed.
+            ImportError: If ``coreai-torch``, or the ``coreai`` runtime package the asset metadata comes from,
+                is not installed.
             ValueError: If the configured precision is not ``"float32"`` or ``"float16"``.
-            RuntimeError: If ``torch.export`` or the Core AI conversion fails.
+            RuntimeError: If ``torch.export`` or the Core AI conversion fails. Writing the asset is not covered:
+                a failing ``save_asset`` raises whatever the Core AI runtime raises.
         """
         _check_coreai_torch_available()
         dtype, precision_token = self._resolve_precision()
@@ -130,8 +133,11 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
         output_path = output_dir / f"{self._export_name(precision_token, backbone_only=graph.backbone_only)}.aimodel"
         if self.config.verbose:
             logger.info(f"Exporting model to Core AI format: {output_path}")
+        # Built first: it imports the `coreai` runtime distribution, which `_check_coreai_torch_available` does not
+        # cover. A missing one must not surface only after a full trace, conversion and optimize().
+        metadata = self._asset_metadata()
         program = self._build_program(graph, dtype)
-        program.save_asset(output_path, metadata=self._asset_metadata())
+        program.save_asset(output_path, metadata=metadata)
         return output_path
 
     def _resolve_precision(self) -> tuple[torch.dtype, str]:
@@ -179,6 +185,9 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
 
         Returns:
             The decomposed exported program.
+
+        Raises:
+            NotImplementedError: If a grid-sampling op outlives the decomposition table.
         """
         from coreai_torch import get_decomp_table
 
@@ -190,6 +199,20 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
         decomposed: ExportedProgram = exported_program.run_decompositions(
             coreai_decomposition_table(get_decomp_table())
         )
+        # A surviving grid sampler would otherwise fail deep inside the converter, long after this is fixable here.
+        survivors = sorted(
+            {
+                str(node.target)
+                for node in decomposed.graph.nodes
+                if node.op == "call_function" and str(node.target).startswith("aten.grid_sampler")
+            }
+        )
+        if survivors:
+            raise NotImplementedError(
+                f"The decomposition table left {', '.join(survivors)} in the graph and Core AI cannot lower grid"
+                " sampling. This needs a decomposition entry for that op in rfdetr.export._coreai.decompositions;"
+                " please report it with your coreai-torch version."
+            )
         return decomposed
 
     def _build_program(self, graph: ExportGraph, dtype: torch.dtype) -> Any:
@@ -204,7 +227,8 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
 
         Raises:
             ImportError: If a lazily imported part of the Core AI stack fails to load.
-            NotImplementedError: If the graph needs a grid-sampling mode the decomposition does not cover.
+            NotImplementedError: If the graph needs a grid-sampling mode the decomposition does not cover, or a
+                grid-sampling op outlives the decomposition table.
             ValueError: If ``torch.export`` or ``coreai-torch`` rejects the graph with it (for example an
                 unsupported ATen op).
             RuntimeError: If the export or conversion fails for any other reason.
