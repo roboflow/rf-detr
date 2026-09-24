@@ -287,6 +287,12 @@ def _mocked_coreai_stack() -> Any:
 
     Yields the mocks so a test can inspect how the converter was driven. ``torch.export.export`` is mocked too: tracing
     is the converter's input, not what these tests are about.
+
+    Examples:
+        >>> with _mocked_coreai_stack() as mocks:
+        ...     import coreai_torch
+        ...     coreai_torch.TorchConverter().add_exported_program(None) is mocks.converter
+        True
     """
     coreai_torch = mock.MagicMock(name="coreai_torch")
     coreai_torch.get_decomp_table.return_value = {}
@@ -566,7 +572,7 @@ def _require_compute_unit(unit: str) -> None:
 
 def _run_aimodel(path: Path, inputs: dict[str, np.ndarray], output_names: tuple[str, ...], unit: str) -> list[Any]:
     """Load *path* with the Core AI runtime on *unit* (``"cpu"``, ``"gpu"``, ``"neural_engine"`` or ``"default"``) and
-    run once.
+    run once; the outputs keep the dtypes the runtime returns.
 
     Examples:
         Requires the Core AI runtime (macOS 27) and a real ``.aimodel``, so documentation only:
@@ -586,7 +592,7 @@ def _run_aimodel(path: Path, inputs: dict[str, np.ndarray], output_names: tuple[
         model = await rt.AIModel.load(path, options)
         function = model.load_function("main")
         outputs = await function({name: rt.NDArray(np.ascontiguousarray(a)) for name, a in inputs.items()})
-        return [torch.from_numpy(np.asarray(outputs[name].numpy(), dtype=np.float32)) for name in output_names]
+        return [torch.from_numpy(np.array(outputs[name].numpy())) for name in output_names]
 
     return asyncio.run(run())
 
@@ -748,7 +754,7 @@ class TestCoreAIEndToEnd:
         assert indices.tolist() == [[7, 6, 5, 4]], f"corrupt topk indices on the Neural Engine: {indices.tolist()}"
 
     def test_float16_export_runs(self, tmp_path: Path) -> None:
-        """A float16 export converts, loads with the default specialization, and returns outputs of the eager shapes."""
+        """A float16 export loads with the default specialization and returns float16 outputs of the eager shapes."""
         seed_all(_COREAI_EXPORT_SEED)
         detector = rfdetr.RFDETRNano(pretrain_weights=None, num_queries=_COREAI_E2E_NUM_QUERIES)
         aimodel_path = detector.export(
@@ -758,6 +764,7 @@ class TestCoreAIEndToEnd:
         resolution = int(detector.model.resolution)
         example = _structured_parity_input(1, 3, resolution, resolution).half()
         dets, labels = _run_aimodel(aimodel_path, {"input": example.numpy()}, ("dets", "labels"), "default")
+        assert dets.dtype == torch.float16 and labels.dtype == torch.float16
         assert tuple(dets.shape) == (1, _COREAI_E2E_NUM_QUERIES, 4)
         assert labels.shape[:2] == (1, _COREAI_E2E_NUM_QUERIES)
         assert torch.isfinite(dets).all() and torch.isfinite(labels).all()
