@@ -649,6 +649,11 @@ class TestInit:
         ("model_overrides", "train_overrides"),
         [
             pytest.param({}, {"square_resize_div_64": False}, id="aspect-ratio-resize"),
+            pytest.param(
+                {},
+                {"aug_config": {"RandomCrop": {"height": 320, "width": 320, "p": 0.5}}},
+                id="custom-shape-changing-augmentation",
+            ),
             pytest.param({"cuda_graphs": True}, {}, id="inductor-cuda-graphs"),
             pytest.param({"segmentation_head": True}, {}, id="segmentation"),
             pytest.param({"use_grouppose_keypoints": True}, {}, id="keypoints"),
@@ -659,10 +664,10 @@ class TestInit:
     ) -> None:
         """A fixed ``multi_scale=False`` run still keeps the dynamic recipe outside the measured detection route.
 
-        Aspect-preserving resize pads each batch to its own per-axis maximum, so distinct batches reach the model with
-        distinct ``(H, W)`` even without multi-scale; a static graph would recompile for each of them. Inductor CUDA
-        graph trees keep their established recipe, and segmentation and keypoint models were not measured. None of these
-        routes enables the batched loss graph.
+        Aspect-preserving resize pads each batch to its own per-axis maximum, and custom augmentations may change image
+        shape after resize; static graphs would recompile when those batch shapes vary. Inductor CUDA graph trees keep
+        their established recipe, and segmentation and keypoint models were not measured. None of these routes enables
+        the batched loss graph.
         """
         mc = _base_model_config(compile=True, **model_overrides)
         tc = _base_train_config(tmp_path, multi_scale=False, **train_overrides)

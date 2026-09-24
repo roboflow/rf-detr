@@ -514,6 +514,7 @@ class RFDETRModelModule(LightningModule):
             dynamic_shapes = (
                 train_config.multi_scale is not MultiScale.OFF
                 or not train_config.square_resize_div_64
+                or bool(train_config.aug_config)
                 or model_config.cuda_graphs
                 or model_config.segmentation_head
                 or model_config.use_grouppose_keypoints
