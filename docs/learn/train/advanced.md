@@ -425,6 +425,106 @@ model.train(dataset_dir="path/to/dataset", scale_jitter=False)
 
 ---
 
+## COCO Evaluation Backends
+
+RF-DETR computes validation and test mAP through a pluggable COCO evaluator, selected by `eval_backend`. Four backends ship with `rfdetr[train]` and return identical metrics — they differ only in how fast `compute()` runs, never in the numbers it reports:
+
+| `eval_backend`        | Notes                                                                                                                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"vernier"` (default) | [vernier](https://pypi.org/project/vernier/) — fastest measured backend, several times faster than `"faster_coco_eval"`. Requires a box on every annotation — an `iou_type` without `"bbox"` is rejected at construction, not at `compute()`. |
+| `"hotcoco"`           | [hotcoco](https://pypi.org/project/hotcoco/) — Rust evaluator, several times faster than `"faster_coco_eval"`.                                                                                                                                |
+| `"ufcoco"`            | [ultrafast-pycocotools](https://pypi.org/project/ultrafast-pycocotools/) — reproduces pycocotools' precision/recall/score arrays byte for byte, at Rust speed.                                                                                |
+| `"faster_coco_eval"`  | [faster-coco-eval](https://pypi.org/project/faster-coco-eval/) — the previous default evaluator. Slowest of the four; kept as the parity baseline the other three are tested against.                                                         |
+
+```python
+model.train(dataset_dir="path/to/dataset", eval_backend="hotcoco")
+```
+
+Full benchmark numbers (core-count scaling, box-only vs. box+mask, hardware) are in [Training Parameters → `eval_backend`](training-parameters.md#training-parameters). Keypoint evaluation uses its own OKS path and is unaffected by this setting.
+
+### Adding a new backend
+
+Every backend is one entry in a name → class registry, checked directly against `TrainConfig.eval_backend`'s type; nothing else in the adapter branches on the backend name (`rfdetr.training.coco_map._BACKENDS`, consumed by `OnePassCocoMeanAveragePrecision`). To add one:
+
+1. **Add the name** to the `CocoEvalBackend` literal in `src/rfdetr/config.py`.
+2. **Implement a backend class** in `src/rfdetr/training/coco_map.py`, subclassing `_RfdetrCocoBackend`:
+    - If the package follows pycocotools' object model (`COCO()`, `COCOeval()`, an RLE `mask` module), subclass `_PackageCocoBackend` instead and implement `_package()` — see `_HotCocoBackend`/`_UfcocoBackend`.
+    - If the package takes ground truth and detections as arrays instead of pycocotools' object model (`vernier`'s shape), subclass `_RfdetrCocoBackend` directly, set `uses_coco_evaluator = False`, and add a new `isinstance(self._coco_backend, YourBackend)` branch to `OnePassCocoMeanAveragePrecision.compute()` alongside the existing `_VernierBackend` check, with a `_your_backend_results()` method modeled on `_vernier_results`. Dispatch here is by `isinstance`, not an overridable hook — there's only one array-native backend today, so no polymorphic seam has been justified yet.
+    - Set the capability flags only where they differ from the shared defaults: `requires_bbox`, `unused_backend_methods`, `uses_coco_evaluator`.
+    - Wrap the import in a small function built on `_import_optional_backend()` (see `_hotcoco()`/`_ufcoco()`/`_vernier()`) so a missing package raises an actionable `ImportError` naming the install extra, not a raw `ModuleNotFoundError`.
+3. **Register it** in `_BACKENDS`, keyed by the literal added in step 1.
+4. **Declare the dependency** in `pyproject.toml`'s `train` extra — all four existing backends ship there.
+5. **Extend the tests** in `tests/training/test_coco_map.py`: add the name to `_BACKEND_PACKAGES` (and to `_ALTERNATIVE_BACKENDS` unless it's a second `"faster_coco_eval"`-equivalent baseline rather than an alternative to compare against one). `test_backend_registry_matches_the_typed_eval_backend_names` then enforces that the registry and the literal stay in sync, and the existing `test_alternative_backend_matches_faster_coco_eval[_for_segmentation]` parity tests pick up the new backend automatically, requiring exact equality against `"faster_coco_eval"` for both box-only and box+mask evaluation.
+6. **Document it**: this table, the `eval_backend` rows in [Training Parameters](training-parameters.md), and `docs/reference/train_config.md`.
+
+!!! warning "Parity is the contract, not an aspiration"
+
+    `OnePassCocoMeanAveragePrecision` promises every backend returns the same aggregate, per-class and class-ID outputs. A backend that can't pass the exact-equality parity tests for box-only and box+mask evaluation isn't ready to register — don't relax those tests to make a new backend pass.
+
+### Benchmarking a backend
+
+There's no long-lived benchmark script in the repo — the numbers in [Training Parameters](training-parameters.md) came from one-off scripts measuring `compute()` wall time on synthetic COCO-val-shaped state. Build one the same way, calling the adapter directly rather than going through a full training run:
+
+```python
+import time
+
+import torch
+
+from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision
+
+NUM_IMAGES = 5_000
+DETS_PER_IMAGE = 300
+GT_PER_IMAGE = 75
+NUM_CLASSES = 80
+IMAGE_SIZE = 640.0
+
+
+def _random_boxes(n: int) -> torch.Tensor:
+    top_left = torch.rand(n, 2) * (IMAGE_SIZE - 10)
+    size = torch.rand(n, 2) * 10 + 1
+    return torch.cat([top_left, top_left + size], dim=1)  # xyxy, x2>x1 and y2>y1 by construction
+
+
+metric = OnePassCocoMeanAveragePrecision(
+    iou_type="bbox",
+    backend="hotcoco",  # backend under test
+    sync_on_compute=False,
+)
+
+torch.manual_seed(0)
+for _ in range(NUM_IMAGES):
+    preds = [
+        {
+            "boxes": _random_boxes(DETS_PER_IMAGE),
+            "scores": torch.rand(DETS_PER_IMAGE),
+            "labels": torch.randint(0, NUM_CLASSES, (DETS_PER_IMAGE,)),
+        }
+    ]
+    target = [
+        {
+            "boxes": _random_boxes(GT_PER_IMAGE),
+            "labels": torch.randint(0, NUM_CLASSES, (GT_PER_IMAGE,)),
+            "iscrowd": torch.zeros(GT_PER_IMAGE, dtype=torch.long),
+            "area": torch.rand(GT_PER_IMAGE) * 1000,
+        }
+    ]
+    metric.update(preds, target)
+
+start = time.perf_counter()
+metric.compute()
+print(f"compute(): {time.perf_counter() - start:.2f}s")
+```
+
+Match the published methodology so the result is comparable:
+
+- Shape the synthetic state (image/detection/class counts) after what you actually validate on — the vernier-vs-hotcoco margin widens on fewer classes and shrinks on more.
+- Time `compute()` alone, not `update()` — `update()`'s cost is TorchMetrics' own CPU tensor copying and is backend-independent.
+- Fix the core count (`torch.set_num_threads(N)`) and report it; the published numbers scale with cores.
+- Run box-only and box+mask separately — the ranking between backends is not the same in both.
+- **Verify parity before trusting a speed number.** Run `pytest tests/training/test_coco_map.py -k <backend_name>` first; a fast backend that doesn't match `"faster_coco_eval"` is a bug, not a result worth publishing.
+
+---
+
 ## CUDA Graph Training
 
 For a long-running detection job on one NVIDIA GPU, enable CUDA graph replay on the model constructor:

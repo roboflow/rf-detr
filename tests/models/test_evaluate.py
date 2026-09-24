@@ -470,12 +470,18 @@ def test_train_then_from_checkpoint_then_evaluate(synthetic_shape_dataset_dir: P
     ``KeyError``. All other tests in this module build the state-dict transplant against an untrained in-memory model;
     this is the only one that exercises a real checkpoint round trip (train → save → reload as a new instance →
     evaluate), the exact case the issue asked for.
+
+    ``resolution=224`` (the synthetic fixture's own image size, so no resize upscaling) shrinks the backbone forward
+    pass to about a third of the default 384px FLOPs; the round-trip only needs finite, present metric keys, not a
+    representative resolution. The 600s timeout (vs. the suite's 420s default) is headroom for this real train+
+    checkpoint+reload+evaluate path on a slow CPU runner, not a promise this test needs that long normally.
     """
     output_dir = tmp_path / "train_output"
     model = RFDETRNano(
         pretrain_weights=None,
         num_classes=_num_classes(synthetic_shape_dataset_dir),
         device="cpu",
+        resolution=224,
     )
     model.train(
         dataset_dir=str(synthetic_shape_dataset_dir),
