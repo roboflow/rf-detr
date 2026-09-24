@@ -682,7 +682,7 @@ The following APIs were deprecated in earlier releases and are removed as of v1.
     from rfdetr.training.param_groups import get_param_dict
     from rfdetr.training.drop_schedule import drop_scheduler
     from rfdetr.visualize.data import save_gt_predictions_visualization
-    from rfdetr.export._onnx.exporter import export_onnx  # became OnnxExporter in 1.11; see Upgrade 1.10 → 1.11
+    from rfdetr.export._onnx.exporter import OnnxExporter  # see Upgrade 1.10 → 1.11
     from rfdetr.models.heads.segmentation import SegmentationHead
     ```
 

@@ -198,7 +198,7 @@ During training, multiple model checkpoints are saved to the output directory:
 
 - `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains model weights, epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.
 
-- `last_ema.pth` – EMA weights from the most recent validation, written whenever EMA is enabled (the default). Mirrors `last.ckpt` for the EMA model.
+- `last_ema.pth` – final EMA weights, written at the end of training when EMA is enabled (the default). Mirrors `last.ckpt` for the EMA model.
 
 For detection models, the validation score is box mAP (`val/mAP_50_95`). For segmentation models, it is mask mAP (`val/segm_mAP_50_95`), not box mAP. For keypoint preview models, best-checkpoint selection uses COCO keypoint AP (`val/keypoint_map_50_95`) and checkpoints persist the model keypoint schema so `RFDETR.from_checkpoint()` can reconstruct the same label/keypoint slots. `TrainConfig.best_model_metric="mar"` selects on mAR instead — unlike mAP, detection and segmentation share the same unprefixed `val/mAR` key; keypoint models still use their own `val/keypoint_mAR`.
 
