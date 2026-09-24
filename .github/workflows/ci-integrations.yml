@@ -178,6 +178,10 @@ jobs:
     # Running an .aimodel needs the Core AI runtime of macOS 27. GitHub's Xcode 27 image is the only hosted runner
     # on macOS 27 (arm64 only, public preview), so this job is not part of export-priority-guardian yet: a preview
     # queue must not block merges. The unit tests in test_coreai_export.py run without it in the CPU jobs.
+    # Those unit tests pin the decomposition table itself, but not its effect on a device: no merge-gating job
+    # exercises the Neural Engine float16 topk corruption or the GPU/NE compute-unit behaviour the two
+    # decompositions exist for. Removing this job, or either table entry, therefore needs a re-measurement on
+    # real hardware rather than a green CPU suite.
     runs-on: xcode-27
     concurrency:
       group: pytest-coreai-${{ matrix.python-version }}-${{ github.ref }}
