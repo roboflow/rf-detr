@@ -51,6 +51,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
           activate-environment: true
 
+      - name: 🤗 Cache Hugging Face hub (DINOv2 backbone weights)
+        # These GitHub-hosted runners are ephemeral, so every job otherwise re-downloads the DINOv2 encoder weights
+        # cold; the self-hosted GPU runner (ci-tests-gpu.yml) keeps its own disk between runs and needs no cache.
+        # Shared across the whole OS/Python matrix (no matrix values in the key): the cached files are backbone
+        # weights and configs, identical regardless of interpreter or, in practice, OS. The key is content-addressed
+        # on the encoder configs so it busts automatically if a config changes which Hugging Face revision is used.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/huggingface
+          key: hf-hub-${{ hashFiles('src/rfdetr/models/backbone/dinov2_configs/**') }}
+          restore-keys: |
+            hf-hub-
+
       - name: 🚀 Install Packages
         timeout-minutes: 5
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip').
