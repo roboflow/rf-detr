@@ -1281,10 +1281,12 @@ def _layered_detection_batch(
     device: torch.device | str = "cpu",
     dtype: torch.dtype = torch.float32,
     seed: int = 904,
+    queries: int = 16,
+    layer_count: int = 3,
     mask_side: int | None = None,
     requires_grad: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Tensor]], list[dict[str, Tensor]]]:
-    """Build three detection output layers and their per-image targets.
+    """Build detection output layers and their per-image targets.
 
     Optional masks cover the segmentation case. Target boxes stay float32 to match training, and a local generator
     keeps cases reproducible without changing the caller's global RNG state.
@@ -1294,6 +1296,8 @@ def _layered_detection_batch(
         device: Device for predictions and targets.
         dtype: Prediction dtype; target boxes remain float32.
         seed: Seed for this case's local random generator.
+        queries: Number of decoder queries per image.
+        layer_count: Number of output layers, including the encoder output.
         mask_side: Mask height and width when testing segmentation losses.
         requires_grad: Whether prediction tensors require gradients.
 
@@ -1307,12 +1311,15 @@ def _layered_detection_batch(
         >>> masked, _, targets = _layered_detection_batch((3, 0), mask_side=8)
         >>> tuple(masked["pred_masks"].shape), [len(target["masks"]) for target in targets]
         ((2, 16, 8, 8), [3, 0])
+        >>> outputs, layers, _ = _layered_detection_batch((3, 0, 7), queries=24, layer_count=4)
+        >>> len(layers), len(outputs["aux_outputs"]), tuple(outputs["enc_outputs"]["pred_logits"].shape)
+        (4, 2, (3, 24, 5))
     """
     device = torch.device(device)
     generator = torch.Generator(device=device).manual_seed(seed)
-    batch_size, queries, classes = len(target_counts), 16, 5
+    batch_size, classes = len(target_counts), 5
     layers: list[dict[str, Tensor]] = []
-    for _ in range(3):
+    for _ in range(layer_count):
         layer = {
             "pred_logits": torch.randn(
                 batch_size,
@@ -1332,7 +1339,7 @@ def _layered_detection_batch(
                 batch_size, queries, mask_side, mask_side, device=device, dtype=dtype, generator=generator
             ).requires_grad_(requires_grad)
         layers.append(layer)
-    outputs = {**layers[0], "aux_outputs": layers[1:2], "enc_outputs": layers[2]}
+    outputs = {**layers[0], "aux_outputs": layers[1:-1], "enc_outputs": layers[-1]}
     targets: list[dict[str, Tensor]] = []
     for count in target_counts:
         target = {
@@ -1403,23 +1410,9 @@ class TestBatchedDetectionLosses:
         self, padded: bool, target_counts: tuple[int, int, int]
     ) -> None:
         """Batching preserves every diagnostic, optimized loss and output gradient, including padding masks."""
-        torch.manual_seed(903)
-        batch_size, queries, classes = 3, 24, 5
-        layers = [
-            {
-                "pred_logits": torch.randn(batch_size, queries, classes, requires_grad=True),
-                "pred_boxes": (torch.rand(batch_size, queries, 4) * 0.5 + 0.25).requires_grad_(True),
-            }
-            for _ in range(4)
-        ]
-        outputs = {**layers[0], "aux_outputs": layers[1:3], "enc_outputs": layers[3]}
-        targets = [
-            {
-                "labels": torch.randint(0, classes, (count,)),
-                "boxes": torch.rand(count, 4) * 0.5 + 0.25,
-            }
-            for count in target_counts
-        ]
+        outputs, layers, targets = _layered_detection_batch(
+            target_counts, queries=24, layer_count=4, seed=903, requires_grad=True
+        )
         if padded:
             targets = list(pad_targets_to_fixed_count(targets, 8))
         criterion = _padding_criterion(losses=["labels", "boxes", "cardinality"])
@@ -1469,24 +1462,13 @@ class TestBatchedDetectionLosses:
         The per-layer path divides a 0-dim sum by ``num_boxes``, which promotes to float32; a per-layer vector of sums
         divided by the same scalar would silently keep the BF16/FP16 dtype instead.
         """
-        torch.manual_seed(905)
-        batch_size, queries, classes = 3, 24, 5
-        layers = [
-            {
-                "pred_logits": torch.randn(batch_size, queries, classes, dtype=dtype, requires_grad=True),
-                "pred_boxes": (torch.rand(batch_size, queries, 4) * 0.5 + 0.25).to(dtype).requires_grad_(True),
-            }
-            for _ in range(4)
-        ]
-        outputs = {**layers[0], "aux_outputs": layers[1:3], "enc_outputs": layers[3]}
-        targets = [
-            {"labels": torch.randint(0, classes, (count,)), "boxes": torch.rand(count, 4) * 0.5 + 0.25}
-            for count in (3, 0, 7)
-        ]
+        outputs, layers, targets = _layered_detection_batch(
+            (3, 0, 7), queries=24, layer_count=4, dtype=dtype, seed=905, requires_grad=True
+        )
         if padded:
             targets = list(pad_targets_to_fixed_count(targets, 8))
         criterion = SetCriterion(
-            num_classes=classes,
+            num_classes=5,
             matcher=_MatcherStub(),
             weight_dict={"loss_bbox": 5.0, "loss_giou": 2.0, "loss_ce": 1.0},
             focal_alpha=0.25,
