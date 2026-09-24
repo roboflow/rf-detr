@@ -243,7 +243,7 @@ jobs:
                 "https://rfdetr.roboflow.com/latest/learn/run/detection/",
                 "https://rfdetr.roboflow.com/latest/learn/run/segmentation/",
                 "https://rfdetr.roboflow.com/latest/learn/train/",
-                "https://rfdetr.roboflow.com/latest/learn/export/",
+                "https://rfdetr.roboflow.com/latest/exports/",
                 "https://rfdetr.roboflow.com/latest/learn/deploy/",
                 "https://rfdetr.roboflow.com/latest/learn/benchmarks/"
               ]

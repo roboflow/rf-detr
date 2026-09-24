@@ -1145,10 +1145,8 @@ def test_vernier_rejects_mask_only_evaluation() -> None:
 def test_vernier_rejects_fractional_ground_truth_labels() -> None:
     """A fractional ground-truth class label must be rejected instead of silently truncated by ``.long()``.
 
-    ``_vernier_ground_truth`` casts the whole gathered label tensor to ``int64`` in one shot rather than per annotation,
-    so a fractional value (a caller bug, or a mismatched label/box zip) has to be caught before that cast instead of
-    becoming a wrong class silently. Ground truth is built before any per-IoU-type evaluation runs, so this exercises
-    the check on its own, ahead of vernier's own native validation of detections.
+    ``coco_inputs`` owns the check now, but a fractional value must still fail loudly rather than become a wrong class
+    through an ``int64`` cast. Driven through ``compute()`` so it pins the behaviour wherever the check lives.
     """
     _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
@@ -1157,17 +1155,15 @@ def test_vernier_rejects_fractional_ground_truth_labels() -> None:
         [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "labels": torch.tensor([3.5])}],
     )
 
-    with pytest.raises(ValueError, match="integral class labels"):
+    with pytest.raises(ValueError, match="must be integral"):
         metric.compute()
 
 
 def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> None:
     """A fractional detection class label under ``segm`` must be rejected instead of truncated by ``.long()``.
 
-    The columnar detection route ``_vernier_detections`` takes only under ``segm`` casts labels with ``.long()``, unlike
-    the ``(N, 7)`` matrix route ``bbox`` takes, whose ``float64`` labels stay uncast until vernier's own
-    ``evaluate_bbox_grid`` validates them. Evaluating ``segm`` before ``bbox`` reaches this adapter's own check before
-    that native validation would otherwise short-circuit the test.
+    ``coco_inputs`` validates both sides and both routes, so this no longer depends on which route an IoU type takes.
+    ``segm`` runs first so the failure is attributed to the detection labels.
     """
     _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", iou_type=("segm", "bbox"), sync_on_compute=False)
@@ -1185,7 +1181,7 @@ def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> Non
         [{"boxes": torch.tensor([[0.0, 0.0, 2.0, 2.0]]), "labels": torch.tensor([3]), "masks": mask}],
     )
 
-    with pytest.raises(ValueError, match="integral class labels"):
+    with pytest.raises(ValueError, match="must be integral"):
         metric.compute()
 
 
@@ -1443,9 +1439,10 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
 ) -> None:
     """The columnar ground truth must be the *document* TorchMetrics' COCO format is, not merely score the same.
 
-    Building the columns reimplements upstream's format rules, so it is checked against the route it replaced --
-    ``_get_coco_format`` through vernier's normalizers and JSON parser -- by ``dataset_hash``, over every image,
-    category and annotation field.
+    ``coco_inputs_from_columns`` builds the document, but mapping *this* metric's state onto it is still
+    RF-DETR's, and that
+    is what this pins -- by ``dataset_hash`` against the route it replaced, ``_get_coco_format`` through vernier's
+    normalizers and JSON parser.
 
     Metrics would not catch it: most cases here differ only in ways AP cannot see, such as an image entry with no
     annotations on it or an ``area`` on an annotation that matches nothing. The cases are the rules easiest to get
@@ -1474,13 +1471,21 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
         all_labels=classes,
         average=metric.average,
     )
+    detection_sizes = {
+        image_id: tuple(masks[0][0]) for image_id, masks in enumerate(metric.detection_mask) if len(masks) > 0
+    }
     sized = (
-        adapters.with_mask_image_sizes(reference, metric._vernier_detection_image_sizes())
+        adapters.with_mask_image_sizes(reference, detection_sizes)
         if with_masks
         else adapters.with_placeholder_image_sizes(reference)
     )
     from_json = _vernier().instance.CocoDataset.from_json(adapters.to_coco_json(sized))
-    from_arrays = metric._vernier_ground_truth(classes)
+    from_arrays, _ = adapters.coco_inputs_from_columns(
+        *metric._vernier_columns(),
+        box_format="xywh",
+        categories=classes,
+        area="auto",
+    )
 
     assert from_arrays.dataset_hash == from_json.dataset_hash
     assert (from_arrays.num_images, from_arrays.num_annotations, from_arrays.num_categories) == (
@@ -1493,7 +1498,7 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
 def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> None:
     """The ground-truth builder must keep ``iscrowd`` at its stored width, not through a column that wraps it.
 
-    ``_vernier_ground_truth`` builds its columns directly from tensors rather than through JSON, so
+    ``coco_inputs`` builds its columns directly from tensors rather than through JSON, so
     ``test_vernier_columnar_ground_truth_is_the_same_document`` cannot cover a value like 256: vernier's own JSON
     parser rejects anything but 0/1 for ``iscrowd``, so the reference side of that test would raise first. Comparing
     the built dataset's ``dataset_hash`` against one built with no crowd annotation at all catches the same defect
@@ -1508,7 +1513,10 @@ def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> No
         )
         metric.update(predictions, targets)
         classes = sorted({int(label) for target in metric.groundtruth_labels for label in target.tolist()})
-        return metric._vernier_ground_truth(classes)
+        ground_truth, _ = _vernier().adapters.coco_inputs_from_columns(
+            *metric._vernier_columns(), box_format="xywh", categories=classes
+        )
+        return ground_truth
 
     wide_crowd, no_crowd = ground_truth(256), ground_truth(0)
 
@@ -1757,3 +1765,157 @@ def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
     # Mask pass: only the true positive is "small", and its 25x25 prediction over a 20x20 target is IoU 0.64 —
     # matched at 3 of the 10 COCO thresholds.
     assert float(result["segm_map_small"]) == pytest.approx(0.3)
+
+
+def _straddling_disc_records() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Records whose box and mask areas straddle the small/medium boundary.
+
+    A disc of radius 17 has a 34x34 = 1156 box (*medium*) and a ~901 mask (*small*), so which area the
+    ground truth is built from is visible in the AP buckets rather than only in the fourth decimal.
+
+    Examples:
+        >>> predictions, targets = _straddling_disc_records()
+        >>> len(predictions), len(targets)
+        (30, 30)
+        >>> targets[0]["masks"].shape
+        torch.Size([1, 128, 128])
+    """
+    size = 128
+    rows, columns = np.ogrid[:size, :size]
+
+    def disc(center_y: int, center_x: int, radius: int) -> Any:
+        return (rows - center_y) ** 2 + (columns - center_x) ** 2 <= radius**2
+
+    def boxes_of(masks: Any) -> torch.Tensor:
+        corners = []
+        for mask in masks:
+            ys, xs = np.nonzero(mask)
+            corners.append([xs.min(), ys.min(), xs.max() + 1, ys.max() + 1])
+        return torch.tensor(np.asarray(corners, dtype=np.float64)).float()
+
+    rng = np.random.default_rng(9)
+    predictions: list[dict[str, Any]] = []
+    targets: list[dict[str, Any]] = []
+    for _ in range(30):
+        center_y, center_x = int(rng.integers(30, 98)), int(rng.integers(30, 98))
+        gt_masks = np.stack([disc(center_y, center_x, 17)])
+        dt_masks = np.stack([disc(center_y + 1, center_x, 17)])
+        labels = torch.tensor([0])
+        targets.append({"boxes": boxes_of(gt_masks), "labels": labels, "masks": torch.from_numpy(gt_masks)})
+        predictions.append(
+            {
+                "boxes": boxes_of(dt_masks),
+                "scores": torch.tensor([0.9]),
+                "labels": labels,
+                "masks": torch.from_numpy(dt_masks),
+            }
+        )
+    return predictions, targets
+
+
+def test_two_iou_type_run_buckets_bbox_ap_by_mask_area() -> None:
+    """A two-IoU-type run must bucket ``bbox`` AP by *mask* area, as upstream does.
+
+    ``_get_coco_format`` derives the ground-truth ``area`` from the mask whenever ``segm`` is among the IoU
+    types -- for the ``bbox`` pass too. Deriving it per pass instead is invisible until an object's box and
+    mask areas straddle 32**2 or 96**2, and then it moves AP between the small and medium buckets with no
+    error. A disc of radius 17 does exactly that: box 34x34 = 1156 (medium), mask ~901 (small).
+    """
+    _require_backend("vernier")
+    _require_backend("hotcoco")
+    predictions, targets = _straddling_disc_records()
+
+    def compute(backend: str) -> dict[str, torch.Tensor]:
+        metric = OnePassCocoMeanAveragePrecision(box_format="xyxy", iou_type=("bbox", "segm"), backend=backend)
+        metric.update(predictions, targets)
+        return metric.compute()
+
+    vernier_result, reference = compute("vernier"), compute("hotcoco")
+    # Anti-vacuity: the fixture only bites if the mask area really is the small bucket while the box is not.
+    assert float(vernier_result["bbox_map_small"]) > 0
+    assert float(vernier_result["bbox_map_medium"]) == -1
+    for key in vernier_result:
+        if key == "classes":
+            continue
+        assert torch.equal(vernier_result[key], reference[key]), key
+
+
+def test_bbox_only_run_buckets_by_box_area_and_carries_no_masks() -> None:
+    """The mirror of the two-IoU-type case, and the reason ``rles`` is gated on the run.
+
+    ``_get_coco_format`` derives the area from the mask only when ``segm`` is among the IoU types; a bbox-only run uses
+    ``w * h``. vernier's ``area="auto"`` reads a mask whenever one is present, so carrying masks here would silently re-
+    bucket the AP. The last assertion is the load-bearing one: what keeps masks out is the gate, not whether the state
+    happens to be empty.
+    """
+    _require_backend("vernier")
+    _require_backend("hotcoco")
+    predictions, targets = _straddling_disc_records()
+
+    def build(backend: str) -> OnePassCocoMeanAveragePrecision:
+        metric = OnePassCocoMeanAveragePrecision(box_format="xyxy", iou_type=("bbox",), backend=backend)
+        metric.update(predictions, targets)
+        return metric
+
+    metric = build("vernier")
+    detection_columns, target_columns = metric._vernier_columns()
+    assert "rles" not in detection_columns
+    assert "rles" not in target_columns
+
+    result = metric.compute()
+    reference = build("hotcoco").compute()
+    # Anti-vacuity: the box area really is the medium bucket while the mask area would be small.
+    assert float(result["map_medium"]) > 0
+    assert float(result["map_small"]) == -1
+    for key in result:
+        if key == "classes":
+            continue
+        assert torch.equal(result[key], reference[key]), key
+
+    # The gate, not the emptiness of the state, is what keeps masks out.
+    metric.groundtruth_mask = [(((128, 128), b"0"),)] * len(targets)
+    metric.detection_mask = [(((128, 128), b"0"),)] * len(predictions)
+    detection_columns, target_columns = metric._vernier_columns()
+    assert "rles" not in detection_columns
+    assert "rles" not in target_columns
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_autocast_dtypes_survive_the_round_trip_to_vernier(dtype: torch.dtype) -> None:
+    """State stored under autocast must evaluate, whatever dtype the autocast ran in.
+
+    ``bfloat16`` has no numpy dtype, so it used to raise ``TypeError`` out of ``np.asarray`` before vernier's f64 ingest
+    boundary was reached; ``vernier>=0.5.3`` widens it there instead. Columns are handed over at their stored dtype on
+    purpose — a cast here would hide that. Every value below is exactly representable in both dtypes, so the float32 run
+    is a bit-exact oracle.
+    """
+    _require_backend("vernier")
+    boxes = [[0.0, 0.0, 16.0, 16.0], [32.0, 32.0, 64.0, 64.0]]
+    scores = [0.75, 0.5]
+
+    def build(tensor_dtype: torch.dtype) -> OnePassCocoMeanAveragePrecision:
+        metric = OnePassCocoMeanAveragePrecision(box_format="xyxy", iou_type=("bbox",), backend="vernier")
+        metric.update(
+            [
+                {
+                    "boxes": torch.tensor(boxes, dtype=tensor_dtype),
+                    "scores": torch.tensor(scores, dtype=tensor_dtype),
+                    "labels": torch.tensor([0, 1]),
+                }
+            ],
+            [{"boxes": torch.tensor(boxes, dtype=tensor_dtype), "labels": torch.tensor([0, 1])}],
+        )
+        return metric
+
+    metric = build(dtype)
+    # The stored dtype reaches vernier unchanged; widening is vernier's job, not this metric's.
+    assert metric._vernier_columns()[0]["scores"].dtype == dtype
+
+    result = metric.compute()
+    reference = build(torch.float32).compute()
+    # Anti-vacuity: a perfect match scores 1.0, so a silently emptied run would not pass this.
+    assert float(result["map"]) == 1.0
+    for key in result:
+        if key == "classes":
+            continue
+        assert torch.equal(result[key], reference[key]), key

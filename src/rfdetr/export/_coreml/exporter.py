@@ -29,7 +29,7 @@ Note:
     ``tests/export/test_coreml_export.py`` check that the ranking is well separated before comparing.
     ``coreml_precision="float16"`` narrows that fp32 safety margin further and makes a rank swap more
     likely, not less — see the "Raw tensors can differ more than the precision suggests" note under
-    Native CoreML Export in ``docs/learn/export.md``.
+    Native CoreML Export in ``docs/exports/coreml.md``.
 """
 
 from __future__ import annotations

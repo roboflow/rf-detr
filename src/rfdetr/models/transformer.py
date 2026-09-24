@@ -49,6 +49,32 @@ def _safe_multinormalize(dim: int) -> int:
     return max(1, dim)
 
 
+def _additive_attn_mask(mask: Tensor | None, dtype: torch.dtype) -> Tensor | None:
+    """Return the float form of a boolean attention mask: ``-inf`` where blocked, ``0`` elsewhere.
+
+    ``nn.MultiheadAttention`` builds this itself from a boolean mask with ``zeros_like(mask, dtype=...)``.
+    coremltools (9.0, 9.1) drops that ``dtype`` keyword when it converts a ``torch.export`` program, so the mask
+    stays boolean and ``scaled_dot_product_attention`` reads it with the opposite meaning. Passing the float mask
+    keeps eager results identical and gives the converters nothing to reinterpret.
+
+    Args:
+        mask: Boolean mask, ``True`` where attention is blocked, or ``None``.
+        dtype: Floating dtype of the attention inputs.
+
+    Returns:
+        The additive mask in *dtype*, or *mask* unchanged when it is ``None`` or already floating.
+
+    Examples:
+        >>> _additive_attn_mask(torch.tensor([[False, True]]), torch.float32)
+        tensor([[0., -inf]])
+        >>> _additive_attn_mask(None, torch.float32) is None
+        True
+    """
+    if mask is None or mask.dtype != torch.bool:
+        return mask
+    return mask.to(dtype).masked_fill(mask, float("-inf"))
+
+
 def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128) -> Tensor:
     # n_query, bs, _ = pos_tensor.size()
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
@@ -1346,7 +1372,9 @@ class TransformerDecoderLayer(nn.Module):
             q = k = combined_feat + combined_pos
             v = combined_feat
 
-            combined_out = self.kp_inst_self_attn(q, k, v, attn_mask=keypoint_class_mask, need_weights=False)[0]
+            combined_out = self.kp_inst_self_attn(
+                q, k, v, attn_mask=_additive_attn_mask(keypoint_class_mask, q.dtype), need_weights=False
+            )[0]
             combined_out = combined_out.reshape(bs, num_queries, 1 + num_kp, kp_dim)
             tgt2 = combined_out[:, :, 0, :]
             keypoint_tgt2 = combined_out[:, :, 1:, :]
