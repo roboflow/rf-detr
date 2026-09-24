@@ -96,6 +96,14 @@ _BOOL_PRODUCING_OPS = frozenset(
 )
 
 
+class _FixedGridSample(torch.nn.Module):
+    """Sample a constant grid from a single input, so an ``ExportGraph`` can carry a grid sampler."""
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        grid = torch.zeros(image.shape[0], 2, 2, 2, dtype=image.dtype)
+        return F.grid_sample(image, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
+
+
 class _GridSample(torch.nn.Module):
     """Wrap ``F.grid_sample`` so a single call can be traced with ``torch.export``."""
 
@@ -164,11 +172,19 @@ class TestGridSamplerDecomposition:
         coreai-torch has no lowering for ``aten.grid_sampler_2d``, and a comparison -> bool -> float mask chain (the
         textbook in-bounds mask of a gather sampler) makes the Core AI runtime overwrite an unrelated live tensor
         (apple/coreai-torch#11). The decomposition therefore builds its masks with float arithmetic only.
+
+        The table is built on ``torch.export.default_decompositions()``, not ``{}``: ``torch.export.export`` leaves
+        ``aten.grid_sampler`` in the graph, and only the default table's own ``CompositeImplicitAutograd`` lowering
+        turns it into the ``aten.grid_sampler_2d.default`` this module's override actually matches. An empty base never
+        reaches that override, so ``grid_sampler_2d_gather`` never runs and every assertion here would pass vacuously;
+        the positive ``aten.gather`` assertion is what catches that regression.
         """
         value, grid = _sampling_case()
         exported = torch.export.export(_GridSample(padding_mode, align_corners=False), (value, grid))
-        decomposed = exported.run_decompositions(coreai_decomposition_table({}))
+        base = torch.export.default_decompositions()
+        decomposed = exported.run_decompositions(coreai_decomposition_table(base))
         targets = {str(node.target).rsplit(".", 1)[0] for node in decomposed.graph.nodes if node.op == "call_function"}
+        assert "aten.gather" in targets, f"grid_sampler_2d_gather never ran, decomposition did not fire: {targets}"
         assert "aten.grid_sampler_2d" not in targets
         assert not targets & _BOOL_PRODUCING_OPS, f"bool-producing ops in the sampler: {targets & _BOOL_PRODUCING_OPS}"
         torch.testing.assert_close(
@@ -185,6 +201,15 @@ class TestGridSamplerDecomposition:
         assert table[torch.ops.aten.grid_sampler_2d.default] is grid_sampler_2d_gather
         assert table[torch.ops.aten.silu.default] is base[torch.ops.aten.silu.default]
         assert torch.ops.aten.grid_sampler_2d.default not in base
+
+    def test_table_also_lowers_the_rank_agnostic_sampler(self) -> None:
+        """``aten.grid_sampler`` maps to the same decomposition as its 4-D form.
+
+        ``F.grid_sample`` exports as the rank-agnostic ``aten.grid_sampler``; only a base decomposition table rewrites
+        it into ``aten.grid_sampler_2d``. Registering both keeps the Core AI table working with a base table that
+        preserves the rank-agnostic op, instead of failing deep inside the converter on an unlowerable node.
+        """
+        assert coreai_decomposition_table({})[torch.ops.aten.grid_sampler.default] is grid_sampler_2d_gather
 
 
 class _TopK(torch.nn.Module):
@@ -317,6 +342,23 @@ class TestCoreAIExporter:
             CoreAIExporter(CoreAIConfig(output_dir=tmp_path, verbose=False))(_make_export_graph())
         export.assert_not_called()
 
+    def test_missing_runtime_package_raises_before_tracing(self, tmp_path: Path) -> None:
+        """A missing Core AI runtime distribution is reported before the trace, not after the whole conversion.
+
+        The asset metadata comes from ``coreai.runtime``, a different distribution from the ``coreai_torch`` the
+        availability probe covers. Building it up front keeps the failure at the same choke point as every other missing
+        dependency, instead of after a full trace, conversion and ``optimize()``.
+        """
+        coreai_torch = mock.MagicMock(name="coreai_torch")
+        with (
+            mock.patch("rfdetr.export._coreai.exporter._IS_COREAI_TORCH_AVAILABLE", True),
+            mock.patch.dict(sys.modules, {"coreai_torch": coreai_torch, "coreai": None, "coreai.runtime": None}),
+            mock.patch("torch.export.export") as export,
+            pytest.raises(ImportError),
+        ):
+            CoreAIExporter(CoreAIConfig(output_dir=tmp_path, verbose=False))(_make_export_graph())
+        export.assert_not_called()
+
     @pytest.mark.parametrize(
         "variant_name, output_name, precision, backbone_only, expected",
         [
@@ -357,6 +399,31 @@ class TestCoreAIExporter:
         assert kwargs["input_names"] == ["input"]
         assert kwargs["output_names"] == ["dets", "labels"]
         stack.program.optimize.assert_called_once_with()
+
+    def test_surviving_grid_sampler_is_refused_before_the_converter(self, tmp_path: Path) -> None:
+        """A grid sampler the table failed to lower is named here rather than failing inside ``coreai-torch``.
+
+        The table registers the decomposition for both grid-sampling ops, so this only fires if a future torch or
+        converter release moves the op out from under it. Simulated here with a table that lowers neither.
+        """
+        coreai_torch = mock.MagicMock(name="coreai_torch")
+        coreai_torch.get_decomp_table.return_value = {}
+        graph = ExportGraph(
+            model=_FixedGridSample(),
+            input_tensors=torch.zeros(1, 3, 8, 8),
+            input_names=("input",),
+            output_names=("dets",),
+            dynamic_axes=None,
+            shape=(8, 8),
+            backbone_only=False,
+        )
+        exporter = CoreAIExporter(CoreAIConfig(output_dir=tmp_path, verbose=False))
+        with (
+            mock.patch.dict(sys.modules, {"coreai_torch": coreai_torch}),
+            mock.patch("rfdetr.export._coreai.exporter.coreai_decomposition_table", return_value={}),
+            pytest.raises(NotImplementedError, match="aten.grid_sampler"),
+        ):
+            exporter._export_program(graph, torch.float32)
 
     def test_float16_traces_a_half_precision_graph(self, tmp_path: Path) -> None:
         """``precision="float16"`` traces the model and its example input in float16."""
