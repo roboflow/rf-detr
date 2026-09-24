@@ -2540,10 +2540,10 @@ class RFDETR:
                 metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
                 needed.
             antialias:
-                Whether to use antialiasing during the inference resize. Keep this ``False`` for checkpoints trained with
-                the antialias-free Albumentations pipeline. Set it to ``True`` for checkpoints trained with torchvision,
-                older RF-DETR releases, or antialiased platform preprocessing. Defaults to ``False`` to preserve the
-                existing inference behavior.
+                Whether to use antialiasing during the inference resize. Keep this ``False`` for checkpoints trained
+                with the antialias-free Albumentations pipeline. Set it to ``True`` for checkpoints trained with
+                torchvision, older RF-DETR releases, or antialiased platform preprocessing. Defaults to ``False`` to
+                preserve the existing inference behavior.
             **kwargs:
                 Additional keyword arguments.
 
