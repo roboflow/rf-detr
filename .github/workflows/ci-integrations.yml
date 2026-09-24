@@ -53,12 +53,13 @@ jobs:
     # previously differed only in: os, python-version, the pip extra to install, an optional
     # extra dependency-group (ci-executorch-pin), the runtime-availability check to run first,
     # and (onnxruntime alone) whether to collect coverage. `format` drives the pytest marker
-    # (`-m e2e_<format>`) and MUST match a marker registered in pyproject.toml; `verify` drives
-    # the check script (`.github/scripts/verify_<verify>.py`) and `extra` the pip extra — both
-    # differ from `format` only where noted below. Every row now runs the SAME test target
-    # (`tests/`, marker-selected) instead of each format's own file list/`.`, and the SAME
-    # job timeout, so a format silently drifting onto too-narrow a test path or a stricter
-    # deadline shows up as a matrix outlier instead of staying hidden in its own job block.
+    # (`-m e2e_<format>`) and MUST match a marker registered in pyproject.toml; `verify` picks
+    # which of the "🔎 Verify" steps below runs (each gated by `if: matrix.verify == '...'`)
+    # and `extra` the pip extra — both differ from `format` only where noted below. Every row
+    # now runs the SAME test target (`tests/`, marker-selected) instead of each format's own
+    # file list/`.`, and the SAME job timeout, so a format silently drifting onto too-narrow a
+    # test path or a stricter deadline shows up as a matrix outlier instead of staying hidden
+    # in its own job block.
     name: ${{ matrix.verify }} parity (py${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     concurrency:
@@ -174,34 +175,108 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages (${{ matrix.extra }} extra)
+        if: matrix.extra_group == ''
+        timeout-minutes: 10
+        run: uv pip install -e ".[${{ matrix.extra }},train,augment,cli,visual]" --group tests
+
+      - name: 🚀 Install Packages (${{ matrix.extra }} extra, pinned)
+        if: matrix.extra_group != ''
         timeout-minutes: 10
         # --group ci-executorch-pin (executorch rows only) locks torch and executorch to a pair
         # whose C10 ABI matches (torch 2.12.x + executorch 1.3.1; see pyproject.toml for the
         # empirically validated range and removal condition).
+        run: uv pip install -e ".[${{ matrix.extra }},train,augment,cli,visual]" --group tests --group ${{ matrix.extra_group }}
+
+      # Guard against a silently-skipped parity test: each format's test class is gated by a
+      # skipif/importorskip on its runtime's availability, so a broken/missing wheel would skip
+      # it (false green) instead of failing red. Exactly one of these runs per matrix row.
+      - name: 🔎 Verify executorch runtime import
+        if: matrix.verify == 'executorch'
         run: |
-          groups="--group tests"
-          if [ -n "${{ matrix.extra_group }}" ]; then
-            groups="$groups --group ${{ matrix.extra_group }}"
-          fi
-          uv pip install -e ".[${{ matrix.extra }},train,augment,cli,visual]" $groups
+          from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+          from rfdetr.export._executorch.exporter import _check_executorch_available
 
-      - name: 🔎 Verify ${{ matrix.verify }} runtime import
-        # Guard against a silently-skipped parity test: each format's test class is gated by a
-        # skipif/importorskip on its runtime's availability, so a broken/missing wheel would
-        # skip it (false green) instead of failing red. See .github/scripts/verify_*.py.
-        run: python .github/scripts/verify_${{ matrix.verify }}.py
+          _check_executorch_available(require_runtime=True)
+          assert _IS_EXECUTORCH_AVAILABLE, "executorch installed but not detected as available"
+          print("executorch runtime import OK")
+        shell: python
 
+      - name: 🔎 Verify coremltools import
+        if: matrix.verify == 'coreml'
+        run: |
+          from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
+
+          assert _IS_COREMLTOOLS_AVAILABLE, "coremltools installed but not detected as available"
+          print("coremltools import OK")
+        shell: python
+
+      - name: 🔎 Verify the Core AI runtime
+        if: matrix.verify == 'coreai'
+        run: |
+          import coreai.runtime as rt
+
+          from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
+
+          assert _IS_COREAI_TORCH_AVAILABLE, "coreai-torch installed but not detected as available"
+          print("Core AI compute units:", rt.ComputeUnitKind.available_kinds())
+        shell: python
+
+      - name: 🔎 Verify executorch runtime and coremltools import
+        if: matrix.verify == 'executorch_coreml'
+        run: |
+          from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+          from rfdetr.export._executorch.exporter import _check_executorch_available
+
+          _check_executorch_available(require_runtime=True)
+          assert _IS_EXECUTORCH_AVAILABLE, "executorch installed but not detected as available"
+          import coremltools  # noqa: F401
+
+          print("executorch runtime + coremltools import OK")
+        shell: python
+
+      - name: 🔎 Verify openvino import
+        if: matrix.verify == 'openvino'
+        run: |
+          from rfdetr.export._openvino import _IS_OPENVINO_AVAILABLE
+
+          assert _IS_OPENVINO_AVAILABLE, "openvino installed but not detected as available"
+          print("openvino import OK")
+        shell: python
+
+      - name: 🔎 Verify litert-torch import
+        if: matrix.verify == 'litert'
+        run: |
+          from rfdetr.export._litert.exporter import _check_litert_available
+
+          _check_litert_available()
+          print("litert-torch import OK")
+        shell: python
+
+      - name: 🔎 Verify onnx and onnxruntime imports
+        if: matrix.verify == 'onnxruntime'
+        run: |
+          import onnx
+          import onnxruntime
+
+          print(f"onnx {onnx.__version__} (IR {onnx.IR_VERSION}) / onnxruntime {onnxruntime.__version__} import OK")
+        shell: python
+
+      # Real export/convert + load/inference per format is heavy; single-worker. Target is
+      # always tests/, selection is always by marker (never a format-specific file list or
+      # `.`) — see the job-level comment above for why. onnxruntime alone also collects
+      # coverage, so it gets its own step rather than a conditionally-built pytest flag.
       - name: 🧪 Run ${{ matrix.format }} end-to-end parity tests
-        # Real export/convert + load/inference per format is heavy; single-worker. Target is
-        # always tests/, selection is always by marker (never a format-specific file list or
-        # `.`) — see the job-level comment above for why.
+        if: matrix.format != 'onnxruntime'
         run: |
-          cov_args=""
-          if [ "${{ matrix.format }}" = "onnxruntime" ]; then
-            cov_args="--cov=rfdetr --cov-report=xml"
-          fi
           uv run --no-sync pytest tests/ -m "e2e_${{ matrix.format }}" -n 1 \
-            $cov_args \
+            --timeout=600 \
+            --durations=20
+
+      - name: 🧪 Run onnxruntime end-to-end parity tests (with coverage)
+        if: matrix.format == 'onnxruntime'
+        run: |
+          uv run --no-sync pytest tests/ -m "e2e_onnxruntime" -n 1 \
+            --cov=rfdetr --cov-report=xml \
             --timeout=600 \
             --durations=20
 
