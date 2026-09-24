@@ -57,6 +57,7 @@ nav:
               - OpenVINO: exports/openvino.md
               - ExecuTorch: exports/executorch.md
               - CoreML: exports/coreml.md
+              - Core AI: exports/coreai.md
           - Exporter Blueprint: exports/blueprint.md
       - Deploy Model: learn/deploy.md
       - Benchmarks: learn/benchmarks.md
