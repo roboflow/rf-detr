@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-24T12:01:18">
+  <meta property="article:modified_time" content="2026-09-24T20:49:59">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-24T12:01:18",
+    "dateModified": "2026-09-24T20:49:59",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1396,6 +1396,45 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Quick Start
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coco-evaluation-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        COCO Evaluation Backends
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="COCO Evaluation Backends">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-new-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a new backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmarking-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmarking a backend
       
     </span>
   </a>
@@ -3391,6 +3430,45 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#coco-evaluation-backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        COCO Evaluation Backends
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="COCO Evaluation Backends">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#adding-a-new-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adding a new backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmarking-a-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmarking a backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#cuda-graph-training" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4021,12 +4099,122 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span></code></pre></div>
 <p><code>scale_jitter</code> defaults to <code>True</code>. Set it to <code>False</code> to use direct resize only — no random crop, so annotations near image borders are never clipped.</p>
 <hr />
+<h2 id="coco-evaluation-backends">COCO Evaluation Backends<a class="headerlink" href="#coco-evaluation-backends" title="Permanent link">&para;</a></h2>
+<p>RF-DETR computes validation and test mAP through a pluggable COCO evaluator, selected by <code>eval_backend</code>. Four backends ship with <code>rfdetr[train]</code> and return identical metrics — they differ only in how fast <code>compute()</code> runs, never in the numbers it reports:</p>
+<table>
+<thead>
+<tr>
+<th><code>eval_backend</code></th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"vernier"</code> (default)</td>
+<td><a href="https://pypi.org/project/vernier/">vernier</a> — fastest measured backend, several times faster than <code>"faster_coco_eval"</code>. Requires a box on every annotation — an <code>iou_type</code> without <code>"bbox"</code> is rejected at construction, not at <code>compute()</code>.</td>
+</tr>
+<tr>
+<td><code>"hotcoco"</code></td>
+<td><a href="https://pypi.org/project/hotcoco/">hotcoco</a> — Rust evaluator, several times faster than <code>"faster_coco_eval"</code>.</td>
+</tr>
+<tr>
+<td><code>"ufcoco"</code></td>
+<td><a href="https://pypi.org/project/ultrafast-pycocotools/">ultrafast-pycocotools</a> — reproduces pycocotools' precision/recall/score arrays byte for byte, at Rust speed.</td>
+</tr>
+<tr>
+<td><code>"faster_coco_eval"</code></td>
+<td><a href="https://pypi.org/project/faster-coco-eval/">faster-coco-eval</a> — the previous default evaluator. Slowest of the four; kept as the parity baseline the other three are tested against.</td>
+</tr>
+</tbody>
+</table>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span> <span class="n">eval_backend</span><span class="o">=</span><span class="s2">"hotcoco"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Full benchmark numbers (core-count scaling, box-only vs. box+mask, hardware) are in <a href="../training-parameters/#training-parameters">Training Parameters → <code>eval_backend</code></a>. Keypoint evaluation uses its own OKS path and is unaffected by this setting.</p>
+<h3 id="adding-a-new-backend">Adding a new backend<a class="headerlink" href="#adding-a-new-backend" title="Permanent link">&para;</a></h3>
+<p>Every backend is one entry in a name → class registry, checked directly against <code>TrainConfig.eval_backend</code>'s type; nothing else in the adapter branches on the backend name (<code>rfdetr.training.coco_map._BACKENDS</code>, consumed by <code>OnePassCocoMeanAveragePrecision</code>). To add one:</p>
+<ol>
+<li><strong>Add the name</strong> to the <code>CocoEvalBackend</code> literal in <code>src/rfdetr/config.py</code>.</li>
+<li><strong>Implement a backend class</strong> in <code>src/rfdetr/training/coco_map.py</code>, subclassing <code>_RfdetrCocoBackend</code>:<ul>
+<li>If the package follows pycocotools' object model (<code>COCO()</code>, <code>COCOeval()</code>, an RLE <code>mask</code> module), subclass <code>_PackageCocoBackend</code> instead and implement <code>_package()</code> — see <code>_HotCocoBackend</code>/<code>_UfcocoBackend</code>.</li>
+<li>If the package takes ground truth and detections as arrays instead of pycocotools' object model (<code>vernier</code>'s shape), subclass <code>_RfdetrCocoBackend</code> directly, set <code>uses_coco_evaluator = False</code>, and add a new <code>isinstance(self._coco_backend, YourBackend)</code> branch to <code>OnePassCocoMeanAveragePrecision.compute()</code> alongside the existing <code>_VernierBackend</code> check, with a <code>_your_backend_results()</code> method modeled on <code>_vernier_results</code>. Dispatch here is by <code>isinstance</code>, not an overridable hook — there's only one array-native backend today, so no polymorphic seam has been justified yet.</li>
+<li>Set the capability flags only where they differ from the shared defaults: <code>requires_bbox</code>, <code>unused_backend_methods</code>, <code>uses_coco_evaluator</code>.</li>
+<li>Wrap the import in a small function built on <code>_import_optional_backend()</code> (see <code>_hotcoco()</code>/<code>_ufcoco()</code>/<code>_vernier()</code>) so a missing package raises an actionable <code>ImportError</code> naming the install extra, not a raw <code>ModuleNotFoundError</code>.</li>
+</ul>
+</li>
+<li><strong>Register it</strong> in <code>_BACKENDS</code>, keyed by the literal added in step 1.</li>
+<li><strong>Declare the dependency</strong> in <code>pyproject.toml</code>'s <code>train</code> extra — all four existing backends ship there.</li>
+<li><strong>Extend the tests</strong> in <code>tests/training/test_coco_map.py</code>: add the name to <code>_BACKEND_PACKAGES</code> (and to <code>_ALTERNATIVE_BACKENDS</code> unless it's a second <code>"faster_coco_eval"</code>-equivalent baseline rather than an alternative to compare against one). <code>test_backend_registry_matches_the_typed_eval_backend_names</code> then enforces that the registry and the literal stay in sync, and the existing <code>test_alternative_backend_matches_faster_coco_eval[_for_segmentation]</code> parity tests pick up the new backend automatically, requiring exact equality against <code>"faster_coco_eval"</code> for both box-only and box+mask evaluation.</li>
+<li><strong>Document it</strong>: this table, the <code>eval_backend</code> rows in <a href="../training-parameters/">Training Parameters</a>, and <code>docs/reference/train_config.md</code>.</li>
+</ol>
+<div class="admonition warning">
+<p class="admonition-title">Parity is the contract, not an aspiration</p>
+<p><code>OnePassCocoMeanAveragePrecision</code> promises every backend returns the same aggregate, per-class and class-ID outputs. A backend that can't pass the exact-equality parity tests for box-only and box+mask evaluation isn't ready to register — don't relax those tests to make a new backend pass.</p>
+</div>
+<h3 id="benchmarking-a-backend">Benchmarking a backend<a class="headerlink" href="#benchmarking-a-backend" title="Permanent link">&para;</a></h3>
+<p>There's no long-lived benchmark script in the repo — the numbers in <a href="../training-parameters/">Training Parameters</a> came from one-off scripts measuring <code>compute()</code> wall time on synthetic COCO-val-shaped state. Build one the same way, calling the adapter directly rather than going through a full training run:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.training.coco_map</span><span class="w"> </span><span class="kn">import</span> <span class="n">OnePassCocoMeanAveragePrecision</span>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="n">NUM_IMAGES</span> <span class="o">=</span> <span class="mi">5_000</span>
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="n">DETS_PER_IMAGE</span> <span class="o">=</span> <span class="mi">300</span>
+</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a><span class="n">GT_PER_IMAGE</span> <span class="o">=</span> <span class="mi">75</span>
+</span><span id="__span-22-10"><a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="n">NUM_CLASSES</span> <span class="o">=</span> <span class="mi">80</span>
+</span><span id="__span-22-11"><a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="n">IMAGE_SIZE</span> <span class="o">=</span> <span class="mf">640.0</span>
+</span><span id="__span-22-12"><a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a>
+</span><span id="__span-22-13"><a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>
+</span><span id="__span-22-14"><a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a><span class="k">def</span><span class="w"> </span><span class="nf">_random_boxes</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+</span><span id="__span-22-15"><a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a>    <span class="n">top_left</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">IMAGE_SIZE</span> <span class="o">-</span> <span class="mi">10</span><span class="p">)</span>
+</span><span id="__span-22-16"><a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a>    <span class="n">size</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="mi">10</span> <span class="o">+</span> <span class="mi">1</span>
+</span><span id="__span-22-17"><a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a>    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">top_left</span><span class="p">,</span> <span class="n">top_left</span> <span class="o">+</span> <span class="n">size</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># xyxy, x2&gt;x1 and y2&gt;y1 by construction</span>
+</span><span id="__span-22-18"><a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a>
+</span><span id="__span-22-19"><a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a>
+</span><span id="__span-22-20"><a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a><span class="n">metric</span> <span class="o">=</span> <span class="n">OnePassCocoMeanAveragePrecision</span><span class="p">(</span>
+</span><span id="__span-22-21"><a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a>    <span class="n">iou_type</span><span class="o">=</span><span class="s2">"bbox"</span><span class="p">,</span>
+</span><span id="__span-22-22"><a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a>    <span class="n">backend</span><span class="o">=</span><span class="s2">"hotcoco"</span><span class="p">,</span>  <span class="c1"># backend under test</span>
+</span><span id="__span-22-23"><a id="__codelineno-22-23" name="__codelineno-22-23" href="#__codelineno-22-23"></a>    <span class="n">sync_on_compute</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-22-24"><a id="__codelineno-22-24" name="__codelineno-22-24" href="#__codelineno-22-24"></a><span class="p">)</span>
+</span><span id="__span-22-25"><a id="__codelineno-22-25" name="__codelineno-22-25" href="#__codelineno-22-25"></a>
+</span><span id="__span-22-26"><a id="__codelineno-22-26" name="__codelineno-22-26" href="#__codelineno-22-26"></a><span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</span><span id="__span-22-27"><a id="__codelineno-22-27" name="__codelineno-22-27" href="#__codelineno-22-27"></a><span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">NUM_IMAGES</span><span class="p">):</span>
+</span><span id="__span-22-28"><a id="__codelineno-22-28" name="__codelineno-22-28" href="#__codelineno-22-28"></a>    <span class="n">preds</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-22-29"><a id="__codelineno-22-29" name="__codelineno-22-29" href="#__codelineno-22-29"></a>        <span class="p">{</span>
+</span><span id="__span-22-30"><a id="__codelineno-22-30" name="__codelineno-22-30" href="#__codelineno-22-30"></a>            <span class="s2">"boxes"</span><span class="p">:</span> <span class="n">_random_boxes</span><span class="p">(</span><span class="n">DETS_PER_IMAGE</span><span class="p">),</span>
+</span><span id="__span-22-31"><a id="__codelineno-22-31" name="__codelineno-22-31" href="#__codelineno-22-31"></a>            <span class="s2">"scores"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">DETS_PER_IMAGE</span><span class="p">),</span>
+</span><span id="__span-22-32"><a id="__codelineno-22-32" name="__codelineno-22-32" href="#__codelineno-22-32"></a>            <span class="s2">"labels"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">NUM_CLASSES</span><span class="p">,</span> <span class="p">(</span><span class="n">DETS_PER_IMAGE</span><span class="p">,)),</span>
+</span><span id="__span-22-33"><a id="__codelineno-22-33" name="__codelineno-22-33" href="#__codelineno-22-33"></a>        <span class="p">}</span>
+</span><span id="__span-22-34"><a id="__codelineno-22-34" name="__codelineno-22-34" href="#__codelineno-22-34"></a>    <span class="p">]</span>
+</span><span id="__span-22-35"><a id="__codelineno-22-35" name="__codelineno-22-35" href="#__codelineno-22-35"></a>    <span class="n">target</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-22-36"><a id="__codelineno-22-36" name="__codelineno-22-36" href="#__codelineno-22-36"></a>        <span class="p">{</span>
+</span><span id="__span-22-37"><a id="__codelineno-22-37" name="__codelineno-22-37" href="#__codelineno-22-37"></a>            <span class="s2">"boxes"</span><span class="p">:</span> <span class="n">_random_boxes</span><span class="p">(</span><span class="n">GT_PER_IMAGE</span><span class="p">),</span>
+</span><span id="__span-22-38"><a id="__codelineno-22-38" name="__codelineno-22-38" href="#__codelineno-22-38"></a>            <span class="s2">"labels"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">NUM_CLASSES</span><span class="p">,</span> <span class="p">(</span><span class="n">GT_PER_IMAGE</span><span class="p">,)),</span>
+</span><span id="__span-22-39"><a id="__codelineno-22-39" name="__codelineno-22-39" href="#__codelineno-22-39"></a>            <span class="s2">"iscrowd"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">GT_PER_IMAGE</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">),</span>
+</span><span id="__span-22-40"><a id="__codelineno-22-40" name="__codelineno-22-40" href="#__codelineno-22-40"></a>            <span class="s2">"area"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">GT_PER_IMAGE</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span><span class="p">,</span>
+</span><span id="__span-22-41"><a id="__codelineno-22-41" name="__codelineno-22-41" href="#__codelineno-22-41"></a>        <span class="p">}</span>
+</span><span id="__span-22-42"><a id="__codelineno-22-42" name="__codelineno-22-42" href="#__codelineno-22-42"></a>    <span class="p">]</span>
+</span><span id="__span-22-43"><a id="__codelineno-22-43" name="__codelineno-22-43" href="#__codelineno-22-43"></a>    <span class="n">metric</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">preds</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
+</span><span id="__span-22-44"><a id="__codelineno-22-44" name="__codelineno-22-44" href="#__codelineno-22-44"></a>
+</span><span id="__span-22-45"><a id="__codelineno-22-45" name="__codelineno-22-45" href="#__codelineno-22-45"></a><span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+</span><span id="__span-22-46"><a id="__codelineno-22-46" name="__codelineno-22-46" href="#__codelineno-22-46"></a><span class="n">metric</span><span class="o">.</span><span class="n">compute</span><span class="p">()</span>
+</span><span id="__span-22-47"><a id="__codelineno-22-47" name="__codelineno-22-47" href="#__codelineno-22-47"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"compute(): </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Match the published methodology so the result is comparable:</p>
+<ul>
+<li>Shape the synthetic state (image/detection/class counts) after what you actually validate on — the vernier-vs-hotcoco margin widens on fewer classes and shrinks on more.</li>
+<li>Time <code>compute()</code> alone, not <code>update()</code> — <code>update()</code>'s cost is TorchMetrics' own CPU tensor copying and is backend-independent.</li>
+<li>Fix the core count (<code>torch.set_num_threads(N)</code>) and report it; the published numbers scale with cores.</li>
+<li>Run box-only and box+mask separately — the ranking between backends is not the same in both.</li>
+<li><strong>Verify parity before trusting a speed number.</strong> Run <code>pytest tests/training/test_coco_map.py -k &lt;backend_name&gt;</code> first; a fast backend that doesn't match <code>"faster_coco_eval"</code> is a bug, not a result worth publishing.</li>
+</ul>
+<hr />
 <h2 id="cuda-graph-training">CUDA Graph Training<a class="headerlink" href="#cuda-graph-training" title="Permanent link">&para;</a></h2>
 <p>For a long-running detection job on one NVIDIA GPU, enable CUDA graph replay on the model constructor:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="n">cuda_graphs</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="n">cuda_graphs</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>An INFO line at train start confirms replay is enabled, and each captured input shape logs its own INFO line; without one of these the run is eager (and the reason was logged as a warning). The first batch at each input signature runs CUDA graph warm-up and capture. Later batches with the same batch size, resolution, dtype, device, and autocast mode replay the captured forward and backward. BF16 capture can cache one graph per signature, so multi-scale training retains one graph and memory pool per resolution. Graph pools are private CUDA allocations; compare peak memory and the largest usable batch size as well as step time on your own workload.</p>
 <p>There are two capture routes:</p>
@@ -4036,17 +4224,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <p><code>cuda_graphs=True</code> may be combined with <code>compile=True</code> (see <a href="#combining-cuda-graphs-with-compilation">Combining CUDA graphs with compilation</a>), but that is the Inductor route. Ordinary FP8 with <code>compile=False</code> still uses Lightning's normal Transformer Engine plugin. When all three flags — <code>cuda_graphs=True</code>, <code>compile=True</code>, and <code>amp_dtype="fp8"</code> — are selected, RF-DETR warns and keeps the run compile-only; it does not wrap the compiled module in the Transformer Engine graph helper. FP8 with <code>compile=True</code> but <code>cuda_graphs=False</code> uses ordinary compiled FP8 training without this graph-routing warning. A capture failure stops training with the original exception attached: an invalidated capture can leave CUDA state unsafe for further operations. Restart the process before retrying with graphs disabled; catching the exception and continuing in the same process is not a supported fallback.</p>
 <p>Use the Transformer Engine-aware route explicitly. <code>TrainConfig.multi_scale</code> defaults to <code>"per-batch"</code>, so it must be explicitly set to <code>False</code> (or <code>"off"</code>) here (along with <code>square_resize_div_64=True</code>) — otherwise the run silently falls back to eager mode, with only a log warning as the signal:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
-</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="n">cuda_graphs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
-</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>    <span class="n">amp_dtype</span><span class="o">=</span><span class="s2">"fp8"</span><span class="p">,</span>
-</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>    <span class="n">multi_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-</span><span id="__span-22-10"><a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a>    <span class="n">square_resize_div_64</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-22-11"><a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="n">cuda_graphs</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="nb">compile</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>    <span class="n">amp_dtype</span><span class="o">=</span><span class="s2">"fp8"</span><span class="p">,</span>
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>    <span class="n">grad_accum_steps</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>    <span class="n">multi_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>    <span class="n">square_resize_div_64</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>CUDA graphs and <code>compile=True</code> remove different costs, and they can be enabled together. The two measurements immediately below compare CUDA graphs with eager training; the matrix in <a href="#combining-cuda-graphs-with-compilation">Combining CUDA graphs with compilation</a> compares all four combinations on one GPU. Compare steady-state throughput, startup time, and peak memory with identical data, batch size, precision, and resolutions before choosing. Compilation keeps positional-embedding interpolation eager to avoid PyTorch's symbolic antialiased-bicubic backward failure; its interpolation math and gradients are unchanged. This is a compatibility mitigation, not an upstream compiler fix.</p>
 <p>As one BF16 reference point, RF-DETR Nano on an NVIDIA L4 with BF16, batch 4, deterministic synthetic detection batches, and a fixed 8-resolution multi-scale set (<code>expanded_scales=False</code>) reduced the median Lightning training batch from 149.8 ms to 101.7 ms across five runs — a 32.4% median reduction in the five paired per-run measurements. Peak allocated memory increased from 2,395 MiB to 3,466 MiB, and peak reserved memory increased from 2,754 MiB to 14,550 MiB for those 8 captured graph pools. <code>TrainConfig</code>'s own default is <code>expanded_scales=True</code>, which resolves to 11 multi-scale resolutions for this model and was not benchmarked; expect proportionally more graph pools and higher peak reserved memory under that default. The speed and memory cost depend on the model, shapes, batch size, GPU, and PyTorch version; this option is not a good fit when memory already limits the batch size.</p>
@@ -4069,10 +4257,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Non-empty custom <code>aug_config</code> values keep model compilation dynamic because transforms can change image shape after resize. They also keep the batched loss graph disabled.</p>
 <h3 id="combining-cuda-graphs-with-compilation">Combining CUDA graphs with compilation<a class="headerlink" href="#combining-cuda-graphs-with-compilation" title="Permanent link">&para;</a></h3>
 <p>Set both flags and RF-DETR hands CUDA graph replay to Inductor's CUDA graph trees (the mechanism behind <code>torch.compile(mode="reduce-overhead")</code>, passed here as the <code>triton.cudagraphs</code> compile option so it coexists with RF-DETR's other Inductor settings). The compiled forward and backward kernels are recorded once per input shape and replayed afterwards; the eager graph runner used by <code>cuda_graphs=True</code> alone stays off, and an INFO line at construction says so.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cuda_graphs</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRNano</span>
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRNano</span><span class="p">(</span><span class="nb">compile</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cuda_graphs</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span><span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Measured on one NVIDIA RTX PRO 6000 (Blackwell) with RF-DETR Nano, BF16, resolution 384, <code>multi_scale=False</code>, synthetic detection batches, torch 2.11, 100 timed steps after warm-up (GPU busy is the fraction of wall time with a kernel running, from a profiler trace):</p>
 <table>
@@ -4126,14 +4314,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Constructor parameter — not a <code>train()</code> parameter</p>
 <p><code>gradient_checkpointing</code> is a <code>ModelConfig</code> field and must be passed to the <strong>model constructor</strong>, not to <code>train()</code>. Passing it to <code>train()</code> will raise a <code>ValidationError</code> because <code>TrainConfig</code> has <code>extra="forbid"</code>.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
-</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
-</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>
-</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
-</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
-</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># May be able to increase with checkpointing</span>
-</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRMedium</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRMedium</span><span class="p">(</span><span class="n">gradient_checkpointing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>
+</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">(</span>
+</span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>    <span class="n">dataset_dir</span><span class="o">=</span><span class="s2">"path/to/dataset"</span><span class="p">,</span>
+</span><span id="__span-26-7"><a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a>    <span class="n">batch_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="c1"># May be able to increase with checkpointing</span>
+</span><span id="__span-26-8"><a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>This re-computes activations during the backward pass instead of storing them, reducing memory usage by ~30-40% at the cost of ~20% slower training.</p>
 <h3 id="memory-efficient-configurations">Memory-Efficient Configurations<a class="headerlink" href="#memory-efficient-configurations" title="Permanent link">&para;</a></h3>
@@ -4255,7 +4443,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 24, 2026 12:01:18 UTC">2026-09-24 12:01:18</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 24, 2026 20:49:59 UTC">2026-09-24 20:49:59</span>
   </span>
 
     
