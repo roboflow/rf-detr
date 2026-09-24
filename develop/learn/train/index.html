@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-23T19:52:14">
+  <meta property="article:modified_time" content="2026-09-24T16:16:08">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-23T19:52:14",
+    "dateModified": "2026-09-24T16:16:08",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3213,8 +3213,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p><code>checkpoint_best_total.pth</code> – final checkpoint selected for inference and benchmarking. It contains model weights, epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.</p>
 </li>
+<li>
+<p><code>last_ema.pth</code> – final EMA weights, written at the end of training when EMA is enabled (the default). Mirrors <code>last.ckpt</code> for the EMA model.</p>
+</li>
 </ul>
-<p>For detection and segmentation models, the validation score is box mAP (<code>val/mAP_50_95</code>). For keypoint preview models, best-checkpoint selection uses COCO keypoint AP (<code>val/keypoint_map_50_95</code>) and checkpoints persist the model keypoint schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/keypoint slots.</p>
+<p>For detection models, the validation score is box mAP (<code>val/mAP_50_95</code>). For segmentation models, it is mask mAP (<code>val/segm_mAP_50_95</code>), not box mAP. For keypoint preview models, best-checkpoint selection uses COCO keypoint AP (<code>val/keypoint_map_50_95</code>) and checkpoints persist the model keypoint schema so <code>RFDETR.from_checkpoint()</code> can reconstruct the same label/keypoint slots. <code>TrainConfig.best_model_metric="mar"</code> selects on mAR instead — unlike mAP, detection and segmentation share the same unprefixed <code>val/mAR</code> key; keypoint models still use their own <code>val/keypoint_mAR</code>.</p>
 <p>The output directory also holds <code>training_config.json</code>, a record of how the run was configured: the full <code>TrainConfig</code> and <code>ModelConfig</code>, the model config class name, and the dataset's class names. It is written when training starts, so a run you interrupt with Ctrl-C still leaves one behind, and rewritten when training finishes — at which point <code>class_names</code> is the list you passed as <code>class_names</code>, or the dataset's own labels when you passed none. Because the start-of-run copy is written before the first batch, the file's presence does not by itself mean a run reached training, and it replaces any copy an earlier run left in the same <code>output_dir</code>.</p>
 <details class="note">
 <summary>Checkpoint file sizes</summary>
@@ -3293,7 +3296,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 23, 2026 19:52:14 UTC">2026-09-23 19:52:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 24, 2026 16:16:08 UTC">2026-09-24 16:16:08</span>
   </span>
 
     
