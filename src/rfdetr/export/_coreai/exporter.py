@@ -9,8 +9,10 @@ Core AI is Apple's on-device inference framework for iOS, iPadOS and macOS 27 an
 it consumes a :func:`torch.export.export` graph directly — no ONNX step — and ``coreai-torch`` lowers it to an
 ``.aimodel`` asset that the Core AI runtime specializes for the CPU, GPU or Neural Engine when it is loaded.
 
-The graph needs one decomposition on top of ``coreai_torch.get_decomp_table()``: ``aten.grid_sampler_2d`` from the
-deformable attention has no Core AI lowering, see :mod:`rfdetr.export._coreai.decompositions`.
+The graph needs two entries on top of ``coreai_torch.get_decomp_table()``, see
+:mod:`rfdetr.export._coreai.decompositions`: ``aten.grid_sampler_2d`` from the deformable attention has no Core AI
+lowering, and a float16 ``aten.topk`` runs in float32, because the Neural Engine's float16 ``topk`` returns corrupt
+indices and the two-stage query selection would gather the wrong encoder tokens.
 
 Note:
     The ``.aimodel`` keeps the contract of the other formats: a fixed ``[batch, 3, H, W]`` float input named

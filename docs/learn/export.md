@@ -930,14 +930,14 @@ pip install "rfdetr[coreai]"
 ### Basic Core AI Export
 
 ```python
-from rfdetr import RFDETRNano
+from rfdetr import RFDETRSmall
 
-model = RFDETRNano(pretrain_weights="<path/to/checkpoint.pth>")
+model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
 
 model.export(format="coreai")
 ```
 
-This produces `output/rfdetr-nano_fp32.aimodel`. Segmentation and keypoint models export the same way. Pass `coreai_precision="float16"` for a half-size `rfdetr-nano_fp16.aimodel` whose input and outputs are float16 as well.
+This produces `output/rfdetr-small_fp32.aimodel`. Segmentation and keypoint models export the same way. Pass `coreai_precision="float16"` for a half-size `rfdetr-small_fp16.aimodel` whose input and outputs are float16 as well.
 
 The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` input, resized without antialiasing and ImageNet-normalized, as in the ONNX example below. Unlike CoreML, the tensors keep their names — `input`, then `dets` and `labels`, plus `masks` or `keypoints` — and any `notes` are stored in the asset metadata under `rfdetr_notes`.
 
@@ -953,7 +953,7 @@ The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` 
 
 
     async def run(image: np.ndarray) -> dict[str, np.ndarray]:
-        model = await rt.AIModel.load("output/rfdetr-nano_fp32.aimodel", rt.SpecializationOptions.default())
+        model = await rt.AIModel.load("output/rfdetr-small_fp32.aimodel", rt.SpecializationOptions.default())
         outputs = await model.load_function("main")({"input": rt.NDArray(image)})
         return {name: outputs[name].numpy() for name in ("dets", "labels")}
 
@@ -976,7 +976,7 @@ The asset keeps the contract of the other formats: one fixed `[batch, 3, H, W]` 
 
 ### Precision, Compute Units and Latency
 
-**Start with float32.** With the default specialization Core AI runs a float32 `.aimodel` on the GPU, where it matches eager PyTorch detection for detection. Single-image latency of pretrained models with public test images (batch 1; M5 Pro Mac: macOS 27.0, Python runtime, median of 100 runs after 10 warm-ups; M4 iPad Air and A15 iPhone 13: 27.0, native Swift runtime in a release-profile app, median of three runs of 20 after 2 warm-ups):
+**Start with float32.** With the default specialization Core AI runs a float32 `.aimodel` on the GPU, where it reproduces every detection of eager PyTorch. Single-image latency of pretrained models with public test images (batch 1; M5 Pro Mac: macOS 27.0, Python runtime, median of 100 runs after 10 warm-ups; M4 iPad Air and A15 iPhone 13: 27.0, native Swift runtime in a release-profile app, median of three runs of 20 after 2 warm-ups):
 
 | Model, precision          | Core AI default | Core AI CPU | CoreML `ALL` | CoreML `CPU_ONLY` |
 | ------------------------- | --------------- | ----------- | ------------ | ----------------- |
