@@ -2509,6 +2509,7 @@ class RFDETR:
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
+        antialias: bool = False,
         **kwargs: Any,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Performs model inference on the input images.
@@ -2538,6 +2539,11 @@ class RFDETR:
                 ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level
                 metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
                 needed.
+            antialias:
+                Whether to use antialiasing during the inference resize. Keep this ``False`` for checkpoints trained with
+                the antialias-free Albumentations pipeline. Set it to ``True`` for checkpoints trained with torchvision,
+                older RF-DETR releases, or antialiased platform preprocessing. Defaults to ``False`` to preserve the
+                existing inference behavior.
             **kwargs:
                 Additional keyword arguments.
 
@@ -2772,8 +2778,9 @@ class RFDETR:
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
-        # used by Albumentations during training — see issue #1203.
-        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=False) for t in processed_images])
+        # used by Albumentations during training — see issue #1203. The opt-in flag
+        # also supports checkpoints trained with torchvision or platform resizing.
+        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=antialias) for t in processed_images])
         batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
 
         if self._is_optimized_for_inference:

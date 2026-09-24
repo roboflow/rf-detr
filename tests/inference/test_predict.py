@@ -1373,6 +1373,20 @@ class TestPredictResizeMatchesTrainingInterpolation:
             "reference preprocessing."
         )
 
+    def test_predict_resize_can_enable_antialias(self) -> None:
+        """``predict(antialias=True)`` enables antialiased inference resizing."""
+        from unittest.mock import patch
+
+        import torchvision.transforms.functional as F  # noqa: N812
+
+        model = _DummyRFDETR()
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+
+        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+            model.predict(img, antialias=True)
+
+        assert mock_resize.call_args.kwargs.get("antialias") is True
+
 
 class TestPredictPatchSize:
     """Predict() patch_size resolution and validation tests."""
