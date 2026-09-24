@@ -49,118 +49,60 @@ jobs:
         run: uv cache prune --ci
 
   export-parity:
-    # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnxruntime, which
-    # previously differed only in: os, python-version, the pip extra to install, an optional
-    # extra dependency-group (ci-executorch-pin), the runtime-availability check to run first,
-    # and (onnxruntime alone) whether to collect coverage. `format` drives the pytest marker
-    # (`-m e2e_<format>`) and MUST match a marker registered in pyproject.toml; `verify` picks
-    # which of the "🔎 Verify" steps below runs (each gated by `if: matrix.verify == '...'`)
-    # and `extra` the pip extra — both differ from `format` only where noted below. Every row
-    # now runs the SAME test target (`tests/`, marker-selected) instead of each format's own
-    # file list/`.`, and the SAME job timeout, so a format silently drifting onto too-narrow a
-    # test path or a stricter deadline shows up as a matrix outlier instead of staying hidden
-    # in its own job block.
-    name: ${{ matrix.verify }} parity (py${{ matrix.python-version }}, ${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnx, which previously
+    # differed only in: os, python-version, an optional extra dependency-group
+    # (ci-executorch-pin), an optional extra to bolt on (`,coreml`, for the one delegate combo
+    # row), and (onnx alone) whether to collect coverage. `format` drives both the pytest marker
+    # (`-m e2e_<format>`) and the pip extra (`.[<format><extra_plus>,...]`) — every row installs
+    # and selects tests by that same name; MUST match a marker registered in pyproject.toml.
+    # `extra_plus` is empty for every row except the executorch+coreml delegate one. Every row
+    # runs the SAME test target (`tests/`, marker-selected) instead of each format's own file
+    # list/`.`, and the SAME job timeout, so a format silently drifting onto too-narrow a test
+    # path or a stricter deadline shows up as a matrix outlier instead of staying hidden in its
+    # own job block.
+    name: ${{ matrix.format }}${{ matrix.extra_plus }} parity (py${{ matrix.python-version }}, ${{ matrix.os || 'ubuntu-latest' }})
+    runs-on: ${{ matrix.os || 'ubuntu-latest' }}
     concurrency:
-      group: pytest-${{ matrix.verify }}-${{ matrix.python-version }}-${{ matrix.os }}-${{ github.ref }}
+      group: pytest-${{ matrix.format }}${{ matrix.extra_plus }}-${{ matrix.python-version }}-${{ matrix.os || 'ubuntu-latest' }}-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # openvino/litert/onnx: same os (ubuntu-latest, via the `|| 'ubuntu-latest'` fallback
+        # above — matrix.os is unset for these), same python-version bracket, no pin group, no
+        # extra_plus — a plain cross product. (onnx's pip extra and marker are both `onnx`,
+        # renamed from the old `e2e_onnxruntime` marker so it needs no special-casing here — see
+        # .github/CONTRIBUTING.md.) Every other format needs its own os/python-version bracket
+        # (or, for executorch, extra_group/extra_plus), so stays a fully-specified `include` row;
+        # none of their `format` values overlap this list, so each becomes its own standalone
+        # matrix combination rather than merging into one of these 6.
+        format: [openvino, litert, onnx]
+        python-version: ["3.10", "3.13"]
         include:
           # executorch: XNNPACK is plain-CPU, ubuntu-latest is sufficient. 3.10/3.13 bracket
           # executorch 1.3.1's manylinux_2_28 cp310-cp313 wheel range.
-          - {
-              format: executorch,
-              verify: executorch,
-              extra: executorch,
-              extra_group: ci-executorch-pin,
-              os: ubuntu-latest,
-              python-version: "3.10",
-            }
-          - {
-              format: executorch,
-              verify: executorch,
-              extra: executorch,
-              extra_group: ci-executorch-pin,
-              os: ubuntu-latest,
-              python-version: "3.13",
-            }
+          - { format: executorch, extra_group: ci-executorch-pin, os: ubuntu-latest, python-version: "3.10" }
+          - { format: executorch, extra_group: ci-executorch-pin, os: ubuntu-latest, python-version: "3.13" }
           # coreml: coremltools + the CoreML runtime are macOS-only. 3.10/3.13 bracket the
           # coremltools 9.0 wheel range.
-          - { format: coreml, verify: coreml, extra: coreml, extra_group: "", os: macos-latest, python-version: "3.10" }
-          - { format: coreml, verify: coreml, extra: coreml, extra_group: "", os: macos-latest, python-version: "3.13" }
+          - { format: coreml, os: macos-latest, python-version: "3.10" }
+          - { format: coreml, os: macos-latest, python-version: "3.13" }
           # coreai: needs the Core AI runtime of macOS 27 — xcode-27 is the only hosted image
           # with it (arm64, public preview); this gates merges through export-priority-guardian.
           # coreai-torch requires Python >= 3.11, so 3.11/3.13 bracket it (not 3.10).
-          - { format: coreai, verify: coreai, extra: coreai, extra_group: "", os: xcode-27, python-version: "3.11" }
-          - { format: coreai, verify: coreai, extra: coreai, extra_group: "", os: xcode-27, python-version: "3.13" }
+          - { format: coreai, os: xcode-27, python-version: "3.11" }
+          - { format: coreai, os: xcode-27, python-version: "3.13" }
           # executorch+coreml delegate: needs macOS (CoreML delegate lowers through coremltools),
           # single interpreter (3.13, executorch 1.3.1's wheel ceiling) — the plain executorch row
           # above already brackets the Python range for the runtime itself. Reuses the
-          # `e2e_executorch` marker (no dedicated combo marker exists), so `format` stays
-          # `executorch` here; `verify`/`extra` are the only fields that differ from that row.
+          # `e2e_executorch` marker (no dedicated combo marker exists); `extra_plus: ",coreml"`
+          # is the only field that differs from that row.
           - {
               format: executorch,
-              verify: executorch_coreml,
-              extra: "executorch,coreml",
+              extra_plus: ",coreml",
               extra_group: ci-executorch-pin,
               os: macos-latest,
-              python-version: "3.13",
-            }
-          # openvino: portable manylinux wheels, ubuntu-latest is sufficient.
-          - {
-              format: openvino,
-              verify: openvino,
-              extra: openvino,
-              extra_group: "",
-              os: ubuntu-latest,
-              python-version: "3.10",
-            }
-          - {
-              format: openvino,
-              verify: openvino,
-              extra: openvino,
-              extra_group: "",
-              os: ubuntu-latest,
-              python-version: "3.13",
-            }
-          # litert: litert-torch + ai-edge-litert run on CPU (XNNPACK), ubuntu-latest is sufficient.
-          - {
-              format: litert,
-              verify: litert,
-              extra: litert,
-              extra_group: "",
-              os: ubuntu-latest,
-              python-version: "3.10",
-            }
-          - {
-              format: litert,
-              verify: litert,
-              extra: litert,
-              extra_group: "",
-              os: ubuntu-latest,
-              python-version: "3.13",
-            }
-          # onnxruntime-session: pip extra is [onnx] but the registered marker/test class is
-          # e2e_onnxruntime — the one row where `format` (marker) and `extra` (pip extra) name
-          # genuinely diverge, not swappable via a single field.
-          - {
-              format: onnxruntime,
-              verify: onnxruntime,
-              extra: onnx,
-              extra_group: "",
-              os: ubuntu-latest,
-              python-version: "3.10",
-            }
-          - {
-              format: onnxruntime,
-              verify: onnxruntime,
-              extra: onnx,
-              extra_group: "",
-              os: ubuntu-latest,
               python-version: "3.13",
             }
     steps:
@@ -174,24 +116,25 @@ jobs:
           python-version: ${{ matrix.python-version }}
           activate-environment: true
 
-      - name: 🚀 Install Packages (${{ matrix.extra }} extra)
-        if: matrix.extra_group == ''
+      - name: 🚀 Install Packages (${{ matrix.format }}${{ matrix.extra_plus }} extra)
+        if: ${{ !matrix.extra_group }}
         timeout-minutes: 10
-        run: uv pip install -e ".[${{ matrix.extra }},train,augment,cli,visual]" --group tests
+        run: uv pip install -e ".[${{ matrix.format }}${{ matrix.extra_plus }},train,augment,cli,visual]" --group tests
 
-      - name: 🚀 Install Packages (${{ matrix.extra }} extra, pinned)
-        if: matrix.extra_group != ''
+      - name: 🚀 Install Packages (${{ matrix.format }}${{ matrix.extra_plus }} extra, pinned)
+        if: matrix.extra_group
         timeout-minutes: 10
         # --group ci-executorch-pin (executorch rows only) locks torch and executorch to a pair
         # whose C10 ABI matches (torch 2.12.x + executorch 1.3.1; see pyproject.toml for the
         # empirically validated range and removal condition).
-        run: uv pip install -e ".[${{ matrix.extra }},train,augment,cli,visual]" --group tests --group ${{ matrix.extra_group }}
+        run: uv pip install -e ".[${{ matrix.format }}${{ matrix.extra_plus }},train,augment,cli,visual]" --group tests --group ${{ matrix.extra_group }}
 
       # Guard against a silently-skipped parity test: each format's test class is gated by a
       # skipif/importorskip on its runtime's availability, so a broken/missing wheel would skip
-      # it (false green) instead of failing red. Exactly one of these runs per matrix row.
+      # it (false green) instead of failing red. The executorch+coreml delegate row runs both
+      # the executorch step (format matches) and the coremltools one (extra_plus is set).
       - name: 🔎 Verify executorch runtime import
-        if: matrix.verify == 'executorch'
+        if: matrix.format == 'executorch'
         run: |
           from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
           from rfdetr.export._executorch.exporter import _check_executorch_available
@@ -202,7 +145,7 @@ jobs:
         shell: python
 
       - name: 🔎 Verify coremltools import
-        if: matrix.verify == 'coreml'
+        if: matrix.format == 'coreml' || contains(matrix.extra_plus, 'coreml')
         run: |
           from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 
@@ -211,7 +154,7 @@ jobs:
         shell: python
 
       - name: 🔎 Verify the Core AI runtime
-        if: matrix.verify == 'coreai'
+        if: matrix.format == 'coreai'
         run: |
           import coreai.runtime as rt
 
@@ -221,21 +164,8 @@ jobs:
           print("Core AI compute units:", rt.ComputeUnitKind.available_kinds())
         shell: python
 
-      - name: 🔎 Verify executorch runtime and coremltools import
-        if: matrix.verify == 'executorch_coreml'
-        run: |
-          from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
-          from rfdetr.export._executorch.exporter import _check_executorch_available
-
-          _check_executorch_available(require_runtime=True)
-          assert _IS_EXECUTORCH_AVAILABLE, "executorch installed but not detected as available"
-          import coremltools  # noqa: F401
-
-          print("executorch runtime + coremltools import OK")
-        shell: python
-
       - name: 🔎 Verify openvino import
-        if: matrix.verify == 'openvino'
+        if: matrix.format == 'openvino'
         run: |
           from rfdetr.export._openvino import _IS_OPENVINO_AVAILABLE
 
@@ -244,7 +174,7 @@ jobs:
         shell: python
 
       - name: 🔎 Verify litert-torch import
-        if: matrix.verify == 'litert'
+        if: matrix.format == 'litert'
         run: |
           from rfdetr.export._litert.exporter import _check_litert_available
 
@@ -253,7 +183,7 @@ jobs:
         shell: python
 
       - name: 🔎 Verify onnx and onnxruntime imports
-        if: matrix.verify == 'onnxruntime'
+        if: matrix.format == 'onnx'
         run: |
           import onnx
           import onnxruntime
@@ -263,30 +193,30 @@ jobs:
 
       # Real export/convert + load/inference per format is heavy; single-worker. Target is
       # always tests/, selection is always by marker (never a format-specific file list or
-      # `.`) — see the job-level comment above for why. onnxruntime alone also collects
-      # coverage, so it gets its own step rather than a conditionally-built pytest flag.
+      # `.`) — see the job-level comment above for why. onnx alone also collects coverage, so
+      # it gets its own step rather than a conditionally-built pytest flag.
       - name: 🧪 Run ${{ matrix.format }} end-to-end parity tests
-        if: matrix.format != 'onnxruntime'
+        if: matrix.format != 'onnx'
         run: |
           uv run --no-sync pytest tests/ -m "e2e_${{ matrix.format }}" -n 1 \
             --timeout=600 \
             --durations=20
 
-      - name: 🧪 Run onnxruntime end-to-end parity tests (with coverage)
-        if: matrix.format == 'onnxruntime'
+      - name: 🧪 Run onnx end-to-end parity tests (with coverage)
+        if: matrix.format == 'onnx'
         run: |
-          uv run --no-sync pytest tests/ -m "e2e_onnxruntime" -n 1 \
+          uv run --no-sync pytest tests/ -m "e2e_onnx" -n 1 \
             --cov=rfdetr --cov-report=xml \
             --timeout=600 \
             --durations=20
 
       - name: Upload coverage to Codecov
-        if: matrix.format == 'onnxruntime'
+        if: matrix.format == 'onnx'
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"
-          flags: integration,onnxruntime,${{ runner.os }},py${{ matrix.python-version }}
+          flags: integration,onnx,${{ runner.os }},py${{ matrix.python-version }}
           env_vars: OS,PYTHON
           name: codecov-umbrella
           fail_ci_if_error: false
@@ -472,4 +402,4 @@ jobs:
           echo "One or more export jobs did not succeed; failing explicitly."
           exit 1
       - name: ✅ all export jobs succeeded
-        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnxruntime; plus tensorrt) completed successfully."
+        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnx; plus tensorrt) completed successfully."
