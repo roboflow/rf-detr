@@ -169,6 +169,8 @@ uv run --no-sync pytest tests/ -m "gpu and not e2e_tensorrt" --ignore=tests/lega
 
 The marker expressions exclude suites that need assets, optional integrations, or unavailable hardware: `coco17` needs the COCO dataset, `integration` covers tests owned by dedicated integration jobs, and `xla` / `tpu` need accelerators. Dropping them from the expression is what produces most local-only failures.
 
+The macOS CI leg adds `and not ddp` on top of that expression. `ddp` marks the tests that spawn real gloo worker processes; on macOS each one costs roughly 110 seconds under Python 3.13 against about 10 seconds elsewhere, which pushed that job past its 25-minute cap. macOS cannot run real distributed training anyway, so the Linux and Windows legs own that coverage. Local macOS runs keep the tests unless you exclude the marker yourself.
+
 **Development vs. PR Requirements:**
 
 - **During development:** Tests may fail as you work through TDD cycle (write failing test → implement → fix)
