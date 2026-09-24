@@ -176,12 +176,12 @@ jobs:
   coreai-parity:
     name: Core AI parity
     # Running an .aimodel needs the Core AI runtime of macOS 27. GitHub's Xcode 27 image is the only hosted runner
-    # on macOS 27 (arm64 only, public preview), so this job is not part of export-priority-guardian yet: a preview
-    # queue must not block merges. The unit tests in test_coreai_export.py run without it in the CPU jobs.
-    # Those unit tests pin the decomposition table itself, but not its effect on a device: no merge-gating job
-    # exercises the Neural Engine float16 topk corruption or the GPU/NE compute-unit behaviour the two
-    # decompositions exist for. Removing this job, or either table entry, therefore needs a re-measurement on
-    # real hardware rather than a green CPU suite.
+    # on macOS 27 (arm64 only, public preview), so this job inherits that image's availability: it gates merges
+    # through export-priority-guardian, and a preview-queue outage blocks them with it.
+    # It gates because the unit tests in test_coreai_export.py pin the decomposition table itself but not its
+    # effect on a device: only this job exercises the Neural Engine float16 topk corruption and the GPU/NE
+    # compute-unit behaviour the two decompositions exist for. Removing it, or either table entry, needs a
+    # re-measurement on real hardware rather than a green CPU suite.
     runs-on: xcode-27
     concurrency:
       group: pytest-coreai-${{ matrix.python-version }}-${{ github.ref }}
@@ -626,6 +626,7 @@ jobs:
         executorch-parity,
         executorch-coreml-parity,
         coreml-parity,
+        coreai-parity,
         openvino-parity,
         tensorrt-parity,
         litert-parity,
@@ -638,6 +639,7 @@ jobs:
           echo "executorch-parity:        ${{ needs.executorch-parity.result }}"
           echo "executorch-coreml-parity: ${{ needs.executorch-coreml-parity.result }}"
           echo "coreml-parity:            ${{ needs.coreml-parity.result }}"
+          echo "coreai-parity:            ${{ needs.coreai-parity.result }}"
           echo "openvino-parity:          ${{ needs.openvino-parity.result }}"
           echo "tensorrt-parity:          ${{ needs.tensorrt-parity.result }}"
           echo "litert-parity:            ${{ needs.litert-parity.result }}"
@@ -649,6 +651,7 @@ jobs:
           needs.executorch-parity.result != 'success' ||
           needs.executorch-coreml-parity.result != 'success' ||
           needs.coreml-parity.result != 'success' ||
+          needs.coreai-parity.result != 'success' ||
           needs.openvino-parity.result != 'success' ||
           needs.tensorrt-parity.result != 'success' ||
           needs.litert-parity.result != 'success' ||
@@ -657,4 +660,4 @@ jobs:
           echo "One or more export jobs did not succeed; failing explicitly."
           exit 1
       - name: ✅ all export jobs succeeded
-        run: echo "All export jobs (executorch, executorch-coreml, coreml, openvino, tensorrt, litert parity, onnxruntime session) completed successfully."
+        run: echo "All export jobs (executorch, executorch-coreml, coreml, coreai, openvino, tensorrt, litert parity, onnxruntime session) completed successfully."
