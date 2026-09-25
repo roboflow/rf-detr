@@ -835,11 +835,36 @@ class RFDETR:
         saved_model_config = ckpt.get("model_config")
         if isinstance(saved_model_config, dict):
             for key, value in saved_model_config.items():
-                if key == "pretrain_weights":
+                # device records the training host (e.g. "cuda"); the loading host keeps its own default.
+                if key in ("pretrain_weights", "device"):
                     continue
                 if not _mc_fields or key in _mc_fields:
                     constructor_kwargs[key] = value
                     checkpoint_config_keys.add(key)
+        elif "best_total_source" in ckpt:
+            # checkpoint_best_total.pth files written before strip_checkpoint kept model_config have lost it; the
+            # unstripped file they were copied from, named by best_total_source, still has it. Stay quiet when the
+            # caller already passes architecture fields (e.g. resolution=...).
+            architecture_fields = {
+                "resolution",
+                "positional_encoding_size",
+                "dec_layers",
+                "num_queries",
+                "group_detr",
+                "num_select",
+                "mask_downsample_ratio",
+            }
+            if not architecture_fields & set(kwargs):
+                logger.warning(
+                    "Checkpoint %r has no model_config (checkpoint_best_total.pth files written by rfdetr 1.9.0 "
+                    "to 1.11.0 lost it when stripped), so architecture settings such as resolution fall back to %s "
+                    "defaults. Load checkpoint_best_%s.pth from the same output directory instead, or pass the "
+                    "training values (e.g. resolution=...) to from_checkpoint(); training_config.json in that "
+                    "directory lists them.",
+                    str(path),
+                    getattr(model_cls, "__name__", repr(model_cls)),
+                    ckpt["best_total_source"],
+                )
 
         if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes

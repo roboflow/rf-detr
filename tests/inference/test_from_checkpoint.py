@@ -17,6 +17,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 
@@ -24,7 +25,8 @@ from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
-from rfdetr.variants import RFDETRSmall
+from rfdetr.utilities.state_dict import strip_checkpoint
+from rfdetr.variants import RFDETRNano, RFDETRSmall
 
 
 class _CustomObj:
@@ -922,3 +924,89 @@ class TestFromCheckpointWeightInference:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["num_keypoints_per_class"] == [0, 33]
         assert call_kwargs["num_classes"] == 2
+
+
+# ---------------------------------------------------------------------------
+# checkpoint_best_total.pth after strip_checkpoint
+# ---------------------------------------------------------------------------
+
+
+class TestFromCheckpointStrippedBestTotal:
+    """``checkpoint_best_total.pth`` goes through ``strip_checkpoint``; reloading it must keep the architecture."""
+
+    def test_stripped_checkpoint_restores_trained_resolution(self, tmp_path: Path) -> None:
+        """A model trained at a non-default resolution reloads at that resolution and predicts the same boxes."""
+        torch.manual_seed(0)
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=3, resolution=224)
+        path = tmp_path / "checkpoint_best_total.pth"
+        # The payload BestModelCallback writes before on_fit_end strips it into checkpoint_best_total.pth.
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b", "c"]},
+                "model_name": "RFDETRNano",
+                "model_config": model.model_config.model_dump(),
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path, device="cpu")
+
+        assert loaded.model_config.resolution == 224, "resolution must survive strip_checkpoint"
+        assert loaded.model_config.device == "cpu", "an explicit device= must win over the checkpoint"
+        image = torch.rand(3, 160, 200, generator=torch.Generator().manual_seed(0))
+        expected = model.predict(image, threshold=0.0)
+        actual = loaded.predict(image, threshold=0.0)
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-4, err_msg="boxes differ after reload")
+
+    @pytest.mark.parametrize(
+        ("extra", "kwargs", "expected_file"),
+        [
+            pytest.param({"best_total_source": "ema"}, {}, "checkpoint_best_ema.pth", id="old-best-total-ema"),
+            pytest.param(
+                {"best_total_source": "regular"}, {}, "checkpoint_best_regular.pth", id="old-best-total-regular"
+            ),
+            pytest.param(
+                {"best_total_source": "ema", "model_config": {"resolution": 224}}, {}, None, id="model-config-present"
+            ),
+            pytest.param({}, {}, None, id="no-best-total-source"),
+            pytest.param({"best_total_source": "ema"}, {"resolution": 224}, None, id="caller-passes-resolution"),
+        ],
+    )
+    def test_missing_model_config_warning(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        extra: dict,
+        kwargs: dict,
+        expected_file: str | None,
+    ) -> None:
+        """Only an old stripped best-total file, loaded without architecture kwargs, warns and names its source."""
+        ckpt = {"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano", **extra}
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano", **kwargs)
+
+        warnings_about_config = [record.message for record in caplog.records if "no model_config" in record.message]
+        if expected_file is None:
+            assert not warnings_about_config, f"unexpected warning: {warnings_about_config}"
+        else:
+            assert any(expected_file in message for message in warnings_about_config), (
+                f"expected a warning naming {expected_file}, got {warnings_about_config}"
+            )
+
+    def test_training_host_device_is_not_restored(self, tmp_path: Path) -> None:
+        """A checkpoint trained on a GPU host must not force ``device="cuda"`` on the loading host."""
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {"device": "cuda", "resolution": 224},
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        assert "device" not in mock_cls.call_args.kwargs, "the training host's device must not be forwarded"
+        assert mock_cls.call_args.kwargs["resolution"] == 224, "other model_config fields must still be restored"

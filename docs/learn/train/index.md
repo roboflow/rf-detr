@@ -196,7 +196,7 @@ During training, multiple model checkpoints are saved to the output directory:
 
 - `checkpoint_best_regular.pth` – best checkpoint based on validation score, using the raw (non-EMA) model weights.
 
-- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains model weights, epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.
+- `checkpoint_best_total.pth` – final checkpoint selected for inference and benchmarking. It contains model weights, the model config (so `RFDETR.from_checkpoint()` rebuilds the trained resolution and architecture), epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.
 
 - `last_ema.pth` – final EMA weights, written at the end of training when EMA is enabled (the default). Mirrors `last.ckpt` for the EMA model.
 
@@ -215,6 +215,8 @@ The output directory also holds `training_config.json`, a record of how the run 
     - **Lightweight total checkpoint** (e.g. `checkpoint_best_total.pth`) keeps the same lightweight resume metadata while selecting the final best model for inference and deployment.
 
 ## Load and Run Fine-Tuned Model
+
+`RFDETR.from_checkpoint("<CHECKPOINT_PATH>")` picks the model class and restores the trained resolution and architecture from the checkpoint. The variant constructors below read only the weights, so pass `resolution=` explicitly if you trained at a non-default resolution.
 
 === "Object Detection"
 
