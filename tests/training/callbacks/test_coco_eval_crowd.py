@@ -368,9 +368,9 @@ class TestCrowdRegionsReachEvaluation:
 def test_crowd_row_matches_its_non_crowd_twin_under_the_eval_transform(tmp_path: Path) -> None:
     """A compressed-RLE crowd and a polygon non-crowd twin covering the same box give the same box and mask.
 
-    The twin goes through ``ConvertCoco``, the square validation resize and ``Normalize``; the crowd is read back
-    from the annotation file. Both must end up in the same frame, box and mask alike, or the crowd would ignore
-    detections somewhere other than where it is. Compressed (string ``counts``) RLE is what most exporters write.
+    The twin goes through ``ConvertCoco``, the square validation resize and ``Normalize``; the crowd is read back from
+    the annotation file. Both must end up in the same frame, box and mask alike, or the crowd would ignore detections
+    somewhere other than where it is. Compressed (string ``counts``) RLE is what most exporters write.
     """
     pycocotools_mask = pytest.importorskip("pycocotools.mask")
     crowd_mask = np.zeros((_HEIGHT, _WIDTH), dtype=np.uint8)
