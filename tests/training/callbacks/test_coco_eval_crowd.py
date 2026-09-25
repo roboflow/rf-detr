@@ -323,10 +323,7 @@ class TestCrowdRegionsReachEvaluation:
         assert targets[0]["labels"].tolist() == [0, 1], "dog crowd takes the dog label; the unmapped bird is skipped"
         assert targets[0]["iscrowd"].tolist() == [0, 1]
 
-    @pytest.mark.parametrize(
-        "rle",
-        [False, True]
-    )
+    @pytest.mark.parametrize("rle", [False, True])
     def test_crowd_mask_is_decoded_onto_the_prediction_grid(self, tmp_path: Path, split: str, rle: bool) -> None:
         """Segmentation ground truth gains the crowd mask, decoded at full size and resized like the other GT masks."""
         crowd_mask = np.zeros((_HEIGHT, _WIDTH), dtype=np.uint8)
