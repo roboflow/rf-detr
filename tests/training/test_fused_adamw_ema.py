@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import io
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -322,6 +323,34 @@ def test_import_does_not_eagerly_import_triton_kernel_module() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_cpu_doctest_collection_skips_triton_kernel_module(tmp_path: Path) -> None:
+    """CPU test collection must not import the CUDA-only kernel module when Triton is unavailable."""
+    (tmp_path / "sitecustomize.py").write_text('import sys\nsys.modules["triton"] = None\n')
+    repository_root = Path(__file__).parents[2]
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join((str(tmp_path), str(repository_root / "src")))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "src/rfdetr/training/",
+            "--ignore=src/rfdetr/training/coco_map.py",
+        ],
+        check=False,
+        capture_output=True,
+        cwd=repository_root,
+        env=environment,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
+    assert "_fused_adamw_ema_triton.py" not in result.stdout
 
 
 def test_rejects_adamw_modes_not_implemented_by_combined_kernel() -> None:
