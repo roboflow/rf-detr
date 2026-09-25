@@ -19,6 +19,7 @@ Private module: no compatibility guarantee across versions. Formerly duplicated 
 from __future__ import annotations
 
 import gc
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -130,47 +131,95 @@ def measure_latency(
     return BenchmarkResult(label, mean_ms, std_ms)
 
 
+#: Seconds between memory samples taken by the background watcher thread.
+_SAMPLE_INTERVAL_S = 0.005
+
+
 @dataclass
 class MemoryResult:
-    """Mutable holder for the memory delta measured by :func:`measure_memory`.
+    """Mutable holder for the memory measurements taken by :func:`measure_memory`.
 
-    ``delta_mb`` is unset (``0.0``) until the ``with`` block exits.
+    All three fields keep their defaults until the ``with`` block exits. ``delta_mb`` and ``peak_mb``
+    answer different questions and routinely differ by a lot: bringing up a CoreML model was measured
+    at a 548.7 MB peak but only a 407.2 MB net change, the 141 MB gap being compile scratch space
+    released before the block closed.
+
+    Attributes:
+        delta_mb: Net change between the start and the end of the block — what the runtime still
+            holds once it is up. May be *negative*, which means the block ended with less memory in
+            use than it started with, usually because the OS reclaimed an earlier allocation.
+        peak_mb: Largest growth above the starting level seen at any sample during the block — what
+            it costs to bring the runtime up, including transient scratch space. Never negative.
+        samples: Number of samples the watcher thread took. ``0`` means it never got scheduled, so
+            ``peak_mb`` is only as good as the two endpoint reads and should not be trusted.
     """
 
     delta_mb: float = 0.0
+    peak_mb: float = 0.0
+    samples: int = 0
 
 
-def _rss_delta_mb() -> Iterator[MemoryResult]:
-    """Measure host resident memory growth across a block via ``psutil``."""
-    import psutil  # type: ignore[import-untyped]
+def _sampled_delta_mb(read_bytes_in_use: Callable[[], int]) -> Iterator[MemoryResult]:
+    """Track net and peak growth of ``read_bytes_in_use()`` across a block, sampling in a thread.
 
-    gc.collect()
-    process = psutil.Process()
-    rss_before = process.memory_info().rss
+    Sampling rather than reading only the endpoints is what makes ``peak_mb`` meaningful: memory
+    allocated and released inside the block is invisible to an endpoint-only diff.
+
+    Args:
+        read_bytes_in_use: Returns the current bytes-in-use figure for whichever memory is measured.
+
+    Yields:
+        The :class:`MemoryResult` filled in when the block exits.
+    """
+    baseline = read_bytes_in_use()
+    peak = baseline
+    samples = 0
+    stop = threading.Event()
+
+    def watch() -> None:
+        nonlocal peak, samples
+        while not stop.is_set():
+            peak = max(peak, read_bytes_in_use())
+            samples += 1
+            stop.wait(_SAMPLE_INTERVAL_S)
+
+    watcher = threading.Thread(target=watch, name="measure_memory", daemon=True)
+    watcher.start()
     result = MemoryResult()
     try:
         yield result
     finally:
-        result.delta_mb = (process.memory_info().rss - rss_before) / 1e6
+        stop.set()
+        watcher.join(timeout=1.0)
+        final = read_bytes_in_use()
+        result.delta_mb = (final - baseline) / 1e6
+        result.peak_mb = (max(peak, final) - baseline) / 1e6
+        result.samples = samples
+
+
+def _rss_delta_mb() -> Iterator[MemoryResult]:
+    """Measure host resident memory across a block via ``psutil``."""
+    import psutil  # type: ignore[import-untyped]
+
+    gc.collect()
+    process = psutil.Process()
+    yield from _sampled_delta_mb(lambda: int(process.memory_info().rss))
 
 
 def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
-    """Measure free-device-memory shrinkage across a block via ``torch.cuda.mem_get_info``.
+    """Measure device memory in use across a block via ``torch.cuda.mem_get_info``.
 
     Device-wide, unlike ``torch.cuda.memory_allocated()`` — it also captures allocations made outside PyTorch's own
     caching allocator, such as ONNX Runtime's CUDA execution provider or a TensorRT engine's own ``cudaMalloc`` calls.
     """
     import torch
 
-    torch.cuda.synchronize()
-    free_before, _total = torch.cuda.mem_get_info()
-    result = MemoryResult()
-    try:
-        yield result
-    finally:
+    def device_bytes_in_use() -> int:
         torch.cuda.synchronize()
-        free_after, _total = torch.cuda.mem_get_info()
-        result.delta_mb = (free_before - free_after) / 1e6
+        free, total = torch.cuda.mem_get_info()
+        return int(total - free)
+
+    yield from _sampled_delta_mb(device_bytes_in_use)
 
 
 @contextmanager
@@ -184,16 +233,38 @@ def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
     first ``execute``), so closing the block right after construction undercounts the real
     footprint.
 
+    A background thread samples memory every 5 ms for the duration of the block, so
+    :attr:`MemoryResult.peak_mb` sees transient scratch space that an endpoint-only reading misses.
+    Check :attr:`MemoryResult.samples` before trusting ``peak_mb``: a block that finishes in under a
+    few milliseconds, or one that never releases the GIL, can collect no samples at all.
+
     Args:
         device: ``"cuda"`` selects the device-memory reader; any other value uses host RSS.
 
     Yields:
-        A :class:`MemoryResult` whose ``delta_mb`` is filled in once the block exits.
+        A :class:`MemoryResult` filled in once the block exits.
+
+    Note:
+        Both figures are measurements, not guarantees, and neither is a per-runtime sandbox. In one
+        shared process the host reader can report ``0.0`` for a large allocation, because RSS counts
+        *resident* pages and the allocator may satisfy the request from pages it already holds — no
+        sampling rate fixes that, and it cannot be detected from inside this helper. ``delta_mb`` can
+        also read negative when the OS reclaims an earlier section's memory during this block. Report
+        what comes back; never assert a lower bound on it.
+
+    Note:
+        Wrap construction and correctness checks, not the timed loop: the sampler thread adds
+        ``psutil`` syscalls that would perturb :func:`measure_latency`'s numbers.
 
     Examples:
+        ``delta_mb`` stays at its ``0.0`` default while the block is open and holds the measurement
+        once the block exits, so read it after the ``with``, never inside:
+
         >>> with measure_memory() as mem:
-        ...     _ = b"x" * 50_000_000  # materialize bytes immediately to make RSS growth observable
-        >>> mem.delta_mb > 1
+        ...     reading_inside_the_block = mem.delta_mb
+        >>> reading_inside_the_block
+        0.0
+        >>> isinstance(mem.delta_mb, float)
         True
     """
     reader = _cuda_free_delta_mb if device == "cuda" else _rss_delta_mb
