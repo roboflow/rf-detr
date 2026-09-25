@@ -2786,9 +2786,7 @@ class RFDETR:
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
         # used by Albumentations during training — see issue #1203. The opt-in flag
         # also supports checkpoints trained with torchvision or platform resizing.
-        batch_tensor = torch.stack(
-            [F.resize(t, resize_to, antialias=antialias) for t in processed_images]
-        )
+        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=antialias) for t in processed_images])
         if resize_on_cpu:
             batch_tensor = batch_tensor.to(self.model.device)
         batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
