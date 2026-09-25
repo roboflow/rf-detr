@@ -766,7 +766,7 @@ class TestBuildTrainerPrecision:
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu")
 
     @patch("torch.cuda.is_available", return_value=True)
-    @patch("torch.cuda.is_bf16_supported", return_value=False)
+    @patch("torch.cuda.is_bf16_supported", side_effect=lambda including_emulation=True: including_emulation)
     @patch("rfdetr.training.trainer.Trainer")
     def test_amp_true_ddp_notebook_probes_bf16_normally(
         self, mock_trainer: MagicMock, _mock_bf16: MagicMock, _mock_cuda: MagicMock, tmp_path
@@ -775,7 +775,8 @@ class TestBuildTrainerPrecision:
 
         With spawn-based DDP, child processes start fresh — CUDA init in the parent does not propagate.  So
         ``is_bf16_supported()`` is safe to call and pre-Ampere GPUs correctly get ``16-mixed`` instead of the slower
-        bf16 emulation path.  Simulates pre-Ampere GPU: CUDA available, bf16 NOT supported.
+        bf16 emulation path.  Simulates a pre-Ampere GPU as real PyTorch reports it: CUDA available, bf16 supported only
+        through emulation.
         """
         captured: dict = {}
 
@@ -839,6 +840,7 @@ class TestBuildTrainerAmpDtype:
         *,
         cuda: bool,
         bf16: bool = False,
+        bf16_emulated: bool = False,
         mps: bool = False,
         amp_dtype: str | None = "auto",
         amp: bool = True,
@@ -852,7 +854,9 @@ class TestBuildTrainerAmpDtype:
         Args:
             tmp_path: pytest temporary directory fixture.
             cuda: Value returned by the mocked ``torch.cuda.is_available``.
-            bf16: Value returned by the mocked ``torch.cuda.is_bf16_supported``.
+            bf16: Whether the mocked CUDA device supports bfloat16 natively.
+            bf16_emulated: Whether the mocked ``torch.cuda.is_bf16_supported`` also reports bfloat16 through emulation,
+                as PyTorch does on pre-Ampere GPUs such as the T4 (``including_emulation=True`` is its default).
             mps: Value returned by the mocked ``torch.backends.mps.is_available``.
             amp_dtype: The ``TrainConfig.amp_dtype`` value under test.
             amp: The deprecated ``ModelConfig.amp`` value under test.
@@ -868,9 +872,12 @@ class TestBuildTrainerAmpDtype:
             captured.update(kwargs)
             return mock.MagicMock()
 
+        def _is_bf16_supported(including_emulation: bool = True) -> bool:
+            return bf16 or (bf16_emulated and including_emulation)
+
         with (
             mock.patch("torch.cuda.is_available", return_value=cuda),
-            mock.patch("torch.cuda.is_bf16_supported", return_value=bf16),
+            mock.patch("torch.cuda.is_bf16_supported", side_effect=_is_bf16_supported),
             mock.patch("torch.backends.mps.is_available", return_value=mps),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
@@ -908,6 +915,22 @@ class TestBuildTrainerAmpDtype:
         with pytest.warns(UserWarning, match=warn_match):
             precision = self._resolved_precision(tmp_path, cuda=cuda, bf16=bf16, mps=mps, amp_dtype=amp_dtype)
         assert precision == "16-mixed"
+
+    def test_auto_uses_fp16_on_gpu_with_emulated_bf16(self, tmp_path: Path) -> None:
+        """``amp_dtype="auto"`` on a GPU whose bfloat16 is only emulated (T4, V100) trains in fp16.
+
+        ``torch.cuda.is_bf16_supported()`` counts emulation, so it returns ``True`` on such a GPU and ``"auto"`` used to
+        pick ``bf16-mixed``. On a Colab T4 that was about 2x slower per RF-DETR Nano training step than ``16-mixed``.
+        """
+        precision = self._resolved_precision(tmp_path, cuda=True, bf16_emulated=True, amp_dtype="auto")
+        assert precision == "16-mixed", f"amp_dtype='auto' on an emulated-bf16 GPU resolved to {precision!r}"
+
+    def test_explicit_bf16_on_gpu_with_emulated_bf16_is_kept_with_a_warning(self, tmp_path: Path) -> None:
+        """An explicit ``amp_dtype="bf16"`` is honoured on an emulated-bf16 GPU, with a warning that names the faster
+        options instead of a silent switch to fp16."""
+        with pytest.warns(UserWarning, match="emulation"):
+            precision = self._resolved_precision(tmp_path, cuda=True, bf16_emulated=True, amp_dtype="bf16")
+        assert precision == "bf16-mixed", f"explicit bf16 on an emulated-bf16 GPU resolved to {precision!r}"
 
     def test_explicit_amp_dtype_overrides_deprecated_amp_false(self, tmp_path):
         """An explicit amp_dtype wins over the deprecated amp flag: the stale amp=False is ignored.

@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - `format="coreai"` works with `coreai-torch` 0.4.3, which runs the optimization passes inside `TorchConverter.to_coreai()` and removed `AIProgram.optimize()`; with 1.11.0 a fresh `pip install "rfdetr[coreai]"` resolved 0.4.3 and every Core AI export failed with `'AIProgram' object has no attribute 'optimize'`. The `[coreai]` extra now pins `coreai-torch==0.4.3` and installs on Python 3.11 to 3.14, since `coreai-core` 1.0.0b3 ships cp314 wheels. It is declared as a uv conflict with `[tflite]`, whose `onnx2tf` pins cannot meet `coreai-core`'s `numpy>=2.3`.
+- `amp_dtype="auto"` (the default) now trains in fp16 on NVIDIA GPUs without native bf16, such as the T4 and V100. `torch.cuda.is_bf16_supported()` counts emulated bf16, so with torch 2.3 and newer those GPUs got `bf16-mixed`: on a Colab T4 an RF-DETR Nano training step took 443 ms, against 226 ms in fp16 and 386 ms in fp32. `"auto"` now picks bf16 only where it is native (Ampere and newer), as the docs describe. On older GPUs that means training and validation run in fp16 with a GradScaler, the `batch_size="auto"` probe measures in fp16, and `cuda_graphs=True` stays eager. An explicit `amp_dtype="bf16"` is still honoured there, now with a warning that it is emulated. ([#1535](https://github.com/roboflow/rf-detr/issues/1535))
 
 ## [1.11.0] — 2026-09-23
 

@@ -35,6 +35,7 @@ from rfdetr.config import (
     RFDETRSmallConfig,
     SegmentationTrainConfig,
     TrainConfig,
+    _cuda_supports_native_bf16,
     _detect_device,
     _resolve_amp_dtype,
 )
@@ -1127,6 +1128,45 @@ class TestDetectDevice:
 
         mock_torch.accelerator.current_accelerator = raises_on_fallback
         assert _detect_device() == "cpu"
+
+
+class TestCudaSupportsNativeBf16:
+    """``_cuda_supports_native_bf16`` answers "native bfloat16?", which ``torch.cuda.is_bf16_supported()`` does not."""
+
+    @pytest.mark.parametrize(
+        "native",
+        [pytest.param(False, id="emulated-only-t4"), pytest.param(True, id="native-ampere")],
+    )
+    def test_emulation_does_not_count(self, native: bool) -> None:
+        """A GPU that PyTorch 2.4+ reports as bf16-capable only through emulation is not treated as bf16-capable."""
+
+        def is_bf16_supported(including_emulation: bool = True) -> bool:
+            return native or including_emulation
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.is_bf16_supported", side_effect=is_bf16_supported),
+        ):
+            assert _cuda_supports_native_bf16() is native
+
+    @pytest.mark.parametrize(
+        ("capability", "native"),
+        [pytest.param((7, 5), False, id="t4"), pytest.param((8, 0), True, id="a100")],
+    )
+    def test_torch_2_3_without_including_emulation_argument(self, capability: tuple[int, int], native: bool) -> None:
+        """PyTorch 2.3 has no ``including_emulation`` argument and counts emulation, so the answer comes from the
+        compute capability instead of from ``is_bf16_supported()``, which returns ``True`` on a T4 there."""
+
+        def is_bf16_supported() -> bool:
+            return True
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.is_bf16_supported", side_effect=is_bf16_supported),
+            patch("torch.cuda.get_device_capability", return_value=capability),
+            patch("torch.version.hip", None),
+        ):
+            assert _cuda_supports_native_bf16() is native
 
 
 class TestPretrainWeightsCompatibilityWarning:

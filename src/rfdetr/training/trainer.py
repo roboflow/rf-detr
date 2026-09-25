@@ -28,7 +28,13 @@ try:
 except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatch
     _MultiProcessingLauncher = None  # type: ignore[assignment,misc]
 
-from rfdetr.config import KeypointTrainConfig, ModelConfig, TrainConfig, _resolve_amp_dtype
+from rfdetr.config import (
+    KeypointTrainConfig,
+    ModelConfig,
+    TrainConfig,
+    _cuda_supports_native_bf16,
+    _resolve_amp_dtype,
+)
 from rfdetr.training.callbacks import (
     BestModelCallback,
     DropPathCallback,
@@ -628,9 +634,10 @@ def build_trainer(
             return "32-true"
         # ``train_config.amp_dtype`` (a train() kwarg) lets callers pin the autocast dtype (see issue #1132):
         #   None   — disable autocast entirely (handled above);
-        #   "auto" — bf16 on bf16-capable CUDA, fp16 otherwise (historical default);
+        #   "auto" — bf16 on CUDA GPUs with native bf16 (Ampere+), fp16 otherwise (historical default);
         #   "fp16" — force "16-mixed" (e.g. deployment targets without bf16 support);
-        #   "bf16" — force "bf16-mixed", falling back to fp16 with a warning when unsupported;
+        #   "bf16" — force "bf16-mixed" (with a warning when the GPU only emulates bf16), falling back to fp16 with a
+        #            warning when bf16 is not available at all;
         #   "fp8" — use Lightning's Transformer Engine precision plugin.
         # Unrecognised values are coerced to "auto" (with a warning) by TrainConfig validation.
         # Ampere+ GPUs support bf16-mixed which is scaler-free —
@@ -639,8 +646,8 @@ def build_trainer(
         # Training from random init with very small LR may underflow; pass
         # ``amp_dtype="fp16"`` if needed.
         #
-        # Note: torch.cuda.is_available() and torch.cuda.is_bf16_supported() both
-        # create a CUDA driver context in the parent process.  This is intentional
+        # Note: torch.cuda.is_available() and the bf16 probes (torch.cuda.is_bf16_supported(),
+        # _cuda_supports_native_bf16()) create a CUDA driver context in the parent process.  This is intentional
         # and safe for the multi-process launch modes we rely on here because we
         # avoid fork-based launching in notebook contexts (see
         # _NotebookSpawnDDPStrategy above), and spawn/subprocess-based launchers
@@ -673,6 +680,14 @@ def build_trainer(
                 return "16-mixed"
             if amp_dtype == "bf16":
                 if torch.cuda.is_bf16_supported():
+                    if not _cuda_supports_native_bf16():
+                        emulated_message = (
+                            "amp_dtype='bf16' runs bfloat16 through emulation on this GPU, which has no native "
+                            "bfloat16 support (pre-Ampere, e.g. T4 or V100), so training is much slower than in fp16. "
+                            "Use amp_dtype='fp16' for speed, or amp_dtype=None to train in fp32."
+                        )
+                        _logger.warning(emulated_message)
+                        warnings.warn(emulated_message, UserWarning, stacklevel=2)
                     return "bf16-mixed"
                 _logger.warning(
                     "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
@@ -686,7 +701,7 @@ def build_trainer(
                 )
                 return "16-mixed"
             # amp_dtype == "auto"
-            return "bf16-mixed" if torch.cuda.is_bf16_supported() else "16-mixed"
+            return "bf16-mixed" if _cuda_supports_native_bf16() else "16-mixed"
         if torch.backends.mps.is_available():
             if amp_dtype == "fp8":
                 raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")

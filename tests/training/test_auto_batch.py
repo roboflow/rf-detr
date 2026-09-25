@@ -955,6 +955,55 @@ def test_resolve_auto_batch_config_does_not_force_fused_when_model_config_disabl
     assert mock_probe.call_args.kwargs["optimizer_fused"] is False
 
 
+@pytest.mark.parametrize(
+    ("amp_dtype", "expected_dtype", "expected_fused"),
+    [
+        pytest.param("auto", torch.float16, False, id="auto-trains-fp16"),
+        pytest.param("bf16", torch.bfloat16, True, id="explicit-bf16-is-kept"),
+    ],
+)
+def test_resolve_auto_batch_config_probe_dtype_on_emulated_bf16_gpu(
+    amp_dtype: str, expected_dtype: torch.dtype, expected_fused: bool
+) -> None:
+    """On a GPU with only emulated bfloat16 (T4, V100) the probe measures memory in the dtype the run will train in:
+    fp16 for amp_dtype='auto', and bf16 for an explicit amp_dtype='bf16', which is honoured there.
+
+    ``torch.cuda.is_bf16_supported()`` counts emulation by default and returns True on such a GPU, so it is mocked with
+    that real signature rather than a flat return value.
+    """
+    model_context = SimpleNamespace(device=torch.device("cuda"), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=True, segmentation_head=True, fused_optimizer=True)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        amp_dtype=amp_dtype,
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch(
+            "rfdetr.training.auto_batch.torch.cuda.is_bf16_supported",
+            side_effect=lambda including_emulation=True: including_emulation,
+        ),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config)
+
+    probed_dtype = mock_probe.call_args.kwargs["autocast_dtype"]
+    assert probed_dtype is expected_dtype, (
+        f"probe ran under {probed_dtype}; amp_dtype={amp_dtype!r} trains in {expected_dtype}"
+    )
+    fused = mock_probe.call_args.kwargs["optimizer_fused"]
+    assert fused is expected_fused, f"shadow optimizer fused={fused}, expected {expected_fused} for {expected_dtype}"
+
+
 @patch("rfdetr.detr.is_main_process", return_value=False)
 @patch("rfdetr.training.auto_batch.resolve_auto_batch_config")
 @patch("rfdetr.training.build_trainer")
