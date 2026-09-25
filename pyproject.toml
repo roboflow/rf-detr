@@ -166,16 +166,14 @@ executorch = [
     "executorch>=1.3,<2.0; python_version < '3.14'",
 ]
 coreai = [
-    # Apple Core AI (.aimodel) export. coreai-torch requires Python >= 3.11 and coreai-core ships cp311-cp313
+    # Apple Core AI (.aimodel) export. coreai-torch requires Python >= 3.11 and coreai-core ships cp311-cp314
     # wheels for macOS arm64 and Linux x86-64 only, so the extra is empty elsewhere and the exporter's own
     # ImportError explains why. Running an .aimodel needs the Core AI runtime of iOS/iPadOS/macOS 27.
-    # Pinned exactly to 0.4.2: even a 0.4.x *patch* can change the pre-1.0 surface this exporter calls, not just a
-    # minor. 0.4.3 (2026-09-24) bumped its coreai-core pin from 1.0.0b2 to 1.0.0b3, which folded AIProgram's
-    # optimization passes into to_coreai() itself and dropped the standalone .optimize()/.get_graph() methods
-    # _coreai/exporter.py calls, breaking every coreai-parity CI job that resolves fresh via `uv pip install`
-    # (unlike local `uv sync`, which stayed on uv.lock's 0.4.2 and never saw the break). Bump this pin only after
-    # re-validating _coreai/exporter.py against the new implicit-optimization API.
-    "coreai-torch==0.4.2; python_version >= '3.11' and python_version < '3.14' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
+    # Pinned exactly: even a 0.4.x *patch* can change the pre-1.0 surface this exporter calls, not just a minor.
+    # 0.4.3 (coreai-core 1.0.0b3) folded AIProgram's optimization passes into to_coreai() and removed
+    # AIProgram.optimize(), so _coreai/exporter.py no longer calls it; with 0.4.2 it would now save an
+    # unoptimized program. Bump this pin only after re-running the e2e_coreai suite against the new version.
+    "coreai-torch==0.4.3; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and platform_machine == 'x86_64'))",
 ]
 coreml = [
     # torch.export (ExportedProgram) support added in coremltools 8.0 (see
@@ -367,6 +365,12 @@ conflicts = [
     # ai-edge-litert>=2.2.0 -- the two .tflite routes cannot share one environment, same fork rationale.
     [
         { extra = "litert" },
+        { extra = "tflite" },
+    ],
+    # coreai-torch 0.4.3 needs coreai-core 1.0.0b3, which requires numpy>=2.3.0, while onnx2tf (the tflite extra)
+    # pins numpy 2.2.6 or 1.26.4 -- same fork rationale.
+    [
+        { extra = "coreai" },
         { extra = "tflite" },
     ],
     [

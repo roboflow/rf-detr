@@ -16,7 +16,7 @@ description: Export RF-DETR models to Apple Core AI (`.aimodel`) for iOS / iPadO
 pip install "rfdetr[coreai]"
 ```
 
-`coreai-torch` supports Python 3.11 to 3.13 and installs on macOS (Apple silicon) and Linux x86-64, so an `.aimodel` can be exported on either. Running it needs the Core AI runtime of iOS, iPadOS or macOS 27.
+`coreai-torch` supports Python 3.11 to 3.14 and installs on macOS (Apple silicon) and Linux x86-64, so an `.aimodel` can be exported on either. Running it needs the Core AI runtime of iOS, iPadOS or macOS 27.
 
 ## Basic Core AI Export
 
