@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced the four per-export-format cookbooks (`export-coreml`, `export-tensorrt`, `export-executorch`, `export-tflite`) and `inference-latency-benchmark` with four per-hardware cookbooks — `export-cuda`, `export-cpu`, `export-mobile`, `export-apple` — each exporting every format that targets that hardware, running inference on it, and benchmarking it against a PyTorch baseline. This also adds cookbook coverage for four formats that previously had none: ONNX, OpenVINO, LiteRT, and Core AI. Per-format reference docs (`docs/exports/*.md`) are unchanged. Added `rfdetr.export._benchmark` (private), a `measure_latency` helper shared by all four cookbooks — CUDA-event timing when `device="cuda"`, `time.perf_counter` otherwise — replacing the ONNX-only `rfdetr.export._onnx.inference._onnx_runtime`, which is removed.
+
 ### Fixed
 
 - `format="coreai"` works with `coreai-torch` 0.4.3, which runs the optimization passes inside `TorchConverter.to_coreai()` and removed `AIProgram.optimize()`; with 1.11.0 a fresh `pip install "rfdetr[coreai]"` resolved 0.4.3 and every Core AI export failed with `'AIProgram' object has no attribute 'optimize'`. The `[coreai]` extra now pins `coreai-torch==0.4.3` and installs on Python 3.11 to 3.14, since `coreai-core` 1.0.0b3 ships cp314 wheels. It is declared as a uv conflict with `[tflite]`, whose `onnx2tf` pins cannot meet `coreai-core`'s `numpy>=2.3`.

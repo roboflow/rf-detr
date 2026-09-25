@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from PIL import Image as PILImage
 from supervision import Detections
 
@@ -217,61 +216,3 @@ def _run_inference(
 
     detections = Detections(xyxy=decoded.xyxy, confidence=decoded.confidence, class_id=decoded.class_id.astype(int))
     return detections, pil_img
-
-
-# Benchmarking helper — not part of production inference API; subject to removal.
-def _onnx_runtime(
-    onnx_path: Path | str,
-    image: PILImage.Image,
-    providers: list[str],
-    warmup: int = 20,
-    runs: int = 100,
-) -> tuple[float, float, str]:
-    """Benchmark ONNX Runtime inference for one image and provider list.
-
-    Creates a fresh ``InferenceSession`` with the requested providers, preprocesses ``image`` once using ImageNet
-    normalisation, then runs timed inference with ``time.perf_counter``.  GPU timings may underestimate real latency
-    if the CUDA execution provider is configured for asynchronous execution; for accurate GPU timing use CUDA events.
-
-    Args:
-        onnx_path: Path to the ``.onnx`` model file.
-        image: Input image (any size); resized to the model's expected spatial resolution.
-        providers: Ordered list of ORT execution providers, e.g.
-            ``["CUDAExecutionProvider", "CPUExecutionProvider"]``.
-        warmup: Number of un-timed warm-up runs before measurement begins.
-        runs: Number of timed runs used to compute statistics.
-
-    Returns:
-        A ``(mean_ms, std_ms, provider_label)`` tuple where ``provider_label`` is the first active provider with
-        ``"ExecutionProvider"`` stripped, e.g. ``"CUDA"`` or ``"CPU"``.
-
-    Examples:
-        .. code-block:: python
-
-            mean_ms, std_ms, label = _onnx_runtime("model.onnx", image, ["CPUExecutionProvider"])
-            print(f"{label}: {mean_ms:.1f} ms ± {std_ms:.1f}")
-    """
-    import time
-
-    sess = _create_onnx_session(onnx_path, providers=providers)
-    active = sess.get_providers()[0]
-    if active != providers[0]:
-        raise RuntimeError(
-            f"Requested provider {providers[0]!r} not active — ORT fell back to {active!r}. "
-            "Install onnxruntime-gpu: `pip install onnxruntime-gpu`"
-        )
-    input_meta = sess.get_inputs()[0]
-    _, channels, height, width = input_meta.shape
-    inp = preprocess_to_nchw(image, height, width, channels)
-    feed = {input_meta.name: inp}
-
-    for _ in range(warmup):
-        sess.run(None, feed)
-    timings: list[float] = []
-    for _ in range(runs):
-        t0 = time.perf_counter()
-        sess.run(None, feed)
-        timings.append((time.perf_counter() - t0) * 1000.0)
-    arr_t = np.array(timings)
-    provider_label = sess.get_providers()[0].replace("ExecutionProvider", "")
-    return float(arr_t.mean()), float(arr_t.std()), provider_label
