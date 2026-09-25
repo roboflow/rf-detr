@@ -855,17 +855,29 @@ class RFDETR:
             missing = [name for name in silent_fields if name not in kwargs]
             if missing:
                 # A best-total file often travels alone (the Roboflow SDK upload path sends only this one), so the
-                # sibling it was copied from is not always there to point at.
-                sibling = Path(path).with_name(f"checkpoint_best_{ckpt.get('best_total_source')}.pth")
-                if sibling.exists():
+                # sibling it was copied from is not always there to point at. Only the two source names the training
+                # stack writes become a filename; anything else is reported as-is so an anomaly stays visible.
+                best_total_source = ckpt.get("best_total_source")
+                sibling = (
+                    Path(path).with_name(f"checkpoint_best_{best_total_source}.pth")
+                    if best_total_source in ("ema", "regular")
+                    else None
+                )
+                if sibling is not None and sibling.exists():
                     remedy = (
                         f"Load {sibling.name} from the same output directory instead, or pass the training values "
                         "to from_checkpoint(); training_config.json in that directory lists them."
                     )
-                else:
+                elif sibling is not None:
                     remedy = (
                         "Pass resolution= explicitly and read training_config.json from the original training run "
                         "for the other values."
+                    )
+                else:
+                    remedy = (
+                        f"Its best_total_source is {best_total_source!r}, so check for an unstripped "
+                        "checkpoint_best_*.pth beside it, or pass resolution= explicitly and read "
+                        "training_config.json from the original training run for the other values."
                     )
                 logger.warning(
                     "Checkpoint %r (written by rfdetr %s) has no model_config, which checkpoint_best_total.pth "
