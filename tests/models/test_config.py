@@ -35,6 +35,7 @@ from rfdetr.config import (
     RFDETRSmallConfig,
     SegmentationTrainConfig,
     TrainConfig,
+    _cuda_supports_native_bf16,
     _detect_device,
     _resolve_amp_dtype,
 )
@@ -1127,6 +1128,41 @@ class TestDetectDevice:
 
         mock_torch.accelerator.current_accelerator = raises_on_fallback
         assert _detect_device() == "cpu"
+
+
+class TestCudaSupportsNativeBf16:
+    """``_cuda_supports_native_bf16`` answers "native bfloat16 on this device?", which ``is_bf16_supported()`` does
+    not."""
+
+    @pytest.mark.parametrize(
+        ("capability", "native"),
+        [
+            pytest.param((7, 5), False, id="t4"),
+            pytest.param((7, 0), False, id="v100"),
+            pytest.param((8, 0), True, id="a100"),
+            pytest.param((8, 9), True, id="rtx-4090"),
+        ],
+    )
+    def test_native_means_compute_capability_8_or_newer(self, capability: tuple[int, int], native: bool) -> None:
+        """Only Ampere and newer run bfloat16 natively, even though ``is_bf16_supported()`` says True on a T4."""
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.is_bf16_supported", return_value=True),
+            patch("torch.cuda.get_device_capability", return_value=capability),
+            patch("torch.version.hip", None),
+        ):
+            assert _cuda_supports_native_bf16() is native
+
+    def test_checks_the_requested_device_not_the_current_one(self) -> None:
+        """On a host with a T4 at index 0 and an A100 at index 1, each index gets its own answer."""
+        capabilities = {0: (7, 5), 1: (8, 0)}
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.get_device_capability", side_effect=lambda device=None: capabilities[device or 0]),
+            patch("torch.version.hip", None),
+        ):
+            assert _cuda_supports_native_bf16(0) is False, "the T4 at index 0 has no native bf16"
+            assert _cuda_supports_native_bf16(1) is True, "the A100 at index 1 has native bf16"
 
 
 class TestPretrainWeightsCompatibilityWarning:

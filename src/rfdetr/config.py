@@ -265,6 +265,36 @@ def _detect_device() -> str:
 
 
 DEVICE: str = _detect_device()
+
+
+def _cuda_supports_native_bf16(device: torch.device | int | None = None) -> bool:
+    """Return whether a CUDA device runs bfloat16 natively rather than through emulation.
+
+    This is the test ``torch.cuda.is_bf16_supported(including_emulation=False)`` applies in PyTorch 2.4+ (compute
+    capability 8.0 or newer, and every ROCm device), but for any device instead of only the current one, and on every
+    supported PyTorch version. ``torch.cuda.is_bf16_supported()`` itself also counts emulated bfloat16, so it returns
+    ``True`` on pre-Ampere GPUs such as the T4 and V100, which have no bfloat16 tensor cores; emulated bfloat16 there
+    runs slower than float16 and even float32.
+
+    Args:
+        device: CUDA device to check. ``None`` checks the current device.
+
+    Returns:
+        ``True`` when CUDA is available and the device supports bfloat16 natively.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with patch("torch.cuda.is_available", return_value=False):
+        ...     _cuda_supports_native_bf16()
+        False
+    """
+    if not torch.cuda.is_available():
+        return False
+    if torch.version.hip:
+        return True
+    return torch.cuda.get_device_capability(device)[0] >= 8
+
+
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
 
 
@@ -1180,8 +1210,10 @@ class TrainConfig(BaseConfig):
             "_resolve_amp_dtype for the deprecated ModelConfig.amp fold-in. "
             "None disables autocast (full fp32). "
             "On TPU, 'auto' and 'bf16' select XLA's bf16-true precision. "
-            "Elsewhere, 'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' selects bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "Elsewhere, 'auto' selects bf16-mixed on CUDA GPUs with native bf16 (Ampere and newer) and fp16 otherwise, "
+            "including pre-Ampere GPUs such as the T4 and V100, where bf16 is only emulated. "
+            "'bf16' selects bfloat16 (with a warning where it is only emulated; falls back to fp16 with a warning if "
+            "unsupported). "
             "'fp16' selects fp16 on supported CUDA/MPS backends. "
             "Explicit XLA uses full fp32 until CPU/GPU PJRT BF16 execution is verified. "
             "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "

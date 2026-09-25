@@ -30,7 +30,7 @@ from typing import Any, cast
 
 import torch
 
-from rfdetr.config import ModelConfig, MultiScale, TrainConfig, _resolve_amp_dtype
+from rfdetr.config import ModelConfig, MultiScale, TrainConfig, _cuda_supports_native_bf16, _resolve_amp_dtype
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
 from rfdetr.training.module_model import _is_builtin_fused_adamw
@@ -637,9 +637,12 @@ def resolve_auto_batch_config(
     if amp_enabled:
         if amp_dtype_str == "fp16":
             probe_autocast_dtype: torch.dtype | None = torch.float16
-        else:
-            # "bf16" or "auto" — both use bf16 on capable hardware, fp16 as fallback
+        elif amp_dtype_str == "bf16":
+            # Explicit bf16 is honoured even when the GPU only emulates it (see trainer.py's _resolve_precision)
             probe_autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        else:
+            # "auto" uses bf16 only on GPUs with native bf16 (Ampere+), fp16 elsewhere
+            probe_autocast_dtype = torch.bfloat16 if _cuda_supports_native_bf16(device) else torch.float16
     else:
         probe_autocast_dtype = None
 
@@ -651,8 +654,8 @@ def resolve_auto_batch_config(
     # the managed fused kernel, so a dotted-path config must not be silently upgraded to fused --
     # and (2) the resolved precision is a bf16 variant, which for this function's CUDA-only
     # autocast resolution above is exactly the case where probe_autocast_dtype came out to
-    # torch.bfloat16 (see trainer.py's _resolve_precision: bf16-mixed iff CUDA + bf16-capable +
-    # amp_dtype in {"auto", "bf16"}, the same inputs probe_autocast_dtype was derived from).
+    # torch.bfloat16 (see trainer.py's _resolve_precision: bf16-mixed for amp_dtype "auto" on CUDA with native bf16,
+    # or for amp_dtype "bf16" on CUDA with any bf16 support; the same inputs probe_autocast_dtype was derived from).
     use_fused_optimizer = (
         _is_builtin_fused_adamw(optimizer_cfg)
         and bool(getattr(model_config, "fused_optimizer", True))
