@@ -440,6 +440,9 @@ addopts = [
     "--color=yes",          # colored output
     "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
+doctest_norecursedirs = [
+    "*_fused_adamw_ema_triton.py",  # CUDA-only DSL module; imported lazily after the Triton gate
+]
 # Doctest collection is intentionally enabled across tests/ (no doctest_norecursedirs exclusion) so
 # helper-function doctests in test modules run. This previously blanket-excluded tests/* because
 # doctestplus walking every test module's attributes after the TF/ai_edge_litert stack is imported by

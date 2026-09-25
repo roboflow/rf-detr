@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - Training is unchanged, and only COCO-format datasets with crowd labels get different numbers — **runs from before and after this change are not directly comparable on crowd-labelled COCO data.**
     - Not covered: WebDataset shards and a hand-built `Trainer.validate(model, dataloaders=...)` call with no datamodule attached are both still scored the old way, and `val/F1` only ignores a detection whose IoU with the crowd is at least 0.5 (measured against the crowd box for detection, the crowd mask for segmentation). ([#1531](https://github.com/roboflow/rf-detr/issues/1531))
 
+### Changed
+
+- Single-GPU compiled BF16 detection training now combines global-norm clipping, AdamW, and the per-step EMA update in one multi-tensor Triton path. The existing public configuration selects it automatically only for the built-in AdamW optimizer with `compile=True`, `fused_optimizer=True`, `use_ema=True`, and `ema_update_interval=1` on one device with the default `devices=1` and `strategy="auto"`; other `devices` or `strategy` values and older Triton versions retain the standard PyTorch path, and a step whose tensor layout the kernels do not support applies clipped, non-fused AdamW instead. On an NVIDIA L4, a public `RFDETRNano.train()` run over COCO128 (default batch 4, 384 px) improved the median settled training epoch from 3.593 s to 3.135 s across five independent pairs (12.66%, range 11.55-16.86%) against an explicitly optimized PyTorch baseline using foreach gradient clipping, fused AdamW, one-call foreach EMA, and a host-side EMA counter. The paired reduction for the complete six-epoch call with populated compile caches had a 5.56% median (range 3.33-10.99%); one-time setup and final validation dilute the recurring-epoch saving. Full-dataset accuracy and larger variants were not measured.
+
 ## [1.11.0] — 2026-09-23
 
 ### Added
