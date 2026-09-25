@@ -36,7 +36,7 @@ If jupytext is not installed: `pip install jupytext` (or `uv add jupytext --dev`
     description: One sentence describing what the notebook demonstrates.
 ```
 
-Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
+Available labels (reuse these to keep tags standardised): `TRAINING`, `AUGMENTATION`, `EXPORT`, `TFLITE`, `PYTORCH LIGHTNING`, `INFERENCE`, `SEGMENTATION`, `DEPLOY`, `CUDA`, `CPU`, `MOBILE`, `APPLE`. Current tag colours are assigned dynamically by the docs UI, so they may change if cards or labels are added or reordered.
 
 For newly added or updated notebooks, write markdown cells in plain, notebook-portable Markdown only — no MkDocs Material syntax (`!!! note`, `=== "Tab"`, admonition blocks). `mkdocs-jupyter` renders the site copy through the same plain renderer as a raw `.ipynb`, so MkDocs-only syntax shows up as literal text (e.g. `!!! warning "..."`) instead of a styled callout. Use a blockquote (`> **Note:** ...`) for callouts instead.
 
@@ -47,17 +47,16 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 
 ## Current notebooks
 
-| File                                | Card title                                      | Version |
-| ----------------------------------- | ----------------------------------------------- | ------- |
-| `custom-augmentations.ipynb`        | Custom Augmentations and Live Training Progress | v1.5.0  |
-| `custom-optimizer-scheduler.ipynb`  | Custom Optimizer and LR Scheduler               | v1.9.0  |
-| `export-coreml.ipynb`               | Export to Native CoreML & Run Inference         | v1.9.0  |
-| `export-tensorrt.ipynb`             | Export to TensorRT & Run Inference              | v1.9.0  |
-| `export-executorch.ipynb`           | Export to ExecuTorch & Run Inference            | v1.9.0  |
-| `export-tflite.ipynb`               | Export to TFLite (INT8) & Run Inference         | v1.11.0 |
-| `fine-tune_detection.ipynb`         | Fine-Tune RF-DETR Object Detection              | v1.8.0  |
-| `fine-tune_keypoints.ipynb`         | Fine-Tune RF-DETR Keypoint Detection            | v1.8.0  |
-| `fine-tune_segmentation.ipynb`      | Fine-Tune RF-DETR Instance Segmentation         | v1.8.2  |
-| `inference-latency-benchmark.ipynb` | Inference Latency Benchmark                     | v1.8.2  |
-| `pytorch-lightning.ipynb`           | Training with PyTorch Lightning                 | v1.6.0  |
-| `train-coco2017.ipynb`              | Train RF-DETR Nano on COCO2017                  | v1.10.0 |
+| File                               | Card title                                             | Version |
+| ---------------------------------- | ------------------------------------------------------ | ------- |
+| `custom-augmentations.ipynb`       | Custom Augmentations and Live Training Progress        | v1.5.0  |
+| `custom-optimizer-scheduler.ipynb` | Custom Optimizer and LR Scheduler                      | v1.9.0  |
+| `export-cuda.ipynb`                | RF-DETR on NVIDIA GPUs — Export, Inference & Latency   | v1.11.0 |
+| `export-cpu.ipynb`                 | RF-DETR on CPU — Export, Inference & Latency           | v1.11.0 |
+| `export-mobile.ipynb`              | RF-DETR on Mobile & Edge — Export, Inference & Latency | v1.11.0 |
+| `export-apple.ipynb`               | RF-DETR on Apple Silicon — Export, Inference & Latency | v1.11.0 |
+| `fine-tune_detection.ipynb`        | Fine-Tune RF-DETR Object Detection                     | v1.8.0  |
+| `fine-tune_keypoints.ipynb`        | Fine-Tune RF-DETR Keypoint Detection                   | v1.8.0  |
+| `fine-tune_segmentation.ipynb`     | Fine-Tune RF-DETR Instance Segmentation                | v1.8.2  |
+| `pytorch-lightning.ipynb`          | Training with PyTorch Lightning                        | v1.6.0  |
+| `train-coco2017.ipynb`             | Train RF-DETR Nano on COCO2017                         | v1.10.0 |
