@@ -31,6 +31,27 @@ This page covers the shared export API, parameters, output-file naming, and the 
 - [Native CoreML](coreml.md) — `.mlpackage` export for Xcode / Apple platforms.
 - [Core AI](coreai.md) — `.aimodel` export for iOS / iPadOS / macOS 27+.
 
+## Measured Performance by Hardware
+
+Which format is fastest depends entirely on the hardware you deploy to. The four per-hardware cookbooks each export every format targeting one class of device, run inference on it, and benchmark it against a PyTorch baseline on the same machine. Below is the fastest end-to-end result per hardware class, plus the PyTorch anchor it was measured against; the cookbooks carry the full tables, including forward-only timings, memory, and the slower configurations.
+
+| Hardware                 | Fastest format            | end2end [ms]   | FPS [img/s] | PyTorch `predict()` anchor | Cookbook                              |
+| ------------------------ | ------------------------- | -------------- | ----------- | -------------------------- | ------------------------------------- |
+| NVIDIA L4                | TensorRT (auto precision) | 4.91 ± 0.14    | 203.5       | 19.88 ms / 50.3 FPS        | [CUDA](../cookbooks/export-cuda/)     |
+| Apple M-series (ANE/GPU) | Core AI fp16              | 11.45 ± 0.18   | 87.3        | 22.62 ms / 44.2 FPS        | [Apple](../cookbooks/export-apple/)   |
+| x86 CPU (4 cores)        | OpenVINO fp32 IR          | 311.92 ± 46.04 | 3.2         | 345.76 ms / 2.9 FPS        | [CPU](../cookbooks/export-cpu/)       |
+| ARM CPU (edge proxy)     | ExecuTorch XNNPACK        | 87.33 ± 1.13   | 11.5        | —                          | [Mobile](../cookbooks/export-mobile/) |
+
+All numbers are batch 1, `RFDETRSmall`, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare *within* a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 12–17% of the mean — on that machine no CPU format separates from the others by more than one standard deviation.
+
+!!! warning "fp16 pays off only where the silicon implements it"
+
+    Reduced precision is not a portable speedup, and the cookbooks measure this directly:
+
+    - **GPU — large win.** On an L4, TensorRT's auto-selected precision is 1.62× faster than the same engine forced to fp32 (4.91 vs 7.96 ms), and PyTorch `inference(dtype=torch.float16)` nearly halves the eager fp32 baseline (11.30 vs 19.88 ms).
+    - **CPU — no win.** OpenVINO's default FP16 IR came out *slower* than explicit `float32` (354.55 vs 311.92 ms) despite halving the file, and TFLite fp16 matched fp32 exactly (780.86 vs 780.74 ms). A CPU without native fp16 kernels upconverts and computes in fp32, so fp16 saves disk and bandwidth, not arithmetic. On CPU the lever is **INT8**: dynamic-range quantization was ~2.5× faster than fp32 TFLite (319.61 vs 780.74 ms), at the cost of one dropped detection on the sample image.
+    - **Apple — runtime-dependent.** Core AI fp16 beat its fp32 default (11.45 vs 12.54 ms), while CoreML fp16 came out *slower* than its fp32 default (20.05 vs 11.62 ms) on the same chip. Both results reproduced across runs. Measure per runtime, not per platform.
+
 ## Installation
 
 Install the export dependencies you need:
