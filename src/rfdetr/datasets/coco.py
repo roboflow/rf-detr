@@ -20,8 +20,9 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, NamedTuple, Optional, cast
 
 import torch
 import torch.utils.data
@@ -463,6 +464,136 @@ def convert_coco_poly_to_mask(segmentations: list[Any], height: int, width: int)
     if len(masks) == 0:
         return torch.zeros((0, height, width), dtype=torch.uint8)
     return torch.stack(masks, dim=0)
+
+
+class CrowdRegion(NamedTuple):
+    """One ``iscrowd=1`` annotation in the form an evaluation metric's ground truth needs.
+
+    Attributes:
+        label: Class index in the dataset's label space (the ``category_id`` itself when the dataset does not remap).
+        box: ``(x_min, y_min, x_max, y_max)`` in original-image pixels, from the annotation's ``bbox``.
+        segmentation: The annotation's ``segmentation`` compressed to a single RLE dict by
+            :func:`crowd_regions_from_coco`, the raw payload when it could not be compressed, or ``None`` when the
+            annotation carries no mask. Decoded only for mask metrics.
+    """
+
+    label: int
+    box: tuple[float, float, float, float]
+    segmentation: list[Any] | dict[str, Any] | None
+
+
+def _compressed_crowd_segmentation(
+    segmentation: Any, height: int | None, width: int | None
+) -> list[Any] | dict[str, Any] | None:
+    """Compress one crowd annotation's ``segmentation`` to a single RLE dict, once per dataset.
+
+    :func:`convert_coco_poly_to_mask` then takes its decode-only path on every batch that scores the region, instead
+    of rasterising the same polygon again. The raw payload is handed back unchanged when it cannot be compressed —
+    the annotation file carries no dimensions for the image, or ``pycocotools`` is not installed (it ships with the
+    ``rfdetr[train]`` extra, and a box-only evaluation never decodes a crowd mask at all).
+
+    Args:
+        segmentation: The annotation's ``segmentation`` payload, or ``None``/empty when it has none.
+        height: The annotation's image height, or ``None`` when the annotation file omits it.
+        width: The annotation's image width, or ``None`` when the annotation file omits it.
+
+    Returns:
+        A compressed RLE dict; *segmentation* itself when it is already compressed or cannot be compressed; ``None``
+        for a missing or empty payload.
+
+    Examples:
+        >>> _compressed_crowd_segmentation(None, 4, 4) is None
+        True
+        >>> _compressed_crowd_segmentation([[0, 0, 2, 0, 2, 2]], None, None)
+        [[0, 0, 2, 0, 2, 2]]
+        >>> _compressed_crowd_segmentation({"counts": b"04", "size": [4, 4]}, 4, 4)
+        {'counts': b'04', 'size': [4, 4]}
+    """
+    if segmentation is None or (not isinstance(segmentation, dict) and len(segmentation) == 0):
+        return None
+    raw = cast("list[Any] | dict[str, Any]", segmentation)
+    is_rle = _is_rle(segmentation)
+    if is_rle and isinstance(segmentation.get("counts"), (str, bytes)):
+        return raw
+    if height is None or width is None:
+        return raw
+    try:
+        import pycocotools.mask as coco_mask
+    except ImportError:
+        return raw
+    converted = coco_mask.frPyObjects(segmentation, int(height), int(width))
+    return cast("dict[str, Any]", coco_mask.merge([converted] if is_rle else converted))
+
+
+def crowd_regions_from_coco(coco_api: Any) -> dict[int, list[CrowdRegion]]:
+    """Group a COCO API's crowd annotations by image id, relabelled into the dataset's label space.
+
+    :class:`ConvertCoco` drops ``iscrowd=1`` annotations from the dataset targets, so a metric that needs to score
+    them the way pycocotools does reads them back from the annotation file through this function.
+
+    :class:`CocoDetection` exposes its remapping as ``coco.label2cat``; inverting it recovers exactly the
+    ``cat2label`` mapping that class hands to :class:`ConvertCoco`, since the two are built together from one source.
+    Without a remapping the category ids are the labels, as in :class:`ConvertCoco`. A crowd whose category has no
+    label is skipped: no prediction can carry that label, so the region could never ignore a detection.
+
+    An annotation missing one of the fields read here is skipped with a warning rather than failing the first batch
+    of the next validation epoch — silently dropping it would move mAP with no signal at all.
+
+    Args:
+        coco_api: A pycocotools-style ``COCO`` object (an ``anns`` mapping, plus an optional ``imgs`` mapping and an
+            optional ``label2cat``).
+
+    Returns:
+        Crowd regions per image id; empty when there is no crowd annotation or ``coco_api`` has no ``anns`` mapping.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> anns = {
+        ...     1: {"image_id": 5, "category_id": 3, "bbox": [10, 20, 30, 40], "iscrowd": 1, "segmentation": None},
+        ...     2: {"image_id": 5, "category_id": 3, "bbox": [0, 0, 1, 1], "iscrowd": 0},
+        ...     3: {"image_id": 6, "category_id": 9, "bbox": [0, 0, 1, 1], "iscrowd": 1},
+        ... }
+        >>> crowd_regions_from_coco(SimpleNamespace(anns=anns, label2cat={0: 3}))
+        {5: [CrowdRegion(label=0, box=(10.0, 20.0, 40.0, 60.0), segmentation=None)]}
+    """
+    annotations = getattr(coco_api, "anns", None)
+    if not isinstance(annotations, Mapping):
+        return {}
+    images = getattr(coco_api, "imgs", None)
+    label2cat = getattr(coco_api, "label2cat", None)
+    cat2label = {int(cat): int(label) for label, cat in label2cat.items()} if isinstance(label2cat, Mapping) else None
+    regions: dict[int, list[CrowdRegion]] = {}
+    for annotation_id, annotation in annotations.items():
+        if not annotation.get("iscrowd"):
+            continue
+        image_id = annotation.get("image_id")
+        if image_id is None:
+            logger.warning("Skipping crowd annotation %s: no 'image_id' to attach it to.", annotation_id)
+            continue
+        category_id = annotation.get("category_id")
+        if category_id is None:
+            logger.warning("Skipping crowd annotation of image_id %s: no 'category_id'.", image_id)
+            continue
+        category_id = int(category_id)
+        if cat2label is not None and category_id not in cat2label:
+            continue
+        try:
+            x, y, w, h = (float(value) for value in annotation["bbox"])
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Skipping crowd annotation of image_id %s: 'bbox' is missing or not four numbers.", image_id)
+            continue
+        image_meta = images.get(int(image_id)) if isinstance(images, Mapping) else None
+        image_meta = image_meta if isinstance(image_meta, Mapping) else {}
+        regions.setdefault(int(image_id), []).append(
+            CrowdRegion(
+                label=category_id if cat2label is None else cat2label[category_id],
+                box=(x, y, x + w, y + h),
+                segmentation=_compressed_crowd_segmentation(
+                    annotation.get("segmentation"), image_meta.get("height"), image_meta.get("width")
+                ),
+            )
+        )
+    return regions
 
 
 class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
