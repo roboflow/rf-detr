@@ -6,7 +6,7 @@
 """Triton kernels for the combined gradient-clipping, AdamW, and EMA update."""
 
 # Triton's JIT DSL is intentionally untyped and does not ship a ``py.typed`` marker.
-# mypy: disable-error-code="import-untyped, untyped-decorator, no-untyped-def"
+# mypy: disable-error-code="import-not-found, import-untyped, untyped-decorator, no-untyped-def"
 
 from __future__ import annotations
 

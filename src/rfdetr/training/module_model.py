@@ -92,7 +92,15 @@ def _has_fused_adamw_ema_kernel() -> bool:
         return False
     try:
         libdevice = importlib.import_module("triton.language.extra.cuda.libdevice")
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        if exc.name not in {
+            "triton",
+            "triton.language",
+            "triton.language.extra",
+            "triton.language.extra.cuda",
+            "triton.language.extra.cuda.libdevice",
+        }:
+            raise
         return False
     return all(hasattr(libdevice, name) for name in LIBDEVICE_FUNCTIONS)
 
@@ -1744,7 +1752,7 @@ class RFDETRModelModule(LightningModule):
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.
 
-        PTL calls this hook before applying ``checkpoint["state_dict"]`` to the module.  Four normalisation steps are
+        PTL calls this hook before applying ``checkpoint["state_dict"]`` to the module.  Five normalisation steps are
         applied in order:
 
         1. **Raw legacy format** — a ``*.pth`` file loaded directly by
@@ -1770,6 +1778,10 @@ class RFDETRModelModule(LightningModule):
            :func:`~rfdetr.training.checkpoint.convert_legacy_checkpoint` that already has ``"state_dict"`` but also
            carries ``"legacy_ema_state_dict"``.  The EMA weights are stashed on ``self._pending_legacy_ema_state`` for
            optional restoration by :class:`~rfdetr.training.callbacks.ema.RFDETREMACallback`.
+
+        5. **Optimizer fused eligibility** — built-in AdamW parameter groups are reset to the live runtime's fused
+           eligibility before PyTorch loads saved group options. A combined-route checkpoint records ``fused=True``;
+           the destination's FP32 DDP route must keep ``fused=False``.
 
         Note:
             This hook only fires on ``Trainer(ckpt_path=...)`` resume paths. Fresh-train bootstrap from a
@@ -1808,6 +1820,13 @@ class RFDETRModelModule(LightningModule):
         # one parameter group per parameter, a layout the optimizer no longer has. Regroup it so
         # resuming such a run keeps its momentum and LR schedule instead of failing to load.
         regroup_unmerged_optimizer_state(checkpoint)
+
+        if _is_builtin_fused_adamw(self.train_config.optimizer):
+            destination_fused = self._use_fused_optimizer
+            for optimizer_state in checkpoint.get("optimizer_states", []):
+                for group in optimizer_state.get("param_groups", []):
+                    if "fused" in group:
+                        group["fused"] = destination_fused
 
         # Stash legacy EMA weights for RFDETREMACallback.setup(), which restores
         # them into AveragedModel when resuming from converted legacy checkpoints.

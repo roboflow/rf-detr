@@ -57,8 +57,23 @@ class TestKernelSupportGate:
             pytest.param("win32", None, _COMPLETE_LIBDEVICE, False, id="windows"),
             pytest.param("darwin", None, _COMPLETE_LIBDEVICE, False, id="macos"),
             pytest.param("linux", "6.1.0", _COMPLETE_LIBDEVICE, False, id="rocm-build"),
-            pytest.param("linux", None, ModuleNotFoundError("triton"), False, id="triton-missing"),
-            pytest.param("linux", None, ImportError("libdevice"), False, id="libdevice-module-missing"),
+            pytest.param(
+                "linux",
+                None,
+                ModuleNotFoundError("No module named 'triton'", name="triton"),
+                False,
+                id="triton-missing",
+            ),
+            pytest.param(
+                "linux",
+                None,
+                ModuleNotFoundError(
+                    "No module named 'triton.language.extra.cuda.libdevice'",
+                    name="triton.language.extra.cuda.libdevice",
+                ),
+                False,
+                id="libdevice-module-missing",
+            ),
             pytest.param("linux", None, _LIBDEVICE_WITHOUT_POW, False, id="libdevice-lacks-a-kernel-function"),
         ],
     )
@@ -81,6 +96,34 @@ class TestKernelSupportGate:
                 assert module_model._has_fused_adamw_ema_kernel() is expected
             # Whenever the gate imports, it asks for exactly the module the kernels' libdevice functions live in.
             assert {call.args for call in import_module.call_args_list} <= {("triton.language.extra.cuda.libdevice",)}
+        finally:
+            module_model._has_fused_adamw_ema_kernel.cache_clear()
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(ImportError("transitive dependency is broken"), id="broken-transitive-import"),
+            pytest.param(
+                ModuleNotFoundError("No module named 'unrelated_dependency'", name="unrelated_dependency"),
+                id="missing-transitive-dependency",
+            ),
+        ],
+    )
+    def test_transitive_import_error_is_not_treated_as_missing_optional_triton(self, error: ImportError) -> None:
+        """A broken dependency imported by libdevice must remain visible to the caller."""
+        module_model._has_fused_adamw_ema_kernel.cache_clear()
+        try:
+            with (
+                patch.object(module_model, "sys", SimpleNamespace(platform="linux")),
+                patch.object(torch.version, "hip", None),
+                patch.object(
+                    module_model.importlib,
+                    "import_module",
+                    side_effect=error,
+                ),
+                pytest.raises(ImportError, match=str(error).split(":")[0]),
+            ):
+                module_model._has_fused_adamw_ema_kernel()
         finally:
             module_model._has_fused_adamw_ema_kernel.cache_clear()
 
@@ -132,6 +175,42 @@ class TestFusedAdamWEMARouting:
         module.model_config.compile = False
         module._compile_active = False
         assert module._use_fused_adamw_ema is False
+
+    def test_combined_checkpoint_keeps_fp32_ddp_destination_unfused(self) -> None:
+        """A combined-route checkpoint must not re-enable fused AdamW for an FP32 DDP resume."""
+        source_model = nn.Linear(2, 1)
+        source_optimizer = FusedAdamWEMA(
+            source_model.parameters(),
+            named_parameters=dict(source_model.named_parameters()),
+            model_buffers=dict(source_model.named_buffers()),
+            max_grad_norm=1.0,
+            ema_decay=0.99,
+            ema_tau=0,
+        )
+        source_model(torch.ones(1, 2)).sum().backward()
+        source_optimizer.step()
+        checkpoint = {"optimizer_states": [source_optimizer.state_dict()]}
+
+        module, _ = _setup_module(None, optimizer="adamw")
+        module.model_config.fused_optimizer = True
+        module._trainer.precision = "32-true"
+        module._trainer.strategy = object.__new__(lightning_strategies.DDPStrategy)
+        with (
+            patch.object(torch.cuda, "is_available", return_value=True),
+            patch.object(torch.cuda, "is_bf16_supported", return_value=True),
+        ):
+            assert module._use_fused_optimizer is False
+            module.on_load_checkpoint(checkpoint)
+
+        resumed_model = nn.Linear(2, 1)
+        resumed_optimizer = torch.optim.AdamW(resumed_model.parameters(), fused=False)
+        resumed_optimizer.load_state_dict(checkpoint["optimizer_states"][0])
+        assert [group["fused"] for group in resumed_optimizer.param_groups] == [False]
+
+        resumed_model(torch.ones(1, 2)).sum().backward()
+        resumed_optimizer.step()
+
+        assert {int(state["step"]) for state in resumed_optimizer.state.values()} == {2}
 
     @patch("rfdetr.training.module_model._has_fused_adamw_ema_kernel", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
