@@ -11,8 +11,10 @@ import importlib
 import inspect
 import math
 import random
+import sys
 import warnings
 from contextlib import nullcontext
+from functools import lru_cache
 from typing import Any, Callable, cast
 
 import torch
@@ -39,6 +41,7 @@ from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
+from rfdetr.training.fused_adamw_ema import LIBDEVICE_FUNCTIONS, UNSUPPORTED_ADAMW_OPTIONS, FusedAdamWEMA
 from rfdetr.training.param_groups import (
     _build_param_dicts,
     get_param_dict,
@@ -80,6 +83,18 @@ def _is_builtin_fused_adamw(optimizer: object) -> bool:
         False
     """
     return isinstance(optimizer, str) and "." not in optimizer and optimizer.strip().lower() == "adamw"
+
+
+@lru_cache(maxsize=1)
+def _has_fused_adamw_ema_kernel() -> bool:
+    """Return whether this platform's Triton exposes every CUDA libdevice function the custom kernel calls."""
+    if sys.platform != "linux" or torch.version.hip is not None:
+        return False
+    try:
+        libdevice = importlib.import_module("triton.language.extra.cuda.libdevice")
+    except ImportError:
+        return False
+    return all(hasattr(libdevice, name) for name in LIBDEVICE_FUNCTIONS)
 
 
 _FUSED_IGNORED_MSG = (
@@ -1423,6 +1438,32 @@ class RFDETRModelModule(LightningModule):
             return False
         return _is_builtin_fused_adamw(self.train_config.optimizer)
 
+    @property
+    def _use_fused_adamw_ema(self) -> bool:
+        """Return whether the measured combined CUDA training update is applicable."""
+        tc = self.train_config
+        runtime_world_size = getattr(self.trainer, "world_size", None)
+        if isinstance(runtime_world_size, int) and runtime_world_size != 1:
+            return False
+        strategy_name = type(getattr(self.trainer, "strategy", None)).__name__.lower()
+        if any(distributed in strategy_name for distributed in ("ddp", "fsdp", "deepspeed", "xla")):
+            return False
+        return (
+            self._use_fused_optimizer
+            and self._compile_active
+            and tc.use_ema
+            and tc.ema_update_interval == 1
+            and not any(tc.optimizer_kwargs.get(option) for option in UNSUPPORTED_ADAMW_OPTIONS)
+            and tc.devices == 1
+            and tc.num_nodes == 1
+            and tc.strategy == "auto"
+            and not self.model_config.segmentation_head
+            and not self.model_config.use_grouppose_keypoints
+            and not self.model_config.cuda_graphs
+            and str(self.trainer.precision) == "bf16-mixed"
+            and _has_fused_adamw_ema_kernel()
+        )
+
     def configure_optimizers(self) -> OptimizerLRSchedulerConfig:
         """Build the configured optimizer with layer-wise LR decay and scheduler.
 
@@ -1446,15 +1487,32 @@ class RFDETRModelModule(LightningModule):
         optimizer_cfg = tc.optimizer
         optimizer: torch.optim.Optimizer
         if _is_builtin_fused_adamw(optimizer_cfg):
-            # Built-in managed fused AdamW path (unchanged behavior).
+            # Built-in managed AdamW path.
             try:
-                optimizer = torch.optim.AdamW(
-                    param_dicts,
-                    lr=tc.lr,
-                    weight_decay=tc.weight_decay,
-                    fused=self._use_fused_optimizer,
-                    **tc.optimizer_kwargs,
-                )
+                if self._use_fused_adamw_ema:
+                    optimizer = FusedAdamWEMA(
+                        param_dicts,
+                        named_parameters=dict(model_for_params.named_parameters()),
+                        model_buffers=dict(model_for_params.named_buffers()),
+                        max_grad_norm=tc.clip_max_norm,
+                        ema_decay=tc.ema_decay,
+                        ema_tau=tc.ema_tau,
+                        lr=tc.lr,
+                        weight_decay=tc.weight_decay,
+                        **tc.optimizer_kwargs,
+                    )
+                    logger.info(
+                        "Combined Triton training update enabled (global-norm clipping + AdamW + EMA); "
+                        "unsupported layouts fall back to clipped, non-fused AdamW for that step."
+                    )
+                else:
+                    optimizer = torch.optim.AdamW(
+                        param_dicts,
+                        lr=tc.lr,
+                        weight_decay=tc.weight_decay,
+                        fused=self._use_fused_optimizer,
+                        **tc.optimizer_kwargs,
+                    )
             except TypeError as exc:
                 raise TypeError(
                     f"Failed to initialize optimizer 'adamw': {exc}. "
@@ -1593,6 +1651,12 @@ class RFDETRModelModule(LightningModule):
             gradient_clip_algorithm: Clipping algorithm; forwarded to super()
                 for the non-fused path.
         """
+        if self._use_fused_adamw_ema:
+            raw_optimizer = getattr(optimizer, "optimizer", optimizer)
+            set_max_grad_norm = getattr(raw_optimizer, "set_max_grad_norm", None)
+            if callable(set_max_grad_norm):
+                set_max_grad_norm(gradient_clip_val)
+            return
         if self._use_fused_optimizer:
             if gradient_clip_val and gradient_clip_val > 0:
                 torch.nn.utils.clip_grad_norm_(self.parameters(), gradient_clip_val)
