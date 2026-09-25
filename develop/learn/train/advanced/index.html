@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-24T20:49:59">
+  <meta property="article:modified_time" content="2026-09-25T23:17:17">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-24T20:49:59",
+    "dateModified": "2026-09-25T23:17:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1463,6 +1463,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Choosing between CUDA graphs and compilation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#combined-adamw-and-ema-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Combined AdamW and EMA update
       
     </span>
   </a>
@@ -3492,6 +3503,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
+  <a href="#combined-adamw-and-ema-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Combined AdamW and EMA update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#matcher-compilation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4252,6 +4274,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>For large batches, combining the two buys nothing over <code>compile=True</code> alone; for small batches it stacks. The section below has the numbers.</li>
 </ul>
 <p><strong>Fastest measured starting point:</strong> for single-GPU RF-DETR Nano detection with BF16 and batch 4, <code>compile=True</code> plus <code>cuda_graphs=True</code>, with <code>multi_scale=False</code>, was fastest among the configurations measured below: 116.0 img/s on an RTX PRO 6000 Blackwell, 1.47× eager and 1.20× <code>compile=True</code> alone. This result used synthetic fixed-shape batches and training steps only. At batch 64, graphs added only 1% over compilation, within run-to-run noise; use <code>compile=True</code> alone as the simpler starting point there. Treat these as hardware- and workload-specific measurements, not a universal optimum. The combined route requires single-GPU detection without gradient accumulation; its fallbacks and memory costs are listed below.</p>
+<h3 id="combined-adamw-and-ema-update">Combined AdamW and EMA update<a class="headerlink" href="#combined-adamw-and-ema-update" title="Permanent link">&para;</a></h3>
+<p>The default single-GPU compiled BF16 detection path combines global-norm gradient clipping, AdamW, and EMA into one multi-tensor Triton update. There is no new option to enable: it is selected when <code>compile=True</code>, <code>fused_optimizer=True</code>, <code>use_ema=True</code>, <code>ema_update_interval=1</code>, and the built-in <code>optimizer="adamw"</code> are used on one NVIDIA CUDA device with the default <code>devices=1</code>, <code>num_nodes=1</code>, and <code>strategy="auto"</code>; other values, including equivalent spellings such as <code>devices="1"</code> or <code>devices="auto"</code>, keep the existing PyTorch update. Segmentation, keypoints, CUDA graphs, distributed strategies, custom optimizers, AdamW options the kernel does not implement (<code>amsgrad</code>, <code>maximize</code>, <code>capturable</code>, <code>differentiable</code>), other precisions, non-Linux platforms, and Triton releases without the required CUDA libdevice interface keep the existing PyTorch update. A step whose tensor layout the kernels do not support (for example a non-contiguous parameter or gradient) is applied by PyTorch's non-fused AdamW after the same gradient clipping, and the EMA callback averages it. The update rule is unchanged, but that step does not use the fused implementation, so its result can differ from the fused route by float32 rounding.</p>
+<p>On an NVIDIA L4, a public <code>RFDETRNano.train()</code> run over COCO128 with BF16, the default batch 4, and 384 px inputs improved the median settled training epoch from 3.593 s to 3.135 s across five independent pairs (12.66%, range 11.55-16.86%). The comparison baseline was deliberately stronger than the current standard path: it explicitly used <code>clip_grad_norm_(foreach=True)</code>, <code>AdamW(fused=True)</code>, a single <code>torch._foreach_lerp_</code> EMA operation in place of the callback's two foreach operations, and a host-side EMA counter that avoided the callback's per-step CUDA scalar read. Per-process medians use epochs 2–4, excluding compilation, the first post-compile warm-up epoch, and final validation. Those epochs include image loading, augmentation, Lightning, forward, criterion, backward, clipping, the optimizer, and EMA. Peak allocated CUDA memory changed from 1,852.89 MiB to 1,853.03 MiB. The paired reduction for the complete six-epoch call with populated per-arm compile caches had a 5.56% median (range 3.33-10.99%); one-time setup and final validation dilute the recurring-epoch saving. Convergence and final accuracy of a full training run were not compared with the standard update, and larger models and other GPUs were not measured.</p>
 <h3 id="matcher-compilation">Matcher compilation<a class="headerlink" href="#matcher-compilation" title="Permanent link">&para;</a></h3>
 <p>On CUDA, <code>compile=True</code> also compiles the matcher's L1 box cost separately from the model. The compiled helper uses dynamic shapes and bypasses the eager target-chunking loop so Inductor can fuse the coordinate reduction. Both compact and full-cartesian matching use it for equal-dtype inputs; mixed-dtype inputs retain the eager helper's autocast/error behavior. Under BF16/FP16 AMP the fused compiled L1 cost serves the decoder (and auxiliary) layers; encoder-stage matching stays on the eager <code>torch.cdist</code> path because its predicted boxes are emitted in the reduced precision while targets stay float32. Target packing and Hungarian assignment stay eager. The losses stay eager too, except for fixed-resolution detection training (<code>multi_scale=False</code> with the default <code>square_resize_div_64=True</code> and <code>cuda_graphs=False</code>), where <code>compile=True</code> compiles the model for the fixed training batch shape (a validation batch of another shape, such as a partial final batch or a different <code>eval_batch_size</code>, recompiles once) and batches the default IA-BCE classification, box, GIoU and cardinality losses across the final, auxiliary and encoder outputs into one lazily compiled function. Matcher CUDA graphs stay disabled independently of the model's graph setting. A startup message confirms that L1 compilation is enabled; kernels compile on first use. <code>compile=False</code> retains the memory-bounded eager helper. Measure steady-state throughput and peak memory on your own workload. The matcher's L1 compilation alone carries no end-to-end speedup claim; across six independent RF-DETR Nano training processes (BF16, batch 4, 384 px, a single NVIDIA L4, EMA and validation off), the fixed-resolution route shortened the median settled epoch by 14.4%, with every paired reduction between 11.3% and 20.7%. Segmentation and keypoint models keep the dynamic model compile and the eager per-layer losses. Other detection models, precisions, batch sizes, multi-GPU (DDP) and EMA-on runs were not measured.</p>
 <p>Non-empty custom <code>aug_config</code> values keep model compilation dynamic because transforms can change image shape after resize. They also keep the batched loss graph disabled.</p>
@@ -4443,7 +4468,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 24, 2026 20:49:59 UTC">2026-09-24 20:49:59</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 25, 2026 23:17:17 UTC">2026-09-25 23:17:17</span>
   </span>
 
     

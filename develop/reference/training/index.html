@@ -6361,7 +6361,7 @@ for the non-fused path.</p>
     <div class="doc doc-contents ">
 
         <p>Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.</p>
-<p>PTL calls this hook before applying <code>checkpoint["state_dict"]</code> to the module.  Four normalisation steps are
+<p>PTL calls this hook before applying <code>checkpoint["state_dict"]</code> to the module.  Five normalisation steps are
 applied in order:</p>
 <ol>
 <li>
@@ -6391,6 +6391,11 @@ applied in order:</p>
    :func:<code>~rfdetr.training.checkpoint.convert_legacy_checkpoint</code> that already has <code>"state_dict"</code> but also
    carries <code>"legacy_ema_state_dict"</code>.  The EMA weights are stashed on <code>self._pending_legacy_ema_state</code> for
    optional restoration by :class:<code>~rfdetr.training.callbacks.ema.RFDETREMACallback</code>.</p>
+</li>
+<li>
+<p><strong>Optimizer fused eligibility</strong> — built-in AdamW parameter groups are reset to the live runtime's fused
+   eligibility before PyTorch loads saved group options. A combined-route checkpoint records <code>fused=True</code>;
+   the destination's FP32 DDP route must keep <code>fused=False</code>.</p>
 </li>
 </ol>
 
