@@ -1,4 +1,4 @@
-name: Smoke Tests
+name: Integration Tests
 
 on:
   push:
