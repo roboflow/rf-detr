@@ -13,7 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - `format="coreai"` works with `coreai-torch` 0.4.3, which runs the optimization passes inside `TorchConverter.to_coreai()` and removed `AIProgram.optimize()`; with 1.11.0 a fresh `pip install "rfdetr[coreai]"` resolved 0.4.3 and every Core AI export failed with `'AIProgram' object has no attribute 'optimize'`. The `[coreai]` extra now pins `coreai-torch==0.4.3` and installs on Python 3.11 to 3.14, since `coreai-core` 1.0.0b3 ships cp314 wheels. It is declared as a uv conflict with `[tflite]`, whose `onnx2tf` pins cannot meet `coreai-core`'s `numpy>=2.3`.
+
 - `RFDETR.from_checkpoint("checkpoint_best_total.pth")` now rebuilds the model the way it was trained. `strip_checkpoint` dropped `model_config`, so the reload fell back to class defaults with no warning: a Nano trained at `resolution=224` came back at 384 with boxes up to 193 px off, and a keypoint model trained at 552 came back at 576. `num_select` was lost the same way and `dec_layers` only logged a generic partial-load warning. The Roboflow SDK upload goes through the same call. `from_checkpoint` no longer takes `device` from the checkpoint either, so GPU-trained checkpoints load and predict on a CPU-only machine (`checkpoint_best_ema.pth` and `checkpoint_best_regular.pth` failed there before). Best-total files from 1.9.0 to 1.11.0 can't be repaired; `from_checkpoint` warns about them and points at the unstripped checkpoint next to them and at `training_config.json`. ([#1533](https://github.com/roboflow/rf-detr/issues/1533))
+
+- Validation and test mAP now ignore detections on COCO crowd regions (`iscrowd=1`) the way pycocotools does. The crowd annotations were dropped before the metric saw them, so a detection inside a crowd counted as a false positive.
+    - Pretrained RF-DETR Nano on COCO val2017 scored 0.4802 mAP through `evaluate()` and now scores 0.4842, the same as pycocotools on the same predictions.
+    - Training is unchanged, and only COCO-format datasets with crowd labels get different numbers — **runs from before and after this change are not directly comparable on crowd-labelled COCO data.**
+    - Not covered: WebDataset shards and a hand-built `Trainer.validate(model, dataloaders=...)` call with no datamodule attached are both still scored the old way, and `val/F1` only ignores a detection whose IoU with the crowd is at least 0.5 (measured against the crowd box for detection, the crowd mask for segmentation). ([#1531](https://github.com/roboflow/rf-detr/issues/1531))
 
 ## [1.11.0] — 2026-09-23
 

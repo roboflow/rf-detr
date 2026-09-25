@@ -615,8 +615,8 @@ class TestValidationBatchEndDeviceRouting:
             side_effect=lambda preds: events.append("convert_preds") or original_convert_preds(preds)
         )
         cb._convert_targets = MagicMock(
-            side_effect=lambda targets, preds=None: (
-                events.append("convert_targets") or original_convert_targets(targets, preds)
+            side_effect=lambda targets, preds=None, **kwargs: (
+                events.append("convert_targets") or original_convert_targets(targets, preds, **kwargs)
             )
         )
         outputs = {"results": _detection_preds(0), "targets": _detection_targets()}
@@ -718,8 +718,8 @@ class TestOnTrainBatchEnd:
             side_effect=lambda preds: events.append("convert_preds") or original_convert_preds(preds)
         )
         cb._convert_targets = MagicMock(
-            side_effect=lambda targets, preds=None: (
-                events.append("convert_targets") or original_convert_targets(targets, preds)
+            side_effect=lambda targets, preds=None, **kwargs: (
+                events.append("convert_targets") or original_convert_targets(targets, preds, **kwargs)
             )
         )
         outputs = {"results": _detection_preds(1), "targets": _detection_targets()}
@@ -1934,8 +1934,8 @@ class TestValidationBatchEndEvalPolicy:
             side_effect=lambda preds: events.append("convert_preds") or original_convert_preds(preds)
         )
         cb._convert_targets = MagicMock(
-            side_effect=lambda targets, preds=None: (
-                events.append("convert_targets") or original_convert_targets(targets, preds)
+            side_effect=lambda targets, preds=None, **kwargs: (
+                events.append("convert_targets") or original_convert_targets(targets, preds, **kwargs)
             )
         )
 
@@ -2159,7 +2159,7 @@ class TestValidationBatchEndTargetConversion:
         with patch.object(cb, "_convert_targets", wraps=cb._convert_targets) as convert_targets:
             cb.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
 
-        convert_targets.assert_called_once_with(outputs["targets"], None)
+        convert_targets.assert_called_once_with(outputs["targets"], None, crowd_regions={})
         assert cb.map_metric_ema.update.call_args.args[1] is cb.map_metric.update.call_args.args[1]
 
     def test_segmentation_converts_targets_separately_for_the_ema_grid(self) -> None:
