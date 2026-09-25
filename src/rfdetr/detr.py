@@ -87,9 +87,9 @@ def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
         # Preserve the existing multiply-then-truncate result, but transfer one byte per channel instead of a
         # floating-point image before NumPy performs the same conversion on the host.
         # ``copy(order="K")`` retains NumPy ownership and the channel-major strides produced by the existing cast.
-        # The annotation pins the untyped ``Tensor.numpy()`` result so ``copy`` is checked rather than inferred Any.
-        transferred: np.ndarray[Any, Any] = source_view.mul(255).to(torch.uint8).cpu().numpy()
-        return transferred.copy(order="K")
+        # NumPy types ``ndarray.copy`` as ``Any``, so ``asarray`` restores the element type; it returns the very
+        # same object for an ndarray, keeping the copy's ownership, writability, and strides untouched.
+        return np.asarray(source_view.mul(255).to(torch.uint8).cpu().numpy().copy(order="K"))
     return (source_view.cpu().numpy() * 255).astype(np.uint8)
 
 
