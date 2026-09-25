@@ -353,7 +353,7 @@ class TestCoreAIExporter:
 
         The asset metadata comes from ``coreai.runtime``, a different distribution from the ``coreai_torch`` the
         availability probe covers. Building it up front keeps the failure at the same choke point as every other missing
-        dependency, instead of after a full trace, conversion and ``optimize()``.
+        dependency, instead of after a full trace and conversion.
         """
         coreai_torch = mock.MagicMock(name="coreai_torch")
         with (
@@ -404,7 +404,6 @@ class TestCoreAIExporter:
         kwargs = stack.converter.add_exported_program.call_args.kwargs
         assert kwargs["input_names"] == ["input"]
         assert kwargs["output_names"] == ["dets", "labels"]
-        stack.program.optimize.assert_called_once_with()
 
     def test_surviving_grid_sampler_is_refused_before_the_converter(self, tmp_path: Path) -> None:
         """A grid sampler the table failed to lower is named here rather than failing inside ``coreai-torch``.
@@ -747,7 +746,6 @@ class TestCoreAIEndToEnd:
             )
             .to_coreai()
         )
-        program.optimize()
         path = tmp_path / "topk.aimodel"
         program.save_asset(path, metadata=rt.AIModelAssetMetadata())
         (indices,) = _run_aimodel(path, {"scores": _RANKED_SCORES.numpy()}, ("indices",), "neural_engine")

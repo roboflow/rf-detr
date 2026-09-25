@@ -23,7 +23,7 @@ Note:
     and returns float16 tensors.
 
 Note:
-    Converting only needs ``coreai-torch`` (macOS 26+ on Apple silicon, or Linux x86-64, Python 3.11-3.13). Loading
+    Converting only needs ``coreai-torch`` (macOS 26+ on Apple silicon, or Linux x86-64, Python 3.11-3.14). Loading
     and running the ``.aimodel`` needs the Core AI runtime, which ships with iOS, iPadOS and macOS 27.
 """
 
@@ -71,7 +71,7 @@ def _check_coreai_torch_available(*, raise_error: bool = True) -> bool:
     if not _IS_COREAI_TORCH_AVAILABLE:
         if raise_error:
             raise ImportError(
-                "Core AI export requires `coreai-torch` (Python 3.11-3.13)."
+                "Core AI export requires `coreai-torch` (Python 3.11-3.14)."
                 ' Install it with: pip install "rfdetr[coreai]"'
             )
         return False
@@ -136,7 +136,7 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
         if self.config.verbose:
             logger.info(f"Exporting model to Core AI format: {output_path}")
         # Built first: it imports the `coreai` runtime distribution, which `_check_coreai_torch_available` does not
-        # cover. A missing one must not surface only after a full trace, conversion and optimize().
+        # cover. A missing one must not surface only after a full trace and conversion.
         metadata = self._asset_metadata()
         program = self._build_program(graph, dtype)
         program.save_asset(output_path, metadata=metadata)
@@ -225,7 +225,8 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
             dtype: Dtype the graph is traced in.
 
         Returns:
-            The optimized ``coreai`` program, ready for ``save_asset``.
+            The ``coreai`` program, ready for ``save_asset``. ``to_coreai()`` runs the optimization passes itself
+            since coreai-torch 0.4.3, which removed the separate ``AIProgram.optimize()``.
 
         Raises:
             ImportError: If a lazily imported part of the Core AI stack fails to load.
@@ -249,7 +250,6 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
                     )
                     .to_coreai()
                 )
-            program.optimize()
         except (ImportError, NotImplementedError, ValueError):
             raise
         except Exception as exc:
