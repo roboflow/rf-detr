@@ -954,7 +954,7 @@ class TestBuildTrainerUsesRealFields:
 
     def test_clip_max_norm_owned_by_model_module_for_keypoints(self, tmp_path):
         """Keypoint models use manual optimization; trainer-owned clipping is disabled and ``clip_max_norm`` is applied
-        inside ``RFDETRModelModule._step_optimizer`` instead."""
+        inside ``RFDETRModelModule.on_before_optimizer_step`` instead."""
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(

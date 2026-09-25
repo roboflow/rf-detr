@@ -1046,10 +1046,28 @@ class RFDETRModelModule(LightningModule):
         self.log("train/lr_max", max(group_lrs), prog_bar=False, on_step=True, on_epoch=False)
 
     def _step_optimizer(self, optimizer: torch.optim.Optimizer | LightningOptimizer) -> None:
-        """Clip gradients, step optimizer and scheduler, then reset accumulation state.
+        """Step optimizer and scheduler, then reset accumulation state.
+
+        Gradient clipping is not done here: ``LightningOptimizer.step()`` reaches the precision plugin, which unscales
+        GradScaler-scaled gradients and then calls :meth:`on_before_optimizer_step`, where clipping happens.
 
         Args:
             optimizer: Optimizer returned by Lightning.
+        """
+        optimizer.step()
+        optimizer.zero_grad()
+        self._step_lr_scheduler()
+        self._accumulated_box_normalizer = None
+
+    def _clip_manual_optimization_gradients(self, optimizer: torch.optim.Optimizer) -> None:
+        """Clip gradients for the manual-optimization (keypoint) path.
+
+        ``TrainConfig.clip_max_norm`` applies unless the trainer sets a numeric ``gradient_clip_val``, which then
+        takes precedence (``0`` disables clipping). Must only run once gradients are unscaled, i.e. from
+        :meth:`on_before_optimizer_step`.
+
+        Args:
+            optimizer: Optimizer about to update model parameters.
         """
         trainer_gradient_clip_val = getattr(self.trainer, "gradient_clip_val", None)
         if trainer_gradient_clip_val is None:
@@ -1067,10 +1085,6 @@ class RFDETRModelModule(LightningModule):
                 gradient_clip_val=gradient_clip_val,
                 gradient_clip_algorithm=gradient_clip_algorithm,
             )
-        optimizer.step()
-        optimizer.zero_grad()
-        self._step_lr_scheduler()
-        self._accumulated_box_normalizer = None
 
     def _current_lr_scheduler(self) -> LRScheduler | ReduceLROnPlateau | None:
         """Return the single configured LR scheduler, or ``None`` when none is available.
@@ -1101,16 +1115,23 @@ class RFDETRModelModule(LightningModule):
         scheduler.step()
 
     def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
-        """Log rates immediately before each Lightning-managed optimizer step.
+        """Log rates and, under manual optimization, clip gradients before each optimizer step.
 
         Lightning invokes this hook for both automatic-optimization and
         manual-optimization (keypoint) training paths, so it is the sole
         emission site for learning-rate logging on either path.
 
+        Lightning's precision plugins call this hook after the backward closure, and ``MixedPrecision`` with a
+        GradScaler (fp16) calls it right after ``scaler.unscale_()``. The manual path therefore clips here, on the true
+        gradients. Clipping before ``optimizer.step()`` would clip the scaled gradients and the optimizer would receive
+        ``clip_max_norm / scale``. The automatic path is clipped by Lightning after this hook returns.
+
         Args:
             optimizer: Optimizer about to update model parameters.
         """
         self._log_learning_rates(optimizer)
+        if not self.automatic_optimization:
+            self._clip_manual_optimization_gradients(optimizer)
 
     def on_train_epoch_end(self) -> None:
         """Step epoch-interval (non-plateau) schedulers on the manual-optimization path.
@@ -1585,7 +1606,9 @@ class RFDETRModelModule(LightningModule):
 
         PTL's AMP precision plugin refuses to clip gradients when the optimizer declares it handles unscaling internally
         (fused=True).  When fused is active we are on BF16 (no GradScaler) so ``clip_grad_norm_`` is correct.  For the
-        non-fused path (FP16 + GradScaler or FP32) we delegate to ``super()`` to preserve scaler-aware unscaling.
+        non-fused path (FP16 + GradScaler or FP32) we delegate to ``super()``, which clips the gradients as they are and
+        does not unscale them. Under FP16 it must therefore only run after ``GradScaler.unscale_()``: Lightning's own
+        clipping on the automatic path, or :meth:`on_before_optimizer_step` on the manual path.
 
         Args:
             optimizer: The current optimizer.

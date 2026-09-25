@@ -914,7 +914,7 @@ def build_trainer(
     sync_bn: bool = tc.sync_bn
 
     # Manual optimization (currently scoped to keypoint models) owns gradient accumulation
-    # and clipping inside ``RFDETRModelModule._step_optimizer`` so the box-count denominator
+    # and clipping inside ``RFDETRModelModule`` so the box-count denominator
     # spans the full effective batch.  Detection and segmentation models keep Lightning's
     # automatic optimization, which means ``accumulate_grad_batches`` and ``gradient_clip_val``
     # must flow through to the Trainer as usual for them.
@@ -988,9 +988,9 @@ def build_trainer(
                 )
         trainer_config["accumulate_grad_batches"] = 1
         # gradient_clip_val=None here does NOT disable gradient clipping — clipping is
-        # performed inside RFDETRModelModule._step_optimizer using train_config.clip_max_norm
-        # (see src/rfdetr/training/module_model.py).  Under manual optimization the module
-        # owns the clipping step; passing None to the PTL Trainer simply prevents PTL from
-        # doing a second redundant clip on top of the module's own.
+        # performed inside RFDETRModelModule.on_before_optimizer_step using train_config.clip_max_norm
+        # (see src/rfdetr/training/module_model.py), after the precision plugin unscales fp16 gradients.
+        # Under manual optimization the module owns the clipping step; passing None to the PTL Trainer
+        # simply prevents PTL from doing a second redundant clip on top of the module's own.
         trainer_config["gradient_clip_val"] = None
     return Trainer(**trainer_config)
