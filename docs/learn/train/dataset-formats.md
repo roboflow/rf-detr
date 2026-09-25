@@ -106,7 +106,7 @@ Each `_annotations.coco.json` file contains:
 | `area`        | Area of the bounding box                                              |
 | `iscrowd`     | 0 for individual objects, 1 for crowd regions (see below)             |
 
-Crowd regions (`iscrowd: 1`) are not training targets. In validation and test mAP, a detection on a crowd region of its class is ignored, as in pycocotools; `val/F1` ignores it only when its IoU with the crowd box is at least 0.5. This applies to loose-file COCO datasets; WebDataset shards do not score crowd regions (see [WebDataset Shards](#webdataset-shards-sequential-io) below).
+Crowd regions (`iscrowd: 1`) are not training targets. In validation and test mAP, a detection on a crowd region of its class is ignored, as in pycocotools; `val/F1` ignores it only when its IoU with the crowd is at least 0.5 — measured against the crowd box for detection models, and against the crowd mask for segmentation models. This applies to loose-file COCO datasets loaded through the `RFDETRDataModule`; WebDataset shards do not score crowd regions (see [WebDataset Shards](#webdataset-shards-sequential-io) below), and neither does a hand-built `Trainer.validate(model, dataloaders=...)` call with no datamodule attached — both fall back to scoring crowd detections as false positives.
 
 ### Segmentation Annotations
 
