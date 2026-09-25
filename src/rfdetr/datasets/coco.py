@@ -614,7 +614,9 @@ class ConvertCoco:
       only present when ``include_keypoints=True``.
 
     Crowd annotations (``iscrowd=1``) and degenerate boxes (zero width or height after clamping to image boundaries) are
-    filtered out.
+    filtered out. For ``CocoDetection`` and ``YoloDetection`` splits, ``COCOEvalCallback`` reads crowd regions back from
+    the dataset's COCO API for validation and test mAP; webdataset shards have no COCO API, so their evaluation metrics
+    still omit crowd regions.
 
     Args:
         include_masks: If ``True``, decode segmentation annotations (polygon or

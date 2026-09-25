@@ -104,7 +104,9 @@ Each `_annotations.coco.json` file contains:
 | `annotations` | List of object annotations linking images to categories               |
 | `bbox`        | Bounding box in `[x, y, width, height]` format (top-left corner)      |
 | `area`        | Area of the bounding box                                              |
-| `iscrowd`     | 0 for individual objects, 1 for crowd regions                         |
+| `iscrowd`     | 0 for individual objects, 1 for crowd regions (see below)             |
+
+Crowd regions (`iscrowd: 1`) are not training targets. In validation and test mAP, a detection on a crowd region of its class is ignored, as in pycocotools; `val/F1` ignores it only when its IoU with the crowd box is at least 0.5. This applies to loose-file COCO datasets; WebDataset shards do not score crowd regions (see [WebDataset Shards](#webdataset-shards-sequential-io) below).
 
 ### Segmentation Annotations
 
@@ -478,6 +480,8 @@ Shard visiting order is shuffled, and samples are shuffled again in a reservoir 
 ### Not covered
 
 Keypoint training rejects `dataset_file="webdataset"` with an explicit error. Its label space is inferred from a whole parsed COCO annotation file, which a shard index does not carry — use `coco`, `roboflow` or `yolo` for keypoints. Detection and segmentation splits are supported.
+
+Validation and test metrics on shards do not score crowd regions (`iscrowd: 1`): a detection on one counts as a false positive, where the loose-file `coco` loader ignores it as pycocotools does. Evaluate from the loose-file split when comparing against COCO numbers.
 
 ---
 

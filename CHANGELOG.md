@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - `format="coreai"` works with `coreai-torch` 0.4.3, which runs the optimization passes inside `TorchConverter.to_coreai()` and removed `AIProgram.optimize()`; with 1.11.0 a fresh `pip install "rfdetr[coreai]"` resolved 0.4.3 and every Core AI export failed with `'AIProgram' object has no attribute 'optimize'`. The `[coreai]` extra now pins `coreai-torch==0.4.3` and installs on Python 3.11 to 3.14, since `coreai-core` 1.0.0b3 ships cp314 wheels. It is declared as a uv conflict with `[tflite]`, whose `onnx2tf` pins cannot meet `coreai-core`'s `numpy>=2.3`.
+- Validation and test mAP now ignore detections on COCO crowd regions (`iscrowd=1`) the way pycocotools does. The crowd annotations were dropped before the metric saw them, so a detection inside a crowd counted as a false positive. Pretrained RF-DETR Nano on COCO val2017 scored 0.4802 mAP through `evaluate()` and now scores 0.4842, the same as pycocotools on the same predictions. Training is unchanged, and only COCO-format datasets with crowd labels get different numbers. WebDataset shards are still scored the old way, and `val/F1` only ignores a detection whose IoU with the crowd box is at least 0.5. ([#1531](https://github.com/roboflow/rf-detr/issues/1531))
 
 ## [1.11.0] — 2026-09-23
 
