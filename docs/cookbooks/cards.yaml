@@ -5,42 +5,36 @@ cards:
     version: v1.10.0
     author: Borda
     description: "Download the full public COCO2017 dataset and train RF-DETR Nano from scratch for 40 epochs end to end on a single CUDA GPU with torch.compile and automatic mixed precision (bf16 when supported, otherwise fp16), with optional FP8 via Transformer Engine."
-  - href: export-coreml/
-    name: "Export to Native CoreML & Run Inference"
-    labels: [EXPORT, INFERENCE, DEPLOY]
-    version: v1.9.0
-    author: Borda
-    description: "Export RF-DETR directly to a native CoreML .mlpackage (no ONNX, no ExecuTorch) and run it with coremltools — the lowest-friction path for Xcode / Apple-platform deployment."
-  - href: export-tensorrt/
-    name: "Export to TensorRT & Run Inference"
-    labels: [EXPORT, INFERENCE, DEPLOY]
-    version: v1.9.0
-    author: Borda
-    description: "Export RF-DETR to a TensorRT FP16 engine and run inference on it directly — low-latency NVIDIA GPU deployment with supervision-annotated detections."
-  - href: export-executorch/
-    name: "Export to ExecuTorch & Run Inference"
-    labels: [EXPORT, INFERENCE, DEPLOY]
-    version: v1.9.0
-    author: Borda
-    description: "Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) and run it on the CPU — on-device mobile and edge deployment with supervision-annotated detections."
-  - href: export-tflite/
-    name: "Export to TFLite (INT8) & Run Inference"
-    labels: [EXPORT, TFLITE, DEPLOY]
+  - href: export-cuda/
+    name: "RF-DETR on NVIDIA GPUs — Export, Inference & Latency"
+    labels: [EXPORT, INFERENCE, DEPLOY, CUDA]
     version: v1.11.0
     author: Borda
-    description: "Export RF-DETR to TensorFlow Lite with INT8 dynamic-range quantization and run it directly with tensorflow.lite.Interpreter — mobile and edge deployment, validated against a fp32 PyTorch baseline."
+    description: "Export RF-DETR to ONNX (CUDA execution provider) and TensorRT, run inference on both, and benchmark them against the PyTorch fp32/fp16+JIT baseline on an NVIDIA GPU."
+  - href: export-cpu/
+    name: "RF-DETR on CPU — Export, Inference & Latency"
+    labels: [EXPORT, INFERENCE, DEPLOY, CPU]
+    version: v1.11.0
+    author: Borda
+    description: "Export RF-DETR to ONNX (CPU execution provider) and OpenVINO IR, run inference on both, and benchmark them against the PyTorch baseline on a general-purpose CPU."
+  - href: export-mobile/
+    name: "RF-DETR on Mobile & Edge — Export, Inference & Latency"
+    labels: [EXPORT, INFERENCE, DEPLOY, TFLITE, MOBILE]
+    version: v1.11.0
+    author: Borda
+    description: "Export RF-DETR to TFLite (INT8), LiteRT, and ExecuTorch's XNNPACK backend, run inference on each, and benchmark them for on-device mobile and edge deployment."
+  - href: export-apple/
+    name: "RF-DETR on Apple Silicon — Export, Inference & Latency"
+    labels: [EXPORT, INFERENCE, DEPLOY, APPLE]
+    version: v1.11.0
+    author: Borda
+    description: "Export RF-DETR to native CoreML, Core AI, and ExecuTorch's CoreML backend, run inference on each, and benchmark them against the PyTorch (MPS) baseline on Apple Silicon."
   - href: fine-tune_detection/
     name: "Fine-Tune RF-DETR Object Detection"
     labels: [TRAINING, PYTORCH LIGHTNING, INFERENCE]
     version: v1.8.2
     author: Borda
     description: "Fine-tune RF-DETR object detection on any COCO detection dataset from Roboflow Universe — covers PPE safety, traffic, sports, infrastructure, and marine-wildlife use cases."
-  - href: inference-latency-benchmark/
-    name: "Inference Latency Benchmark"
-    labels: [INFERENCE, ONNX, GPU]
-    version: v1.8.1
-    author: Borda
-    description: "Benchmark detection, segmentation, and keypoint models across FP32, FP16+JIT, and ONNX Runtime — measures latency and FPS on GPU using CUDA events."
   - href: fine-tune_segmentation/
     name: "Fine-Tune RF-DETR Instance Segmentation"
     labels: [TRAINING, PYTORCH LIGHTNING, SEGMENTATION, INFERENCE]

@@ -224,9 +224,10 @@ docs/cookbooks/output/
 docs/cookbooks/*.py
 
 # export artifacts written by the export cookbooks when run in place (.pte/.trt weigh 100+ MB)
-docs/cookbooks/export_executorch/
-docs/cookbooks/export_tensorrt/
-docs/cookbooks/export_tflite/
+docs/cookbooks/export_cuda/
+docs/cookbooks/export_cpu/
+docs/cookbooks/export_mobile/
+docs/cookbooks/export_apple/
 /export_coreml/
 
 # MacOS files
