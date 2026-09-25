@@ -325,10 +325,7 @@ class TestCrowdRegionsReachEvaluation:
 
     @pytest.mark.parametrize(
         "rle",
-        [
-            pytest.param(False, id="polygon"),
-            pytest.param(True, id="uncompressed-rle"),
-        ],
+        [False, True]
     )
     def test_crowd_mask_is_decoded_onto_the_prediction_grid(self, tmp_path: Path, split: str, rle: bool) -> None:
         """Segmentation ground truth gains the crowd mask, decoded at full size and resized like the other GT masks."""
