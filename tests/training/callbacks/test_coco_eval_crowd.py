@@ -365,40 +365,37 @@ class TestCrowdRegionsReachEvaluation:
         assert scored[0]["boxes"][1].tolist() == [116.0, 16.0, 180.0, 80.0], "image 2 must get its own crowd region"
 
 
-class TestCrowdRegionsUnderTheEvalTransform:
-    """Crowd rows land where the dataset's own ground truth lands after the real validation transform."""
+def test_crowd_row_matches_its_non_crowd_twin_under_the_eval_transform(tmp_path: Path) -> None:
+    """A compressed-RLE crowd and a polygon non-crowd twin covering the same box give the same box and mask.
 
-    def test_crowd_row_matches_its_non_crowd_twin(self, tmp_path: Path) -> None:
-        """A compressed-RLE crowd and a polygon non-crowd twin covering the same box give the same box and mask.
+    The twin goes through ``ConvertCoco``, the square validation resize and ``Normalize``; the crowd is read back
+    from the annotation file. Both must end up in the same frame, box and mask alike, or the crowd would ignore
+    detections somewhere other than where it is. Compressed (string ``counts``) RLE is what most exporters write.
+    """
+    pycocotools_mask = pytest.importorskip("pycocotools.mask")
+    crowd_mask = np.zeros((_HEIGHT, _WIDTH), dtype=np.uint8)
+    crowd_mask[16:112, 128:224] = 1
+    rle = pycocotools_mask.encode(np.asfortranarray(crowd_mask))
+    rle["counts"] = rle["counts"].decode()
+    annotations = [
+        _annotation(1, 1, _PERSON_CROWD),
+        _annotation(2, 1, _PERSON_CROWD, iscrowd=1, segmentation=rle),
+    ]
+    transforms = make_coco_transforms_square_div_64("val", 384)
+    dataset = _coco_dataset(tmp_path, annotations, transforms=transforms, include_masks=True)
+    image, target = dataset[0]
+    grid = (image.shape[-2] // 4, image.shape[-1] // 4)
+    prediction = _prediction([], [], [])
+    prediction["masks"] = torch.zeros(0, 1, *grid, dtype=torch.bool)
 
-        The twin goes through ``ConvertCoco``, the square validation resize and ``Normalize``; the crowd is read back
-        from the annotation file. Both must end up in the same frame, box and mask alike, or the crowd would ignore
-        detections somewhere other than where it is. Compressed (string ``counts``) RLE is what most exporters write.
-        """
-        pycocotools_mask = pytest.importorskip("pycocotools.mask")
-        crowd_mask = np.zeros((_HEIGHT, _WIDTH), dtype=np.uint8)
-        crowd_mask[16:112, 128:224] = 1
-        rle = pycocotools_mask.encode(np.asfortranarray(crowd_mask))
-        rle["counts"] = rle["counts"].decode()
-        annotations = [
-            _annotation(1, 1, _PERSON_CROWD),
-            _annotation(2, 1, _PERSON_CROWD, iscrowd=1, segmentation=rle),
-        ]
-        transforms = make_coco_transforms_square_div_64("val", 384)
-        dataset = _coco_dataset(tmp_path, annotations, transforms=transforms, include_masks=True)
-        image, target = dataset[0]
-        grid = (image.shape[-2] // 4, image.shape[-1] // 4)
-        prediction = _prediction([], [], [])
-        prediction["masks"] = torch.zeros(0, 1, *grid, dtype=torch.bool)
+    scored = _metric_targets(COCOEvalCallback(segmentation=True), _trainer(dataset), "val", [prediction], [target])
 
-        scored = _metric_targets(COCOEvalCallback(segmentation=True), _trainer(dataset), "val", [prediction], [target])
-
-        boxes, masks = scored[0]["boxes"], scored[0]["masks"]
-        assert scored[0]["iscrowd"].tolist() == [0, 1]
-        torch.testing.assert_close(boxes[1], boxes[0], atol=1e-3, rtol=0, msg="crowd box left the twin's frame")
-        overlap = (masks[0] & masks[1]).sum() / (masks[0] | masks[1]).sum()
-        assert masks.shape == (2, *grid)
-        assert float(overlap) > 0.99, f"crowd mask IoU with its twin is {float(overlap):.4f}"
+    boxes, masks = scored[0]["boxes"], scored[0]["masks"]
+    assert scored[0]["iscrowd"].tolist() == [0, 1]
+    torch.testing.assert_close(boxes[1], boxes[0], atol=1e-3, rtol=0, msg="crowd box left the twin's frame")
+    overlap = (masks[0] & masks[1]).sum() / (masks[0] | masks[1]).sum()
+    assert masks.shape == (2, *grid)
+    assert float(overlap) > 0.99, f"crowd mask IoU with its twin is {float(overlap):.4f}"
 
 
 class TestCrowdLookupIsANoOpWithoutCocoAnnotations:
@@ -442,33 +439,30 @@ class TestCrowdLookupIsANoOpWithoutCocoAnnotations:
         assert callback.map_metric_train.update.call_args.args[1][0]["iscrowd"].tolist() == [0]
 
 
-class TestEmaTrackSeesCrowdRegions:
-    """The independent EMA forward (``eval_base_model=True``) is scored against the same crowd regions."""
+def test_segmentation_ema_targets_carry_crowd_rows_on_the_ema_grid(tmp_path: Path) -> None:
+    """Segmentation converts targets a second time for the EMA grid; that conversion must add the crowd too."""
+    dataset = _coco_dataset(tmp_path, _PERSON_AND_CROWD, include_masks=True)
+    ema_callback = MagicMock(name="ema_callback")
+    ema_callback.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
+    ema_callback._average_model = SimpleNamespace(module=SimpleNamespace(model=MagicMock(return_value={})))
+    trainer = _trainer(dataset)
+    trainer.callbacks = [ema_callback]
+    module = _module()
+    module.postprocess.return_value = [_prediction([[16, 16, 48, 48]], [0.9], [1], mask_grid=(32, 64))]
+    callback = COCOEvalCallback(segmentation=True, eval_base_model=True)
+    callback.setup(trainer, module, stage="fit")
+    callback.map_metric = MagicMock(name="map_metric")
+    callback.map_metric_ema = MagicMock(name="map_metric_ema")
+    outputs = {
+        "results": [_prediction([[16, 16, 48, 48]], [0.9], [1], mask_grid=(64, 128))],
+        "targets": _eval_targets(dataset),
+    }
 
-    def test_segmentation_ema_targets_carry_crowd_rows_on_the_ema_grid(self, tmp_path: Path) -> None:
-        """Segmentation converts targets a second time for the EMA grid; that conversion must add the crowd too."""
-        dataset = _coco_dataset(tmp_path, _PERSON_AND_CROWD, include_masks=True)
-        ema_callback = MagicMock(name="ema_callback")
-        ema_callback.get_ema_model_state_dict = MagicMock(name="get_ema_model_state_dict")
-        ema_callback._average_model = SimpleNamespace(module=SimpleNamespace(model=MagicMock(return_value={})))
-        trainer = _trainer(dataset)
-        trainer.callbacks = [ema_callback]
-        module = _module()
-        module.postprocess.return_value = [_prediction([[16, 16, 48, 48]], [0.9], [1], mask_grid=(32, 64))]
-        callback = COCOEvalCallback(segmentation=True, eval_base_model=True)
-        callback.setup(trainer, module, stage="fit")
-        callback.map_metric = MagicMock(name="map_metric")
-        callback.map_metric_ema = MagicMock(name="map_metric_ema")
-        outputs = {
-            "results": [_prediction([[16, 16, 48, 48]], [0.9], [1], mask_grid=(64, 128))],
-            "targets": _eval_targets(dataset),
-        }
+    callback.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
 
-        callback.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
-
-        ema_targets = callback.map_metric_ema.update.call_args.args[1]
-        assert ema_targets[0]["iscrowd"].tolist() == [0, 1]
-        assert ema_targets[0]["masks"].shape == (2, 32, 64)
+    ema_targets = callback.map_metric_ema.update.call_args.args[1]
+    assert ema_targets[0]["iscrowd"].tolist() == [0, 1]
+    assert ema_targets[0]["masks"].shape == (2, 32, 64)
 
 
 # Three images: a crowd of people beside two people and a car, a crowd of cars beside one car, and one person with no
@@ -553,33 +547,30 @@ def _pycocotools_stats(
     return evaluator.stats
 
 
-class TestCrowdMetricsMatchPycocotools:
-    """On a small COCO file with crowd regions, the callback's metrics equal pycocotools' on the raw file."""
+@pytest.mark.parametrize("backend", [pytest.param(backend, id=backend) for backend in get_args(CocoEvalBackend)])
+@pytest.mark.parametrize("segmentation", [pytest.param(False, id="bbox"), pytest.param(True, id="bbox+segm")])
+def test_callback_metrics_equal_pycocotools(tmp_path: Path, backend: str, segmentation: bool) -> None:
+    """On a small COCO file with crowd regions, callback box and mask metrics equal pycocotools."""
+    pytest.importorskip("pycocotools")
+    pytest.importorskip({"ufcoco": "ultrafast_pycocotools"}.get(backend, backend))
+    dataset = _coco_dataset(tmp_path, _PARITY_ANNOTATIONS, images=3, include_masks=segmentation)
+    grid = (_HEIGHT, _WIDTH) if segmentation else None
+    results = [_prediction(boxes, scores, labels, mask_grid=grid) for boxes, scores, labels in _PARITY_DETECTIONS]
+    # pycocotools reads its headline stats[0] at maxDets=100 whatever the configured thresholds, so both use 100.
+    callback = COCOEvalCallback(max_dets=100, segmentation=segmentation, eval_backend=backend)
 
-    @pytest.mark.parametrize("backend", [pytest.param(backend, id=backend) for backend in get_args(CocoEvalBackend)])
-    @pytest.mark.parametrize("segmentation", [pytest.param(False, id="bbox"), pytest.param(True, id="bbox+segm")])
-    def test_callback_metrics_equal_pycocotools(self, tmp_path: Path, backend: str, segmentation: bool) -> None:
-        """MAP 50:95 / 50 / 75 and mAR agree with pycocotools, box and mask, on the same predictions."""
-        pytest.importorskip("pycocotools")
-        pytest.importorskip({"ufcoco": "ultrafast_pycocotools"}.get(backend, backend))
-        dataset = _coco_dataset(tmp_path, _PARITY_ANNOTATIONS, images=3, include_masks=segmentation)
-        grid = (_HEIGHT, _WIDTH) if segmentation else None
-        results = [_prediction(boxes, scores, labels, mask_grid=grid) for boxes, scores, labels in _PARITY_DETECTIONS]
-        # pycocotools reads its headline stats[0] at maxDets=100 whatever the configured thresholds, so both use 100.
-        callback = COCOEvalCallback(max_dets=100, segmentation=segmentation, eval_backend=backend)
+    with contextlib.redirect_stdout(io.StringIO()):
+        metrics = _evaluate(callback, _trainer(dataset), "val", results, _eval_targets(dataset))
 
-        with contextlib.redirect_stdout(io.StringIO()):
-            metrics = _evaluate(callback, _trainer(dataset), "val", results, _eval_targets(dataset))
-
-        expected = {"bbox": _pycocotools_stats(tmp_path / "annotations.json", results, "bbox", 100)}
-        observed = {
-            "bbox": [metrics["val/mAP_50_95"], metrics["val/mAP_50"], metrics["val/mAP_75"], metrics["val/mAR"]],
-        }
-        stat_indices = {"bbox": [0, 1, 2, 8]}
-        if segmentation:
-            expected["segm"] = _pycocotools_stats(tmp_path / "annotations.json", results, "segm", 100)
-            observed["segm"] = [metrics["val/segm_mAP_50_95"], metrics["val/segm_mAP_50"]]
-            stat_indices["segm"] = [0, 1]
-        for iou_type, values in observed.items():
-            reference = [float(expected[iou_type][index]) for index in stat_indices[iou_type]]
-            assert values == pytest.approx(reference, abs=1e-6), f"{iou_type}: rf-detr {values} vs {reference}"
+    expected = {"bbox": _pycocotools_stats(tmp_path / "annotations.json", results, "bbox", 100)}
+    observed = {
+        "bbox": [metrics["val/mAP_50_95"], metrics["val/mAP_50"], metrics["val/mAP_75"], metrics["val/mAR"]],
+    }
+    stat_indices = {"bbox": [0, 1, 2, 8]}
+    if segmentation:
+        expected["segm"] = _pycocotools_stats(tmp_path / "annotations.json", results, "segm", 100)
+        observed["segm"] = [metrics["val/segm_mAP_50_95"], metrics["val/segm_mAP_50"]]
+        stat_indices["segm"] = [0, 1]
+    for iou_type, values in observed.items():
+        reference = [float(expected[iou_type][index]) for index in stat_indices[iou_type]]
+        assert values == pytest.approx(reference, abs=1e-6), f"{iou_type}: rf-detr {values} vs {reference}"
