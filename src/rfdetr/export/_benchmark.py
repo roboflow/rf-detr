@@ -43,7 +43,7 @@ class BenchmarkResult(NamedTuple):
             >>> BenchmarkResult("cpu", 10.0, 0.5).fps
             100.0
         """
-        return 1000.0 / self.mean_ms
+        return float("inf") if self.mean_ms == 0.0 else 1000.0 / self.mean_ms
 
 
 def _mean_std(timings: list[float]) -> tuple[float, float]:
@@ -120,6 +120,11 @@ def measure_latency(
         >>> result.mean_ms >= 0.0
         True
     """
+    if warmup < 0:
+        raise ValueError("warmup must be non-negative")
+    if runs <= 0:
+        raise ValueError("runs must be positive")
+
     measure = _measure_cuda if device == "cuda" else _measure_wall_clock
     mean_ms, std_ms = measure(fn, warmup, runs)
     return BenchmarkResult(label, mean_ms, std_ms)
@@ -143,8 +148,10 @@ def _rss_delta_mb() -> Iterator[MemoryResult]:
     process = psutil.Process()
     rss_before = process.memory_info().rss
     result = MemoryResult()
-    yield result
-    result.delta_mb = (process.memory_info().rss - rss_before) / 1e6
+    try:
+        yield result
+    finally:
+        result.delta_mb = (process.memory_info().rss - rss_before) / 1e6
 
 
 def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
@@ -158,10 +165,12 @@ def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
     torch.cuda.synchronize()
     free_before, _total = torch.cuda.mem_get_info()
     result = MemoryResult()
-    yield result
-    torch.cuda.synchronize()
-    free_after, _total = torch.cuda.mem_get_info()
-    result.delta_mb = (free_before - free_after) / 1e6
+    try:
+        yield result
+    finally:
+        torch.cuda.synchronize()
+        free_after, _total = torch.cuda.mem_get_info()
+        result.delta_mb = (free_before - free_after) / 1e6
 
 
 @contextmanager
