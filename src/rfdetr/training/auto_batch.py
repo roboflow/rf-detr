@@ -642,7 +642,7 @@ def resolve_auto_batch_config(
             probe_autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         else:
             # "auto" uses bf16 only on GPUs with native bf16 (Ampere+), fp16 elsewhere
-            probe_autocast_dtype = torch.bfloat16 if _cuda_supports_native_bf16() else torch.float16
+            probe_autocast_dtype = torch.bfloat16 if _cuda_supports_native_bf16(device) else torch.float16
     else:
         probe_autocast_dtype = None
 

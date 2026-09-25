@@ -888,6 +888,7 @@ def test_resolve_auto_batch_config_forwards_fused_when_bf16_and_builtin_adamw():
     with (
         patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
         patch("rfdetr.training.auto_batch.torch.cuda.is_bf16_supported", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_capability", return_value=(8, 0)),
         patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
         patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
         patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
@@ -916,6 +917,7 @@ def test_resolve_auto_batch_config_does_not_force_fused_for_fp16():
     with (
         patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
         patch("rfdetr.training.auto_batch.torch.cuda.is_bf16_supported", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_capability", return_value=(8, 0)),
         patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
         patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
         patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
@@ -946,6 +948,7 @@ def test_resolve_auto_batch_config_does_not_force_fused_when_model_config_disabl
     with (
         patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
         patch("rfdetr.training.auto_batch.torch.cuda.is_bf16_supported", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_capability", return_value=(8, 0)),
         patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
         patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
         patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
@@ -990,6 +993,7 @@ def test_resolve_auto_batch_config_probe_dtype_on_emulated_bf16_gpu(
             "rfdetr.training.auto_batch.torch.cuda.is_bf16_supported",
             side_effect=lambda including_emulation=True: including_emulation,
         ),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_capability", return_value=(7, 5)),
         patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
         patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
         patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),

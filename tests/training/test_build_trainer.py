@@ -588,6 +588,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=False),
+            mock.patch("torch.cuda.get_device_capability", return_value=(6, 1)),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured_trainer_kwargs["precision"] == "16-mixed"
@@ -599,6 +600,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True))
         assert captured_trainer_kwargs["precision"] == "bf16-mixed"
@@ -621,6 +623,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
             build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=True), accelerator=accelerator)
@@ -715,6 +718,7 @@ class TestBuildTrainerPrecision:
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
             mock.patch("pytorch_lightning.plugins.XLAPrecision", mock_xla_precision_cls),
         ):
@@ -767,9 +771,15 @@ class TestBuildTrainerPrecision:
 
     @patch("torch.cuda.is_available", return_value=True)
     @patch("torch.cuda.is_bf16_supported", side_effect=lambda including_emulation=True: including_emulation)
+    @patch("torch.cuda.get_device_capability", return_value=(7, 5))
     @patch("rfdetr.training.trainer.Trainer")
     def test_amp_true_ddp_notebook_probes_bf16_normally(
-        self, mock_trainer: MagicMock, _mock_bf16: MagicMock, _mock_cuda: MagicMock, tmp_path
+        self,
+        mock_trainer: MagicMock,
+        _mock_capability: MagicMock,
+        _mock_bf16: MagicMock,
+        _mock_cuda: MagicMock,
+        tmp_path,
     ):
         """ddp_notebook uses standard precision probing (spawn makes CUDA init safe).
 
@@ -875,9 +885,12 @@ class TestBuildTrainerAmpDtype:
         def _is_bf16_supported(including_emulation: bool = True) -> bool:
             return bf16 or (bf16_emulated and including_emulation)
 
+        capability = (8, 0) if bf16 else (7, 5) if bf16_emulated else (6, 1)
+
         with (
             mock.patch("torch.cuda.is_available", return_value=cuda),
             mock.patch("torch.cuda.is_bf16_supported", side_effect=_is_bf16_supported),
+            mock.patch("torch.cuda.get_device_capability", return_value=capability),
             mock.patch("torch.backends.mps.is_available", return_value=mps),
             mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
         ):
@@ -931,6 +944,41 @@ class TestBuildTrainerAmpDtype:
         with pytest.warns(UserWarning, match="emulation"):
             precision = self._resolved_precision(tmp_path, cuda=True, bf16_emulated=True, amp_dtype="bf16")
         assert precision == "bf16-mixed", f"explicit bf16 on an emulated-bf16 GPU resolved to {precision!r}"
+
+    @pytest.mark.parametrize(
+        ("devices", "expected"),
+        [
+            pytest.param("1,", "bf16-mixed", id="a100-at-index-1"),
+            pytest.param("0,", "16-mixed", id="t4-at-index-0"),
+            pytest.param(2, "16-mixed", id="both-gpus"),
+        ],
+    )
+    def test_auto_checks_the_gpus_the_run_trains_on(self, tmp_path: Path, devices: int | str, expected: str) -> None:
+        """On a host with a T4 at index 0 and an A100 at index 1, ``"auto"`` follows the GPUs the run trains on.
+
+        Selecting a GPU by index (``devices="1,"``, or the ``[1]`` that ``RFDETR.train(device="cuda:1")`` forwards) does
+        not change the current device, so checking only the current device would pick fp16 for the A100 run here, and
+        bf16 for a T4 run on a host whose index 0 is an A100. A run across both GPUs uses fp16.
+        """
+        import unittest.mock as mock
+
+        captured: dict[str, Any] = {}
+
+        def _fake_trainer(**kwargs: Any) -> MagicMock:
+            captured.update(kwargs)
+            return mock.MagicMock()
+
+        capabilities = {0: (7, 5), 1: (8, 0)}
+        with (
+            mock.patch("torch.cuda.is_available", return_value=True),
+            mock.patch("torch.cuda.device_count", return_value=2),
+            mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", side_effect=lambda device=None: capabilities[device or 0]),
+            mock.patch("torch.version.hip", None),
+            mock.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer),
+        ):
+            build_trainer(_tc(tmp_path, use_ema=False), _mc(), devices=devices)
+        assert captured["precision"] == expected, f"devices={devices!r} resolved to {captured['precision']!r}"
 
     def test_explicit_amp_dtype_overrides_deprecated_amp_false(self, tmp_path):
         """An explicit amp_dtype wins over the deprecated amp flag: the stale amp=False is ignored.
@@ -1835,6 +1883,7 @@ class TestBuildTrainerKeypointDistributed:
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("torch.cuda.device_count", return_value=2),
             mock.patch("torch.cuda.is_bf16_supported", return_value=True),
+            mock.patch("torch.cuda.get_device_capability", return_value=(8, 0)),
         ):
             build_trainer(tc, mc)
 

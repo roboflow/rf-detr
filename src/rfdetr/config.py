@@ -267,17 +267,20 @@ def _detect_device() -> str:
 DEVICE: str = _detect_device()
 
 
-def _cuda_supports_native_bf16() -> bool:
-    """Return whether the current CUDA device runs bfloat16 natively rather than through emulation.
+def _cuda_supports_native_bf16(device: torch.device | int | None = None) -> bool:
+    """Return whether a CUDA device runs bfloat16 natively rather than through emulation.
 
-    ``torch.cuda.is_bf16_supported()`` also counts emulation (the ``including_emulation=True`` default since PyTorch
-    2.4, and unconditionally in 2.3), so it returns ``True`` on pre-Ampere GPUs such as the T4 and V100. Those have no
-    bfloat16 tensor cores, and emulated bfloat16 there runs slower than float16 and even float32. On builds without the
-    ``including_emulation`` argument the answer comes from the compute capability, which is how PyTorch 2.4+ decides
-    native support. On ROCm every device counts as native, as in ``torch.cuda.is_bf16_supported()``.
+    This is the test ``torch.cuda.is_bf16_supported(including_emulation=False)`` applies in PyTorch 2.4+ (compute
+    capability 8.0 or newer, and every ROCm device), but for any device instead of only the current one, and on every
+    supported PyTorch version. ``torch.cuda.is_bf16_supported()`` itself also counts emulated bfloat16, so it returns
+    ``True`` on pre-Ampere GPUs such as the T4 and V100, which have no bfloat16 tensor cores; emulated bfloat16 there
+    runs slower than float16 and even float32.
+
+    Args:
+        device: CUDA device to check. ``None`` checks the current device.
 
     Returns:
-        ``True`` when CUDA is available and the current device supports bfloat16 natively.
+        ``True`` when CUDA is available and the device supports bfloat16 natively.
 
     Examples:
         >>> from unittest.mock import patch
@@ -287,12 +290,9 @@ def _cuda_supports_native_bf16() -> bool:
     """
     if not torch.cuda.is_available():
         return False
-    try:
-        return bool(torch.cuda.is_bf16_supported(including_emulation=False))
-    except TypeError:
-        if torch.version.hip:
-            return True
-        return torch.cuda.get_device_capability()[0] >= 8
+    if torch.version.hip:
+        return True
+    return torch.cuda.get_device_capability(device)[0] >= 8
 
 
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}

@@ -1131,42 +1131,38 @@ class TestDetectDevice:
 
 
 class TestCudaSupportsNativeBf16:
-    """``_cuda_supports_native_bf16`` answers "native bfloat16?", which ``torch.cuda.is_bf16_supported()`` does not."""
-
-    @pytest.mark.parametrize(
-        "native",
-        [pytest.param(False, id="emulated-only-t4"), pytest.param(True, id="native-ampere")],
-    )
-    def test_emulation_does_not_count(self, native: bool) -> None:
-        """A GPU that PyTorch 2.4+ reports as bf16-capable only through emulation is not treated as bf16-capable."""
-
-        def is_bf16_supported(including_emulation: bool = True) -> bool:
-            return native or including_emulation
-
-        with (
-            patch("torch.cuda.is_available", return_value=True),
-            patch("torch.cuda.is_bf16_supported", side_effect=is_bf16_supported),
-        ):
-            assert _cuda_supports_native_bf16() is native
+    """``_cuda_supports_native_bf16`` answers "native bfloat16 on this device?", which ``is_bf16_supported()`` does
+    not."""
 
     @pytest.mark.parametrize(
         ("capability", "native"),
-        [pytest.param((7, 5), False, id="t4"), pytest.param((8, 0), True, id="a100")],
+        [
+            pytest.param((7, 5), False, id="t4"),
+            pytest.param((7, 0), False, id="v100"),
+            pytest.param((8, 0), True, id="a100"),
+            pytest.param((8, 9), True, id="rtx-4090"),
+        ],
     )
-    def test_torch_2_3_without_including_emulation_argument(self, capability: tuple[int, int], native: bool) -> None:
-        """PyTorch 2.3 has no ``including_emulation`` argument and counts emulation, so the answer comes from the
-        compute capability instead of from ``is_bf16_supported()``, which returns ``True`` on a T4 there."""
-
-        def is_bf16_supported() -> bool:
-            return True
-
+    def test_native_means_compute_capability_8_or_newer(self, capability: tuple[int, int], native: bool) -> None:
+        """Only Ampere and newer run bfloat16 natively, even though ``is_bf16_supported()`` says True on a T4."""
         with (
             patch("torch.cuda.is_available", return_value=True),
-            patch("torch.cuda.is_bf16_supported", side_effect=is_bf16_supported),
+            patch("torch.cuda.is_bf16_supported", return_value=True),
             patch("torch.cuda.get_device_capability", return_value=capability),
             patch("torch.version.hip", None),
         ):
             assert _cuda_supports_native_bf16() is native
+
+    def test_checks_the_requested_device_not_the_current_one(self) -> None:
+        """On a host with a T4 at index 0 and an A100 at index 1, each index gets its own answer."""
+        capabilities = {0: (7, 5), 1: (8, 0)}
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.get_device_capability", side_effect=lambda device=None: capabilities[device or 0]),
+            patch("torch.version.hip", None),
+        ):
+            assert _cuda_supports_native_bf16(0) is False, "the T4 at index 0 has no native bf16"
+            assert _cuda_supports_native_bf16(1) is True, "the A100 at index 1 has native bf16"
 
 
 class TestPretrainWeightsCompatibilityWarning:
