@@ -3,12 +3,14 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Latency benchmarking helpers shared by the per-hardware export cookbooks.
+"""Latency and memory benchmarking helpers shared by the per-hardware export cookbooks.
 
 Two timer strategies exist because GPU kernels execute asynchronously: CUDA events measure actual device-side execution,
 while ``time.perf_counter`` is correct wall-clock timing for anything that blocks the calling thread — CPU inference,
 and every non-CUDA runtime (CoreML, Core AI, ExecuTorch, TensorFlow Lite, LiteRT, OpenVINO) has no CUDA stream to
-desynchronize from in the first place.
+desynchronize from in the first place. The same split applies to :func:`measure_memory`: device-side weights and buffers
+on a CUDA GPU don't show up in host resident memory, so it reads ``torch.cuda.mem_get_info()`` there instead of process
+RSS.
 
 Private module: no compatibility guarantee across versions. Formerly duplicated per export format (see the removed
 ``rfdetr.export._onnx.inference._onnx_runtime``); this is the single home for it.
@@ -16,8 +18,11 @@ Private module: no compatibility guarantee across versions. Formerly duplicated 
 
 from __future__ import annotations
 
+import gc
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
@@ -118,3 +123,69 @@ def measure_latency(
     measure = _measure_cuda if device == "cuda" else _measure_wall_clock
     mean_ms, std_ms = measure(fn, warmup, runs)
     return BenchmarkResult(label, mean_ms, std_ms)
+
+
+@dataclass
+class MemoryResult:
+    """Mutable holder for the memory delta measured by :func:`measure_memory`.
+
+    ``delta_mb`` is unset (``0.0``) until the ``with`` block exits.
+    """
+
+    delta_mb: float = 0.0
+
+
+def _rss_delta_mb() -> Iterator[MemoryResult]:
+    """Measure host resident memory growth across a block via ``psutil``."""
+    import psutil  # type: ignore[import-untyped]
+
+    gc.collect()
+    process = psutil.Process()
+    rss_before = process.memory_info().rss
+    result = MemoryResult()
+    yield result
+    result.delta_mb = (process.memory_info().rss - rss_before) / 1e6
+
+
+def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
+    """Measure free-device-memory shrinkage across a block via ``torch.cuda.mem_get_info``.
+
+    Device-wide, unlike ``torch.cuda.memory_allocated()`` — it also captures allocations made outside PyTorch's own
+    caching allocator, such as ONNX Runtime's CUDA execution provider or a TensorRT engine's own ``cudaMalloc`` calls.
+    """
+    import torch
+
+    torch.cuda.synchronize()
+    free_before, _total = torch.cuda.mem_get_info()
+    result = MemoryResult()
+    yield result
+    torch.cuda.synchronize()
+    free_after, _total = torch.cuda.mem_get_info()
+    result.delta_mb = (free_before - free_after) / 1e6
+
+
+@contextmanager
+def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
+    """Measure the memory growth caused by the code inside a ``with`` block.
+
+    ``device="cuda"`` reads free-device-memory shrinkage via ``torch.cuda.mem_get_info()``; any
+    other value reads host resident-memory growth via ``psutil``. Bracket both the runtime's
+    construction *and* its first inference call — several runtimes allocate lazily (an ONNX
+    Runtime session grows its arena on first ``run``, an ExecuTorch CoreML program compiles on
+    first ``execute``), so closing the block right after construction undercounts the real
+    footprint.
+
+    Args:
+        device: ``"cuda"`` selects the device-memory reader; any other value uses host RSS.
+
+    Yields:
+        A :class:`MemoryResult` whose ``delta_mb`` is filled in once the block exits.
+
+    Examples:
+        >>> with measure_memory() as mem:
+        ...     _ = b"x" * 50_000_000  # a bytes literal is materialized immediately, unlike bytearray(n)
+        >>> mem.delta_mb > 10
+        True
+    """
+    reader = _cuda_free_delta_mb if device == "cuda" else _rss_delta_mb
+    yield from reader()
