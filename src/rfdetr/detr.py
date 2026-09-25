@@ -854,16 +854,27 @@ class RFDETR:
                 silent_fields.append("mask_downsample_ratio")
             missing = [name for name in silent_fields if name not in kwargs]
             if missing:
+                # A best-total file often travels alone (the Roboflow SDK upload path sends only this one), so the
+                # sibling it was copied from is not always there to point at.
+                sibling = Path(path).with_name(f"checkpoint_best_{ckpt.get('best_total_source')}.pth")
+                if sibling.exists():
+                    remedy = (
+                        f"Load {sibling.name} from the same output directory instead, or pass the training values "
+                        "to from_checkpoint(); training_config.json in that directory lists them."
+                    )
+                else:
+                    remedy = (
+                        "Pass resolution= explicitly and read training_config.json from the original training run "
+                        "for the other values."
+                    )
                 logger.warning(
                     "Checkpoint %r (written by rfdetr %s) has no model_config, which checkpoint_best_total.pth "
-                    "files lost when stripped, so these settings fall back to %s defaults: %s. Load "
-                    "checkpoint_best_%s.pth from the same output directory instead, or pass the training values to "
-                    "from_checkpoint(); training_config.json in that directory lists them.",
+                    "files lost when stripped, so these settings fall back to %s defaults: %s. %s",
                     str(path),
                     ckpt["rfdetr_version"],
                     getattr(model_cls, "__name__", repr(model_cls)),
                     ", ".join(missing),
-                    ckpt.get("best_total_source"),
+                    remedy,
                 )
 
         if num_classes is not None and "num_classes" not in kwargs:
