@@ -454,6 +454,36 @@ def test_gen_encoder_output_proposals_accepts_int_tuple_spatial_shapes() -> None
     assert output_proposals.shape == (batch, ht * wd, 4)
 
 
+@pytest.mark.parametrize("padded", [False, True])
+def test_gen_encoder_output_proposals_centres_each_cell(padded: bool) -> None:
+    """Unsigmoided proposal centres are ``((x + 0.5) / W, (y + 0.5) / H)`` over the unpadded region, 0 where padded.
+
+    The grid behind the proposals feeds every path (eager, ``torch.compile`` and each export format), so its values
+    are pinned here independently of how it is built: an off-by-one grid such as ``arange(1, n + 1)`` would shift every
+    proposal by one cell without changing any shape.
+    """
+    height, width = 3, 5
+    valid_height, valid_width = (2, 3) if padded else (height, width)
+    padding_mask = torch.ones(1, height, width, dtype=torch.bool)
+    padding_mask[:, :valid_height, :valid_width] = False
+    expected = torch.tensor(
+        [
+            [(x + 0.5) / valid_width, (y + 0.5) / valid_height] if y < valid_height and x < valid_width else [0.0, 0.0]
+            for y in range(height)
+            for x in range(width)
+        ]
+    )
+
+    _, proposals = gen_encoder_output_proposals(
+        torch.randn(1, height * width, 8),
+        padding_mask.flatten(1) if padded else None,
+        [(height, width)],
+        unsigmoid=False,
+    )
+
+    torch.testing.assert_close(proposals[0, :, :2], expected)
+
+
 def test_gen_encoder_output_proposals_accepts_python_int_pair_spatial_shapes() -> None:
     """`gen_encoder_output_proposals` must accept `spatial_shapes` as `list[tuple[int, int]]` with no padding mask.
 
@@ -2093,6 +2123,41 @@ def test_two_stage_group_selection_compiles_with_finite_gradients() -> None:
     assert torch.isfinite(boxes_ts).all()
     for gradient in gradients:
         assert torch.isfinite(gradient).all()
+
+
+def test_dynamic_compile_reuses_graph_across_resolutions() -> None:
+    """A new input resolution must not compile a new Transformer graph under ``dynamic=True``.
+
+    Multi-scale training feeds up to 11 resolutions through one ``torch.compile(dynamic=True)`` model. Building
+    ``spatial_shapes`` with ``torch.as_tensor`` of the (H, W) pairs, or the encoder-proposal grid with
+    ``torch.linspace(0, n - 1, n)``, specialises H and W to their traced values, so every resolution recompiled this
+    frame until Dynamo's recompile limit (8) left the remaining resolutions eager. The ``eager`` backend exercises the
+    Dynamo guards that decide recompilation without paying for Inductor, and ``capture_scalar_outputs`` mirrors the
+    training compile setup in ``module_model.py``. The first-traced sizes avoid 0 and 1, which Dynamo would specialise
+    to constants, and differ from the other input dimensions, which duck sizing would tie to a shared symbol. Counts are
+    taken relative to the global Dynamo counter, and the first resolution must add a graph, so the test also fails if
+    nothing gets compiled at all.
+    """
+    torch._dynamo.reset()
+    torch.manual_seed(0)
+    hidden_dim, num_queries, group_detr = 16, 3, 2
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim, num_queries, group_detr, num_classes=7, bbox_reparam=True
+    )
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+    graph_counts = []
+    baseline = torch._dynamo.utils.counters["stats"]["unique_graphs"]
+    with torch._dynamo.config.patch(capture_scalar_outputs=True):
+        compiled_transformer = torch.compile(transformer, dynamic=True, backend="eager")
+        for spatial_shapes_hw in ([(10, 14), (5, 7)], [(12, 20), (6, 10)], [(18, 14), (9, 7)]):
+            srcs = [torch.randn(2, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+            masks = [torch.zeros(2, height, width, dtype=torch.bool) for height, width in spatial_shapes_hw]
+            pos_embeds = [torch.randn(2, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+            compiled_transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+            graph_counts.append(torch._dynamo.utils.counters["stats"]["unique_graphs"] - baseline)
+
+    assert graph_counts[0] > 0 and graph_counts[1:] == [graph_counts[0]] * 2, f"graphs per resolution: {graph_counts}"
 
 
 def _build_two_stage_transformer_with_keypoints(
