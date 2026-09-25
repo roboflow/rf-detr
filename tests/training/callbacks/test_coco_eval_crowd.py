@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, get_args
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -26,9 +26,11 @@ import torch.nn.functional as F  # noqa: N812
 from PIL import Image
 from torch.utils.data import DistributedSampler
 
-from rfdetr.config import CocoEvalBackend
+from rfdetr.config import CocoEvalBackend, RFDETRBaseConfig, TrainConfig
+from rfdetr.datasets import get_coco_api_from_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms_square_div_64
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
+from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
 
 # Power-of-two image sides keep every normalised box coordinate exact in float32, so boxes survive the
@@ -209,6 +211,37 @@ def _trainer(dataset: Any) -> MagicMock:
     return trainer
 
 
+def test_trainer_datamodule_shim_matches_real_dataset_attribute_names() -> None:
+    """``_trainer``'s mock datamodule must name the same private attributes ``RFDETRDataModule`` actually exposes.
+
+    ``_get_crowd_regions`` resolves the split's dataset via ``getattr(datamodule, f"_dataset_{split}", None)`` — an
+    f-string, not a literal lookup. ``_trainer`` restates the same two names by hand in a ``SimpleNamespace``; a rename
+    in ``RFDETRDataModule`` would leave every crowd test in this file green while the real feature silently stops
+    finding crowd regions in production.
+    """
+    model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu", num_classes=1)
+    train_config = TrainConfig(
+        dataset_dir="/nonexistent/dataset",
+        output_dir="/nonexistent/output",
+        epochs=1,
+        lr=1e-4,
+        lr_encoder=1.5e-4,
+        batch_size=2,
+        weight_decay=1e-4,
+        lr_scheduler_kwargs={"lr_drop": 8},
+        warmup_epochs=1.0,
+        drop_path=0.0,
+        multi_scale=False,
+        expanded_scales=False,
+        grad_accum_steps=1,
+        tensorboard=False,
+    )
+    datamodule = RFDETRDataModule(model_config, train_config)
+
+    for split in ("train", "val", "test"):
+        assert hasattr(datamodule, f"_dataset_{split}")
+
+
 def _metric_targets(
     callback: COCOEvalCallback,
     trainer: MagicMock,
@@ -363,6 +396,22 @@ class TestCrowdRegionsReachEvaluation:
         assert len(scored) == 1
         assert scored[0]["iscrowd"].tolist() == [0, 1], "the one real image must carry exactly its own crowd region"
         assert scored[0]["boxes"][1].tolist() == [116.0, 16.0, 180.0, 80.0], "image 2 must get its own crowd region"
+
+    def test_degenerate_crowd_box_reaches_ground_truth_without_crashing(self, tmp_path: Path, split: str) -> None:
+        """A crowd annotation whose bbox has zero width or height is appended as-is, unlike ``ConvertCoco``'s training
+        path, which drops degenerate boxes.
+
+        ``crowd_regions_from_coco`` builds its crowd box straight from the raw bbox with no equivalent filter. Such a
+        box has zero IoU with every prediction, so it can never be scored as a false positive either way — this only
+        guards against a crash while decoding/appending it.
+        """
+        degenerate_crowd = _annotation(2, 1, [128, 16, 0, 96], iscrowd=1)
+        dataset = _coco_dataset(tmp_path, [_annotation(1, 1, _PERSON), degenerate_crowd])
+
+        scored = _metric_targets(COCOEvalCallback(), _trainer(dataset), split, _NO_PREDICTION, _eval_targets(dataset))
+
+        assert scored[0]["iscrowd"].tolist() == [0, 1]
+        assert scored[0]["boxes"][1].tolist() == [128.0, 16.0, 128.0, 112.0], "the zero-width box must reach GT as-is"
 
 
 def test_crowd_row_matches_its_non_crowd_twin_under_the_eval_transform(tmp_path: Path) -> None:
@@ -547,7 +596,7 @@ def _pycocotools_stats(
     return evaluator.stats
 
 
-@pytest.mark.parametrize("backend", [pytest.param(backend, id=backend) for backend in get_args(CocoEvalBackend)])
+@pytest.mark.parametrize("backend", list(get_args(CocoEvalBackend)))
 @pytest.mark.parametrize("segmentation", [pytest.param(False, id="bbox"), pytest.param(True, id="bbox+segm")])
 def test_callback_metrics_equal_pycocotools(tmp_path: Path, backend: str, segmentation: bool) -> None:
     """On a small COCO file with crowd regions, callback box and mask metrics equal pycocotools."""
@@ -574,3 +623,75 @@ def test_callback_metrics_equal_pycocotools(tmp_path: Path, backend: str, segmen
     for iou_type, values in observed.items():
         reference = [float(expected[iou_type][index]) for index in stat_indices[iou_type]]
         assert values == pytest.approx(reference, abs=1e-6), f"{iou_type}: rf-detr {values} vs {reference}"
+
+
+def test_mixed_batch_crowd_rows_land_against_the_correct_image_id(tmp_path: Path) -> None:
+    """Each image in a mixed three-image batch carries only its own crowd region, not a neighbor's.
+
+    ``test_callback_metrics_equal_pycocotools`` batches a person crowd, a car crowd, and an uncrowded image through one
+    ``on_validation_batch_end`` call but only asserts the final aggregate mAP/mAR. A misindexing bug that swapped two
+    images' same-class crowd regions would still land on the same aggregate score, so this asserts per image instead.
+    """
+    dataset = _coco_dataset(tmp_path, _PARITY_ANNOTATIONS, images=3)
+
+    scored = _metric_targets(COCOEvalCallback(), _trainer(dataset), "val", _NO_PREDICTION * 3, _eval_targets(dataset))
+
+    assert len(scored) == 3
+    # Image 1: 3 real boxes (person, person, car) plus its own person crowd, appended last.
+    assert scored[0]["iscrowd"].tolist() == [0, 0, 0, 1]
+    assert scored[0]["labels"].tolist()[-1] == 1
+    assert scored[0]["boxes"][-1].tolist() == [128.0, 8.0, 240.0, 120.0]
+    # Image 2: 1 real box (car) plus its own car crowd, not image 1's person crowd.
+    assert scored[1]["iscrowd"].tolist() == [0, 1]
+    assert scored[1]["labels"].tolist()[-1] == 2
+    assert scored[1]["boxes"][-1].tolist() == [0.0, 0.0, 128.0, 128.0]
+    # Image 3 has no crowd annotation at all.
+    assert scored[2]["iscrowd"].tolist() == [0]
+
+
+def test_missing_image_id_only_drops_its_own_targets_crowd_rows(tmp_path: Path) -> None:
+    """One target lacking ``image_id`` in a mixed batch loses only its own crowd rows, not the whole batch's.
+
+    ``add_crowd`` used to gate on ``all("image_id" in t for t in targets)``: one target missing ``image_id`` silently
+    disabled crowd injection for every target in the batch. This pins the per-target fix on the same three-image
+    fixture ``test_mixed_batch_crowd_rows_land_against_the_correct_image_id`` uses, with image 2's ``image_id``
+    removed — image 1 and image 3 must still get their own crowd handling.
+    """
+    dataset = _coco_dataset(tmp_path, _PARITY_ANNOTATIONS, images=3)
+    targets = _eval_targets(dataset)
+    del targets[1]["image_id"]
+
+    scored = _metric_targets(COCOEvalCallback(), _trainer(dataset), "val", _NO_PREDICTION * 3, targets)
+
+    assert len(scored) == 3
+    # Image 1 (image_id intact) still gets its own person crowd appended.
+    assert scored[0]["iscrowd"].tolist() == [0, 0, 0, 1]
+    # Image 2 (image_id missing) loses only its own crowd row — batch-wide degradation would also strip image 1's.
+    assert scored[1]["iscrowd"].tolist() == [0]
+    # Image 3 (image_id intact, no crowd annotation) is unaffected either way.
+    assert scored[2]["iscrowd"].tolist() == [0]
+
+
+def test_crowd_regions_resolved_once_and_cached_across_batches(tmp_path: Path) -> None:
+    """The COCO API lookup backing crowd-region resolution runs once per split, not once per batch.
+
+    ``_get_crowd_regions`` caches its result in ``self._crowd_regions[split]`` on first use. A caching regression that
+    re-resolved on every batch would repeat the ``get_coco_api_from_dataset`` lookup (and, on a real dataset, its cost)
+    for every batch of every epoch instead of once for the whole run.
+    """
+    dataset = _coco_dataset(tmp_path, _PERSON_AND_CROWD)
+    callback = COCOEvalCallback()
+    trainer = _trainer(dataset)
+    module = _module()
+    callback.setup(trainer, module, stage="fit")
+    callback.map_metric = MagicMock(name="map_metric")
+    callback.on_validation_epoch_start(trainer, module)
+    outputs = {"results": _NO_PREDICTION, "targets": _eval_targets(dataset)}
+
+    with patch(
+        "rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", wraps=get_coco_api_from_dataset
+    ) as get_coco_api:
+        callback.on_validation_batch_end(trainer, module, outputs, None, 0)
+        callback.on_validation_batch_end(trainer, module, outputs, None, 1)
+
+    get_coco_api.assert_called_once()

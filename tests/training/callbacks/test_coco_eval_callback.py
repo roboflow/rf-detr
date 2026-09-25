@@ -2159,8 +2159,7 @@ class TestValidationBatchEndTargetConversion:
         with patch.object(cb, "_convert_targets", wraps=cb._convert_targets) as convert_targets:
             cb.on_validation_batch_end(trainer, module, outputs, (torch.zeros(1), None), 0)
 
-        convert_targets.assert_called_once()
-        assert convert_targets.call_args.args == (outputs["targets"], None)
+        convert_targets.assert_called_once_with(outputs["targets"], None, crowd_regions={})
         assert cb.map_metric_ema.update.call_args.args[1] is cb.map_metric.update.call_args.args[1]
 
     def test_segmentation_converts_targets_separately_for_the_ema_grid(self) -> None:
