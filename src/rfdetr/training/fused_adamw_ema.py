@@ -269,6 +269,7 @@ class FusedAdamWEMA(torch.optim.AdamW):
         super().step()
 
     def _supported(self, parameters: list[Tensor]) -> bool:
+        """Check whether every parameter and model buffer fits the combined kernels' strict layout."""
         active_parameters = [parameter for parameter in parameters if parameter.grad is not None]
         parameters_supported = bool(active_parameters) and all(
             parameter.device.type == "cuda"
@@ -293,6 +294,7 @@ class FusedAdamWEMA(torch.optim.AdamW):
         return parameters_supported and buffers_supported
 
     def _initialize_state(self, parameters: list[Tensor]) -> None:
+        """Create AdamW moment and step state for any parameter that does not have it yet."""
         for parameter in parameters:
             state = self.state[parameter]
             if state:
@@ -302,6 +304,7 @@ class FusedAdamWEMA(torch.optim.AdamW):
             state["exp_avg_sq"] = torch.zeros_like(parameter, memory_format=torch.preserve_format)
 
     def _get_cache(self, parameters: list[Tensor], inactive_parameters: list[Tensor]) -> dict[str, Any]:
+        """Return the cached kernel-launch metadata, rebuilding it when the tensor set has changed."""
         signature = tuple(
             (parameter.data_ptr(), self.state[parameter]["exp_avg"].data_ptr()) for parameter in parameters
         ) + tuple((parameter.data_ptr(), 0) for parameter in inactive_parameters)
@@ -365,6 +368,7 @@ class FusedAdamWEMA(torch.optim.AdamW):
         return self._cache
 
     def _refresh_group_options(self, cache: dict[str, Any]) -> None:
+        """Sync the cached per-group hyperparameter tensors with the optimizer's current param groups."""
         options = tuple(
             (
                 float(group["lr"]),
@@ -389,6 +393,7 @@ class FusedAdamWEMA(torch.optim.AdamW):
         cache["group_options"] = options
 
     def _effective_decay(self, update: int) -> float:
+        """Return the EMA decay for this update, ramped through the warm-up window."""
         if update == 1:
             return 0.0
         if self._ema_tau > 0:
@@ -397,6 +402,7 @@ class FusedAdamWEMA(torch.optim.AdamW):
 
     @classmethod
     def _blocks(cls, tensors: list[Tensor]) -> tuple[list[int], list[int]]:
+        """Split each tensor into fixed-size kernel blocks, returning each block's tensor id and start offset."""
         tensor_ids: list[int] = []
         starts: list[int] = []
         for tensor_id, tensor in enumerate(tensors):
@@ -407,10 +413,12 @@ class FusedAdamWEMA(torch.optim.AdamW):
 
     @staticmethod
     def _pointers(tensors: list[Tensor], device: torch.device) -> Tensor:
+        """Return each tensor's raw data pointer, packed as a device tensor for the kernels to index."""
         return torch.tensor([tensor.data_ptr() for tensor in tensors], dtype=torch.uint64, device=device)
 
     @staticmethod
     def _kernels() -> tuple[Any, Any, Any]:
+        """Import and return the global-norm, combined AdamW+EMA, and buffer-only EMA Triton kernels."""
         from rfdetr.training._fused_adamw_ema_triton import (
             ema_only_kernel,
             fused_adamw_ema_kernel,
