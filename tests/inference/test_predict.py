@@ -1387,6 +1387,50 @@ class TestPredictResizeMatchesTrainingInterpolation:
 
         assert mock_resize.call_args.kwargs.get("antialias") is True
 
+    def test_mps_antialias_resize_stays_on_cpu_until_batch_transfer(self) -> None:
+        """MPS antialias fallback resizes on CPU before moving the batch to MPS."""
+        model = _DummyRFDETR()
+        model.model.device = torch.device("mps")
+        image = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        real_to = torch.Tensor.to
+        real_tensor = torch.tensor
+        real_resize = F.resize
+        resize_inputs: list[torch.Tensor] = []
+        mps_transfers: list[torch.Tensor] = []
+        events: list[str] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            target = args[0] if args else kwargs.get("device")
+            if isinstance(target, torch.device) and target.type == "mps":
+                mps_transfers.append(self)
+                events.append("mps-transfer")
+                return self
+            return real_to(self, *args, **kwargs)
+
+        def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
+            if isinstance(kwargs.get("device"), torch.device) and kwargs["device"].type == "mps":
+                kwargs["device"] = torch.device("cpu")
+            return real_tensor(data, **kwargs)
+
+        def resize_spy(tensor: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            resize_inputs.append(tensor)
+            events.append("resize")
+            assert tensor.device.type == "cpu"
+            return real_resize(tensor, *args, **kwargs)
+
+        with (
+            patch("rfdetr.detr._move_model_context_to_device"),
+            patch.object(torch.Tensor, "to", to_spy),
+            patch.object(torch, "tensor", tensor_spy),
+            patch("rfdetr.detr.F.resize", side_effect=resize_spy),
+        ):
+            model.predict(image, antialias=True)
+
+        assert resize_inputs
+        assert all(t.device.type == "cpu" for t in resize_inputs)
+        assert mps_transfers, "the resized batch must transfer to the model device"
+        assert events == ["resize", "mps-transfer"]
+
 
 class TestPredictPatchSize:
     """Predict() patch_size resolution and validation tests."""

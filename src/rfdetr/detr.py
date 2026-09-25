@@ -2651,6 +2651,12 @@ class RFDETR:
         # Built lazily on the first uint8 image, then shared by the rest of the batch.
         uint8_scale: torch.Tensor | None = None
 
+        # Older MPS builds do not implement antialiased resize. Keep the whole
+        # preprocessing path on CPU in that case, so an input is never moved to
+        # MPS only to come straight back for resizing.
+        resize_on_cpu = antialias and self.model.device.type == "mps"
+        preprocess_device = torch.device("cpu") if resize_on_cpu else self.model.device
+
         for img_input in images:
             img: Any = img_input
             if isinstance(img, str):
@@ -2740,14 +2746,14 @@ class RFDETR:
             # CPU tensor headed to an accelerator; pin_memory() raises on a tensor the caller already placed on the
             # accelerator (a legitimate tensor-input use to skip a host round-trip), and pinning buys nothing when
             # the target device is the CPU itself.
-            if img_tensor.device.type == "cpu" and self.model.device.type == "cuda":
+            if img_tensor.device.type == "cpu" and preprocess_device.type == "cuda":
                 img_tensor = img_tensor.pin_memory()
             # non_blocking only pays off (and is only safe without an explicit sync) when the destination is CUDA,
             # matching the transfer_batch_to_device() convention in training/module_data.py: a CUDA-tensor-input ->
             # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
             # reads of the tensor's data can observe an in-flight (partially written) copy.
-            non_blocking = self.model.device.type == "cuda"
-            img_tensor = img_tensor.to(self.model.device, non_blocking=non_blocking)
+            non_blocking = preprocess_device.type == "cuda"
+            img_tensor = img_tensor.to(preprocess_device, non_blocking=non_blocking)
             if deferred_widen:
                 if uint8_scale is None:
                     uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
@@ -2780,9 +2786,8 @@ class RFDETR:
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
         # used by Albumentations during training — see issue #1203. The opt-in flag
         # also supports checkpoints trained with torchvision or platform resizing.
-        resize_on_cpu = antialias and self.model.device.type == "mps"
         batch_tensor = torch.stack(
-            [F.resize(t.cpu() if resize_on_cpu else t, resize_to, antialias=antialias) for t in processed_images]
+            [F.resize(t, resize_to, antialias=antialias) for t in processed_images]
         )
         if resize_on_cpu:
             batch_tensor = batch_tensor.to(self.model.device)
