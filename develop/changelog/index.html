@@ -2722,6 +2722,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>format="coreai"</code> works with <code>coreai-torch</code> 0.4.3, which runs the optimization passes inside <code>TorchConverter.to_coreai()</code> and removed <code>AIProgram.optimize()</code>; with 1.11.0 a fresh <code>pip install "rfdetr[coreai]"</code> resolved 0.4.3 and every Core AI export failed with <code>'AIProgram' object has no attribute 'optimize'</code>. The <code>[coreai]</code> extra now pins <code>coreai-torch==0.4.3</code> and installs on Python 3.11 to 3.14, since <code>coreai-core</code> 1.0.0b3 ships cp314 wheels. It is declared as a uv conflict with <code>[tflite]</code>, whose <code>onnx2tf</code> pins cannot meet <code>coreai-core</code>'s <code>numpy&gt;=2.3</code>.</li>
+<li>Validation and test mAP now ignore detections on COCO crowd regions (<code>iscrowd=1</code>) the way pycocotools does. The crowd annotations were dropped before the metric saw them, so a detection inside a crowd counted as a false positive.<ul>
+<li>Pretrained RF-DETR Nano on COCO val2017 scored 0.4802 mAP through <code>evaluate()</code> and now scores 0.4842, the same as pycocotools on the same predictions.</li>
+<li>Training is unchanged, and only COCO-format datasets with crowd labels get different numbers — <strong>runs from before and after this change are not directly comparable on crowd-labelled COCO data.</strong></li>
+<li>Not covered: WebDataset shards and a hand-built <code>Trainer.validate(model, dataloaders=...)</code> call with no datamodule attached are both still scored the old way, and <code>val/F1</code> only ignores a detection whose IoU with the crowd is at least 0.5 (measured against the crowd box for detection, the crowd mask for segmentation). (<a href="https://github.com/roboflow/rf-detr/issues/1531">#1531</a>)</li>
+</ul>
+</li>
 </ul>
 <h2 id="1110-2026-09-23">[1.11.0] — 2026-09-23<a class="headerlink" href="#1110-2026-09-23" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>

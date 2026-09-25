@@ -7842,6 +7842,13 @@ model can distribute rates across ViT encoder layers.</p>
 </ul>
 <p>For segmentation models (<code>segmentation=True</code>) additional metrics <code>val/segm_mAP_50_95</code> and <code>val/segm_mAP_50</code>
 are logged.</p>
+<p>In mAP, crowd regions (<code>iscrowd=1</code>) are scored as in pycocotools: a detection on one is ignored, not counted as a
+false positive. <code>ConvertCoco</code> drops them from the dataset targets so training never matches them; for validation
+and test the callback reads them back from the split's COCO API (by <code>image_id</code>) and appends them to the metric
+ground truth as <code>iscrowd=1</code> rows. The macro-F1 sweep sees the same rows but matches them by union IoU, so it
+ignores a detection only when its IoU with the crowd is at least 0.5. Datasets without a COCO API (webdataset
+shards) get no crowd rows. Train-split metrics (<code>compute_train_metrics</code>) are computed on augmented images, where
+annotation-file geometry no longer applies, and get none either.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
