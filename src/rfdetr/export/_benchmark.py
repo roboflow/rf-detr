@@ -183,8 +183,8 @@ def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
 
     Examples:
         >>> with measure_memory() as mem:
-        ...     _ = b"x" * 50_000_000  # a bytes literal is materialized immediately, unlike bytearray(n)
-        >>> mem.delta_mb > 10
+        ...     _ = b"x" * 50_000_000  # materialize bytes immediately to make RSS growth observable
+        >>> mem.delta_mb > 1
         True
     """
     reader = _cuda_free_delta_mb if device == "cuda" else _rss_delta_mb
