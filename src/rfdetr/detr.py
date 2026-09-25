@@ -841,11 +841,13 @@ class RFDETR:
                 if not _mc_fields or key in _mc_fields:
                     constructor_kwargs[key] = value
                     checkpoint_config_keys.add(key)
-        elif "best_total_source" in ckpt:
+        elif "rfdetr_version" in ckpt:
             # checkpoint_best_total.pth files written before strip_checkpoint kept model_config have lost it; the
             # unstripped file they were copied from, named by best_total_source, still has it. These settings then
             # fall back to class defaults without an error (a changed num_queries or group_detr fails loudly on the
             # weight shapes instead), so keep warning until the caller has passed all of them.
+            # rfdetr_version is the discriminator because it is written and strip-preserved for every checkpoint the
+            # PTL stack produces, while best_total_source only exists in files written by 1.9.0 and later.
             silent_fields = ["resolution", "num_select", "dec_layers"]
             segmentation_field = _mc_fields.get("segmentation_head")
             if kwargs.get("segmentation_head", getattr(segmentation_field, "default", False)) is True:
@@ -853,14 +855,15 @@ class RFDETR:
             missing = [name for name in silent_fields if name not in kwargs]
             if missing:
                 logger.warning(
-                    "Checkpoint %r has no model_config (checkpoint_best_total.pth files written by rfdetr 1.9.0 "
-                    "to 1.11.0 lost it when stripped), so these settings fall back to %s defaults: %s. Load "
+                    "Checkpoint %r (written by rfdetr %s) has no model_config, which checkpoint_best_total.pth "
+                    "files lost when stripped, so these settings fall back to %s defaults: %s. Load "
                     "checkpoint_best_%s.pth from the same output directory instead, or pass the training values to "
                     "from_checkpoint(); training_config.json in that directory lists them.",
                     str(path),
+                    ckpt["rfdetr_version"],
                     getattr(model_cls, "__name__", repr(model_cls)),
                     ", ".join(missing),
-                    ckpt["best_total_source"],
+                    ckpt.get("best_total_source"),
                 )
 
         if num_classes is not None and "num_classes" not in kwargs:
