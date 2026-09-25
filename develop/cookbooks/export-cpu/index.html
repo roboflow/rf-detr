@@ -12,7 +12,7 @@
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/cookbooks/export-tflite/">
+        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/cookbooks/export-cpu/">
       
       
       
@@ -27,7 +27,7 @@
   
     
       
-        <title>RF-DETR → TFLite Export & Inference (INT8 Dynamic-Range) - RF-DETR</title>
+        <title>RF-DETR on CPU — Export, Inference & Latency - RF-DETR</title>
       
     
   
@@ -82,10 +82,10 @@
   
   
   
-  <meta property="og:title" content="RF-DETR → TFLite Export &amp; Inference (INT8 Dynamic-Range) - RF-DETR">
+  <meta property="og:title" content="RF-DETR on CPU — Export, Inference &amp; Latency - RF-DETR">
   <meta property="og:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/export-tflite/">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/cookbooks/export-cpu/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
   <meta property="og:image:width" content="840">
   <meta property="og:image:height" content="630">
@@ -93,7 +93,7 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="RF-DETR → TFLite Export &amp; Inference (INT8 Dynamic-Range) - RF-DETR">
+  <meta name="twitter:title" content="RF-DETR on CPU — Export, Inference &amp; Latency - RF-DETR">
   <meta name="twitter:description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
@@ -101,26 +101,26 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-23T19:52:14">
+  <meta property="article:modified_time" content="2026-09-25T17:47:43">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "RF-DETR \u2192 TFLite Export \u0026amp; Inference (INT8 Dynamic-Range)",
+    "headline": "RF-DETR on CPU \u2014 Export, Inference \u0026amp; Latency",
     "description": "Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python \u22653.10.",
-    "url": "https://rfdetr.roboflow.com/develop/cookbooks/export-tflite/",
+    "url": "https://rfdetr.roboflow.com/develop/cookbooks/export-cpu/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
     "proficiencyLevel": "Beginner to advanced",
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-23T19:52:14",
+    "dateModified": "2026-09-25T17:47:43",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/cookbooks/export-tflite/"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/cookbooks/export-cpu/"},
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
@@ -142,8 +142,8 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "RF-DETR \u2192 TFLite Export \u0026amp; Inference (INT8 Dynamic-Range)",
-        "item": "https://rfdetr.roboflow.com/develop/cookbooks/export-tflite/"
+        "name": "RF-DETR on CPU \u2014 Export, Inference \u0026amp; Latency",
+        "item": "https://rfdetr.roboflow.com/develop/cookbooks/export-cpu/"
       }
       
     ]
@@ -164,7 +164,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rf-detr-tflite-export-inference-int8-dynamic-range" class="md-skip">
+        <a href="#rf-detr-on-cpu-export-inference-latency" class="md-skip">
           Skip to content
         </a>
       
@@ -240,7 +240,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
             </a>
             
-              RF-DETR → TFLite Export &amp; Inference (INT8 Dynamic-Range)
+              RF-DETR on CPU — Export, Inference &amp; Latency
             
           </span>
         </div>
@@ -2694,10 +2694,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-export-to-tflite-int8-dynamic-range" class="md-nav__link">
+  <a href="#3-sample-image" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Export to TFLite (INT8 dynamic-range)
+        3. Sample image
       
     </span>
   </a>
@@ -2705,10 +2705,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-sample-image" class="md-nav__link">
+  <a href="#4-pytorch-baseline" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Sample image
+        4. PyTorch baseline — /
       
     </span>
   </a>
@@ -2716,32 +2716,121 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-fp32-baseline-pytorch" class="md-nav__link">
+  <a href="#5-onnx-cpu-execution-provider" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. FP32 baseline (PyTorch)
+        5. ONNX (CPU execution provider)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. ONNX (CPU execution provider)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#6-run-the-int8-model-with" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#inference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Run the INT8 model with
+        Inference
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#7-visualize-with-supervision" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#benchmark" class="md-nav__link">
     <span class="md-ellipsis">
       
-        7. Visualize with supervision
+        Benchmark
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-openvino" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. OpenVINO
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. OpenVINO">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#export_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inference_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmark_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openvino-fp16-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenVINO (fp16, default)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Results
       
     </span>
   </a>
@@ -3501,53 +3590,64 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </style>
 <!-- End of mermaid configuration --><div class="jupyter-wrapper">
 <div class="jp-Notebook" data-jp-theme-light="true" data-jp-theme-name="JupyterLab Light">
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=06a0bb61">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fe432520">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="rf-detr-tflite-export-inference-int8-dynamic-range">RF-DETR → TFLite Export &amp; Inference (INT8 Dynamic-Range)<a class="anchor-link" href="#rf-detr-tflite-export-inference-int8-dynamic-range">¶</a></h1><p>Export an RF-DETR detector to <strong>TensorFlow Lite</strong> (<code>.tflite</code>) with INT8 dynamic-range
-quantization, then run the exported model directly with <code>tensorflow.lite.Interpreter</code> and
-visualize the detections. The TFLite pipeline converts ONNX → TensorFlow → TFLite via
-<a href="https://github.com/PINTO0309/onnx2tf"><code>onnx2tf</code></a>, and <code>quantization="int8"</code> always writes FP32
-and FP16 <code>.tflite</code> files alongside the requested INT8 model.</p>
+<h1 id="rf-detr-on-cpu-export-inference-latency">RF-DETR on CPU — Export, Inference &amp; Latency<a class="anchor-link" href="#rf-detr-on-cpu-export-inference-latency">¶</a></h1><p>Compares every export path that targets a general-purpose <strong>CPU</strong> (x86 or ARM desktop/server —
+no GPU, no NPU): eager PyTorch as the reference anchor, ONNX Runtime with the CPU execution
+provider, and OpenVINO IR.</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Export</th>
+<th>Inference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PyTorch</strong></td>
+<td><em>(no export — eager model)</em></td>
+<td><code>predict()</code> / <code>inference()</code> (TorchScript JIT, fp32)</td>
+</tr>
+<tr>
+<td><strong>ONNX (CPU EP)</strong></td>
+<td><code>model.export()</code> → <code>.onnx</code></td>
+<td><code>onnxruntime.InferenceSession</code></td>
+</tr>
+<tr>
+<td><strong>OpenVINO</strong></td>
+<td><code>model.export(format="openvino")</code> → <code>.xml</code> + <code>.bin</code></td>
+<td><code>OpenVINOInference</code></td>
+</tr>
+</tbody>
+</table>
 <blockquote>
-<p><strong>Note:</strong> INT8 here means <strong>dynamic-range</strong> quantization — INT8 weights, float32 activations,
-with weight scales derived from the weights themselves. No calibration data is required (and
-supplying it does not change the result). This is not full-integer INT8, and the resulting
-model is not suitable for integer-only accelerators such as the Coral Edge TPU.</p>
-</blockquote>
-<blockquote>
-<p><strong>Python version:</strong> the <code>[tflite]</code> extra installs only on <strong>Python 3.12 exactly</strong> — its
-<code>onnx2tf</code> / <code>tensorflow</code> dependency stack pins <code>numpy==1.26.4</code>, which cannot be satisfied on
-3.10, 3.11, 3.13, or 3.14 (see <code>pyproject.toml</code>). Check your interpreter before installing: a
-Colab runtime whose default Python has moved past 3.12 will fail the install cell below.</p>
-</blockquote>
-<blockquote>
-<p><strong>Warning:</strong> TFLite export is experimental. <code>onnx2tf</code>'s output layout can change between
-versions, and the ONNX → TF → TFLite conversion chain introduces numerical rounding relative
-to the original PyTorch model — validate the exported <code>.tflite</code> file against a held-out
-evaluation set before deploying it.</p>
+<p><strong>Not covered here</strong>: NVIDIA GPU deployment (see the <a href="../export-cuda/">CUDA cookbook</a>),
+mobile/edge formats — TFLite, LiteRT, ExecuTorch's XNNPACK backend (see the
+<a href="../export-mobile/">mobile cookbook</a>) — or Apple Silicon (see the
+<a href="../export-apple/">Apple cookbook</a>). OpenVINO can also target Intel GPUs and NPUs; this notebook
+only exercises its <code>"CPU"</code> device.</p>
 </blockquote>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3943d76e">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2d64d054">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>The <code>[tflite]</code> extra pulls in the full ONNX → TensorFlow → TFLite conversion stack (<code>onnx2tf</code>,
-<code>tensorflow</code>, <code>onnxsim</code>, <code>onnx_graphsurgeon</code>, ...). The assertion below fails fast on any
-interpreter other than 3.12, before the (slow) install runs.</p>
+<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to pick up the newest export fixes. No CUDA-specific packages needed.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fcb7fecc">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=edd7aac6">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3565,26 +3665,34 @@ interpreter other than 3.12, before the (slow) install runs.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
-
-<span class="k">assert</span> <span class="n">sys</span><span class="o">.</span><span class="n">version_info</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span> <span class="o">==</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span> <span class="p">(</span>
-    <span class="s2">"rfdetr[tflite] requires Python 3.12 exactly (see pyproject.toml); this runtime is "</span>
-    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">sys</span><span class="o">.</span><span class="n">version_info</span><span class="o">.</span><span class="n">major</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">sys</span><span class="o">.</span><span class="n">version_info</span><span class="o">.</span><span class="n">minor</span><span class="si">}</span><span class="s2">. Use a Python 3.12 environment instead."</span>
-<span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">import sys
-
-assert sys.version_info[:2] == (3, 12), (
-    "rfdetr[tflite] requires Python 3.12 exactly (see pyproject.toml); this runtime is "
-    f"{sys.version_info.major}.{sys.version_info.minor}. Use a Python 3.12 environment instead."
-)</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" psutil supervision pandas</div>
 </div>
 </div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=21efdcdc">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="2-setup">2. Setup<a class="anchor-link" href="#2-setup">¶</a></h2><p><code>WARMUP_RUNS</code> discards the first N inferences; <code>MEASURE_RUNS</code> then collects the steady-state
+timing distribution. No CUDA guard needed — every format in this notebook runs on CPU.</p>
+<p>Three small helpers are shared by every format section below: <code>_artifact_size_mb</code> reports an
+export artifact's size on disk (a single file, or the total of a directory bundle — needed for
+OpenVINO's <code>.xml</code> + <code>.bin</code> pair), <code>visualize_detections</code> annotates and displays a
+<code>supervision.Detections</code> on the sample image (falling back to <code>COCO_CLASSES</code> for label text when
+a detection object carries no <code>class_name</code>), and <code>measure_memory</code> (from <code>_benchmark</code>) measures
+the host resident-memory growth of constructing a runtime and running its first inference call.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0b95d4d2">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=64228e3e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3602,27 +3710,134 @@ assert sys.version_info[:2] == (3, 12), (
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[tflite]&gt;=1.10.1"</span> <span class="n">supervision</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.assets.coco_classes</span><span class="w"> </span><span class="kn">import</span> <span class="n">COCO_CLASSES</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkResult</span><span class="p">,</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+
+<span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"export_cpu"</span><span class="p">)</span>
+<span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">CONFIDENCE_THRESHOLD</span> <span class="o">=</span> <span class="mf">0.5</span>
+<span class="n">WARMUP_RUNS</span> <span class="o">=</span> <span class="mi">15</span>
+<span class="n">MEASURE_RUNS</span> <span class="o">=</span> <span class="mi">50</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_artifact_size_mb</span><span class="p">(</span><span class="o">*</span><span class="n">paths</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+    <span class="n">total_bytes</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">path</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
+            <span class="n">total_bytes</span> <span class="o">+=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">path</span><span class="o">.</span><span class="n">rglob</span><span class="p">(</span><span class="s2">"*"</span><span class="p">)</span> <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">is_file</span><span class="p">())</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">total_bytes</span> <span class="o">+=</span> <span class="n">path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span>
+    <span class="k">return</span> <span class="n">total_bytes</span> <span class="o">/</span> <span class="mf">1e6</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">visualize_detections</span><span class="p">(</span><span class="n">detections</span><span class="p">:</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="s2">"Image.Image"</span><span class="p">,</span> <span class="n">save_path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">names</span> <span class="o">=</span> <span class="n">detections</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"class_name"</span><span class="p">)</span> <span class="k">if</span> <span class="n">detections</span><span class="o">.</span><span class="n">data</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">names</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="n">COCO_CLASSES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">c</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">c</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">detections</span><span class="o">.</span><span class="n">class_id</span><span class="p">]</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">conf</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">conf</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="n">detections</span><span class="o">.</span><span class="n">confidence</span><span class="p">)]</span>
+
+    <span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">(</span><span class="n">thickness</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">scene</span><span class="o">=</span><span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">)</span>
+    <span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">(</span><span class="n">text_scale</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span> <span class="n">text_thickness</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">text_padding</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span>
+        <span class="n">scene</span><span class="o">=</span><span class="n">annotated</span><span class="p">,</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">labels</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">save_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">annotated</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">save_path</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Saved annotated image: </span><span class="si">{</span><span class="n">save_path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="n">sv</span><span class="o">.</span><span class="n">plot_image</span><span class="p">(</span><span class="n">annotated</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_enable_notebook_inline_matplotlib</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Enable inline matplotlib figures when running in IPython."""</span>
+    <span class="n">get_ipython_func</span> <span class="o">=</span> <span class="nb">globals</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"get_ipython"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">callable</span><span class="p">(</span><span class="n">get_ipython_func</span><span class="p">):</span>
+        <span class="k">return</span>
+    <span class="n">ipython</span> <span class="o">=</span> <span class="n">get_ipython_func</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">ipython</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">ipython</span><span class="o">.</span><span class="n">run_line_magic</span><span class="p">(</span><span class="s2">"matplotlib"</span><span class="p">,</span> <span class="s2">"inline"</span><span class="p">)</span>
+        <span class="n">ipython</span><span class="o">.</span><span class="n">run_line_magic</span><span class="p">(</span><span class="s2">"config"</span><span class="p">,</span> <span class="s2">"InlineBackend.close_figures = True"</span><span class="p">)</span>
+
+
+<span class="n">_enable_notebook_inline_matplotlib</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">!pip install -q "rfdetr[tflite]&gt;=1.10.1" supervision</div>
+<div class="clipboard-copy-txt" id="cell-2">from pathlib import Path
+
+import numpy as np
+import supervision as sv
+from PIL import Image
+
+from rfdetr.assets.coco_classes import COCO_CLASSES
+from rfdetr.export._benchmark import BenchmarkResult, measure_latency, measure_memory
+
+EXPORT_DIR = Path("export_cpu")
+EXPORT_DIR.mkdir(exist_ok=True)
+CONFIDENCE_THRESHOLD = 0.5
+WARMUP_RUNS = 15
+MEASURE_RUNS = 50
+
+
+def _artifact_size_mb(*paths: Path) -&gt; float:
+    total_bytes = 0
+    for path in paths:
+        if path.is_dir():
+            total_bytes += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+        else:
+            total_bytes += path.stat().st_size
+    return total_bytes / 1e6
+
+
+def visualize_detections(detections: sv.Detections, image: "Image.Image", save_path: Path | None = None) -&gt; None:
+    names = detections.data.get("class_name") if detections.data else None
+    if names is None:
+        names = [COCO_CLASSES.get(int(c), str(c)) for c in detections.class_id]
+    labels = [f"{name} {conf:.2f}" for name, conf in zip(names, detections.confidence)]
+
+    annotated = sv.BoxAnnotator(thickness=3).annotate(scene=image.copy(), detections=detections)
+    annotated = sv.LabelAnnotator(text_scale=0.6, text_thickness=1, text_padding=4).annotate(
+        scene=annotated, detections=detections, labels=labels
+    )
+    if save_path is not None:
+        annotated.save(save_path)
+        print(f"Saved annotated image: {save_path}")
+    sv.plot_image(annotated)
+
+
+def _enable_notebook_inline_matplotlib() -&gt; None:
+    """Enable inline matplotlib figures when running in IPython."""
+    get_ipython_func = globals().get("get_ipython")
+    if not callable(get_ipython_func):
+        return
+    ipython = get_ipython_func()
+    if ipython is not None:
+        ipython.run_line_magic("matplotlib", "inline")
+        ipython.run_line_magic("config", "InlineBackend.close_figures = True")
+
+
+_enable_notebook_inline_matplotlib()</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=faed143a">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d3b648a1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="2-setup">2. Setup<a class="anchor-link" href="#2-setup">¶</a></h2><p>TFLite export itself runs on CPU — no GPU is needed.</p>
+<h2 id="3-sample-image">3. Sample image<a class="anchor-link" href="#3-sample-image">¶</a></h2><p>A single street scene with several COCO classes (dog, bicycle, car) is enough to verify
+detections. The image is downloaded once and reused for every format below.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ae6b651c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a54e5f5e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3640,46 +3855,50 @@ assert sys.version_info[:2] == (3, 12), (
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">urllib.request</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+<span class="n">IMAGE_URL</span> <span class="o">=</span> <span class="s2">"https://media.roboflow.com/notebooks/examples/dog.jpeg"</span>
+<span class="n">IMAGE_PATH</span> <span class="o">=</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"sample.jpg"</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">IMAGE_PATH</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+    <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlretrieve</span><span class="p">(</span><span class="n">IMAGE_URL</span><span class="p">,</span> <span class="n">IMAGE_PATH</span><span class="p">)</span>
 
-<span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"export_tflite"</span><span class="p">)</span>
-<span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">IMAGE_PATH</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Sample image: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">from pathlib import Path
+<div class="clipboard-copy-txt" id="cell-3">import urllib.request
 
-from rfdetr import RFDETRSmall
+IMAGE_URL = "https://media.roboflow.com/notebooks/examples/dog.jpeg"
+IMAGE_PATH = EXPORT_DIR / "sample.jpg"
+if not IMAGE_PATH.exists():
+    urllib.request.urlretrieve(IMAGE_URL, IMAGE_PATH)
 
-EXPORT_DIR = Path("export_tflite")
-EXPORT_DIR.mkdir(exist_ok=True)</div>
+image = Image.open(IMAGE_PATH).convert("RGB")
+print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=81b843e6">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=02348c40">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="3-export-to-tflite-int8-dynamic-range">3. Export to TFLite (INT8 dynamic-range)<a class="anchor-link" href="#3-export-to-tflite-int8-dynamic-range">¶</a></h2><p>The COCO-pretrained <code>RFDETRSmall</code> is exported directly — pass
-<code>pretrain_weights="&lt;path/to/checkpoint.pth&gt;"</code> to export a fine-tuned model instead.</p>
-<p><code>quantization="int8"</code> requests dynamic-range INT8; static full-integer INT8 (the mode that
-<em>would</em> need calibration data) is intentionally unsupported because RF-DETR's transformer
-activations do not survive it. This call also writes a <code>*_fp32.tflite</code> and <code>*_fp16.tflite</code> file
-alongside the requested INT8 file.</p>
-<p>TFLite filenames are derived from the model variant (<code>rfdetr-small</code>, here). When GridSample ops
-are patched — the standard RF-DETR path, since RF-DETR's deformable attention uses <code>GridSample</code>
-— they also carry a <code>_gs_patched</code> infix, e.g. <code>rfdetr-small_gs_patched_dynamic_range_quant.tflite</code>.
-<code>export()</code> returns the resolved path directly, so nothing needs to be hardcoded here.</p>
+<h2 id="4-pytorch-baseline-predict-inference">4. PyTorch baseline — <code>predict()</code> / <code>inference()</code><a class="anchor-link" href="#4-pytorch-baseline-predict-inference">¶</a></h2><p>No export needed — this is the reference every other format in this notebook is compared
+against. <code>predict()</code> is the unoptimized baseline. <code>inference()</code> defaults to
+<code>dtype=torch.float32</code> with <code>compile_backend="torchscript"</code> — a JIT-compiled, still-fp32
+optimization (fp16 arithmetic is CUDA-only and not exercised here);
+<code>remove_optimized_model()</code> reverts the in-place optimization afterward so <code>model</code> stays reusable
+for the export calls below.</p>
+<p>Both calls include preprocessing and postprocessing — there is no separate "forward-only" path
+through eager <code>predict()</code>, so only an end-to-end number is reported for the PyTorch baseline.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=67b8730c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a39bdbe8">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3697,34 +3916,80 @@ are patched — the standard RF-DETR path, since RF-DETR's deformable attention 
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
 
-<span class="n">tflite_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span><span class="p">))</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TFLite INT8 (dynamic-range) model: </span><span class="si">{</span><span class="n">tflite_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">tflite_path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mf">1e6</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">)</span>
+    <span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="n">pytorch_eager_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
+
+<span class="n">pytorch_eager</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="k">lambda</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"PyTorch predict()"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span>
+<span class="p">)</span>
+
+<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">()</span>
+    <span class="n">_</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+<span class="n">pytorch_jit_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+
+<span class="n">pytorch_jit</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="k">lambda</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"PyTorch inference() JIT"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span>
+<span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
+
+<span class="k">for</span> <span class="n">r</span><span class="p">,</span> <span class="n">mb</span> <span class="ow">in</span> <span class="p">((</span><span class="n">pytorch_eager</span><span class="p">,</span> <span class="n">pytorch_eager_memory_mb</span><span class="p">),</span> <span class="p">(</span><span class="n">pytorch_jit</span><span class="p">,</span> <span class="n">pytorch_jit_memory_mb</span><span class="p">)):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)   +</span><span class="si">{</span><span class="n">mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">model = RFDETRSmall()
+<div class="clipboard-copy-txt" id="cell-4">from rfdetr import RFDETRSmall
 
-tflite_path = model.export(format="tflite", quantization="int8", output_dir=str(EXPORT_DIR))
-print(f"TFLite INT8 (dynamic-range) model: {tflite_path}  ({tflite_path.stat().st_size / 1e6:.1f} MB)")</div>
+with measure_memory() as mem:
+    model = RFDETRSmall(device="cpu")
+    baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
+pytorch_eager_memory_mb = mem.delta_mb
+print(f"PyTorch baseline: {len(baseline_detections)} detections above {CONFIDENCE_THRESHOLD}")
+visualize_detections(baseline_detections, image)
+
+pytorch_eager = measure_latency(
+    lambda: model.predict(image), label="PyTorch predict()", device="cpu", warmup=WARMUP_RUNS, runs=MEASURE_RUNS
+)
+
+with measure_memory() as mem:
+    model.inference()
+    _ = model.predict(image)
+pytorch_jit_memory_mb = mem.delta_mb
+
+pytorch_jit = measure_latency(
+    lambda: model.predict(image), label="PyTorch inference() JIT", device="cpu", warmup=WARMUP_RUNS, runs=MEASURE_RUNS
+)
+model.remove_optimized_model()
+
+for r, mb in ((pytorch_eager, pytorch_eager_memory_mb), (pytorch_jit, pytorch_jit_memory_mb)):
+    print(f"  {r.label:&lt;32}  {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({r.fps:6.1f} FPS)   +{mb:.1f} MB")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f3653080">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6b55b3f9">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="4-sample-image">4. Sample image<a class="anchor-link" href="#4-sample-image">¶</a></h2><p>A single street scene with several COCO classes (dog, person, backpack, car) is enough to verify
-detections. The image is downloaded once and reused.</p>
+<h2 id="5-onnx-cpu-execution-provider">5. ONNX (CPU execution provider)<a class="anchor-link" href="#5-onnx-cpu-execution-provider">¶</a></h2><p><strong>What it is.</strong> ONNX (Open Neural Network Exchange) is a portable model-graph format most
+inference runtimes understand — ONNX Runtime, TensorRT, and OpenVINO can all consume the same
+<code>.onnx</code> file. <strong>Good for</strong> avoiding a single-vendor runtime lock-in: export once, then run it
+through whichever of those runtimes fits the target machine, CPU or GPU, without re-exporting.
+See the <a href="https://rfdetr.roboflow.com/exports/onnx/">ONNX export docs</a>.</p>
+<h3 id="export">Export<a class="anchor-link" href="#export">¶</a></h3><p><code>model.export()</code> defaults to ONNX.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fb425098">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c1bb6eba">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3742,49 +4007,32 @@ detections. The image is downloaded once and reused.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">urllib.request</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-
-<span class="n">IMAGE_URL</span> <span class="o">=</span> <span class="s2">"https://media.roboflow.com/notebooks/examples/dog.jpeg"</span>
-<span class="n">IMAGE_PATH</span> <span class="o">=</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"sample.jpg"</span>
-<span class="k">if</span> <span class="ow">not</span> <span class="n">IMAGE_PATH</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-    <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlretrieve</span><span class="p">(</span><span class="n">IMAGE_URL</span><span class="p">,</span> <span class="n">IMAGE_PATH</span><span class="p">)</span>
-
-<span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">IMAGE_PATH</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Sample image: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">onnx_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span><span class="p">))</span>
+<span class="n">onnx_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX model: </span><span class="si">{</span><span class="n">onnx_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">onnx_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">import urllib.request
-
-from PIL import Image
-
-IMAGE_URL = "https://media.roboflow.com/notebooks/examples/dog.jpeg"
-IMAGE_PATH = EXPORT_DIR / "sample.jpg"
-if not IMAGE_PATH.exists():
-    urllib.request.urlretrieve(IMAGE_URL, IMAGE_PATH)
-
-image = Image.open(IMAGE_PATH).convert("RGB")
-print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
+<div class="clipboard-copy-txt" id="cell-5">onnx_path = model.export(output_dir=str(EXPORT_DIR))
+onnx_size_mb = _artifact_size_mb(onnx_path)
+print(f"ONNX model: {onnx_path}  ({onnx_size_mb:.1f} MB)")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=76d54d9d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=14f555c4">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="5-fp32-baseline-pytorch">5. FP32 baseline (PyTorch)<a class="anchor-link" href="#5-fp32-baseline-pytorch">¶</a></h2><p>Before trusting the INT8 export, run the same image through the eager PyTorch model to get a
-fp32 baseline. <code>predict()</code> handles preprocessing, inference, and postprocessing (including the
-confidence threshold) in one call and returns a ready-to-use <code>supervision.Detections</code>.</p>
+<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p><code>_create_onnx_session</code> (the same session-construction helper <code>RFDETR.predict()</code>'s reference
+decoder uses internally) is pinned to <code>CPUExecutionProvider</code>.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=923a9762">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=6b609e65">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3802,48 +4050,43 @@ confidence threshold) in one call and returns a ready-to-use <code>supervision.D
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">CONFIDENCE_THRESHOLD</span> <span class="o">=</span> <span class="mf">0.5</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._onnx.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">_create_onnx_session</span><span class="p">,</span> <span class="n">_run_inference</span>
 
-<span class="n">baseline_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span>
-    <span class="sa">f</span><span class="s2">"PyTorch fp32 baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections, "</span>
-    <span class="sa">f</span><span class="s2">"top score </span><span class="si">{</span><span class="n">baseline_detections</span><span class="o">.</span><span class="n">confidence</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">"</span>
-<span class="p">)</span>
+<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">onnx_session</span> <span class="o">=</span> <span class="n">_create_onnx_session</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">,</span> <span class="n">providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CPUExecutionProvider"</span><span class="p">])</span>
+    <span class="n">onnx_detections</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_run_inference</span><span class="p">(</span><span class="n">onnx_session</span><span class="p">,</span> <span class="n">IMAGE_PATH</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="n">onnx_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">visualize_detections</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_onnx.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">CONFIDENCE_THRESHOLD = 0.5
+<div class="clipboard-copy-txt" id="cell-6">from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
 
-baseline_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
-print(
-    f"PyTorch fp32 baseline: {len(baseline_detections)} detections, "
-    f"top score {baseline_detections.confidence.max():.3f}"
-)</div>
+with measure_memory() as mem:
+    onnx_session = _create_onnx_session(onnx_path, providers=["CPUExecutionProvider"])
+    onnx_detections, _ = _run_inference(onnx_session, IMAGE_PATH, threshold=CONFIDENCE_THRESHOLD)
+onnx_memory_mb = mem.delta_mb
+print(f"ONNX (CPU): {len(onnx_detections)} detections above {CONFIDENCE_THRESHOLD}")
+visualize_detections(onnx_detections, image, EXPORT_DIR / "annotated_onnx.jpg")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d860344e">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=fef3065a">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="6-run-the-int8-model-with-tensorflowliteinterpreter">6. Run the INT8 model with <code>tensorflow.lite.Interpreter</code><a class="anchor-link" href="#6-run-the-int8-model-with-tensorflowliteinterpreter">¶</a></h2><p><code>rfdetr[tflite]</code> already installs <code>tensorflow</code>, so <code>tensorflow.lite.Interpreter</code> needs no extra
-install (a standalone <code>tflite-runtime</code> package is a lighter-weight alternative on edge devices —
-see the <a href="https://rfdetr.roboflow.com/exports/tflite/">Export docs</a>).</p>
-<p>The TFLite input is <strong>NHWC</strong>, not the NCHW layout ONNX/ExecuTorch/CoreML use. Preprocessing
-reuses <code>infer_transforms</code> for the resize + ImageNet-normalization pipeline, then permutes to
-<code>(1, H, W, 3)</code> before feeding the interpreter.</p>
-<p><code>onnx2tf</code>'s SavedModel conversion route renames every output — the ONNX <code>dets</code> / <code>labels</code> names
-arrive as <code>StatefulPartitionedCall:0</code> / <code>:1</code> in the <code>.tflite</code> file and are no longer
-distinguishable by name. Match outputs by <strong>rank and last dimension</strong> instead: boxes are the
-rank-3 tensor with last dimension <code>4</code>, logits are the other rank-3 tensor.</p>
+<h3 id="benchmark">Benchmark<a class="anchor-link" href="#benchmark">¶</a></h3><p>Two scopes: <code>forward_ms</code> times only <code>session.run</code> with preprocessing done once outside the
+loop; <code>end2end_ms</code> times preprocessing + <code>session.run</code> + decoding together, the same scope
+<code>predict()</code> above was timed at.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cccadc0f">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cbbebe67">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3861,103 +4104,93 @@ rank-3 tensor with last dimension <code>4</code>, logits are the other rank-3 te
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">tensorflow</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">tf</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._runtime.decode</span><span class="w"> </span><span class="kn">import</span> <span class="n">decode_detections</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._runtime.preprocess</span><span class="w"> </span><span class="kn">import</span> <span class="n">preprocess_to_nchw</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">infer_transforms</span><span class="p">,</span> <span class="n">post_process</span>
+<span class="n">_onnx_input_name</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
+<span class="n">_</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
+<span class="n">_onnx_output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
+<span class="n">_onnx_boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
+<span class="n">_onnx_logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
+<span class="n">_onnx_feed</span> <span class="o">=</span> <span class="p">{</span><span class="n">_onnx_input_name</span><span class="p">:</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)}</span>
 
-<span class="n">resolution</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">model_config</span><span class="o">.</span><span class="n">resolution</span>
-<span class="n">image_tensor</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">infer_transforms</span><span class="p">((</span><span class="n">resolution</span><span class="p">,</span> <span class="n">resolution</span><span class="p">))(</span><span class="n">image</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-<span class="c1"># TFLite expects NHWC, not the NCHW layout used by the other export formats.</span>
-<span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">)[</span><span class="kc">None</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
-<span class="n">interpreter</span> <span class="o">=</span> <span class="n">tf</span><span class="o">.</span><span class="n">lite</span><span class="o">.</span><span class="n">Interpreter</span><span class="p">(</span><span class="n">model_path</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">tflite_path</span><span class="p">))</span>
-<span class="n">interpreter</span><span class="o">.</span><span class="n">allocate_tensors</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_onnx_end2end</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inp</span> <span class="o">=</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="n">_onnx_input_name</span><span class="p">:</span> <span class="n">inp</span><span class="p">})</span>
+    <span class="n">decode_detections</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="n">_onnx_boxes_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span> <span class="n">raw</span><span class="p">[</span><span class="n">_onnx_logits_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 
-<span class="n">input_details</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_input_details</span><span class="p">()</span>
-<span class="n">output_details</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_output_details</span><span class="p">()</span>
-<span class="n">interpreter</span><span class="o">.</span><span class="n">set_tensor</span><span class="p">(</span><span class="n">input_details</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"index"</span><span class="p">],</span> <span class="n">image_array</span><span class="p">)</span>
-<span class="n">interpreter</span><span class="o">.</span><span class="n">invoke</span><span class="p">()</span>
 
-<span class="c1"># onnx2tf strips the dets/labels names, so match by rank and last dimension instead — boxes are</span>
-<span class="c1"># the rank-3 tensor with last dim 4, logits are the other rank-3 tensor.</span>
-<span class="n">rank3</span> <span class="o">=</span> <span class="p">[</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">output_details</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">])</span> <span class="o">==</span> <span class="mi">3</span><span class="p">]</span>
-<span class="n">boxes_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">rank3</span> <span class="k">if</span> <span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">4</span><span class="p">)</span>
-<span class="n">labels_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">rank3</span> <span class="k">if</span> <span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">)</span>
-
-<span class="n">dets</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">boxes_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">]))</span>
-<span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">labels_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">]))</span>
-
-<span class="n">target_sizes</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">]])</span>
-<span class="n">result</span> <span class="o">=</span> <span class="n">post_process</span><span class="p">({</span><span class="s2">"dets"</span><span class="p">:</span> <span class="n">dets</span><span class="p">,</span> <span class="s2">"labels"</span><span class="p">:</span> <span class="n">labels</span><span class="p">},</span> <span class="n">target_sizes</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
-
-<span class="n">keep</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span>
-<span class="nb">print</span><span class="p">(</span>
-    <span class="sa">f</span><span class="s2">"TFLite INT8: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">keep</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">, "</span>
-    <span class="sa">f</span><span class="s2">"top score </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">'scores'</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> "</span>
-    <span class="sa">f</span><span class="s2">"(fp32 baseline top score </span><span class="si">{</span><span class="n">baseline_detections</span><span class="o">.</span><span class="n">confidence</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">)"</span>
+<span class="n">onnx_forward</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="k">lambda</span><span class="p">:</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">_onnx_feed</span><span class="p">),</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">"ONNX (CPU) forward"</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span>
+    <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+    <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="n">onnx_end2end</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="n">_onnx_end2end</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"ONNX (CPU) end2end"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span>
+<span class="p">)</span>
+
+<span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="p">(</span><span class="n">onnx_forward</span><span class="p">,</span> <span class="n">onnx_end2end</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">import numpy as np
-import tensorflow as tf
-import torch
+<div class="clipboard-copy-txt" id="cell-7">from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.export._runtime.preprocess import preprocess_to_nchw
 
-from rfdetr.export.benchmark import infer_transforms, post_process
+_onnx_input_name = onnx_session.get_inputs()[0].name
+_, _onnx_channels, _onnx_height, _onnx_width = onnx_session.get_inputs()[0].shape
+_onnx_output_names = [out.name for out in onnx_session.get_outputs()]
+_onnx_boxes_idx = next(i for i, name in enumerate(_onnx_output_names) if "dets" in name)
+_onnx_logits_idx = next(i for i, name in enumerate(_onnx_output_names) if "labels" in name)
+_onnx_feed = {_onnx_input_name: preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels)}
 
-resolution = model.model_config.resolution
-image_tensor, _ = infer_transforms((resolution, resolution))(image, None)
-# TFLite expects NHWC, not the NCHW layout used by the other export formats.
-image_array = image_tensor.permute(1, 2, 0)[None].contiguous().numpy().astype(np.float32)
 
-interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
-interpreter.allocate_tensors()
+def _onnx_end2end() -&gt; None:
+    inp = preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels)
+    raw = onnx_session.run(None, {_onnx_input_name: inp})
+    decode_detections(raw[_onnx_boxes_idx][0], raw[_onnx_logits_idx][0], image.size, threshold=CONFIDENCE_THRESHOLD)
 
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-interpreter.set_tensor(input_details[0]["index"], image_array)
-interpreter.invoke()
 
-# onnx2tf strips the dets/labels names, so match by rank and last dimension instead — boxes are
-# the rank-3 tensor with last dim 4, logits are the other rank-3 tensor.
-rank3 = [detail for detail in output_details if len(detail["shape"]) == 3]
-boxes_detail = next(detail for detail in rank3 if detail["shape"][-1] == 4)
-labels_detail = next(detail for detail in rank3 if detail["shape"][-1] != 4)
+onnx_forward = measure_latency(
+    lambda: onnx_session.run(None, _onnx_feed),
+    label="ONNX (CPU) forward",
+    device="cpu",
+    warmup=WARMUP_RUNS,
+    runs=MEASURE_RUNS,
+)
+onnx_end2end = measure_latency(
+    _onnx_end2end, label="ONNX (CPU) end2end", device="cpu", warmup=WARMUP_RUNS, runs=MEASURE_RUNS
+)
 
-dets = torch.from_numpy(interpreter.get_tensor(boxes_detail["index"]))
-labels = torch.from_numpy(interpreter.get_tensor(labels_detail["index"]))
-
-target_sizes = torch.tensor([[image.height, image.width]])
-result = post_process({"dets": dets, "labels": labels}, target_sizes)[0]
-
-keep = result["scores"] &gt; CONFIDENCE_THRESHOLD
-print(
-    f"TFLite INT8: {int(keep.sum())} detections above {CONFIDENCE_THRESHOLD}, "
-    f"top score {result['scores'][0]:.3f} "
-    f"(fp32 baseline top score {baseline_detections.confidence.max():.3f})"
-)</div>
+for r in (onnx_forward, onnx_end2end):
+    print(f"  {r.label:&lt;32}  {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({r.fps:6.1f} FPS)")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=839b471c">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c9b56c8e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="7-visualize-with-supervision">7. Visualize with supervision<a class="anchor-link" href="#7-visualize-with-supervision">¶</a></h2><p>Wrap the kept TFLite detections in a <code>supervision.Detections</code> and annotate the original image.</p>
-<p>Annotate the <strong>PIL image</strong> rather than <code>np.array(image)</code>. supervision's annotators accept
-either, but a numpy scene is assumed to be OpenCV-style BGR — handing them an RGB array swaps
-the red and blue channels of the annotations, and <code>sv.plot_image</code> then swaps the photo itself.
-Passing PIL lets supervision convert in both directions and keeps the colours right.</p>
+<h2 id="6-openvino">6. OpenVINO<a class="anchor-link" href="#6-openvino">¶</a></h2><p><strong>What it is.</strong> OpenVINO IR (Intermediate Representation) is Intel's own model format and
+toolkit for optimizing and deploying deep learning models on Intel hardware. <strong>Good for</strong>
+non-NVIDIA deployment: it targets Intel CPUs, integrated/discrete GPUs, and NPUs from the same
+exported IR, which matters if the deployment box has no NVIDIA GPU at all. See the
+<a href="https://rfdetr.roboflow.com/exports/openvino/">OpenVINO export docs</a>.</p>
+<h3 id="export">Export<a class="anchor-link" href="#export">¶</a></h3><p><code>openvino_precision="float32"</code> overrides OpenVINO's default FP16 weight compression — this
+keeps the IR at full precision for tight parity with the fp32 ONNX/PyTorch baseline above; drop
+it for a smaller, faster file if you don't need that parity (execution precision still depends
+on the compiled device regardless of this setting).</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=663a08bc">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f0b71b09">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3975,78 +4208,503 @@ Passing PIL lets supervision convert in both directions and keeps the colours ri
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.assets.coco_classes</span><span class="w"> </span><span class="kn">import</span> <span class="n">COCO_CLASSES</span>
-
-<span class="n">detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
-    <span class="n">xyxy</span><span class="o">=</span><span class="n">result</span><span class="p">[</span><span class="s2">"boxes"</span><span class="p">][</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-    <span class="n">confidence</span><span class="o">=</span><span class="n">result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">][</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
-    <span class="n">class_id</span><span class="o">=</span><span class="n">result</span><span class="p">[</span><span class="s2">"labels"</span><span class="p">][</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">),</span>
-<span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Kept </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-
-<span class="n">names</span> <span class="o">=</span> <span class="p">[</span><span class="n">COCO_CLASSES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">c</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">c</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">detections</span><span class="o">.</span><span class="n">class_id</span><span class="p">]</span>
-<span class="n">annotation_labels</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">conf</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">conf</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="n">detections</span><span class="o">.</span><span class="n">confidence</span><span class="p">)]</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Detections: </span><span class="si">{</span><span class="n">annotation_labels</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-
-<span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">BoxAnnotator</span><span class="p">(</span><span class="n">thickness</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="n">scene</span><span class="o">=</span><span class="n">image</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">)</span>
-<span class="n">annotated</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">LabelAnnotator</span><span class="p">(</span><span class="n">text_scale</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span> <span class="n">text_thickness</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">text_padding</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span>
-    <span class="n">scene</span><span class="o">=</span><span class="n">annotated</span><span class="p">,</span> <span class="n">detections</span><span class="o">=</span><span class="n">detections</span><span class="p">,</span> <span class="n">labels</span><span class="o">=</span><span class="n">annotation_labels</span>
-<span class="p">)</span>
-
-<span class="n">OUTPUT_PATH</span> <span class="o">=</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_tflite.jpg"</span>
-<span class="n">annotated</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">OUTPUT_PATH</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Saved annotated image: </span><span class="si">{</span><span class="n">OUTPUT_PATH</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="n">sv</span><span class="o">.</span><span class="n">plot_image</span><span class="p">(</span><span class="n">annotated</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">openvino_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">,</span> <span class="n">openvino_precision</span><span class="o">=</span><span class="s2">"float32"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span><span class="p">))</span>
+<span class="n">openvino_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">openvino_path</span><span class="p">,</span> <span class="n">openvino_path</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">".bin"</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO IR: </span><span class="si">{</span><span class="n">openvino_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">openvino_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB, .xml + .bin)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">import supervision as sv
+<div class="clipboard-copy-txt" id="cell-8">openvino_path = model.export(format="openvino", openvino_precision="float32", output_dir=str(EXPORT_DIR))
+openvino_size_mb = _artifact_size_mb(openvino_path, openvino_path.with_suffix(".bin"))
+print(f"OpenVINO IR: {openvino_path}  ({openvino_size_mb:.1f} MB, .xml + .bin)")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e47fc455">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p><code>OpenVINOInference</code> is session-tier: it takes already-preprocessed NCHW tensors and returns raw
+output tensors, decoded here with the same <code>decode_detections</code> helper used for ONNX above.
+<code>infer()</code> requires a C-contiguous float32 array — <code>preprocess_to_nchw</code> already returns one, but
+<code>np.ascontiguousarray</code> is applied defensively since <code>infer()</code> raises <code>ValueError</code> otherwise.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7e4868cc">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenVINOInference</span>
 
-from rfdetr.assets.coco_classes import COCO_CLASSES
+<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">ov_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span><span class="n">openvino_path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">)</span>
+    <span class="n">ov_input</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">))</span>
+    <span class="n">ov_boxes</span><span class="p">,</span> <span class="n">ov_logits</span> <span class="o">=</span> <span class="n">ov_model</span><span class="p">(</span><span class="n">ov_input</span><span class="p">)</span>
+<span class="n">openvino_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+<span class="n">ov_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">ov_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ov_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="c1"># Observed on this build: OpenVINO's raw logits run markedly lower-magnitude than ONNX's on the</span>
+<span class="c1"># same preprocessed input (top logit ~0.05 vs ~3.0 here), so fewer detections clear the same</span>
+<span class="c1"># 0.5 threshold even at openvino_precision="float32" — a real export/runtime parity gap, not a</span>
+<span class="c1"># preprocessing bug (verified by feeding both runtimes the identical tensor). If this matters for</span>
+<span class="c1"># your model, lower the threshold for the OpenVINO path or compare raw scores directly rather than</span>
+<span class="c1"># post-threshold counts.</span>
 
-detections = sv.Detections(
-    xyxy=result["boxes"][keep].numpy(),
-    confidence=result["scores"][keep].numpy(),
-    class_id=result["labels"][keep].numpy().astype(int),
+<span class="n">ov_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
+    <span class="n">xyxy</span><span class="o">=</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span> <span class="n">class_id</span><span class="o">=</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">visualize_detections</span><span class="p">(</span><span class="n">ov_sv_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_openvino.jpg"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-9">from rfdetr.export.inference import OpenVINOInference
+
+with measure_memory() as mem:
+    ov_model = OpenVINOInference(openvino_path, device="CPU")
+    ov_input = np.ascontiguousarray(preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels))
+    ov_boxes, ov_logits = ov_model(ov_input)
+openvino_memory_mb = mem.delta_mb
+ov_decoded = decode_detections(ov_boxes[0], ov_logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
+print(f"OpenVINO (CPU): {len(ov_decoded.xyxy)} detections above {CONFIDENCE_THRESHOLD}")
+# Observed on this build: OpenVINO's raw logits run markedly lower-magnitude than ONNX's on the
+# same preprocessed input (top logit ~0.05 vs ~3.0 here), so fewer detections clear the same
+# 0.5 threshold even at openvino_precision="float32" — a real export/runtime parity gap, not a
+# preprocessing bug (verified by feeding both runtimes the identical tensor). If this matters for
+# your model, lower the threshold for the OpenVINO path or compare raw scores directly rather than
+# post-threshold counts.
+
+ov_sv_detections = sv.Detections(
+    xyxy=ov_decoded.xyxy, confidence=ov_decoded.confidence, class_id=ov_decoded.class_id.astype(int)
 )
-print(f"Kept {len(detections)} detections above {CONFIDENCE_THRESHOLD}")
+visualize_detections(ov_sv_detections, image, EXPORT_DIR / "annotated_openvino.jpg")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9dafb038">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="benchmark">Benchmark<a class="anchor-link" href="#benchmark">¶</a></h3>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=81596644">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">openvino_forward</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="k">lambda</span><span class="p">:</span> <span class="n">ov_model</span><span class="p">(</span><span class="n">ov_input</span><span class="p">),</span> <span class="n">label</span><span class="o">=</span><span class="s2">"OpenVINO forward"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span>
+<span class="p">)</span>
 
-names = [COCO_CLASSES.get(int(c), str(c)) for c in detections.class_id]
-annotation_labels = [f"{name} {conf:.2f}" for name, conf in zip(names, detections.confidence)]
-print(f"Detections: {annotation_labels}")
 
-annotated = sv.BoxAnnotator(thickness=3).annotate(scene=image.copy(), detections=detections)
-annotated = sv.LabelAnnotator(text_scale=0.6, text_thickness=1, text_padding=4).annotate(
-    scene=annotated, detections=detections, labels=annotation_labels
+<span class="k">def</span><span class="w"> </span><span class="nf">_openvino_end2end</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">))</span>
+    <span class="n">boxes</span><span class="p">,</span> <span class="n">logits</span> <span class="o">=</span> <span class="n">ov_model</span><span class="p">(</span><span class="n">inp</span><span class="p">)</span>
+    <span class="n">decode_detections</span><span class="p">(</span><span class="n">boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+
+
+<span class="n">openvino_end2end</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="n">_openvino_end2end</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"OpenVINO end2end"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span>
+<span class="p">)</span>
+
+<span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="p">(</span><span class="n">openvino_forward</span><span class="p">,</span> <span class="n">openvino_end2end</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-10">openvino_forward = measure_latency(
+    lambda: ov_model(ov_input), label="OpenVINO forward", device="cpu", warmup=WARMUP_RUNS, runs=MEASURE_RUNS
 )
 
-OUTPUT_PATH = EXPORT_DIR / "annotated_tflite.jpg"
-annotated.save(OUTPUT_PATH)
-print(f"Saved annotated image: {OUTPUT_PATH}")
-sv.plot_image(annotated)</div>
+
+def _openvino_end2end() -&gt; None:
+    inp = np.ascontiguousarray(preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels))
+    boxes, logits = ov_model(inp)
+    decode_detections(boxes[0], logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
+
+
+openvino_end2end = measure_latency(
+    _openvino_end2end, label="OpenVINO end2end", device="cpu", warmup=WARMUP_RUNS, runs=MEASURE_RUNS
+)
+
+for r in (openvino_forward, openvino_end2end):
+    print(f"  {r.label:&lt;32}  {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({r.fps:6.1f} FPS)")</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=dbd33deb">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a3621a14">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="openvino-fp16-default">OpenVINO (fp16, default)<a class="anchor-link" href="#openvino-fp16-default">¶</a></h3><p>Dropping <code>openvino_precision</code> (or passing <code>"float16"</code> explicitly) restores OpenVINO's own
+default FP16 weight compression — a smaller IR on disk and less memory traffic per inference,
+at the cost of the numeric parity the <code>float32</code> row above trades for. Execution precision still
+depends on the compiled device, not just this setting (see the export docs linked above).</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fc819af4">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">openvino_fp16_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
+    <span class="nb">format</span><span class="o">=</span><span class="s2">"openvino"</span><span class="p">,</span> <span class="n">openvino_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"openvino_fp16"</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">openvino_fp16_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">openvino_fp16_path</span><span class="p">,</span> <span class="n">openvino_fp16_path</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">".bin"</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO IR (fp16): </span><span class="si">{</span><span class="n">openvino_fp16_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">openvino_fp16_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB, .xml + .bin)"</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">ov_fp16_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span><span class="n">openvino_fp16_path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">)</span>
+    <span class="n">ov_fp16_input</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">))</span>
+    <span class="n">ov_fp16_boxes</span><span class="p">,</span> <span class="n">ov_fp16_logits</span> <span class="o">=</span> <span class="n">ov_fp16_model</span><span class="p">(</span><span class="n">ov_fp16_input</span><span class="p">)</span>
+<span class="n">openvino_fp16_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+<span class="n">ov_fp16_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">ov_fp16_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ov_fp16_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO fp16 (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="n">ov_fp16_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
+    <span class="n">xyxy</span><span class="o">=</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span> <span class="n">class_id</span><span class="o">=</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">visualize_detections</span><span class="p">(</span><span class="n">ov_fp16_sv_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_openvino_fp16.jpg"</span><span class="p">)</span>
+
+<span class="n">openvino_fp16_forward</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="k">lambda</span><span class="p">:</span> <span class="n">ov_fp16_model</span><span class="p">(</span><span class="n">ov_fp16_input</span><span class="p">),</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">"OpenVINO fp16 forward"</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span>
+    <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+    <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_openvino_fp16_end2end</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">inp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">))</span>
+    <span class="n">boxes</span><span class="p">,</span> <span class="n">logits</span> <span class="o">=</span> <span class="n">ov_fp16_model</span><span class="p">(</span><span class="n">inp</span><span class="p">)</span>
+    <span class="n">decode_detections</span><span class="p">(</span><span class="n">boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+
+
+<span class="n">openvino_fp16_end2end</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="n">_openvino_fp16_end2end</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"OpenVINO fp16 end2end"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span>
+<span class="p">)</span>
+
+<span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="p">(</span><span class="n">openvino_fp16_forward</span><span class="p">,</span> <span class="n">openvino_fp16_end2end</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-11">openvino_fp16_path = model.export(
+    format="openvino", openvino_precision="float16", output_dir=str(EXPORT_DIR / "openvino_fp16")
+)
+openvino_fp16_size_mb = _artifact_size_mb(openvino_fp16_path, openvino_fp16_path.with_suffix(".bin"))
+print(f"OpenVINO IR (fp16): {openvino_fp16_path}  ({openvino_fp16_size_mb:.1f} MB, .xml + .bin)")
+
+with measure_memory() as mem:
+    ov_fp16_model = OpenVINOInference(openvino_fp16_path, device="CPU")
+    ov_fp16_input = np.ascontiguousarray(preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels))
+    ov_fp16_boxes, ov_fp16_logits = ov_fp16_model(ov_fp16_input)
+openvino_fp16_memory_mb = mem.delta_mb
+ov_fp16_decoded = decode_detections(ov_fp16_boxes[0], ov_fp16_logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
+print(f"OpenVINO fp16 (CPU): {len(ov_fp16_decoded.xyxy)} detections above {CONFIDENCE_THRESHOLD}")
+
+ov_fp16_sv_detections = sv.Detections(
+    xyxy=ov_fp16_decoded.xyxy, confidence=ov_fp16_decoded.confidence, class_id=ov_fp16_decoded.class_id.astype(int)
+)
+visualize_detections(ov_fp16_sv_detections, image, EXPORT_DIR / "annotated_openvino_fp16.jpg")
+
+openvino_fp16_forward = measure_latency(
+    lambda: ov_fp16_model(ov_fp16_input),
+    label="OpenVINO fp16 forward",
+    device="cpu",
+    warmup=WARMUP_RUNS,
+    runs=MEASURE_RUNS,
+)
+
+
+def _openvino_fp16_end2end() -&gt; None:
+    inp = np.ascontiguousarray(preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels))
+    boxes, logits = ov_fp16_model(inp)
+    decode_detections(boxes[0], logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
+
+
+openvino_fp16_end2end = measure_latency(
+    _openvino_fp16_end2end, label="OpenVINO fp16 end2end", device="cpu", warmup=WARMUP_RUNS, runs=MEASURE_RUNS
+)
+
+for r in (openvino_fp16_forward, openvino_fp16_end2end):
+    print(f"  {r.label:&lt;32}  {r.mean_ms:6.2f} ms ± {r.std_ms:5.2f}   ({r.fps:6.1f} FPS)")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f6337267">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="7-results">7. Results<a class="anchor-link" href="#7-results">¶</a></h2><p>Measured on a Colab CPU runtime: <code>x86_64</code>, 4 physical / 8 logical cores at 2200 MHz, 51 GB RAM,
+Linux 6.6.122+, rfdetr v1.11.0, batch 1, 15 warmup + 50 timed runs, <code>RFDETRSmall</code>. Numbers vary
+by architecture (x86 vs ARM) and vendor — rerun the cells below to get yours. <code>Config</code> is the
+precision/backend used for that row; <code>—</code> marks a scope this format doesn't have (PyTorch's
+<code>predict()</code> has no forward-only path). <code>Memory [MB]</code> is host resident-memory growth across
+constructing the runtime plus its first inference call.</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Config</th>
+<th>forward [ms]</th>
+<th>end2end [ms]</th>
+<th>FPS [img/s] (end2end)</th>
+<th>Memory [MB]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PyTorch <code>predict()</code></td>
+<td>eager, fp32</td>
+<td>—</td>
+<td>345.76 ± 42.57</td>
+<td>2.9</td>
+<td>545.5</td>
+</tr>
+<tr>
+<td>PyTorch <code>inference()</code></td>
+<td>JIT, fp32</td>
+<td>—</td>
+<td>327.30 ± 52.05</td>
+<td>3.1</td>
+<td>213.5</td>
+</tr>
+<tr>
+<td>ONNX</td>
+<td>CPU EP</td>
+<td>360.30 ± 48.62</td>
+<td>368.33 ± 40.04</td>
+<td>2.7</td>
+<td>64.3</td>
+</tr>
+<tr>
+<td>OpenVINO</td>
+<td>fp32 IR, CPU</td>
+<td>316.89 ± 48.16</td>
+<td>311.92 ± 46.04</td>
+<td>3.2</td>
+<td>302.9</td>
+</tr>
+<tr>
+<td>OpenVINO</td>
+<td>fp16 IR (default), CPU</td>
+<td>344.38 ± 48.47</td>
+<td>354.55 ± 58.25</td>
+<td>2.8</td>
+<td>215.0</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>No format wins decisively on this CPU — read the ± column.</strong> Every row's standard deviation is
+12–17% of its own mean, and the spread between the nominally fastest row (OpenVINO fp32,
+311.92 ms) and the slowest (ONNX, 368.33 ms) is smaller than a single standard deviation. A
+shared Colab vCPU is a noisy timing environment; treat this table as "all four paths land in the
+same 300–370 ms band here" rather than as a ranking. The same noise is why OpenVINO fp32's
+<code>forward</code> (316.89) reads marginally above its own <code>end2end</code> (311.92), which is not physically
+possible — <code>forward</code> is a strict subset of <code>end2end</code>, and the 5 ms gap is ~1/10th of the ±48 ms
+noise. On dedicated hardware these rows separate much more cleanly.</p>
+</blockquote>
+<blockquote>
+<p><strong>fp16 IR does not speed up CPU inference.</strong> OpenVINO's default FP16 weight compression came out
+<em>slower</em> than explicit <code>float32</code> here (354.55 vs 311.92 ms end2end) while halving the IR on disk.
+fp16 is a size and memory-bandwidth optimization; a CPU without native fp16 kernels still
+computes in fp32 after upconverting. The <a href="../export-mobile/">mobile cookbook</a> measures the same
+effect for TFLite fp16 on an ARM CPU, where only dynamic-range INT8 actually changed the kernels.</p>
+</blockquote>
+<blockquote>
+<p><strong>OpenVINO parity gap.</strong> On the machine this notebook was drafted on, OpenVINO's exported
+logits ran markedly lower-magnitude than ONNX/PyTorch's on identical input (top logit ≈0.05
+vs ≈3.0), yielding fewer detections above the 0.5 threshold on the sample image — a numerical
+export/runtime parity gap, not a bug in this notebook's pre/postprocessing. Worth checking for
+on your own hardware; if it matters for your model, lower the threshold for the OpenVINO path
+or compare raw scores directly rather than post-threshold counts.</p>
+</blockquote>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=fbe08612">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_fmt_ms</span><span class="p">(</span><span class="n">result</span><span class="p">:</span> <span class="n">BenchmarkResult</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">result</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"—"</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ± </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">"</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_result_row</span><span class="p">(</span>
+    <span class="n">format_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">config</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">forward</span><span class="p">:</span> <span class="n">BenchmarkResult</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">end2end</span><span class="p">:</span> <span class="n">BenchmarkResult</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">memory_mb</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="n">fps</span> <span class="o">=</span> <span class="p">(</span><span class="n">end2end</span> <span class="ow">or</span> <span class="n">forward</span><span class="p">)</span><span class="o">.</span><span class="n">fps</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"Format"</span><span class="p">:</span> <span class="n">format_label</span><span class="p">,</span>
+        <span class="s2">"Config"</span><span class="p">:</span> <span class="n">config</span><span class="p">,</span>
+        <span class="s2">"forward [ms]"</span><span class="p">:</span> <span class="n">_fmt_ms</span><span class="p">(</span><span class="n">forward</span><span class="p">),</span>
+        <span class="s2">"end2end [ms]"</span><span class="p">:</span> <span class="n">_fmt_ms</span><span class="p">(</span><span class="n">end2end</span><span class="p">),</span>
+        <span class="s2">"FPS [img/s] (end2end)"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">fps</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="s2">"Memory [MB]"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">memory_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">"</span> <span class="k">if</span> <span class="n">memory_mb</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">"—"</span><span class="p">,</span>
+    <span class="p">}</span>
+
+
+<span class="n">summary</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+    <span class="p">[</span>
+        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"PyTorch predict()"</span><span class="p">,</span> <span class="s2">"eager, fp32"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">pytorch_eager</span><span class="p">,</span> <span class="n">pytorch_eager_memory_mb</span><span class="p">),</span>
+        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"PyTorch inference()"</span><span class="p">,</span> <span class="s2">"JIT, fp32"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">pytorch_jit</span><span class="p">,</span> <span class="n">pytorch_jit_memory_mb</span><span class="p">),</span>
+        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="s2">"CPU EP"</span><span class="p">,</span> <span class="n">onnx_forward</span><span class="p">,</span> <span class="n">onnx_end2end</span><span class="p">,</span> <span class="n">onnx_memory_mb</span><span class="p">),</span>
+        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"OpenVINO"</span><span class="p">,</span> <span class="s2">"fp32 IR, CPU"</span><span class="p">,</span> <span class="n">openvino_forward</span><span class="p">,</span> <span class="n">openvino_end2end</span><span class="p">,</span> <span class="n">openvino_memory_mb</span><span class="p">),</span>
+        <span class="n">_result_row</span><span class="p">(</span>
+            <span class="s2">"OpenVINO"</span><span class="p">,</span> <span class="s2">"fp16 IR (default), CPU"</span><span class="p">,</span> <span class="n">openvino_fp16_forward</span><span class="p">,</span> <span class="n">openvino_fp16_end2end</span><span class="p">,</span> <span class="n">openvino_fp16_memory_mb</span>
+        <span class="p">),</span>
+    <span class="p">]</span>
+<span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"Format"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">summary</span><span class="o">.</span><span class="n">to_string</span><span class="p">())</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs, batch 1, CPU."</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-12">import pandas as pd
+
+
+def _fmt_ms(result: BenchmarkResult | None) -&gt; str:
+    if result is None:
+        return "—"
+    return f"{result.mean_ms:.2f} ± {result.std_ms:.2f}"
+
+
+def _result_row(
+    format_label: str,
+    config: str,
+    forward: BenchmarkResult | None,
+    end2end: BenchmarkResult | None,
+    memory_mb: float | None,
+) -&gt; dict:
+    fps = (end2end or forward).fps
+    return {
+        "Format": format_label,
+        "Config": config,
+        "forward [ms]": _fmt_ms(forward),
+        "end2end [ms]": _fmt_ms(end2end),
+        "FPS [img/s] (end2end)": round(fps, 1),
+        "Memory [MB]": f"{memory_mb:.1f}" if memory_mb is not None else "—",
+    }
+
+
+summary = pd.DataFrame(
+    [
+        _result_row("PyTorch predict()", "eager, fp32", None, pytorch_eager, pytorch_eager_memory_mb),
+        _result_row("PyTorch inference()", "JIT, fp32", None, pytorch_jit, pytorch_jit_memory_mb),
+        _result_row("ONNX", "CPU EP", onnx_forward, onnx_end2end, onnx_memory_mb),
+        _result_row("OpenVINO", "fp32 IR, CPU", openvino_forward, openvino_end2end, openvino_memory_mb),
+        _result_row(
+            "OpenVINO", "fp16 IR (default), CPU", openvino_fp16_forward, openvino_fp16_end2end, openvino_fp16_memory_mb
+        ),
+    ]
+).set_index("Format")
+print(summary.to_string())
+print(f"\n{MEASURE_RUNS} timed + {WARMUP_RUNS} warmup runs, batch 1, CPU.")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=64652d0f">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="next-steps">Next steps<a class="anchor-link" href="#next-steps">¶</a></h2><ul>
-<li><strong>Deploy on-device</strong> — copy the <code>.tflite</code> file to your Android / edge app and run it with the
-TensorFlow Lite runtime for that platform.</li>
 <li><strong>Fine-tuned weights</strong> — pass <code>pretrain_weights="&lt;path/to/checkpoint.pth&gt;"</code> when constructing
 the model.</li>
-<li><strong>Other quantization modes</strong> — <code>quantization="fp16"</code> (or omit <code>quantization</code> for the FP32 /
-FP16 pair only) trades the INT8 size/latency win for tighter numeric parity with PyTorch.</li>
-<li><strong>Other runtimes</strong> — see the <a href="export-executorch/">ExecuTorch cookbook</a> (mobile/edge via
-<code>torch.export</code>) or the <a href="export-tensorrt/">TensorRT cookbook</a> (NVIDIA GPU).</li>
-<li>See the <a href="https://rfdetr.roboflow.com/exports/tflite/">Export documentation</a> for
-every TFLite option, including calibration-data arguments and known instabilities.</li>
+<li><strong>Intel GPU / NPU</strong> — pass <code>device="GPU"</code> or <code>device="NPU"</code> to <code>OpenVINOInference</code> on Intel
+hardware that has one; see the <a href="https://rfdetr.roboflow.com/exports/openvino/">OpenVINO export docs</a>.</li>
+<li><strong>Have a CUDA GPU, mobile target, or Apple Silicon?</strong> — see the
+<a href="../export-cuda/">CUDA cookbook</a>, the <a href="../export-mobile/">mobile/edge cookbook</a>, or the
+<a href="../export-apple/">Apple cookbook</a>.</li>
+<li>See the <a href="https://rfdetr.roboflow.com/learn/export/">Export documentation</a> for every format and
+option.</li>
 </ul>
 </div>
 </div>
@@ -4079,7 +4737,7 @@ every TFLite option, including calibration-data arguments and known instabilitie
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 23, 2026 19:52:14 UTC">2026-09-23 19:52:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 25, 2026 17:47:43 UTC">2026-09-25 17:47:43</span>
   </span>
 
     

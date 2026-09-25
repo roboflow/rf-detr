@@ -29,19 +29,19 @@
          <lastmod>2026-09-25</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-coreml/</loc>
+         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-apple/</loc>
          <lastmod>2026-09-25</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-executorch/</loc>
+         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-cpu/</loc>
          <lastmod>2026-09-25</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-tensorrt/</loc>
+         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-cuda/</loc>
          <lastmod>2026-09-25</lastmod>
     </url>
     <url>
-         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-tflite/</loc>
+         <loc>https://rfdetr.roboflow.com/develop/cookbooks/export-mobile/</loc>
          <lastmod>2026-09-25</lastmod>
     </url>
     <url>
@@ -54,10 +54,6 @@
     </url>
     <url>
          <loc>https://rfdetr.roboflow.com/develop/cookbooks/fine-tune_segmentation/</loc>
-         <lastmod>2026-09-25</lastmod>
-    </url>
-    <url>
-         <loc>https://rfdetr.roboflow.com/develop/cookbooks/inference-latency-benchmark/</loc>
          <lastmod>2026-09-25</lastmod>
     </url>
     <url>

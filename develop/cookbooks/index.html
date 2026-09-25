@@ -2709,40 +2709,40 @@ APIs described here may change or may never ship in a release, so use the <a hre
              data-description="Download the full public COCO2017 dataset and train RF-DETR Nano from scratch for 40 epochs end to end on a single CUDA GPU with torch.compile and automatic mixed precision (bf16 when supported, otherwise fp16), with optional FP8 via Transformer Engine."></div>
         </a>
       
-        <a href="export-coreml/">
+        <a href="export-cuda/">
           <div class="card repo-card"
-             data-name="Export to Native CoreML & Run Inference"
-             data-labels="EXPORT,INFERENCE,DEPLOY"
-             data-version="v1.9.0"
-             data-author="Borda"
-             data-description="Export RF-DETR directly to a native CoreML .mlpackage (no ONNX, no ExecuTorch) and run it with coremltools — the lowest-friction path for Xcode / Apple-platform deployment."></div>
-        </a>
-      
-        <a href="export-tensorrt/">
-          <div class="card repo-card"
-             data-name="Export to TensorRT & Run Inference"
-             data-labels="EXPORT,INFERENCE,DEPLOY"
-             data-version="v1.9.0"
-             data-author="Borda"
-             data-description="Export RF-DETR to a TensorRT FP16 engine and run inference on it directly — low-latency NVIDIA GPU deployment with supervision-annotated detections."></div>
-        </a>
-      
-        <a href="export-executorch/">
-          <div class="card repo-card"
-             data-name="Export to ExecuTorch & Run Inference"
-             data-labels="EXPORT,INFERENCE,DEPLOY"
-             data-version="v1.9.0"
-             data-author="Borda"
-             data-description="Export RF-DETR to a portable ExecuTorch .pte program (XNNPACK / CoreML / QNN backends) and run it on the CPU — on-device mobile and edge deployment with supervision-annotated detections."></div>
-        </a>
-      
-        <a href="export-tflite/">
-          <div class="card repo-card"
-             data-name="Export to TFLite (INT8) & Run Inference"
-             data-labels="EXPORT,TFLITE,DEPLOY"
+             data-name="RF-DETR on NVIDIA GPUs — Export, Inference & Latency"
+             data-labels="EXPORT,INFERENCE,DEPLOY,CUDA"
              data-version="v1.11.0"
              data-author="Borda"
-             data-description="Export RF-DETR to TensorFlow Lite with INT8 dynamic-range quantization and run it directly with tensorflow.lite.Interpreter — mobile and edge deployment, validated against a fp32 PyTorch baseline."></div>
+             data-description="Export RF-DETR to ONNX (CUDA execution provider) and TensorRT, run inference on both, and benchmark them against the PyTorch fp32/fp16+JIT baseline on an NVIDIA GPU."></div>
+        </a>
+      
+        <a href="export-cpu/">
+          <div class="card repo-card"
+             data-name="RF-DETR on CPU — Export, Inference & Latency"
+             data-labels="EXPORT,INFERENCE,DEPLOY,CPU"
+             data-version="v1.11.0"
+             data-author="Borda"
+             data-description="Export RF-DETR to ONNX (CPU execution provider) and OpenVINO IR, run inference on both, and benchmark them against the PyTorch baseline on a general-purpose CPU."></div>
+        </a>
+      
+        <a href="export-mobile/">
+          <div class="card repo-card"
+             data-name="RF-DETR on Mobile & Edge — Export, Inference & Latency"
+             data-labels="EXPORT,INFERENCE,DEPLOY,TFLITE,MOBILE"
+             data-version="v1.11.0"
+             data-author="Borda"
+             data-description="Export RF-DETR to TFLite (INT8), LiteRT, and ExecuTorch's XNNPACK backend, run inference on each, and benchmark them for on-device mobile and edge deployment."></div>
+        </a>
+      
+        <a href="export-apple/">
+          <div class="card repo-card"
+             data-name="RF-DETR on Apple Silicon — Export, Inference & Latency"
+             data-labels="EXPORT,INFERENCE,DEPLOY,APPLE"
+             data-version="v1.11.0"
+             data-author="Borda"
+             data-description="Export RF-DETR to native CoreML, Core AI, and ExecuTorch's CoreML backend, run inference on each, and benchmark them against the PyTorch (MPS) baseline on Apple Silicon."></div>
         </a>
       
         <a href="fine-tune_detection/">
@@ -2752,15 +2752,6 @@ APIs described here may change or may never ship in a release, so use the <a hre
              data-version="v1.8.2"
              data-author="Borda"
              data-description="Fine-tune RF-DETR object detection on any COCO detection dataset from Roboflow Universe — covers PPE safety, traffic, sports, infrastructure, and marine-wildlife use cases."></div>
-        </a>
-      
-        <a href="inference-latency-benchmark/">
-          <div class="card repo-card"
-             data-name="Inference Latency Benchmark"
-             data-labels="INFERENCE,ONNX,GPU"
-             data-version="v1.8.1"
-             data-author="Borda"
-             data-description="Benchmark detection, segmentation, and keypoint models across FP32, FP16+JIT, and ONNX Runtime — measures latency and FPS on GPU using CUDA events."></div>
         </a>
       
         <a href="fine-tune_segmentation/">

@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-24T09:41:35">
+  <meta property="article:modified_time" content="2026-09-25T17:47:43">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-24T09:41:35",
+    "dateModified": "2026-09-25T17:47:43",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1345,6 +1345,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#measured-performance-by-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Performance by Hardware
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#installation" class="md-nav__link">
@@ -2935,6 +2946,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#measured-performance-by-hardware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measured Performance by Hardware
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#installation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3182,6 +3204,64 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><a href="coreml/">Native CoreML</a> — <code>.mlpackage</code> export for Xcode / Apple platforms.</li>
 <li><a href="coreai/">Core AI</a> — <code>.aimodel</code> export for iOS / iPadOS / macOS 27+.</li>
 </ul>
+<h2 id="measured-performance-by-hardware">Measured Performance by Hardware<a class="headerlink" href="#measured-performance-by-hardware" title="Permanent link">&para;</a></h2>
+<p>Which format is fastest depends entirely on the hardware you deploy to. The four per-hardware cookbooks each export every format targeting one class of device, run inference on it, and benchmark it against a PyTorch baseline on the same machine. Below is the fastest end-to-end result per hardware class, plus the PyTorch anchor it was measured against; the cookbooks carry the full tables, including forward-only timings, memory, and the slower configurations.</p>
+<table>
+<thead>
+<tr>
+<th>Hardware</th>
+<th>Fastest format</th>
+<th>end2end [ms]</th>
+<th>FPS [img/s]</th>
+<th>PyTorch <code>predict()</code> anchor</th>
+<th>Cookbook</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NVIDIA L4</td>
+<td>TensorRT (auto precision)</td>
+<td>4.91 ± 0.14</td>
+<td>203.5</td>
+<td>19.88 ms / 50.3 FPS</td>
+<td><a href="../cookbooks/export-cuda/">CUDA</a></td>
+</tr>
+<tr>
+<td>Apple M-series (ANE/GPU)</td>
+<td>Core AI fp16</td>
+<td>11.45 ± 0.18</td>
+<td>87.3</td>
+<td>22.62 ms / 44.2 FPS</td>
+<td><a href="../cookbooks/export-apple/">Apple</a></td>
+</tr>
+<tr>
+<td>x86 CPU (4 cores)</td>
+<td>OpenVINO fp32 IR</td>
+<td>311.92 ± 46.04</td>
+<td>3.2</td>
+<td>345.76 ms / 2.9 FPS</td>
+<td><a href="../cookbooks/export-cpu/">CPU</a></td>
+</tr>
+<tr>
+<td>ARM CPU (edge proxy)</td>
+<td>ExecuTorch XNNPACK</td>
+<td>87.33 ± 1.13</td>
+<td>11.5</td>
+<td>—</td>
+<td><a href="../cookbooks/export-mobile/">Mobile</a></td>
+</tr>
+</tbody>
+</table>
+<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare <em>within</em> a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 12–17% of the mean — on that machine no CPU format separates from the others by more than one standard deviation.</p>
+<div class="admonition warning">
+<p class="admonition-title">fp16 pays off only where the silicon implements it</p>
+<p>Reduced precision is not a portable speedup, and the cookbooks measure this directly:</p>
+<ul>
+<li><strong>GPU — large win.</strong> On an L4, TensorRT's auto-selected precision is 1.62× faster than the same engine forced to fp32 (4.91 vs 7.96 ms), and PyTorch <code>inference(dtype=torch.float16)</code> nearly halves the eager fp32 baseline (11.30 vs 19.88 ms).</li>
+<li><strong>CPU — no win.</strong> OpenVINO's default FP16 IR came out <em>slower</em> than explicit <code>float32</code> (354.55 vs 311.92 ms) despite halving the file, and TFLite fp16 matched fp32 exactly (780.86 vs 780.74 ms). A CPU without native fp16 kernels upconverts and computes in fp32, so fp16 saves disk and bandwidth, not arithmetic. On CPU the lever is <strong>INT8</strong>: dynamic-range quantization was ~2.5× faster than fp32 TFLite (319.61 vs 780.74 ms), at the cost of one dropped detection on the sample image.</li>
+<li><strong>Apple — runtime-dependent.</strong> Core AI fp16 beat its fp32 default (11.45 vs 12.54 ms), while CoreML fp16 came out <em>slower</em> than its fp32 default (20.05 vs 11.62 ms) on the same chip. Both results reproduced across runs. Measure per runtime, not per platform.</li>
+</ul>
+</div>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <p>Install the export dependencies you need:</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:7"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><input id="__tabbed_1_5" name="__tabbed_1" type="radio" /><input id="__tabbed_1_6" name="__tabbed_1" type="radio" /><input id="__tabbed_1_7" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">ONNX</label><label for="__tabbed_1_2">OpenVINO</label><label for="__tabbed_1_3">TFLite</label><label for="__tabbed_1_4">LiteRT</label><label for="__tabbed_1_5">ExecuTorch</label><label for="__tabbed_1_6">Native CoreML (macOS)</label><label for="__tabbed_1_7">Apple Core AI</label></div>
@@ -3523,7 +3603,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 24, 2026 09:41:35 UTC">2026-09-24 09:41:35</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 25, 2026 17:47:43 UTC">2026-09-25 17:47:43</span>
   </span>
 
     
