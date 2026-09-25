@@ -52,7 +52,8 @@ jobs:
     # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnx, which previously
     # differed only in: os, python-version, an optional extra dependency-group
     # (ci-executorch-pin), an optional extra to bolt on (`,coreml`, for the one delegate combo
-    # row), and (onnx alone) whether to collect coverage. `format` drives both the pytest marker
+    # row), and (onnx alone) whether to collect coverage — now every row does, tagged by its own
+    # Codecov flag. `format` drives both the pytest marker
     # (`-m e2e_<format>`) and the pip extra (`.[<format><extra_plus>,...]`) — every row installs
     # and selects tests by that same name; MUST match a marker registered in pyproject.toml.
     # `extra_plus` is empty for every row except the executorch+coreml delegate one. Every row
@@ -77,32 +78,32 @@ jobs:
         # (or, for executorch, extra_group/extra_plus), so stays a fully-specified `include` row;
         # none of their `format` values overlap this list, so each becomes its own standalone
         # matrix combination rather than merging into one of these 6.
-        format: [openvino, litert, onnx]
+        format: ["openvino", "litert", "onnx"]
         python-version: ["3.10", "3.13"]
         include:
           # executorch: XNNPACK is plain-CPU, ubuntu-latest is sufficient. 3.10/3.13 bracket
           # executorch 1.3.1's manylinux_2_28 cp310-cp313 wheel range.
-          - { format: executorch, extra_group: ci-executorch-pin, os: ubuntu-latest, python-version: "3.10" }
-          - { format: executorch, extra_group: ci-executorch-pin, os: ubuntu-latest, python-version: "3.13" }
+          - { format: "executorch", extra_group: "ci-executorch-pin", os: "ubuntu-latest", python-version: "3.10" }
+          - { format: "executorch", extra_group: "ci-executorch-pin", os: "ubuntu-latest", python-version: "3.13" }
           # coreml: coremltools + the CoreML runtime are macOS-only. 3.10/3.13 bracket the
           # coremltools 9.0 wheel range.
-          - { format: coreml, os: macos-latest, python-version: "3.10" }
-          - { format: coreml, os: macos-latest, python-version: "3.13" }
+          - { format: "coreml", os: "macos-latest", python-version: "3.10" }
+          - { format: "coreml", os: "macos-latest", python-version: "3.13" }
           # coreai: needs the Core AI runtime of macOS 27 — xcode-27 is the only hosted image
           # with it (arm64, public preview); this gates merges through export-priority-guardian.
           # coreai-torch requires Python >= 3.11, so 3.11/3.13 bracket it (not 3.10).
-          - { format: coreai, os: xcode-27, python-version: "3.11" }
-          - { format: coreai, os: xcode-27, python-version: "3.13" }
+          - { format: "coreai", os: "xcode-27", python-version: "3.11" }
+          - { format: "coreai", os: "xcode-27", python-version: "3.13" }
           # executorch+coreml delegate: needs macOS (CoreML delegate lowers through coremltools),
           # single interpreter (3.13, executorch 1.3.1's wheel ceiling) — the plain executorch row
           # above already brackets the Python range for the runtime itself. Reuses the
           # `e2e_executorch` marker (no dedicated combo marker exists); `extra_plus: ",coreml"`
           # is the only field that differs from that row.
           - {
-              format: executorch,
+              format: "executorch",
               extra_plus: ",coreml",
-              extra_group: ci-executorch-pin,
-              os: macos-latest,
+              extra_group: "ci-executorch-pin",
+              os: "macos-latest",
               python-version: "3.13",
             }
     steps:
@@ -193,30 +194,21 @@ jobs:
 
       # Real export/convert + load/inference per format is heavy; single-worker. Target is
       # always tests/, selection is always by marker (never a format-specific file list or
-      # `.`) — see the job-level comment above for why. onnx alone also collects coverage, so
-      # it gets its own step rather than a conditionally-built pytest flag.
+      # `.`) — see the job-level comment above for why. Every row collects coverage; flags
+      # tag it by format/os/python so Codecov keeps each row's contribution distinct.
       - name: 🧪 Run ${{ matrix.format }} end-to-end parity tests
-        if: matrix.format != 'onnx'
         run: |
           uv run --no-sync pytest tests/ -m "e2e_${{ matrix.format }}" -n 1 \
-            --timeout=600 \
-            --durations=20
-
-      - name: 🧪 Run onnx end-to-end parity tests (with coverage)
-        if: matrix.format == 'onnx'
-        run: |
-          uv run --no-sync pytest tests/ -m "e2e_onnx" -n 1 \
             --cov=rfdetr --cov-report=xml \
             --timeout=600 \
             --durations=20
 
       - name: Upload coverage to Codecov
-        if: matrix.format == 'onnx'
         uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: "coverage.xml"
-          flags: integration,onnx,${{ runner.os }},py${{ matrix.python-version }}
+          flags: integration,${{ matrix.format }},${{ runner.os }},py${{ matrix.python-version }}
           env_vars: OS,PYTHON
           name: codecov-umbrella
           fail_ci_if_error: false
