@@ -843,26 +843,23 @@ class RFDETR:
                     checkpoint_config_keys.add(key)
         elif "best_total_source" in ckpt:
             # checkpoint_best_total.pth files written before strip_checkpoint kept model_config have lost it; the
-            # unstripped file they were copied from, named by best_total_source, still has it. Stay quiet when the
-            # caller already passes architecture fields (e.g. resolution=...).
-            architecture_fields = {
-                "resolution",
-                "positional_encoding_size",
-                "dec_layers",
-                "num_queries",
-                "group_detr",
-                "num_select",
-                "mask_downsample_ratio",
-            }
-            if not architecture_fields & set(kwargs):
+            # unstripped file they were copied from, named by best_total_source, still has it. These settings then
+            # fall back to class defaults without an error (a changed num_queries or group_detr fails loudly on the
+            # weight shapes instead), so keep warning until the caller has passed all of them.
+            silent_fields = ["resolution", "num_select", "dec_layers"]
+            segmentation_field = _mc_fields.get("segmentation_head")
+            if kwargs.get("segmentation_head", getattr(segmentation_field, "default", False)) is True:
+                silent_fields.append("mask_downsample_ratio")
+            missing = [name for name in silent_fields if name not in kwargs]
+            if missing:
                 logger.warning(
                     "Checkpoint %r has no model_config (checkpoint_best_total.pth files written by rfdetr 1.9.0 "
-                    "to 1.11.0 lost it when stripped), so architecture settings such as resolution fall back to %s "
-                    "defaults. Load checkpoint_best_%s.pth from the same output directory instead, or pass the "
-                    "training values (e.g. resolution=...) to from_checkpoint(); training_config.json in that "
-                    "directory lists them.",
+                    "to 1.11.0 lost it when stripped), so these settings fall back to %s defaults: %s. Load "
+                    "checkpoint_best_%s.pth from the same output directory instead, or pass the training values to "
+                    "from_checkpoint(); training_config.json in that directory lists them.",
                     str(path),
                     getattr(model_cls, "__name__", repr(model_cls)),
+                    ", ".join(missing),
                     ckpt["best_total_source"],
                 )
 

@@ -972,7 +972,24 @@ class TestFromCheckpointStrippedBestTotal:
                 {"best_total_source": "ema", "model_config": {"resolution": 224}}, {}, None, id="model-config-present"
             ),
             pytest.param({}, {}, None, id="no-best-total-source"),
-            pytest.param({"best_total_source": "ema"}, {"resolution": 224}, None, id="caller-passes-resolution"),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224},
+                "checkpoint_best_ema.pth",
+                id="caller-passes-only-resolution",
+            ),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224, "num_select": 50, "dec_layers": 3},
+                None,
+                id="caller-passes-every-silent-field",
+            ),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224, "num_select": 50, "dec_layers": 3, "segmentation_head": True},
+                "checkpoint_best_ema.pth",
+                id="segmentation-still-missing-mask-downsample-ratio",
+            ),
         ],
     )
     def test_missing_model_config_warning(
@@ -984,7 +1001,7 @@ class TestFromCheckpointStrippedBestTotal:
         kwargs: dict,
         expected_file: str | None,
     ) -> None:
-        """Only an old stripped best-total file, loaded without architecture kwargs, warns and names its source."""
+        """An old stripped best-total file warns and names its source until the caller passes every setting it lost."""
         ckpt = {"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano", **extra}
         monkeypatch.setattr(detr_logger, "propagate", True)
         with caplog.at_level(logging.WARNING, logger="rf-detr"):
@@ -997,6 +1014,22 @@ class TestFromCheckpointStrippedBestTotal:
             assert any(expected_file in message for message in warnings_about_config), (
                 f"expected a warning naming {expected_file}, got {warnings_about_config}"
             )
+
+    def test_missing_model_config_warning_names_the_settings_still_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Passing some settings keeps the warning, which lists only the settings still falling back to defaults."""
+        ckpt = {"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano", "best_total_source": "ema"}
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(
+                ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano", resolution=224
+            )
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert messages, "expected the missing model_config warning"
+        assert "defaults: num_select, dec_layers." in messages[0], f"missing settings not listed: {messages[0]}"
+        assert "resolution" not in messages[0], f"resolution was passed but is still listed: {messages[0]}"
 
     def test_training_host_device_is_not_restored(self, tmp_path: Path) -> None:
         """A checkpoint trained on a GPU host must not force ``device="cuda"`` on the loading host."""
