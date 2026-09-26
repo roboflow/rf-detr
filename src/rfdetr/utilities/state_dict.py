@@ -145,8 +145,9 @@ def strip_checkpoint(
 ) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
-    Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()`` can still resolve the model class from
-    the stripped file.  Also preserves ``rfdetr_version`` (when present) for provenance tracking.
+    Preserves ``model_name`` and ``model_config`` (when present) so that ``RFDETR.from_checkpoint()`` can still resolve
+    the model class and rebuild the trained architecture (e.g. ``resolution``, ``num_queries``, ``dec_layers``) from the
+    stripped file.  Also preserves ``rfdetr_version`` (when present) for provenance tracking.
 
     Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``, ``loops``, ``optimizer_states``, and
     ``lr_schedulers`` when present so the stripped checkpoint can still be used directly with
@@ -188,6 +189,10 @@ def strip_checkpoint(
     # Preserve model_name when present (#887).
     if "model_name" in state_dict:
         new_state_dict["model_name"] = state_dict["model_name"]
+    # Preserve model_config when present: without it from_checkpoint rebuilds the class-default
+    # architecture (e.g. resolution) around weights trained with a different one.
+    if "model_config" in state_dict:
+        new_state_dict["model_config"] = state_dict["model_config"]
     # Preserve rfdetr_version when present for provenance tracking.
     if "rfdetr_version" in state_dict:
         new_state_dict["rfdetr_version"] = state_dict["rfdetr_version"]
