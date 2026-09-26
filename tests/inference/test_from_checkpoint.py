@@ -1058,6 +1058,61 @@ class TestFromCheckpointStrippedBestTotal:
         assert "defaults: num_select, dec_layers." in messages[0], f"missing settings not listed: {messages[0]}"
         assert "resolution" not in messages[0], f"resolution was passed but is still listed: {messages[0]}"
 
+    def test_strip_checkpoint_without_model_config_key_still_warns_on_reload(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """strip_checkpoint on a file with no model_config key adds no phantom key, and the reload still warns.
+
+        Every other test in this module supplies a model_config key (present, present-but-empty, or absent only through
+        mocked construction); this exercises a real strip_checkpoint round trip on a file that never had the key at all,
+        which must not invent one, and must still round-trip into the best-total-source warn path.
+        """
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save({"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano"}, path)
+
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        stripped = torch.load(path, weights_only=False)
+        assert "model_config" not in stripped, "strip_checkpoint must not invent a model_config key"
+
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(stripped, path, "rfdetr.variants.RFDETRNano")
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert any("checkpoint_best_ema.pth" in message for message in messages), (
+            f"expected the best-total warning naming the ema sibling, got {messages}"
+        )
+
+    def test_missing_model_config_warning_empty_dict_restores_nothing_and_does_not_warn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An empty model_config dict is still a dict, so it takes the restore branch and skips the warning branch.
+
+        Documents current behavior at the boundary: ``model_config: {}`` passes ``isinstance(value, dict)``, so
+        ``from_checkpoint`` never falls through to the ``best_total_source`` warning check even though the empty
+        dict restores zero fields — the caller silently gets class defaults with no warning either way.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {},
+            "best_total_source": "ema",
+        }
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _, mock_cls = _call_from_checkpoint(
+                ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano"
+            )
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert not messages, f"unexpected warning despite the model_config key being present: {messages}"
+        call_kwargs = mock_cls.call_args.kwargs
+        assert not {"resolution", "num_select", "dec_layers"} & call_kwargs.keys(), (
+            f"an empty model_config unexpectedly restored fields: {call_kwargs}"
+        )
+
     def test_missing_model_config_warning_fires_for_rfdetr_version_without_best_total_source(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
