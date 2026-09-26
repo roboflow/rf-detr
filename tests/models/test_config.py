@@ -299,6 +299,24 @@ class TestTrainConfigT42PromotedFields:
         """clip_max_norm defaults to 0.1."""
         assert self._tc(tmp_path).clip_max_norm == pytest.approx(0.1)
 
+    def test_clip_max_norm_rejects_negative(self, tmp_path):
+        """A negative clip_max_norm fails at construction instead of silently disabling clipping.
+
+        Every consumer gates clipping behind ``> 0`` (``RFDETRModelModule._step_optimizer``, ``FusedAdamWEMA``), so a
+        negative value would train unclipped for the whole run with no error and no warning — the failure this boundary
+        constraint turns into a construction error.
+        """
+        with pytest.raises(ValidationError, match="clip_max_norm"):
+            self._tc(tmp_path, clip_max_norm=-0.1)
+
+    def test_clip_max_norm_accepts_zero(self, tmp_path):
+        """clip_max_norm=0.0 stays legal as the documented way to disable gradient clipping.
+
+        The constraint has to be ``ge``, not ``gt``: callers already pass 0.0 to opt out of clipping (e.g. the keypoint
+        DDP training test), so rejecting it would break a supported configuration.
+        """
+        assert self._tc(tmp_path, clip_max_norm=0.0).clip_max_norm == pytest.approx(0.0)
+
     def test_seed_default_is_none(self, tmp_path):
         """Seed defaults to None (no seeding)."""
         assert self._tc(tmp_path).seed is None
