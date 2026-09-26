@@ -912,6 +912,7 @@ class TestConvertLegacyCheckpoint:
 
         class _FakeModule:
             model_config = SimpleNamespace(positional_encoding_size=36)
+            train_config = SimpleNamespace(optimizer="torch.optim.AdamW")
 
         fake = _FakeModule()
         original_state_dict = dict(ckpt["state_dict"])  # copy before mutation
@@ -952,6 +953,7 @@ class _FakeModule:
     """Minimal object supporting attribute assignment for on_load_checkpoint tests."""
 
     model_config = SimpleNamespace(positional_encoding_size=36)
+    train_config = SimpleNamespace(optimizer="torch.optim.AdamW")
 
 
 class TestOnLoadCheckpoint:

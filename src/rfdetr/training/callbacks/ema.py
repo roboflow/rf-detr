@@ -65,6 +65,7 @@ class RFDETREMACallback(Callback):
         self._swapped_state_dict: dict[str, Any] | None = None
         self._pending_average_state_dict: dict[str, Any] | None = None
         self._xla_optimizer_hook: RemovableHandle | None = None
+        self._fused_optimizer: Any | None = None
 
     # Retained as the per-tensor fallback for non-floating-point groups (see
     # _multi_avg_fn) — no longer the registered AveragedModel avg_fn.
@@ -289,6 +290,7 @@ class RFDETREMACallback(Callback):
         self._average_model.eval()
 
         self._restore_pending_average_state(pl_module)
+        self._attach_fused_optimizer(trainer)
 
     def on_train_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Apply resumed EMA state that arrived after ``on_fit_start()``.
@@ -308,8 +310,16 @@ class RFDETREMACallback(Callback):
         if trainer.global_step < self._latest_update_step:
             self._latest_update_step = trainer.global_step
         self._restore_pending_average_state(pl_module)
+        self._attach_fused_optimizer(trainer)
         if pl_module.device.type == "xla":
             self._register_xla_optimizer_hook(trainer, pl_module)
+
+    def _attach_fused_optimizer(self, trainer: Trainer) -> None:
+        """Give the combined optimizer the callback-owned EMA model, including after resume restoration."""
+        optimizer: Any = trainer.optimizers[0] if trainer.optimizers else None
+        if getattr(optimizer, "_fuses_ema", False) is True and self._average_model is not None:
+            optimizer.attach_ema_model(self._average_model)
+            self._fused_optimizer = optimizer
 
     def _register_xla_optimizer_hook(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Queue EMA inside the optimizer step, before Lightning's XLA step marker.
@@ -404,7 +414,16 @@ class RFDETREMACallback(Callback):
         """Update EMA after optimizer steps on eager accelerators."""
         if pl_module.device.type == "xla":
             return
+        optimizer: Any = trainer.optimizers[0] if trainer.optimizers else None
+        is_fused = self._fused_optimizer is not None and optimizer is self._fused_optimizer
+        if is_fused and optimizer.fused_ema_applied:
+            optimizer.fused_ema_applied = False
+            self._latest_update_step = max(self._latest_update_step, trainer.global_step)
+            return
+        previous_update_step = self._latest_update_step
         self._update_ema_for_step(pl_module, trainer.global_step)
+        if is_fused and self._latest_update_step != previous_update_step and self._average_model is not None:
+            optimizer.ema_update_step = int(self._average_model.n_averaged.item())
 
     def on_test_epoch_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Evaluate tests using averaged EMA weights unless the swap is suppressed."""

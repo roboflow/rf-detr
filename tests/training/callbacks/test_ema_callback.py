@@ -237,6 +237,85 @@ class TestInit:
 
         assert averaged_model.call_args.kwargs["device"] is None
 
+    def test_fit_start_attaches_average_model_to_combined_optimizer(self) -> None:
+        """The combined optimizer receives the precision-matched EMA copy created by the callback."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        optimizer = MagicMock()
+        optimizer._fuses_ema = True
+        optimizer.attach_ema_model = MagicMock()
+        trainer = MagicMock(optimizers=[optimizer])
+
+        cb.on_fit_start(trainer, pl_module)
+
+        optimizer.attach_ema_model.assert_called_once_with(cb._average_model)
+
+    @pytest.mark.parametrize(
+        ("fused_applied", "global_step", "restored_updates"),
+        [
+            pytest.param(True, 1, 0, id="fresh-run-kernel-averaged"),
+            pytest.param(True, 1001, 0, id="resume-without-ema-state-kernel-averaged"),
+            pytest.param(False, 1, 0, id="fresh-run-fallback"),
+            pytest.param(False, 1, 500, id="lightweight-resume-fallback"),
+        ],
+    )
+    def test_batch_end_averages_only_steps_the_combined_optimizer_did_not(
+        self, fused_applied: bool, global_step: int, restored_updates: int
+    ) -> None:
+        """The callback averages a step itself only when the kernels did not, whatever the two step counters say.
+
+        Resuming restores ``n_averaged`` independently of ``trainer.global_step`` (a lightweight checkpoint restarts the
+        latter at zero, a checkpoint without EMA state restores only the latter), so neither counter may decide whether
+        the kernels already averaged the step.
+        """
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        cb._average_model = AveragedModel(pl_module, use_buffers=True, multi_avg_fn=cb._multi_avg_fn)
+        kernel_updates = restored_updates + 1 if fused_applied else restored_updates  # state after optimizer.step()
+        cb._average_model.n_averaged.fill_(kernel_updates)
+        optimizer = MagicMock(ema_update_step=kernel_updates, fused_ema_applied=fused_applied)
+        optimizer._fuses_ema = True
+        trainer = MagicMock(global_step=global_step, optimizers=[optimizer])
+        cb._fused_optimizer = optimizer
+        expected_updates = kernel_updates if fused_applied else kernel_updates + 1
+
+        cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=0)
+
+        assert int(cb._average_model.n_averaged) == expected_updates
+        assert optimizer.ema_update_step == expected_updates
+        assert optimizer.fused_ema_applied is False
+        assert cb._latest_update_step == global_step
+
+    def test_batch_end_without_optimizer_step_leaves_ema_and_counter_alone(self) -> None:
+        """A micro-batch under gradient accumulation has no optimizer step to average or to resynchronize."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        cb._average_model = AveragedModel(pl_module, use_buffers=True, multi_avg_fn=cb._multi_avg_fn)
+        cb._average_model.n_averaged.fill_(4)
+        cb._latest_update_step = 4
+        optimizer = MagicMock(ema_update_step=4, fused_ema_applied=False)
+        optimizer._fuses_ema = True
+        trainer = MagicMock(global_step=4, optimizers=[optimizer])
+        cb._fused_optimizer = optimizer
+
+        cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=1)
+
+        assert int(cb._average_model.n_averaged) == 4
+        assert optimizer.ema_update_step == 4
+        assert cb._latest_update_step == 4
+
+    def test_batch_end_without_optimizers_updates_ema_normally(self) -> None:
+        """No optimizer means no combined optimizer to consult; the ordinary per-step update still runs."""
+        cb = RFDETREMACallback()
+        pl_module = _EMAContainerModule()
+        cb._average_model = AveragedModel(pl_module, use_buffers=True, multi_avg_fn=cb._multi_avg_fn)
+        trainer = MagicMock(global_step=1, optimizers=[])
+
+        cb.on_train_batch_end(trainer, pl_module, outputs=None, batch=None, batch_idx=0)
+
+        assert int(cb._average_model.n_averaged) == 1
+        assert cb._latest_update_step == 1
+
     def test_xla_average_uses_host_counter_without_reading_lazy_argument(self) -> None:
         """Decay lookup must not materialize AveragedModel's per-group XLA counter copy."""
         cb = RFDETREMACallback()

@@ -526,7 +526,9 @@ class ModelConfig(BaseConfig):
             final batch or a different ``TrainConfig.eval_batch_size``, recompiles once) and the default
             IA-BCE detection losses run layer-batched in one compiled function. Target packing and
             assignment stay eager, and every other configuration, including segmentation and keypoint
-            models, keeps its dynamic model compile and eager per-layer losses. Defaults to ``False``.
+            models, keeps its dynamic model compile and eager per-layer losses. Detection training on one BF16
+            CUDA device with ``TrainConfig.use_ema=True`` also runs gradient clipping, AdamW and the EMA update
+            as one Triton pass; the advanced training guide lists the exact conditions. Defaults to ``False``.
         cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
             graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
             sizes it matches eager and ``compile`` is the better lever. Combined with
