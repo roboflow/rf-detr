@@ -299,6 +299,24 @@ class TestTrainConfigT42PromotedFields:
         """clip_max_norm defaults to 0.1."""
         assert self._tc(tmp_path).clip_max_norm == pytest.approx(0.1)
 
+    def test_clip_max_norm_rejects_negative(self, tmp_path):
+        """A negative clip_max_norm fails at construction instead of silently disabling clipping.
+
+        Every consumer gates clipping behind ``> 0`` (``RFDETRModelModule._clip_manual_optimization_gradients``,
+        ``FusedAdamWEMA``), so a negative value would train unclipped for the whole run with no error and no warning —
+        the failure this boundary constraint turns into a construction error.
+        """
+        with pytest.raises(ValidationError, match="clip_max_norm"):
+            self._tc(tmp_path, clip_max_norm=-0.1)
+
+    def test_clip_max_norm_accepts_zero(self, tmp_path):
+        """clip_max_norm=0.0 stays legal as the documented way to disable gradient clipping.
+
+        The constraint has to be ``ge``, not ``gt``: callers already pass 0.0 to opt out of clipping (e.g. the keypoint
+        DDP training test), so rejecting it would break a supported configuration.
+        """
+        assert self._tc(tmp_path, clip_max_norm=0.0).clip_max_norm == pytest.approx(0.0)
+
     def test_seed_default_is_none(self, tmp_path):
         """Seed defaults to None (no seeding)."""
         assert self._tc(tmp_path).seed is None
@@ -954,7 +972,7 @@ class TestBuildTrainerUsesRealFields:
 
     def test_clip_max_norm_owned_by_model_module_for_keypoints(self, tmp_path):
         """Keypoint models use manual optimization; trainer-owned clipping is disabled and ``clip_max_norm`` is applied
-        inside ``RFDETRModelModule._step_optimizer`` instead."""
+        inside ``RFDETRModelModule.on_before_optimizer_step`` instead."""
         from rfdetr.training import build_trainer
 
         trainer = build_trainer(
