@@ -26,7 +26,7 @@ from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.utilities.state_dict import strip_checkpoint
-from rfdetr.variants import RFDETRNano, RFDETRSmall
+from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSmall
 
 
 class _CustomObj:
@@ -987,6 +987,43 @@ class TestFromCheckpointStrippedBestTotal:
         loaded = RFDETR.from_checkpoint(path)
 
         assert loaded.model_config.device != "cuda", "the training host's device must not be restored"
+
+    def test_stripped_checkpoint_restores_keypoint_model_resolution(self, tmp_path: Path) -> None:
+        """A real (unmocked) keypoint model trained at a non-default resolution reloads and predicts at it.
+
+        The existing mocked coverage (``test_checkpoint_model_config_forwarded_to_constructor``) only proves the
+        restored fields are forwarded as kwargs to a ``MagicMock`` constructor, never that a real keypoint model
+        (a non-default schema, unlike plain detection) actually builds and runs from them — the exact gap the
+        CHANGELOG's own keypoint-model repro describes.
+        """
+        torch.manual_seed(0)
+        model = RFDETRKeypointPreview(
+            pretrain_weights=None,
+            device="cpu",
+            resolution=96,
+            num_queries=4,
+            num_classes=2,
+            num_keypoints_per_class=[3, 3],
+        )
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b"]},
+                "model_name": "RFDETRKeypointPreview",
+                "model_config": model.model_config.model_dump(),
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path, device="cpu")
+
+        assert loaded.model_config.resolution == 96, "resolution must survive strip_checkpoint for keypoint models"
+        image = torch.rand(3, 120, 160, generator=torch.Generator().manual_seed(0))
+        result = loaded.predict(image, threshold=0.0)
+        assert hasattr(result, "xy"), "restored keypoint model must actually predict at the restored resolution"
 
     @pytest.mark.parametrize(
         ("extra", "kwargs", "expected_file"),
