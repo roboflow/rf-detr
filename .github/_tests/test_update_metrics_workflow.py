@@ -367,8 +367,11 @@ class TestUpdateMetricsWorkflow:
         assert "git diff --quiet -- docs/assets/weekly-metrics.svg" in run
         assert "git add -- docs/assets/weekly-metrics.svg" in run
         assert 'git commit -m "docs: update weekly project metrics"' in run
-        assert 'git ls-remote --exit-code --heads origin "$METRICS_BRANCH"' in run
-        assert 'git push --force-with-lease origin HEAD:"$METRICS_BRANCH"' in run
+        assert 'git ls-remote --exit-code --heads origin "$METRICS_BRANCH" | awk \'{print $1}\'' in run
+        assert (
+            'git push --force-with-lease="refs/heads/$METRICS_BRANCH:$remote_branch_sha" '
+            'origin HEAD:"$METRICS_BRANCH"' in run
+        )
         assert 'git push origin HEAD:"$METRICS_BRANCH"' in run
 
 
@@ -544,4 +547,7 @@ class TestCommitAndPushStep:
 
         assert result.returncode == 0, result.stderr
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
-        assert "push --force-with-lease origin HEAD:automation/update-weekly-metrics" in logged
+        assert (
+            "push --force-with-lease=refs/heads/automation/update-weekly-metrics:deadbeef "
+            "origin HEAD:automation/update-weekly-metrics" in logged
+        )
