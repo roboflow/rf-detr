@@ -853,13 +853,14 @@ class RFDETR:
                 if not _mc_fields or key in _mc_fields:
                     constructor_kwargs[key] = value
                     checkpoint_config_keys.add(key)
-        elif "rfdetr_version" in ckpt:
+        elif "rfdetr_version" in ckpt or "best_total_source" in ckpt:
             # checkpoint_best_total.pth files written before strip_checkpoint kept model_config have lost it; the
             # unstripped file they were copied from, named by best_total_source, still has it. These settings then
             # fall back to class defaults without an error (a changed num_queries or group_detr fails loudly on the
             # weight shapes instead), so keep warning until the caller has passed all of them.
-            # rfdetr_version is the discriminator because it is written and strip-preserved for every checkpoint the
-            # PTL stack produces, while best_total_source only exists in files written by 1.9.0 and later.
+            # Both keys discriminate, because neither is present on its own in every affected file: rfdetr_version
+            # reaches back to 1.7.0 but is omitted when get_version() cannot resolve a version (editable install
+            # without package metadata), while best_total_source covers those but only exists since 1.9.0.
             silent_fields = ["resolution", "num_select", "dec_layers"]
             segmentation_field = _mc_fields.get("segmentation_head")
             if kwargs.get("segmentation_head", getattr(segmentation_field, "default", False)) is True:
@@ -882,20 +883,21 @@ class RFDETR:
                     )
                 elif sibling is not None:
                     remedy = (
-                        "Pass resolution= explicitly and read training_config.json from the original training run "
-                        "for the other values."
+                        f"{sibling.name} is not beside it, so pass the values above to from_checkpoint() "
+                        "explicitly; training_config.json from the original training run lists them."
                     )
                 else:
                     remedy = (
                         f"Its best_total_source is {best_total_source!r}, so check for an unstripped "
-                        "checkpoint_best_*.pth beside it, or pass resolution= explicitly and read "
-                        "training_config.json from the original training run for the other values."
+                        "checkpoint_best_*.pth beside it, or pass the values above to from_checkpoint() "
+                        "explicitly; training_config.json from the original training run lists them."
                     )
+                written_by = f" (written by rfdetr {ckpt['rfdetr_version']})" if "rfdetr_version" in ckpt else ""
                 logger.warning(
-                    "Checkpoint %r (written by rfdetr %s) has no model_config, which checkpoint_best_total.pth "
-                    "files lost when stripped, so these settings fall back to %s defaults: %s. %s",
+                    "Checkpoint %r%s has no model_config, which checkpoint_best_total.pth files lost when "
+                    "stripped, so these settings fall back to %s defaults: %s. %s",
                     str(path),
-                    ckpt["rfdetr_version"],
+                    written_by,
                     getattr(model_cls, "__name__", repr(model_cls)),
                     ", ".join(missing),
                     remedy,
