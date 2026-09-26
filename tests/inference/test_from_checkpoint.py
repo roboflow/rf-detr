@@ -5,8 +5,11 @@
 # ------------------------------------------------------------------------
 """Tests for RFDETR.from_checkpoint classmethod.
 
-The inference logic is isolated by patching ``torch.load`` and the target model class inside ``rfdetr.variants`` (or
-``rfdetr.platform.models`` for plus models).  No model weights are downloaded or GPU memory allocated.
+Most tests isolate the inference logic by patching ``torch.load`` and the target model class inside ``rfdetr.variants``
+(or ``rfdetr.platform.models`` for plus models). The round-trip cases in ``TestFromCheckpointStrippedBestTotal`` instead
+build a real, small CPU model (Nano or keypoint preview) and run it through a real ``strip_checkpoint`` +
+``from_checkpoint`` cycle, to prove a working model actually comes out the other end. Either way, no model weights are
+downloaded and no GPU memory is allocated.
 """
 
 from __future__ import annotations
