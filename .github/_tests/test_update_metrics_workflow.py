@@ -126,26 +126,32 @@ def _restore_env(workspace: Path, branch_exists: bool, git_show_fails: bool = Fa
     return env
 
 
-def _commit_env(workspace: Path, branch_exists: bool, svg_changed: bool) -> dict[str, str]:
+def _commit_env(
+    workspace: Path,
+    branch_exists: bool,
+    svg_changed: bool,
+    ls_remote_status: int | None = None,
+) -> dict[str, str]:
     """Build the environment a commit-step run sees, including the stub controls.
 
     Args:
         workspace: Directory the step runs in; the stub command log is written beside the step script.
         branch_exists: Whether the `git` stub reports the automation branch as existing on the remote.
         svg_changed: Whether the `git diff --quiet` guard reports a tracked SVG change.
+        ls_remote_status: Explicit `git ls-remote` exit status to simulate when needed.
 
     Returns:
         Environment overlay handed to `_run_step`.
 
     Examples:
         >>> env = _commit_env(Path("workspace"), branch_exists=False, svg_changed=False)
-        >>> (env["STUB_REMOTE_BRANCH_EXISTS"], env["STUB_DIFF_CLEAN"])
-        ('0', '1')
+        >>> (env["STUB_LS_REMOTE_STATUS"], env["STUB_DIFF_CLEAN"])
+        ('2', '1')
     """
     env = {
         "METRICS_BRANCH": "automation/update-weekly-metrics",
         "STUB_LOG": str(workspace / STUB_LOG_NAME),
-        "STUB_REMOTE_BRANCH_EXISTS": "1" if branch_exists else "0",
+        "STUB_LS_REMOTE_STATUS": str(ls_remote_status if ls_remote_status is not None else (0 if branch_exists else 2)),
     }
     if not svg_changed:
         env["STUB_DIFF_CLEAN"] = "1"
@@ -227,11 +233,11 @@ def commit_sandbox(tmp_path: Path) -> tuple[Path, Path]:
         "    fi\n"
         "    ;;\n"
         "  ls-remote)\n"
-        '    if [ "${STUB_REMOTE_BRANCH_EXISTS:-1}" = "1" ]; then\n'
+        '    if [ "${STUB_LS_REMOTE_STATUS:-0}" = "0" ]; then\n'
         '      printf "%s\\t%s\\n" "deadbeef" "refs/heads/$5"\n'
         "      exit 0\n"
         "    fi\n"
-        "    exit 2\n"
+        '    exit "${STUB_LS_REMOTE_STATUS:-2}"\n'
         "    ;;\n"
         "esac",
     )
@@ -368,11 +374,15 @@ class TestUpdateMetricsWorkflow:
         assert "git add -- docs/assets/weekly-metrics.svg" in run
         assert 'git commit -m "docs: update weekly project metrics"' in run
         assert 'git ls-remote --exit-code --heads origin "$METRICS_BRANCH" | awk \'{print $1}\'' in run
+        assert "ls_remote_status=$?" in run
+        assert 'if [ "$ls_remote_status" -eq 0 ]; then' in run
+        assert 'elif [ "$ls_remote_status" -eq 2 ]; then' in run
         assert (
             'git push --force-with-lease="refs/heads/$METRICS_BRANCH:$remote_branch_sha" '
             'origin HEAD:"$METRICS_BRANCH"' in run
         )
         assert 'git push origin HEAD:"$METRICS_BRANCH"' in run
+        assert 'echo "::error::git ls-remote failed for $METRICS_BRANCH"' in run
 
 
 @requires_bash
@@ -551,3 +561,23 @@ class TestCommitAndPushStep:
             "push --force-with-lease=refs/heads/automation/update-weekly-metrics:deadbeef "
             "origin HEAD:automation/update-weekly-metrics" in logged
         )
+
+    def test_remote_lookup_failure_stops_before_any_push(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        commit_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A transient remote lookup failure must fail the step instead of masquerading as branch creation."""
+        workspace, stubs = commit_sandbox
+
+        result = _run_step(
+            metrics_steps["📤 Commit and push metrics update"]["run"],
+            workspace,
+            stubs,
+            _commit_env(workspace, branch_exists=False, svg_changed=True, ls_remote_status=128),
+        )
+
+        assert result.returncode == 128
+        assert "::error::git ls-remote failed for automation/update-weekly-metrics" in result.stdout
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert "push " not in logged
