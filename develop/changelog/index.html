@@ -2733,6 +2733,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><code>RFDETR.from_checkpoint("checkpoint_best_total.pth")</code> now rebuilds the model the way it was trained. <code>strip_checkpoint</code> dropped <code>model_config</code>, so the reload fell back to class defaults with no warning: a Nano trained at <code>resolution=224</code> came back at 384 with boxes up to 193 px off, and a keypoint model trained at 552 came back at 576. <code>num_select</code> was lost the same way and <code>dec_layers</code> only logged a generic partial-load warning. The Roboflow SDK upload goes through the same call. <code>from_checkpoint</code> no longer takes <code>device</code> from the checkpoint either, so GPU-trained checkpoints load and predict on a CPU-only machine (<code>checkpoint_best_ema.pth</code> and <code>checkpoint_best_regular.pth</code> failed there before). Best-total files written by 1.11.0 and earlier can't be repaired in place; <code>from_checkpoint</code> warns about them and points at the unstripped checkpoint next to them and at <code>training_config.json</code>. (<a href="https://github.com/roboflow/rf-detr/issues/1533">#1533</a>)</p>
 </li>
 <li>
+<p>Keypoint models trained in fp16 now clip the real gradient. The manual-optimization path clipped before Lightning unscaled the gradients, so the optimizer got <code>clip_max_norm / 65536</code> (1.5e-6 instead of 0.1 with the defaults) and training quietly stalled. Clipping now happens in <code>on_before_optimizer_step</code>, after the unscale. This affects keypoint runs in <code>16-mixed</code>: Apple Silicon with the default AMP settings, CUDA with <code>amp_dtype="fp16"</code>, and T4/V100 once <code>amp_dtype="auto"</code> picks fp16 there (<a href="https://github.com/roboflow/rf-detr/issues/1535">#1535</a>). Detection and segmentation were never affected. (<a href="https://github.com/roboflow/rf-detr/issues/1536">#1536</a>)</p>
+<ul>
+<li>Multi-device XLA keypoint training now clips the reduced gradients; this path does not depend on GradScaler unscaling.</li>
+<li>Callbacks now see unclipped gradients in the keypoint <code>on_before_optimizer_step</code> path, matching Lightning's automatic-optimization hook order.</li>
+</ul>
+</li>
+<li>
 <p>Validation and test mAP now ignore detections on COCO crowd regions (<code>iscrowd=1</code>) the way pycocotools does. The crowd annotations were dropped before the metric saw them, so a detection inside a crowd counted as a false positive.</p>
 <ul>
 <li>Pretrained RF-DETR Nano on COCO val2017 scored 0.4802 mAP through <code>evaluate()</code> and now scores 0.4842, the same as pycocotools on the same predictions.</li>

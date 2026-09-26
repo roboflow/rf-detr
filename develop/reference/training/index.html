@@ -2871,56 +2871,6 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;clip_gradients
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" clip_gradients">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;optimizer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_val
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_algorithm
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4455,56 +4405,6 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;clip_gradients
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" clip_gradients">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;optimizer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_val
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_algorithm
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
@@ -6254,91 +6154,6 @@ other names can be loaded from <code>pytorch-optimizer</code>.</p>
               <div class="doc-md-description">
                 <p>PTL optimizer config dict with optimizer and step-interval scheduler.</p>
               </div>
-            </td>
-          </tr>
-      </tbody>
-    </table>
-
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
-<h3 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">clip_gradients</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">gradient_clip_val</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gradient_clip_algorithm</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
-
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Override PTL gradient clipping to support fused AdamW.</p>
-<p>PTL's AMP precision plugin refuses to clip gradients when the optimizer declares it handles unscaling internally
-(fused=True).  When fused is active we are on BF16 (no GradScaler) so <code>clip_grad_norm_</code> is correct.  For the
-non-fused path (FP16 + GradScaler or FP32) we delegate to <code>super()</code> to preserve scaler-aware unscaling.</p>
-
-
-<p><span class="doc-section-title">Parameters:</span></p>
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Type</th>
-          <th>Description</th>
-          <th>Default</th>
-        </tr>
-      </thead>
-      <tbody>
-          <tr class="doc-section-item">
-            <td>
-<h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="doc doc-heading doc-heading-parameter">                  <code>optimizer</code>
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
-            <td>
-                  <code><span title="torch.optim.Optimizer">Optimizer</span> | <span title="pytorch_lightning.core.optimizer.LightningOptimizer">LightningOptimizer</span></code>
-            </td>
-            <td>
-              <div class="doc-md-description">
-                <p>The current optimizer.</p>
-              </div>
-            </td>
-            <td>
-                <em>required</em>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td>
-<h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_val</code>
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
-            <td>
-                  <code><span title="float">float</span> | None</code>
-            </td>
-            <td>
-              <div class="doc-md-description">
-                <p>Maximum gradient norm.</p>
-              </div>
-            </td>
-            <td>
-                  <code>None</code>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td>
-<h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_algorithm</code>
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
-            <td>
-                  <code><span title="str">str</span> | None</code>
-            </td>
-            <td>
-              <div class="doc-md-description">
-                <p>Clipping algorithm; forwarded to super()
-for the non-fused path.</p>
-              </div>
-            </td>
-            <td>
-                  <code>None</code>
             </td>
           </tr>
       </tbody>
