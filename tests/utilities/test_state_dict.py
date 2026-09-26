@@ -192,15 +192,22 @@ class TestValidateCheckpointCompatibility:
             pytest.param(16, 16, False, id="matching_16_no_raise"),
         ],
     )
+    @pytest.mark.parametrize(
+        "proj_key",
+        [
+            "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight",
+            "backbone.0.encoder.base_model.model.encoder.embeddings.patch_embeddings.projection.weight",
+        ],
+    )
     def test_patch_size_inferred_from_projection_weight(
-        self, ckpt_patch_size: int, model_patch_size: int, should_raise: bool
+        self, ckpt_patch_size: int, model_patch_size: int, should_raise: bool, proj_key: str
     ) -> None:
         """Projection weight shape used to infer ckpt patch_size when 'args' key absent.
 
         Regression test for #965 — pretrained COCO weights lack 'args', so the shape-based fallback must fire before
-        load_state_dict raises a cryptic RuntimeError.
+        load_state_dict raises a cryptic RuntimeError. The second key is where a ``backbone_lora=True`` run saves the
+        same weight (#1540); its checkpoint args are a ``TrainConfig`` dump without ``patch_size``.
         """
-        proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
         proj_weight = torch.zeros(384, 3, ckpt_patch_size, ckpt_patch_size)
         checkpoint = {"model": {proj_key: proj_weight}}  # no "args" key
         model_args = SimpleNamespace(patch_size=model_patch_size)

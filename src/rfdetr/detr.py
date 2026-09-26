@@ -547,6 +547,10 @@ class RFDETR:
                 weights.
             **kwargs: ModelConfig field values (e.g. ``resolution``, ``num_classes``,
                 ``pretrain_weights``, ``gradient_checkpointing``).
+
+        Raises:
+            ImportError: If ``backbone_lora=True`` is set, or ``pretrain_weights`` was saved by a
+                ``backbone_lora=True`` run, and ``peft`` is not installed (``pip install "rfdetr[lora]"``).
         """
         self.model_config = self.get_model_config(**kwargs)
         self.maybe_download_pretrain_weights()
@@ -666,6 +670,8 @@ class RFDETR:
             KeyError: If the checkpoint does not contain an ``"args"`` key.
             ValueError: If the model class cannot be inferred from ``model_name``,
                 ``pretrain_weights``, or the checkpoint filename.
+            ImportError: If the checkpoint was saved by a ``backbone_lora=True`` run and ``peft``
+                is not installed (``pip install "rfdetr[lora]"``).
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
