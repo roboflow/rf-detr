@@ -134,9 +134,11 @@ def gen_encoder_output_proposals(
             valid_height = torch.zeros_like(memory[:, 0, 0], dtype=torch.long) + height
             valid_width = torch.zeros_like(memory[:, 0, 0], dtype=torch.long) + width
 
+        # arange(n) equals linspace(0, n - 1, n) bit for bit, but linspace's integer step count
+        # specialises symbolic sizes under torch.compile(dynamic=True) and recompiles per resolution.
         grid_y, grid_x = torch.meshgrid(
-            torch.linspace(0, height - 1, height, dtype=torch.float32, device=memory.device),
-            torch.linspace(0, width - 1, width, dtype=torch.float32, device=memory.device),
+            torch.arange(height, dtype=torch.float32, device=memory.device),
+            torch.arange(width, dtype=torch.float32, device=memory.device),
             indexing="ij",
         )
         grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)  # height, width, 2
@@ -667,12 +669,15 @@ class Transformer(nn.Module):
         # torch.export (ExecuTorch) cannot trace torch._shape_as_tensor — it raises "the tensor has
         # a non-zero number of elements, but its data is not allocated yet". Under that trace build
         # spatial_shapes directly from the concrete Python-int (H, W) pairs instead; ExecuTorch uses
-        # static shapes, so the baked constant is exact. torch.compile needs the same branch for a
-        # different reason: Dynamo polyfills torch._shape_as_tensor to return a torch.Size, so
-        # torch.stack raises "expected Tensor as element 0 in argument 0, but got torch.Size" and
-        # the compile aborts (suppress_errors=True does not catch it — the TypeError comes from
-        # user code, not from Dynamo). Neither guard is true in eager or under torch.jit.trace, so
-        # the eager and TorchScript-ONNX/TensorRT (#1155) paths keep the _shape_as_tensor form.
+        # static shapes, so the baked constant is exact. torch.compile cannot use _shape_as_tensor
+        # either: Dynamo polyfills it to return a torch.Size, so torch.stack raises "expected Tensor
+        # as element 0 in argument 0, but got torch.Size" and the compile aborts. It cannot use
+        # torch.as_tensor (or, on older torch, torch.tensor) of the (H, W) pairs: under dynamic=True
+        # that specialises every size to its traced value, so each new input resolution recompiles
+        # the whole transformer frame and multi-scale training exhausts Dynamo's recompile limit.
+        # Stacking one 0-d tensor per size keeps the sizes symbolic. Neither guard is true in eager
+        # or under torch.jit.trace, so the eager and TorchScript-ONNX/TensorRT (#1155) paths keep the
+        # _shape_as_tensor form.
         # ``torch.compiler.is_compiling`` is public from torch 2.3 onward. The compatibility
         # helper uses the legacy Dynamo predicate for supported torch 2.2 environments, while
         # ``is_exporting`` remains absent below torch 2.7.
@@ -682,8 +687,15 @@ class Transformer(nn.Module):
             if spatial_shapes is None:
                 spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
                 self._cuda_graph_spatial_shapes[spatial_key] = spatial_shapes
-        elif getattr(torch.compiler, "is_exporting", _tracer_absent)() or is_compiling():
+        elif getattr(torch.compiler, "is_exporting", _tracer_absent)():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
+        elif is_compiling():
+            spatial_shapes = torch.stack(
+                [
+                    torch.stack([torch.scalar_tensor(size, dtype=torch.long, device=srcs[0].device) for size in hw])
+                    for hw in spatial_shapes_hw
+                ]
+            )
         else:
             spatial_shapes = torch.stack([torch._shape_as_tensor(src)[2:4] for src in srcs]).to(
                 device=srcs[0].device, dtype=torch.long
