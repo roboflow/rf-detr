@@ -1065,4 +1065,33 @@ class TestFromCheckpointStrippedBestTotal:
         _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
 
         assert "device" not in mock_cls.call_args.kwargs, "the training host's device must not be forwarded"
+
+    def test_training_host_optimization_flags_are_restored(self, tmp_path: Path) -> None:
+        """Unlike device, compile/cuda_graphs/gradient_checkpointing/freeze_encoder ARE restored from model_config.
+
+        The host-policy skip list in ``from_checkpoint`` only excludes ``pretrain_weights`` and ``device``; every other
+        ``model_config`` field, including these training-time performance flags, is forwarded to the constructor like
+        any other schema field.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {
+                "device": "cuda",
+                "resolution": 224,
+                "compile": True,
+                "cuda_graphs": True,
+                "gradient_checkpointing": True,
+                "freeze_encoder": True,
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["compile"] is True
+        assert call_kwargs["cuda_graphs"] is True
+        assert call_kwargs["gradient_checkpointing"] is True
+        assert call_kwargs["freeze_encoder"] is True
+        assert "device" not in call_kwargs, "device stays host policy, unlike the other flags"
         assert mock_cls.call_args.kwargs["resolution"] == 224, "other model_config fields must still be restored"
