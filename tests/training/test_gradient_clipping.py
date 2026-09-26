@@ -290,10 +290,12 @@ class _OverflowCriterion(_KeypointCriterion):
     reason="torch.amp.GradScaler(device, ...) needs torch>=2.3",
 )
 def test_overflowing_gradient_is_safely_skipped_by_scaler(tmp_path: Path) -> None:
-    """An overflowing (non-finite) loss makes the ``GradScaler`` skip the optimizer step, not clip garbage.
+    """An overflowing (non-finite) loss may make the ``GradScaler`` skip the parameter update.
+
+    This may happen after unscale and clipping.
 
     Every other case in this suite uses a clean finite gradient, so none of them exercise the scaler's own overflow-
-    detection path. A forced-inf loss must make ``GradScaler`` skip ``optimizer.step()`` entirely (the post-hook that
+    detection path. A forced-inf loss must make ``GradScaler`` skip the optimizer's parameter update (the post-hook that
     records a consumed gradient must never fire), back off its scale, and leave the model's parameters finite.
     """
     mc = RFDETRBaseConfig(
@@ -406,3 +408,80 @@ def test_zero_clip_max_norm_disables_clipping_on_manual_path(tmp_path: Path) -> 
     assert capture.grads == [pytest.approx(1.0, rel=1e-4)], (
         f"optimizer consumed {capture.grads}; expected the unclipped true gradient 1.0 with clip_max_norm=0"
     )
+
+
+@pytest.mark.xla
+def test_xla_reduces_gradients_before_manual_clipping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The XLA precision closure must reduce a local gradient before RF-DETR clips it.
+
+    CPU PJRT provides the ``torch_xla`` runtime used by the XLA CI lane but cannot launch Lightning's TPU trainer,
+    so this drives the real ``XLAPrecision.optimizer_step`` closure composition directly. The mocked collective is the
+    external boundary: it scales a local gradient of ``1.0`` to ``0.25``. Correct ordering clips that reduced gradient
+    to ``0.1``; clipping first and then reducing would leave ``0.025``. This proves the Lightning-plugin-to-RF-DETR
+    hook ordering, not the PJRT collective's numerical implementation.
+    """
+    pytest.importorskip("torch_xla")
+    import torch_xla.core.xla_model as xm
+    from pytorch_lightning.plugins.precision import XLAPrecision
+
+    mc = RFDETRBaseConfig(
+        pretrain_weights=None,
+        device="cpu",
+        num_classes=3,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+    )
+    tc = TrainConfig(
+        dataset_dir=str(tmp_path / "ds"),
+        output_dir=str(tmp_path / "out"),
+        epochs=1,
+        batch_size=2,
+        num_workers=0,
+        clip_max_norm=_CLIP_MAX_NORM,
+        tensorboard=False,
+        use_ema=False,
+    )
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_KeypointCriterion(), MagicMock(side_effect=_fake_postprocess)),
+        ),
+        patch("rfdetr.training.module_model.get_param_dict", side_effect=lambda args, model: _make_param_dicts(model)),
+    ):
+        module = RFDETRModelModule(mc, tc)
+
+    precision = XLAPrecision()
+    trainer = MagicMock(
+        callbacks=[],
+        gradient_clip_val=None,
+        gradient_clip_algorithm=None,
+        precision_plugin=precision,
+    )
+    trainer.lightning_module = module
+    module._trainer = trainer
+    module.log = MagicMock()
+    optimizer = torch.optim.SGD(module.parameters(), lr=0.01)
+    reduce_gradients = MagicMock(
+        side_effect=lambda received_optimizer: torch._foreach_mul_(
+            [
+                parameter.grad
+                for group in received_optimizer.param_groups
+                for parameter in group["params"]
+                if parameter.grad is not None
+            ],
+            0.25,
+        )
+    )
+    monkeypatch.setattr(xm, "reduce_gradients", reduce_gradients)
+    monkeypatch.setattr(xm, "mark_step", MagicMock())
+
+    precision.optimizer_step(
+        optimizer,
+        module,
+        closure=lambda: setattr(module.model.dummy, "grad", torch.ones_like(module.model.dummy)),
+    )
+
+    reduce_gradients.assert_called_once_with(optimizer)
+    torch.testing.assert_close(module.model.dummy.grad, torch.full_like(module.model.dummy, _CLIP_MAX_NORM))
