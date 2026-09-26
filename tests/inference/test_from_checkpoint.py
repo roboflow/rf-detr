@@ -955,11 +955,38 @@ class TestFromCheckpointStrippedBestTotal:
         loaded = RFDETR.from_checkpoint(path, device="cpu")
 
         assert loaded.model_config.resolution == 224, "resolution must survive strip_checkpoint"
-        assert loaded.model_config.device == "cpu", "an explicit device= must win over the checkpoint"
         image = torch.rand(3, 160, 200, generator=torch.Generator().manual_seed(0))
         expected = model.predict(image, threshold=0.0)
         actual = loaded.predict(image, threshold=0.0)
         np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-4, err_msg="boxes differ after reload")
+
+    def test_stripped_checkpoint_does_not_forward_training_host_device(self, tmp_path: Path) -> None:
+        """The training host's device is never restored, even through a real strip_checkpoint round trip.
+
+        A ``device="cpu"`` build with a plain ``device="cpu"`` reload cannot fail whether or not the skip clause in
+        ``from_checkpoint`` fires, since the checkpoint value and the explicit kwarg already agree. This test instead
+        simulates a checkpoint written on a GPU training host (``model_config["device"] = "cuda"``) and reloads with
+        no ``device=`` override, so only the host-policy skip clause — not kwarg precedence — can make it pass.
+        """
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=3, resolution=224)
+        model_config_dict = model.model_config.model_dump()
+        model_config_dict["device"] = "cuda"  # simulate a checkpoint written on a GPU training host
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b", "c"]},
+                "model_name": "RFDETRNano",
+                "model_config": model_config_dict,
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path)
+
+        assert loaded.model_config.device != "cuda", "the training host's device must not be restored"
 
     @pytest.mark.parametrize(
         ("extra", "kwargs", "expected_file"),
