@@ -40,6 +40,10 @@ from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_para
 _CLIP_MAX_NORM = 0.1
 _INIT_SCALE = 2.0**16
 
+#: ``torch.amp.GradScaler`` is the device-agnostic API added in torch 2.3; on torch 2.2 (the project's own floor)
+#: ``torch.amp`` has no ``GradScaler`` attribute at all, so constructing one unconditionally raises ``AttributeError``.
+_HAS_DEVICE_AGNOSTIC_GRAD_SCALER = hasattr(torch.amp, "GradScaler")
+
 
 class _KeypointCriterion(_FakeCriterion):
     """``_FakeCriterion`` that accepts the ``num_boxes`` override the manual-optimization path requires."""
@@ -63,9 +67,18 @@ class _CaptureConsumedGradient(Callback):
         """Register the step post-hook once the optimizers exist.
 
         Examples:
-            Requires a Trainer whose optimizers were built by ``Trainer.fit()``.
-            >>> callable(_CaptureConsumedGradient.on_train_start)  # doctest: +SKIP
-            True
+            A minimal stand-in trainer/module (no real ``Trainer.fit()`` needed) proves the hook fires and
+            records the gradient exactly once per optimizer step.
+            >>> from unittest.mock import MagicMock
+            >>> optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+            >>> stub_trainer = MagicMock(optimizers=[optimizer])
+            >>> stub_module = MagicMock()
+            >>> stub_module.model.dummy.grad.item.return_value = 1.0
+            >>> callback = _CaptureConsumedGradient()
+            >>> callback.on_train_start(stub_trainer, stub_module)
+            >>> _ = optimizer.step()
+            >>> callback.grads
+            [1.0]
         """
 
         def _record(optimizer: torch.optim.Optimizer, args: Any, kwargs: Any) -> None:
@@ -87,25 +100,28 @@ class TestClipBeforeOptimizerStep:
         ],
     )
     @pytest.mark.parametrize(
-        "fp16_grad_scaler",
+        "precision_mode",
         [
-            pytest.param(False, id="fp32"),
-            pytest.param(True, id="fp16-mixed-gradscaler"),
+            "fp32",
+            pytest.param(
+                "fp16-mixed-gradscaler",
+                marks=pytest.mark.skipif(
+                    not _HAS_DEVICE_AGNOSTIC_GRAD_SCALER,
+                    reason="torch.amp.GradScaler(device, ...) needs torch>=2.3",
+                ),
+            ),
+            "bf16-mixed",
         ],
     )
-    @pytest.mark.parametrize(
-        "grad_accum_steps",
-        [
-            pytest.param(1, id="no-accumulation"),
-            pytest.param(2, id="accumulate-2"),
-        ],
-    )
+    @pytest.mark.parametrize("grad_accum_steps", [1, 2])
     def test_optimizer_consumes_clipped_true_gradient(
-        self, tmp_path: Path, keypoints: bool, fp16_grad_scaler: bool, grad_accum_steps: int
+        self, tmp_path: Path, keypoints: bool, precision_mode: str, grad_accum_steps: int
     ) -> None:
         """One optimizer step per accumulation window must see ``dummy.grad == clip_max_norm``.
 
         With the clip applied to scaled gradients the fp16 keypoint case sees ``clip_max_norm / 2**16`` instead.
+        ``bf16-mixed`` takes the ``scaler=None`` branch Lightning's ``MixedPrecision`` uses for BF16, structurally
+        distinct from the FP16 GradScaler-present inline path.
         """
         keypoint_kwargs: dict[str, Any] = (
             {"use_grouppose_keypoints": True, "num_keypoints_per_class": [17]} if keypoints else {}
@@ -126,9 +142,11 @@ class TestClipBeforeOptimizerStep:
         trainer_kwargs: dict[str, Any] = (
             {} if keypoints else {"accumulate_grad_batches": grad_accum_steps, "gradient_clip_val": tc.clip_max_norm}
         )
-        if fp16_grad_scaler:
+        if precision_mode == "fp16-mixed-gradscaler":
             scaler = torch.amp.GradScaler("cpu", init_scale=_INIT_SCALE)
             trainer_kwargs["plugins"] = [MixedPrecision("16-mixed", "cpu", scaler=scaler)]
+        elif precision_mode == "bf16-mixed":
+            trainer_kwargs["plugins"] = [MixedPrecision("bf16-mixed", "cpu")]
         criterion = _KeypointCriterion() if keypoints else _FakeCriterion()
         capture = _CaptureConsumedGradient()
 
@@ -161,10 +179,218 @@ class TestClipBeforeOptimizerStep:
             f"optimizer consumed {capture.grads}; expected one step on the true gradient 1.0 clipped to "
             f"{_CLIP_MAX_NORM}"
         )
-        if fp16_grad_scaler:
+        if precision_mode == "fp16-mixed-gradscaler":
             # Guard against the scaler silently disabling itself, which would turn the fp16 cases into fp32 ones.
             assert scaler.is_enabled(), "GradScaler was disabled, so the fp16 case no longer exercises scaling"
             assert scaler.get_scale() == _INIT_SCALE, (
                 f"GradScaler scale changed to {scaler.get_scale()}; expected it to stay at {_INIT_SCALE} after one "
                 "finite step"
             )
+
+
+class _CaptureRawGradient(Callback):
+    """Record ``_TinyModel.dummy.grad`` from ``on_before_optimizer_step``, before RF-DETR's own hook clips it.
+
+    Lightning calls every registered callback's ``on_before_optimizer_step`` before the ``LightningModule``'s own hook
+    of the same name, so a callback here sees the true, unclipped gradient — the opposite end of the gradient's
+    lifecycle from :class:`_CaptureConsumedGradient`'s post-clip, post-step view.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded gradients."""
+        self.grads: list[float] = []
+
+    def on_before_optimizer_step(
+        self, trainer: Trainer, pl_module: RFDETRModelModule, optimizer: torch.optim.Optimizer
+    ) -> None:
+        """Store the gradient as callbacks see it, ahead of the module's own clip."""
+        self.grads.append(pl_module.model.dummy.grad.item())
+
+
+def test_callback_sees_unclipped_gradient_before_manual_clip(tmp_path: Path) -> None:
+    """A callback's ``on_before_optimizer_step`` observes the true gradient, not the value clipping produces.
+
+    Lightning fires every callback's ``on_before_optimizer_step`` before the ``LightningModule``'s own hook of the same
+    name, so on the manual-optimization (keypoint) path a callback must see ``dummy.grad == 1.0`` (the true gradient)
+    even though the optimizer itself ultimately consumes the clipped ``clip_max_norm``.
+    """
+    mc = RFDETRBaseConfig(
+        pretrain_weights=None,
+        device="cpu",
+        num_classes=3,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+    )
+    tc = TrainConfig(
+        dataset_dir=str(tmp_path / "ds"),
+        output_dir=str(tmp_path / "out"),
+        epochs=1,
+        batch_size=2,
+        num_workers=0,
+        clip_max_norm=_CLIP_MAX_NORM,
+        tensorboard=False,
+        use_ema=False,
+    )
+    raw_capture = _CaptureRawGradient()
+    consumed_capture = _CaptureConsumedGradient()
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_KeypointCriterion(), MagicMock(side_effect=_fake_postprocess)),
+        ),
+        patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
+        patch(
+            "rfdetr.training.module_model.get_param_dict",
+            side_effect=lambda args, model: _make_param_dicts(model),
+        ),
+    ):
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = Trainer(
+            fast_dev_run=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            callbacks=[raw_capture, consumed_capture],
+        )
+        trainer.fit(module, datamodule)
+
+    assert raw_capture.grads == [pytest.approx(1.0, rel=1e-4)], (
+        f"callback observed {raw_capture.grads}; expected the true unclipped gradient 1.0"
+    )
+    assert consumed_capture.grads == [pytest.approx(_CLIP_MAX_NORM, rel=1e-4)], (
+        f"optimizer consumed {consumed_capture.grads}; expected the clipped gradient {_CLIP_MAX_NORM}"
+    )
+
+
+class _OverflowCriterion(_KeypointCriterion):
+    """Criterion producing a non-finite loss, to exercise the ``GradScaler``'s skip-step path."""
+
+    def __call__(
+        self, outputs: dict[str, Any], targets: list[dict[str, Any]], num_boxes: torch.Tensor | None = None
+    ) -> dict[str, torch.Tensor]:
+        """Return the base keypoint loss scaled to ``inf``."""
+        return {key: value * float("inf") for key, value in super().__call__(outputs, targets, num_boxes).items()}
+
+
+def test_overflowing_gradient_is_safely_skipped_by_scaler(tmp_path: Path) -> None:
+    """An overflowing (non-finite) loss makes the ``GradScaler`` skip the optimizer step, not clip garbage.
+
+    Every other case in this suite uses a clean finite gradient, so none of them exercise the scaler's own overflow-
+    detection path. A forced-inf loss must make ``GradScaler`` skip ``optimizer.step()`` entirely (the post-hook that
+    records a consumed gradient must never fire), back off its scale, and leave the model's parameters finite — the clip
+    must never be asked to act on an inf/nan gradient.
+    """
+    mc = RFDETRBaseConfig(
+        pretrain_weights=None,
+        device="cpu",
+        num_classes=3,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+    )
+    tc = TrainConfig(
+        dataset_dir=str(tmp_path / "ds"),
+        output_dir=str(tmp_path / "out"),
+        epochs=1,
+        batch_size=2,
+        num_workers=0,
+        clip_max_norm=_CLIP_MAX_NORM,
+        tensorboard=False,
+        use_ema=False,
+    )
+    scaler = torch.amp.GradScaler("cpu", init_scale=_INIT_SCALE)
+    capture = _CaptureConsumedGradient()
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_OverflowCriterion(), MagicMock(side_effect=_fake_postprocess)),
+        ),
+        patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
+        patch(
+            "rfdetr.training.module_model.get_param_dict",
+            side_effect=lambda args, model: _make_param_dicts(model),
+        ),
+    ):
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = Trainer(
+            fast_dev_run=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            callbacks=[capture],
+            plugins=[MixedPrecision("16-mixed", "cpu", scaler=scaler)],
+        )
+        trainer.fit(module, datamodule)
+
+    assert capture.grads == [], (
+        f"optimizer consumed {capture.grads}; expected the overflowing step to be skipped entirely, never reaching "
+        "the post-clip optimizer.step() hook"
+    )
+    assert scaler.get_scale() < _INIT_SCALE, (
+        f"GradScaler scale stayed at {scaler.get_scale()}; expected it to back off after a non-finite gradient"
+    )
+    assert all(torch.isfinite(param).all() for param in module.model.parameters()), (
+        "model parameters must stay finite after a skipped (non-finite) optimizer step"
+    )
+
+
+def test_zero_clip_max_norm_disables_clipping_on_manual_path(tmp_path: Path) -> None:
+    """``clip_max_norm=0`` on the manual-optimization (keypoint) path leaves the gradient unclipped.
+
+    ``module_model.py``'s manual-clip helper only calls ``clip_grad_norm_`` when the resolved clip value is strictly
+    positive, so the true gradient (``1.0``) must reach the optimizer unchanged when the configured value is exactly
+    ``0`` — the disabling case the suite's other cases (``clip_max_norm=0.1``) never cover.
+    """
+    mc = RFDETRBaseConfig(
+        pretrain_weights=None,
+        device="cpu",
+        num_classes=3,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=[17],
+    )
+    tc = TrainConfig(
+        dataset_dir=str(tmp_path / "ds"),
+        output_dir=str(tmp_path / "out"),
+        epochs=1,
+        batch_size=2,
+        num_workers=0,
+        clip_max_norm=0,
+        tensorboard=False,
+        use_ema=False,
+    )
+    capture = _CaptureConsumedGradient()
+
+    with (
+        patch("rfdetr.training.module_model.build_model_from_config", return_value=_TinyModel()),
+        patch(
+            "rfdetr.training.module_model.build_criterion_from_config",
+            return_value=(_KeypointCriterion(), MagicMock(side_effect=_fake_postprocess)),
+        ),
+        patch("rfdetr.training.module_data.build_dataset", return_value=_FakeDataset(length=20)),
+        patch(
+            "rfdetr.training.module_model.get_param_dict",
+            side_effect=lambda args, model: _make_param_dicts(model),
+        ),
+    ):
+        module = RFDETRModelModule(mc, tc)
+        datamodule = RFDETRDataModule(mc, tc)
+        trainer = Trainer(
+            fast_dev_run=1,
+            accelerator="cpu",
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            logger=False,
+            callbacks=[capture],
+        )
+        trainer.fit(module, datamodule)
+
+    assert capture.grads == [pytest.approx(1.0, rel=1e-4)], (
+        f"optimizer consumed {capture.grads}; expected the unclipped true gradient 1.0 with clip_max_norm=0"
+    )
