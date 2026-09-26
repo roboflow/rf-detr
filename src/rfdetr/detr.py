@@ -651,6 +651,18 @@ class RFDETR:
                 dataset's class count.  Pass an explicit ``num_classes=N`` to pin
                 the head and prevent adaptation.
 
+                The checkpoint's other ``model_config`` fields (``resolution``,
+                ``num_select``, ``dec_layers`` and the rest of the trained
+                architecture) are restored the same way: an explicit caller kwarg
+                always wins over the saved value.  ``device`` is the one exception
+                — it is never restored, so the loading host's own default applies
+                unless ``device=`` is passed, letting a GPU-trained checkpoint load
+                on a CPU-only machine.  When the checkpoint carries no
+                ``model_config`` at all (best-total files written before it was
+                strip-preserved), the lost fields fall back to class defaults and a
+                warning names them, together with the unstripped sibling checkpoint
+                or ``training_config.json`` to recover them from.
+
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
 
