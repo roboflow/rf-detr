@@ -72,4 +72,8 @@ jobs:
           fi
           git add -- docs/assets/weekly-metrics.svg
           git commit -m "docs: update weekly project metrics"
-          git push --force-with-lease origin HEAD:"$METRICS_BRANCH"
+          if git ls-remote --exit-code --heads origin "$METRICS_BRANCH" > /dev/null 2>&1; then
+            git push --force-with-lease origin HEAD:"$METRICS_BRANCH"
+          else
+            git push origin HEAD:"$METRICS_BRANCH"
+          fi
