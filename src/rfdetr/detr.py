@@ -654,10 +654,11 @@ class RFDETR:
                 The checkpoint's other ``model_config`` fields (``resolution``,
                 ``num_select``, ``dec_layers`` and the rest of the trained
                 architecture) are restored the same way: an explicit caller kwarg
-                always wins over the saved value.  ``device`` is the one exception
-                — it is never restored, so the loading host's own default applies
-                unless ``device=`` is passed, letting a GPU-trained checkpoint load
-                on a CPU-only machine.  When the checkpoint carries no
+                always wins over the saved value.  ``device`` and
+                ``pretrain_weights`` are the two exceptions — *path* itself supplies
+                the weights, and ``device`` is never restored, so the loading host's
+                own default applies unless ``device=`` is passed, letting a
+                GPU-trained checkpoint load on a CPU-only machine.  When the checkpoint carries no
                 ``model_config`` at all (best-total files written before it was
                 strip-preserved), the lost fields fall back to class defaults and a
                 warning names them, together with the unstripped sibling checkpoint
