@@ -1031,6 +1031,29 @@ class TestFromCheckpointStrippedBestTotal:
         assert "defaults: num_select, dec_layers." in messages[0], f"missing settings not listed: {messages[0]}"
         assert "resolution" not in messages[0], f"resolution was passed but is still listed: {messages[0]}"
 
+    def test_missing_model_config_warning_fires_for_rfdetr_version_without_best_total_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A resolvable rfdetr_version with no best_total_source still warns, citing the version.
+
+        This is the 1.7.0-1.8.x shape the union discriminator (``"rfdetr_version" in ckpt or "best_total_source" in
+        ckpt``) exists to catch: model_config persistence started in 1.7.0 but best_total_source was only added in
+        1.9.0, so a checkpoint from that window has no best_total_source to key off yet still lost model_config.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "rfdetr_version": "1.7.0",
+        }
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert messages, "expected the missing model_config warning to fire from rfdetr_version alone"
+        assert "written by rfdetr 1.7.0" in messages[0], f"warning should cite the rfdetr_version: {messages[0]}"
+
     def test_training_host_device_is_not_restored(self, tmp_path: Path) -> None:
         """A checkpoint trained on a GPU host must not force ``device="cuda"`` on the loading host."""
         ckpt = {
