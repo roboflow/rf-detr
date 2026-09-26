@@ -302,9 +302,9 @@ class TestTrainConfigT42PromotedFields:
     def test_clip_max_norm_rejects_negative(self, tmp_path):
         """A negative clip_max_norm fails at construction instead of silently disabling clipping.
 
-        Every consumer gates clipping behind ``> 0`` (``RFDETRModelModule._step_optimizer``, ``FusedAdamWEMA``), so a
-        negative value would train unclipped for the whole run with no error and no warning — the failure this boundary
-        constraint turns into a construction error.
+        Every consumer gates clipping behind ``> 0`` (``RFDETRModelModule._clip_manual_optimization_gradients``,
+        ``FusedAdamWEMA``), so a negative value would train unclipped for the whole run with no error and no warning —
+        the failure this boundary constraint turns into a construction error.
         """
         with pytest.raises(ValidationError, match="clip_max_norm"):
             self._tc(tmp_path, clip_max_norm=-0.1)

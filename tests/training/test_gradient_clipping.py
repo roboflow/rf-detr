@@ -203,7 +203,16 @@ class _CaptureRawGradient(Callback):
     def on_before_optimizer_step(
         self, trainer: Trainer, pl_module: RFDETRModelModule, optimizer: torch.optim.Optimizer
     ) -> None:
-        """Store the gradient as callbacks see it, ahead of the module's own clip."""
+        """Store the gradient as callbacks see it, ahead of the module's own clip.
+
+        Examples:
+            >>> callback = _CaptureRawGradient()
+            >>> module = MagicMock()
+            >>> module.model.dummy.grad.item.return_value = 1.0
+            >>> callback.on_before_optimizer_step(MagicMock(), module, MagicMock())
+            >>> callback.grads
+            [1.0]
+        """
         self.grads.append(pl_module.model.dummy.grad.item())
 
 
@@ -276,13 +285,16 @@ class _OverflowCriterion(_KeypointCriterion):
         return {key: value * float("inf") for key, value in super().__call__(outputs, targets, num_boxes).items()}
 
 
+@pytest.mark.skipif(
+    not _HAS_DEVICE_AGNOSTIC_GRAD_SCALER,
+    reason="torch.amp.GradScaler(device, ...) needs torch>=2.3",
+)
 def test_overflowing_gradient_is_safely_skipped_by_scaler(tmp_path: Path) -> None:
     """An overflowing (non-finite) loss makes the ``GradScaler`` skip the optimizer step, not clip garbage.
 
-    Every other case in this suite uses a clean finite gradient, so none of them exercise the scaler's own overflow-
-    detection path. A forced-inf loss must make ``GradScaler`` skip ``optimizer.step()`` entirely (the post-hook that
-    records a consumed gradient must never fire), back off its scale, and leave the model's parameters finite — the clip
-    must never be asked to act on an inf/nan gradient.
+        Every other case in this suite uses a clean finite gradient, so none of them exercise the scaler's own overflow-
+        detection path. A forced-inf loss must make ``GradScaler`` skip ``optimizer.step()`` entirely (the post-hook that
+        records a consumed gradient must never fire), back off its scale, and leave the model's parameters finite.
     """
     mc = RFDETRBaseConfig(
         pretrain_weights=None,
