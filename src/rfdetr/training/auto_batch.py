@@ -25,12 +25,13 @@ Probe assumptions (worst-case so training does not OOM):
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
 import torch
 
-from rfdetr.config import ModelConfig, MultiScale, TrainConfig, _cuda_supports_native_bf16, _resolve_amp_dtype
+from rfdetr.config import ModelConfig, MultiScale, TrainConfig, _cuda_native_bf16_on_devices, _resolve_amp_dtype
 from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
 from rfdetr.training.module_model import _is_builtin_fused_adamw
@@ -547,6 +548,7 @@ def resolve_auto_batch_config(
     train_config: TrainConfig,
     safety_margin: float = 0.9,
     max_micro_batch: int = 128,
+    devices: int | str | Sequence[int] | None = None,
 ) -> AutoBatchResult:
     """Resolve batch_size='auto' into concrete batch_size and grad_accum_steps using a probe.
 
@@ -570,6 +572,9 @@ def resolve_auto_batch_config(
         train_config: Training config (auto_batch_target_effective, amp_dtype); batch_size should be "auto".
         safety_margin: Fraction of max batch to use (passed to probe_max_micro_batch).
         max_micro_batch: Upper bound on batch size to try (passed to probe_max_micro_batch).
+        devices: The Lightning ``devices`` value the run trains on, as passed to ``build_trainer``; ``None`` uses
+            ``train_config.devices``. With amp_dtype='auto' the probe runs in bf16 only when every one of those GPUs
+            has native bf16, which is how the trainer picks its precision.
 
     Returns:
         AutoBatchResult with safe_micro_batch, recommended_grad_accum_steps, effective_batch_size, and device_name.
@@ -641,8 +646,11 @@ def resolve_auto_batch_config(
             # Explicit bf16 is honoured even when the GPU only emulates it (see trainer.py's _resolve_precision)
             probe_autocast_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         else:
-            # "auto" uses bf16 only on GPUs with native bf16 (Ampere+), fp16 elsewhere
-            probe_autocast_dtype = torch.bfloat16 if _cuda_supports_native_bf16(device) else torch.float16
+            # "auto" uses bf16 only when every GPU the run trains on has native bf16 (Ampere+), fp16 otherwise;
+            # the trainer decides the same way from the same devices value.
+            training_devices = getattr(train_config, "devices", 1) if devices is None else devices
+            native_bf16 = _cuda_native_bf16_on_devices(training_devices)
+            probe_autocast_dtype = torch.bfloat16 if native_bf16 else torch.float16
     else:
         probe_autocast_dtype = None
 

@@ -1008,6 +1008,64 @@ def test_resolve_auto_batch_config_probe_dtype_on_emulated_bf16_gpu(
     assert fused is expected_fused, f"shadow optimizer fused={fused}, expected {expected_fused} for {expected_dtype}"
 
 
+@pytest.mark.parametrize(
+    ("capabilities", "config_devices", "devices", "expected_dtype"),
+    [
+        pytest.param({0: (8, 0), 1: (7, 5)}, 2, None, torch.float16, id="a100-and-t4-both-train"),
+        pytest.param({0: (8, 0), 1: (7, 5)}, 1, [1], torch.float16, id="trains-on-the-t4-only"),
+        pytest.param({0: (7, 5), 1: (8, 0)}, 1, [1], torch.bfloat16, id="trains-on-the-a100-only"),
+    ],
+)
+def test_resolve_auto_batch_config_probe_dtype_follows_every_training_gpu(
+    capabilities: dict[int, tuple[int, int]],
+    config_devices: int,
+    devices: list[int] | None,
+    expected_dtype: torch.dtype,
+) -> None:
+    """With amp_dtype='auto' the probe uses bf16 only when every GPU the run trains on has native bf16, as the trainer
+    decides it, and not just the GPU the probe runs on.
+
+    The probe model sits on cuda:0 in every case. The run trains on ``devices`` when given (what
+    ``train(device="cuda:1")`` forwards) and on ``train_config.devices`` otherwise.
+    """
+
+    def device_capability(device: torch.device | int | None = None) -> tuple[int, int]:
+        """Return the mocked compute capability of ``device``; ``None`` is the current device, cuda:0."""
+        index = device.index if isinstance(device, torch.device) else device
+        return capabilities[0 if index is None else index]
+
+    model_context = SimpleNamespace(device=torch.device("cuda", 0), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=True, segmentation_head=True, fused_optimizer=True)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        amp_dtype="auto",
+        devices=config_devices,
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.device_count", return_value=len(capabilities)),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_capability", side_effect=device_capability),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        # devices=None means the caller did not pass it, so train_config.devices decides.
+        device_kwargs = {} if devices is None else {"devices": devices}
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config, **device_kwargs)
+
+    probed_dtype = mock_probe.call_args.kwargs["autocast_dtype"]
+    assert probed_dtype is expected_dtype, f"probe ran under {probed_dtype}, the run trains in {expected_dtype}"
+    fused = mock_probe.call_args.kwargs["optimizer_fused"]
+    assert fused is (expected_dtype is torch.bfloat16), f"shadow optimizer fused={fused} for {expected_dtype}"
+
+
 @patch("rfdetr.detr.is_main_process", return_value=False)
 @patch("rfdetr.training.auto_batch.resolve_auto_batch_config")
 @patch("rfdetr.training.build_trainer")
@@ -1059,6 +1117,7 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
         model_context=mock_self.model,
         model_config=mock_self.model_config,
         train_config=train_config,
+        devices=None,
     )
     assert call_order == ["ensure", "resolve"]
 

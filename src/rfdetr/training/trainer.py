@@ -32,7 +32,7 @@ from rfdetr.config import (
     KeypointTrainConfig,
     ModelConfig,
     TrainConfig,
-    _cuda_supports_native_bf16,
+    _cuda_native_bf16_on_devices,
     _resolve_amp_dtype,
 )
 from rfdetr.training.callbacks import (
@@ -269,38 +269,6 @@ def _requests_multiple_devices(devices: int | str, accelerator: str | None = Non
     if "," in devices_name:
         return len([entry for entry in devices_name.split(",") if entry.strip()]) > 1
     return False
-
-
-def _cuda_training_device_indices(devices: int | str | Sequence[int]) -> list[int]:
-    """Return the CUDA device indices a Lightning ``devices`` value trains on.
-
-    Lightning reads ``devices`` as a count (``2``, ``"2"``), explicit indices (``[1]``, ``"0,2"``), or every visible
-    device (``"auto"``, ``-1``). ``RFDETR.train(device="cuda:1")`` forwards ``devices=[1]``.
-
-    Args:
-        devices: The ``devices`` value passed to the Lightning ``Trainer``.
-
-    Returns:
-        The device indices, in the order given. Empty when nothing is visible for an "every device" value.
-
-    Examples:
-        >>> _cuda_training_device_indices([1])
-        [1]
-        >>> _cuda_training_device_indices("0,2")
-        [0, 2]
-        >>> _cuda_training_device_indices(2)
-        [0, 1]
-    """
-    if not isinstance(devices, (int, str)):
-        return [int(index) for index in devices]
-    if isinstance(devices, str):
-        devices_name = devices.strip().lower()
-        if "," in devices_name:
-            return [int(entry) for entry in devices_name.split(",") if entry.strip()]
-        devices = int(devices_name) if devices_name.isdigit() else -1
-    if devices > 0:
-        return list(range(devices))
-    return list(range(torch.cuda.device_count()))
 
 
 def _preserve_csv_history_across_resume(csv_logger: CSVLogger, output_dir: str | Path) -> None:
@@ -679,7 +647,7 @@ def build_trainer(
         # ``amp_dtype="fp16"`` if needed.
         #
         # Note: torch.cuda.is_available() and the bf16 probes (torch.cuda.is_bf16_supported(),
-        # _cuda_supports_native_bf16()) create a CUDA driver context in the parent process.  This is intentional
+        # _cuda_native_bf16_on_devices()) create a CUDA driver context in the parent process.  This is intentional
         # and safe for the multi-process launch modes we rely on here because we
         # avoid fork-based launching in notebook contexts (see
         # _NotebookSpawnDDPStrategy above), and spawn/subprocess-based launchers
@@ -712,8 +680,8 @@ def build_trainer(
                 return "16-mixed"
             # Native bf16 on every GPU this run trains on, not just the current device: train(device="cuda:1")
             # forwards devices=[1] without changing the current device, and a mixed-GPU host can differ per index.
-            training_devices: list[int | None] = list(_cuda_training_device_indices(devices)) or [None]
-            native_bf16 = all(_cuda_supports_native_bf16(index) for index in training_devices)
+            # The batch_size="auto" probe asks the same question with the same devices value.
+            native_bf16 = _cuda_native_bf16_on_devices(devices)
             if amp_dtype == "bf16":
                 if torch.cuda.is_bf16_supported():
                     if not native_bf16:

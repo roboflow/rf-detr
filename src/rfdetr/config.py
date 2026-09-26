@@ -10,7 +10,7 @@ import importlib
 import json
 import os
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Literal, Optional, TypeAlias
@@ -293,6 +293,66 @@ def _cuda_supports_native_bf16(device: torch.device | int | None = None) -> bool
     if torch.version.hip:
         return True
     return torch.cuda.get_device_capability(device)[0] >= 8
+
+
+def _cuda_training_device_indices(devices: int | str | Sequence[int]) -> list[int]:
+    """Return the CUDA device indices a Lightning ``devices`` value trains on.
+
+    Lightning reads ``devices`` as a count (``2``, ``"2"``), explicit indices (``[1]``, ``"0,2"``), or every visible
+    device (``"auto"``, ``-1``). ``RFDETR.train(device="cuda:1")`` forwards ``devices=[1]``.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        The device indices, in the order given. Empty when nothing is visible for an "every device" value.
+
+    Examples:
+        >>> _cuda_training_device_indices([1])
+        [1]
+        >>> _cuda_training_device_indices("0,2")
+        [0, 2]
+        >>> _cuda_training_device_indices(2)
+        [0, 1]
+    """
+    if not isinstance(devices, (int, str)):
+        return [int(index) for index in devices]
+    if isinstance(devices, str):
+        devices_name = devices.strip().lower()
+        if "," in devices_name:
+            return [int(entry) for entry in devices_name.split(",") if entry.strip()]
+        devices = int(devices_name) if devices_name.isdigit() else -1
+    if devices > 0:
+        return list(range(devices))
+    return list(range(torch.cuda.device_count()))
+
+
+def _cuda_native_bf16_on_devices(devices: int | str | Sequence[int]) -> bool:
+    """Return whether every CUDA device a Lightning ``devices`` value trains on runs bfloat16 natively.
+
+    ``amp_dtype="auto"`` trains in bf16 only when this is ``True``. The trainer's precision and the
+    ``batch_size="auto"`` probe both take their answer from here, so the probe measures the dtype the run uses.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        ``True`` when every selected device supports bfloat16 natively. When ``devices`` selects no visible device,
+        the current device is checked.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> capability = {0: (8, 0), 1: (7, 5)}
+        >>> with (
+        ...     patch("torch.cuda.is_available", return_value=True),
+        ...     patch("torch.version.hip", None),
+        ...     patch("torch.cuda.get_device_capability", side_effect=lambda index=None: capability[index or 0]),
+        ... ):
+        ...     _cuda_native_bf16_on_devices([0]), _cuda_native_bf16_on_devices(2)
+        (True, False)
+    """
+    indices: list[int | None] = list(_cuda_training_device_indices(devices)) or [None]
+    return all(_cuda_supports_native_bf16(index) for index in indices)
 
 
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
