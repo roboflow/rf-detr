@@ -46,7 +46,29 @@ logger = get_logger()
 
 
 class TRTInference:
-    """TensorRT inference engine."""
+    """Run a serialized TensorRT engine on torch tensors that already sit on its CUDA device.
+
+    TensorRT places an engine, and every execution context created from it, on the CUDA device that is current when the
+    engine is deserialized, and each launch must find that device current again. The runtime makes *device* current
+    around both rather than relying on the caller's current device. Inputs are bound by pointer, never copied: each must
+    be a contiguous tensor of the engine's input dtype on that device. That is the layout of an engine with linear
+    (row-major) device I/O, which is what ``RFDETR.export(format="tensorrt")`` builds; vectorized formats such as
+    ``chw32`` are not supported.
+
+    Args:
+        engine_path: Path to a ``.trt`` engine built on this machine's GPU and TensorRT version.
+        device: CUDA device to load and run the engine on. A bare ``"cuda"`` is pinned to the current device at
+            construction.
+        sync_mode: Run with ``execute_v2`` instead of launching on a CUDA stream; the stream needs the
+            ``tensorrt-bench`` extra (pycuda).
+        verbose: Log TensorRT at VERBOSE rather than INFO.
+
+    Raises:
+        ImportError: If TensorRT, or pycuda for ``sync_mode=False``, is not installed.
+        ValueError: If *device* is not a CUDA device, or the engine's tensor shapes cannot be resolved from its
+            optimization profile (see :meth:`get_bindings`).
+        RuntimeError: If TensorRT cannot deserialize the engine or create its execution context.
+    """
 
     def __init__(
         self,
@@ -60,20 +82,27 @@ class TRTInference:
 
         self.engine_path = engine_path
         self.device = device
+        self._engine_device = self._resolve_engine_device(device)
         self.sync_mode = sync_mode
 
         self.logger = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)
 
-        self.engine = self.load_engine(engine_path)
+        with torch.cuda.device(self._engine_device):
+            self.engine = self.load_engine(engine_path)
 
-        self.context = self.engine.create_execution_context()
+            self.context = self.engine.create_execution_context()
+            if self.context is None:
+                raise RuntimeError(
+                    f"TensorRT could not create an execution context for the engine at '{engine_path}'; its error "
+                    "is in the TensorRT log above."
+                )
 
-        self.bindings = self.get_bindings(self.engine, self.context, self.device)
-        self.bindings_addr = OrderedDict((n, v.ptr) for n, v in self.bindings.items())
+            self.bindings = self.get_bindings(self.engine, self.context, self._engine_device)
+            self.bindings_addr = OrderedDict((n, v.ptr) for n, v in self.bindings.items())
 
-        self.input_names = self.get_input_names()
-        self.output_names = self.get_output_names()
-        self._prime_context()
+            self.input_names = self.get_input_names()
+            self.output_names = self.get_output_names()
+            self._prime_context()
         self.stream = None
 
         if not self.sync_mode:
@@ -85,34 +114,99 @@ class TRTInference:
 
             self.stream = cuda.Stream()
 
-        # self.time_profile = TimeProfiler()
-        self.time_profile = TimeProfiler()
+        self.time_profile = TimeProfiler(device=self._engine_device)
+
+    @staticmethod
+    def _resolve_engine_device(device: str | torch.device) -> torch.device:
+        """Return the CUDA device an engine requested on *device* is loaded and run on.
+
+        A bare ``"cuda"`` is pinned to the current device here, once: TensorRT places the engine on the device current
+        at deserialization, and resolving ``"cuda"`` again on a later call would follow the caller's current device
+        away from the engine and its buffers.
+
+        Args:
+            device: The device the caller asked for.
+
+        Returns:
+            A CUDA ``torch.device`` with an explicit index.
+
+        Raises:
+            ValueError: If *device* is not a CUDA device; TensorRT runs on nothing else.
+
+        Examples:
+            >>> TRTInference._resolve_engine_device("cuda:1")
+            device(type='cuda', index=1)
+            >>> TRTInference._resolve_engine_device("cpu")
+            Traceback (most recent call last):
+            ...
+            ValueError: TensorRT runs on CUDA devices only, got device='cpu'. Pass a CUDA device such as 'cuda:0'.
+        """
+        requested = torch.device(device)
+        if requested.type != "cuda":
+            raise ValueError(
+                f"TensorRT runs on CUDA devices only, got device={device!r}. Pass a CUDA device such as 'cuda:0'."
+            )
+        return requested if requested.index is not None else torch.device("cuda", torch.cuda.current_device())
 
     def _prime_context(self) -> None:
-        """Register the context state that never changes again, so the per-call path only touches what does.
+        """Register the state that never changes again, so the per-call path only touches what does.
 
         The output buffers are allocated once and never move, so their addresses are registered here instead of on every
         call. The per-input shape memo starts empty rather than at the profile maximum :meth:`get_bindings` just
         declared: an unset entry can only cost one redundant ``set_input_shape`` on the first call, where a pre-filled
-        one could skip a declaration the engine actually needs.
+        one could skip a declaration the engine actually needs. The torch dtype each input must arrive in is read off
+        the engine once, for :meth:`_check_input_memory`.
         """
         self._declared_shapes: dict[str, tuple[int, ...] | None] = dict.fromkeys(self.input_names)
+        self._input_dtypes = {
+            name: torch.from_numpy(np.empty(0, dtype=self.bindings[name].dtype)).dtype for name in self.input_names
+        }
         for name in self.output_names:
             self.context.set_tensor_address(name, int(self.bindings[name].ptr))
 
     def get_dummy_input(self, batch_size: int) -> dict[str, Tensor]:
+        """Build a random input for every engine input, in the dtype and on the device the engine reads it from.
+
+        Args:
+            batch_size: Batch to build; a static engine accepts only the batch it was built for.
+
+        Returns:
+            One contiguous tensor per engine input, keyed by input name, holding values drawn from ``[0, 1)`` and cast
+            to that input's dtype.
+        """
         blob: dict[str, Tensor] = {}
         for name, binding in self.bindings.items():
             if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 logger.info(f"make dummy input {name} with shape {binding.shape}")
-                blob[name] = torch.rand(batch_size, *binding.shape[1:]).float().to(self.device)
+                values = torch.rand(batch_size, *binding.shape[1:], device=self._engine_device)
+                blob[name] = values.to(self._input_dtypes[name])
         return blob
 
     def load_engine(self, path: str) -> Any:
-        """Load engine."""
+        """Deserialize the engine at *path* onto the current CUDA device.
+
+        Args:
+            path: Path to a serialized ``.trt`` engine.
+
+        Returns:
+            The deserialized TensorRT engine.
+
+        Raises:
+            RuntimeError: If TensorRT cannot deserialize the file. It reports that by returning ``None`` (with the
+                reason in its log), for an engine built by another TensorRT version or GPU architecture as well as
+                for a truncated or corrupt file.
+        """
         trt.init_libnvinfer_plugins(self.logger, "")
         with open(path, "rb") as f, trt.Runtime(self.logger) as runtime:
-            return runtime.deserialize_cuda_engine(f.read())
+            engine = runtime.deserialize_cuda_engine(f.read())
+        if engine is None:
+            raise RuntimeError(
+                f"TensorRT {trt.__version__} could not deserialize the engine at '{path}'; the reason is in the "
+                "TensorRT log above. By default an engine only loads on the TensorRT version and GPU architecture "
+                "that built it, and a truncated or corrupt file fails the same way. Rebuild it on this machine with "
+                'RFDETR.export(format="tensorrt").'
+            )
+        return engine
 
     def get_input_names(self) -> list[str]:
         names: list[str] = []
@@ -176,7 +270,7 @@ class TRTInference:
         Args:
             engine: A deserialized TensorRT engine.
             context: The execution context whose dynamic inputs get declared at their profile maximum.
-            device: The device output buffers are allocated on. Defaults to this instance's own device.
+            device: The device output buffers are allocated on. Defaults to the device this instance runs the engine on.
 
         Returns:
             One :class:`Binding` per engine tensor, keyed by tensor name, in engine iteration order.
@@ -187,6 +281,7 @@ class TRTInference:
         """
         Binding = namedtuple("Binding", ("name", "dtype", "shape", "data", "ptr", "dynamic"))
         bindings = OrderedDict()
+        buffer_device = self._engine_device if device is None else device
         self._declare_profile_max_inputs(engine, context)
 
         for name in engine:
@@ -207,41 +302,111 @@ class TRTInference:
             if engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 bindings[name] = Binding(name, dtype, shape, None, 0, dynamic)
                 continue
-            data = torch.from_numpy(np.empty(shape, dtype=dtype)).to(device)
+            data = torch.from_numpy(np.empty(shape, dtype=dtype)).to(buffer_device)
             bindings[name] = Binding(name, dtype, shape, data, data.data_ptr(), dynamic)
 
         return bindings
+
+    def _check_input_memory(self, name: str, tensor: Tensor) -> None:
+        """Refuse a tensor the engine would misread: TensorRT reads a dense buffer of its own dtype off the pointer.
+
+        Nothing copies or casts on the caller's behalf. A hidden copy would be timed as inference by :meth:`speed` and
+        the benchmark, and would hide an input pipeline that produces the wrong layout.
+
+        Args:
+            name: Engine input the tensor is bound to.
+            tensor: The caller's tensor for that input.
+
+        Raises:
+            ValueError: If *tensor* is on another device than the engine (a CPU tensor on a GPU engine ends in an
+                illegal-address fault), has another dtype than the engine's input (TensorRT reads its own element size
+                regardless), or is not contiguous (TensorRT would read a ``channels_last`` or sliced tensor as dense
+                row-major memory).
+        """
+        if tensor.device != self._engine_device:
+            raise ValueError(
+                f"Input {name!r} is on device {tensor.device}, but this engine runs on {self._engine_device}. Move it "
+                f"there with .to({str(self._engine_device)!r})."
+            )
+        expected_dtype = self._input_dtypes[name]
+        if tensor.dtype != expected_dtype:
+            raise ValueError(
+                f"Input {name!r} has dtype {tensor.dtype}, but this engine reads {expected_dtype}. Convert it with "
+                f".to({expected_dtype})."
+            )
+        if not tensor.is_contiguous():
+            raise ValueError(
+                f"Input {name!r} is not contiguous (strides {tensor.stride()}), and TensorRT reads it as dense "
+                "row-major memory. Pass tensor.contiguous()."
+            )
+
+    def _describe_profile_refusal(self, name: str, shape: tuple[int, ...]) -> str:
+        """Explain why the optimization profile refused *shape* for input *name*, and whether re-exporting fixes it.
+
+        Only called once TensorRT has refused the shape, so the profile query stays off the per-call path.
+
+        Args:
+            name: Dynamic engine input whose shape was refused.
+            shape: The refused shape.
+
+        Returns:
+            The error message, advising a larger ``max_batch_size`` only when the batch is the one axis above its
+            profile range.
+        """
+        min_shape, _, max_shape = (
+            tuple(int(dim) for dim in dims) for dims in self.engine.get_tensor_profile_shape(name, 0)
+        )
+        message = (
+            f"Input {name!r} shape {shape} is outside the engine's optimization profile "
+            f"(min {min_shape}, max {max_shape})."
+        )
+        # Compared per axis rather than against the maximum alone: an engine may make its image size dynamic too.
+        image_fits = len(shape) == len(max_shape) and all(
+            low <= dim <= high
+            for dim, low, high in zip(
+                shape[BATCH_AXIS + 1 :], min_shape[BATCH_AXIS + 1 :], max_shape[BATCH_AXIS + 1 :], strict=True
+            )
+        )
+        if image_fits and shape[BATCH_AXIS] > max_shape[BATCH_AXIS]:
+            message += " Export with a larger max_batch_size."
+        return message
 
     def _bind_inputs(self, blob: Mapping[str, Tensor]) -> None:
         """Point the input bindings at *blob* and, for dynamic engines, declare this call's input shapes.
 
         Raises:
-            ValueError: If a dynamic input's shape falls outside the engine's optimization profile -- TensorRT
-                reports that by returning ``False`` from ``set_input_shape`` rather than raising -- or if a static
-                engine is handed a shape it was not built for. Executing anyway would hand back whatever the output
-                buffers held from the previous call, or read past the end of the caller's tensor.
+            ValueError: If a tensor is not memory the engine can read as-is (see :meth:`_check_input_memory`), if a
+                dynamic input's shape falls outside the engine's optimization profile -- TensorRT reports that by
+                returning ``False`` from ``set_input_shape`` rather than raising -- or if a static engine is handed a
+                shape it was not built for. Executing anyway would hand back whatever the output buffers held from the
+                previous call, or read past the end of the caller's tensor.
         """
         for name in self.input_names:
             binding = self.bindings[name]
-            shape = tuple(blob[name].shape)
+            tensor = blob[name]
+            self._check_input_memory(name, tensor)
+            shape = tuple(tensor.shape)
             # Declaring a shape the context already holds is a no-op on TensorRT's side, so skip the round trip
             # when this input ran at the same shape last call -- the common case for a steady batch size.
             if binding.dynamic and shape != self._declared_shapes[name]:
                 if not self.context.set_input_shape(name, shape):
-                    raise ValueError(
-                        f"Input {name!r} shape {shape} is outside the engine's optimization profile (batch up to "
-                        f"{binding.shape[BATCH_AXIS]}, spatial {tuple(binding.shape[BATCH_AXIS + 1 :])}). "
-                        "Export with a larger max_batch_size."
-                    )
+                    raise ValueError(self._describe_profile_refusal(name, shape))
                 self._declared_shapes[name] = shape
             if not binding.dynamic and shape != binding.shape:
                 # Nothing declares a static engine's shape to TensorRT, so an unchecked mismatch is not reported at
                 # all: the engine reads binding.shape elements from the blob's raw pointer whatever it holds.
-                raise ValueError(
+                message = (
                     f"Input {name!r} shape {shape} does not match the fixed shape {binding.shape} this engine was "
-                    "built for. Export with dynamic_batch=True to serve a range of batch sizes from one engine."
+                    "built for."
                 )
-            self.bindings_addr[name] = blob[name].data_ptr()
+                # A dynamic engine's profile starts at batch 1, so it would refuse an empty batch too.
+                only_batch_differs = (
+                    len(shape) == len(binding.shape) and shape[BATCH_AXIS + 1 :] == binding.shape[BATCH_AXIS + 1 :]
+                )
+                if only_batch_differs and shape[BATCH_AXIS] > 0:
+                    message += " Export with dynamic_batch=True to serve a range of batch sizes from one engine."
+                raise ValueError(message)
+            self.bindings_addr[name] = tensor.data_ptr()
 
     def _collect_outputs(self) -> dict[str, Tensor]:
         """Return the output buffers, trimmed to the batch the engine actually produced."""
@@ -263,15 +428,17 @@ class TRTInference:
             overwrites -- copy it before the next call if it needs to outlive that call.
 
         Raises:
+            ValueError: If an input is refused before launch (see :meth:`_bind_inputs`).
             RuntimeError: If TensorRT reports the launch failed.
         """
-        self._bind_inputs(blob)
-        # Not migrated to v3 alongside run_async: TensorRT exposes no synchronous v3 call -- execute_async_v3 is
-        # the only v3 entry point, and it needs a CUDA stream and an explicit sync per launch. The sync path is
-        # deliberately stream-free; __init__ only builds a stream, and only then requires pycuda, for async mode.
-        if not self.context.execute_v2(list(self.bindings_addr.values())):
-            raise RuntimeError("TensorRT execute_v2 reported a launch failure.")
-        return self._collect_outputs()
+        with torch.cuda.device(self._engine_device):
+            self._bind_inputs(blob)
+            # Not migrated to v3 alongside run_async: TensorRT exposes no synchronous v3 call -- execute_async_v3 is
+            # the only v3 entry point, and it needs a CUDA stream and an explicit sync per launch. The sync path is
+            # deliberately stream-free; __init__ only builds a stream, and only then requires pycuda, for async mode.
+            if not self.context.execute_v2(list(self.bindings_addr.values())):
+                raise RuntimeError("TensorRT execute_v2 reported a launch failure.")
+            return self._collect_outputs()
 
     def run_async(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
         """Run inference on this engine's CUDA stream and return the outputs, trimmed to the produced batch.
@@ -284,22 +451,24 @@ class TRTInference:
             overwrites -- copy it before the next call if it needs to outlive that call.
 
         Raises:
+            ValueError: If an input is refused before launch (see :meth:`_bind_inputs`).
             RuntimeError: If no CUDA stream is available, or TensorRT reports the launch failed.
         """
-        self._bind_inputs(blob)
-        if self.stream is None:
-            raise RuntimeError("Async TensorRT inference requires a CUDA stream.")
-        # execute_async_v2 (binding lists) is gone from TensorRT 11; the tensor-address API exists since 8.5. Only
-        # the inputs are registered here -- the output addresses were set once in _prime_context and never move.
-        for name in self.input_names:
-            if not self.context.set_tensor_address(name, int(self.bindings_addr[name])):
-                raise RuntimeError(f"TensorRT refused the tensor address for input {name!r}.")
-        if not self.context.execute_async_v3(stream_handle=self.stream.handle):
-            raise RuntimeError("TensorRT execute_async_v3 reported a launch failure.")
-        # Drain the stream before reading the produced shapes: execute_async_v3 only enqueues the work, so until it
-        # completes the context still reports the previous call's batch and _collect_outputs would trim to that.
-        self.stream.synchronize()
-        return self._collect_outputs()
+        with torch.cuda.device(self._engine_device):
+            self._bind_inputs(blob)
+            if self.stream is None:
+                raise RuntimeError("Async TensorRT inference requires a CUDA stream.")
+            # execute_async_v2 (binding lists) is gone from TensorRT 11; the tensor-address API exists since 8.5. Only
+            # the inputs are registered here -- the output addresses were set once in _prime_context and never move.
+            for name in self.input_names:
+                if not self.context.set_tensor_address(name, int(self.bindings_addr[name])):
+                    raise RuntimeError(f"TensorRT refused the tensor address for input {name!r}.")
+            if not self.context.execute_async_v3(stream_handle=self.stream.handle):
+                raise RuntimeError("TensorRT execute_async_v3 reported a launch failure.")
+            # Drain the stream before reading the produced shapes: execute_async_v3 only enqueues the work, so until it
+            # completes the context still reports the previous call's batch and _collect_outputs would trim to that.
+            self.stream.synchronize()
+            return self._collect_outputs()
 
     def __call__(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
         if self.sync_mode:
@@ -308,15 +477,16 @@ class TRTInference:
             return self.run_async(blob)
 
     def synchronize(self) -> None:
+        """Wait for this runtime's work: its stream in async mode, otherwise everything on the engine's device."""
         if self.sync_mode:
             if torch.cuda.is_available():
-                torch.cuda.synchronize()
+                torch.cuda.synchronize(self._engine_device)
             return
 
         if self.stream is not None:
             self.stream.synchronize()
         elif torch.cuda.is_available():
-            torch.cuda.synchronize()
+            torch.cuda.synchronize(self._engine_device)
 
     def speed(self, blob: Mapping[str, Tensor], n: int) -> float:
         self.time_profile.reset()
@@ -344,6 +514,9 @@ class TRTInference:
         Raises:
             Fp16CastUnsupportedError: If a strongly typed TensorRT needs the graph cast to fp16 and it
                 cannot be (already fp16, or explicitly quantized).
+            RuntimeError: If TensorRT parses the model but cannot build an engine from it, for example a
+                dynamic-batch ONNX, since this builder declares no optimization profile. Nothing is written to
+                *engine_file_path* then, so an engine already there is kept.
 
         Examples:
             >>> TRTInference.build_engine(trt_inference, "model.onnx", "model.trt")  # doctest: +SKIP
@@ -392,6 +565,14 @@ class TRTInference:
                         return None
 
                 serialized_engine = builder.build_serialized_network(network, config)
+                # TensorRT reports a failed build by returning None; opening the target first would truncate it.
+                if serialized_engine is None:
+                    raise RuntimeError(
+                        f"TensorRT could not build an engine from '{onnx_file_path}'; the reason is in the TensorRT "
+                        "log above. If the model has a dynamic batch axis, it cannot be built here, because this "
+                        "builder declares no optimization profile: build it with "
+                        'RFDETR.export(format="tensorrt", dynamic_batch=True, max_batch_size=...) instead.'
+                    )
                 with open(engine_file_path, "wb") as f:
                     f.write(serialized_engine)
 
@@ -399,7 +580,21 @@ class TRTInference:
 
 
 class TimeProfiler(contextlib.ContextDecorator):
-    def __init__(self) -> None:
+    """Accumulate wall-clock time across ``with`` blocks, waiting for queued CUDA work at each edge.
+
+    Args:
+        device: CUDA device to wait for. ``None`` waits for the current device.
+
+    Examples:
+        >>> profiler = TimeProfiler()
+        >>> with profiler:
+        ...     pass
+        >>> profiler.total >= 0.0
+        True
+    """
+
+    def __init__(self, device: str | torch.device | None = None) -> None:
+        self.device = device
         self.total = 0.0
         self.start = 0.0
 
@@ -414,6 +609,7 @@ class TimeProfiler(contextlib.ContextDecorator):
         self.total = 0.0
 
     def time(self) -> float:
+        """Return ``time.perf_counter()`` once the profiled device has finished its queued work."""
         if torch.cuda.is_available():
-            torch.cuda.synchronize()
+            torch.cuda.synchronize(self.device)
         return time.perf_counter()

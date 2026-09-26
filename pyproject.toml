@@ -136,7 +136,7 @@ tensorrt = [
     "onnxconverter-common",
     "onnx>=1.16.0,<2.0",
 ]
-# pycuda is only used by async TRTInference in rfdetr.export.benchmark. It ships as an sdist
+# pycuda is only used by async TRTInference (rfdetr.export._tensorrt.inference). It ships as an sdist
 # and builds against the CUDA toolkit dev headers (cuda.h), which a GPU driver alone does not
 # provide. Keep it out of the base [tensorrt] extra so the ONNX->engine parity path (polygraphy
 # TrtRunner, no pycuda) installs on a driver-only runner; async benchmarking opts into it here.
