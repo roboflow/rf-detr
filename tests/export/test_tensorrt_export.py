@@ -14,6 +14,8 @@ and checks runtime parity — mirroring the CoreML and ExecuTorch export suites.
 
 from __future__ import annotations
 
+import importlib.util
+import re
 import sys
 import types
 from pathlib import Path
@@ -79,6 +81,9 @@ _TENSORRT_FP16_MAX_ABS_DIFF = 3e-1
 def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
     """Stub the polygraphy build chain and return the dict that captures ``CreateConfig`` kwargs.
 
+    The loader parses every path into a network with one fixed-batch input, and TensorRT is reported available, so
+    the build runs the same way whether or not the host has ``polygraphy``/``tensorrt`` installed.
+
     Args:
         monkeypatch: Fixture used to replace the polygraphy entry points on the module under test.
 
@@ -86,11 +91,11 @@ def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
         Dict populated with the keyword arguments ``build_engine`` passes to ``CreateConfig``.
 
     Examples:
-        Cannot be called directly — it requires a live ``pytest.MonkeyPatch`` instance supplied by
-        pytest's fixture machinery. See ``TestBuildEngineDryRun`` for real invocations.
-
-        >>> callable(_patch_polygraphy_chain)  # doctest: +SKIP
-        True
+        >>> with pytest.MonkeyPatch.context() as monkeypatch:
+        ...     config_kwargs = _patch_polygraphy_chain(monkeypatch)
+        ...     _ = tensorrt_export.CreateConfig(fp16=True)
+        >>> config_kwargs
+        {'fp16': True}
     """
     config_kwargs: dict = {}
 
@@ -100,38 +105,49 @@ def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
         config_kwargs["fp16"] = fp16
         return "config"
 
-    monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
+    monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
+    monkeypatch.setattr(
+        tensorrt_export, "network_from_onnx_path", lambda path: ("builder", _FakeNetwork(_STATIC_INPUT), "parser")
+    )
     monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
     monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: "engine")
     monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
     return config_kwargs
 
 
-def _patch_polygraphy_build_capture(monkeypatch: pytest.MonkeyPatch) -> dict:
+def _patch_polygraphy_build_capture(monkeypatch: pytest.MonkeyPatch, network: _FakeNetwork | None = None) -> dict:
     """Stub the polygraphy build chain and return the dict that captures the arguments the build receives.
 
     Args:
         monkeypatch: Fixture used to replace the polygraphy entry points on the module under test.
+        network: The parsed-network stand-in the loader hands back, or ``None`` for one fixed-batch input.
 
     Returns:
-        Dict populated with the ``network`` and ``config`` ``build_engine`` hands to
-        ``engine_from_network`` — which is what reveals *which graph* the engine was built from.
+        Dict populated with the ``source`` path the loader parsed — which is what reveals *which graph* the
+        engine was built from — and the ``network`` and ``config`` ``build_engine`` hands to ``engine_from_network``.
 
     Examples:
-        Cannot be called directly — it requires a live ``pytest.MonkeyPatch`` instance supplied by
-        pytest's fixture machinery. See ``TestBuildEngineStrongTyping`` for real invocations.
-
-        >>> callable(_patch_polygraphy_build_capture)  # doctest: +SKIP
-        True
+        >>> with pytest.MonkeyPatch.context() as monkeypatch:
+        ...     build_args = _patch_polygraphy_build_capture(monkeypatch)
+        ...     _ = tensorrt_export.network_from_onnx_path("model.onnx")
+        >>> build_args
+        {'source': 'model.onnx'}
     """
     build_args: dict = {}
+
+    parsed_network = network if network is not None else _FakeNetwork(_STATIC_INPUT)
+
+    def _network_from_onnx_path(path: str) -> tuple:
+        build_args["source"] = path
+        return ("builder", parsed_network, "parser")
 
     def _engine_from_network(network, config):
         build_args["network"] = network
         build_args["config"] = config
         return "engine"
 
-    monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
+    monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
+    monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
     monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
     monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
     monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
@@ -169,6 +185,25 @@ def _fake_tensorrt(version: str, *, has_fp16_flag: bool) -> types.ModuleType:
     if has_fp16_flag:
         BuilderFlag.FP16 = 1
     module.BuilderFlag = BuilderFlag
+    return module
+
+
+def _fake_polygraphy_trt() -> types.ModuleType:
+    """Build a stand-in ``polygraphy.backend.trt`` exposing the five names the exporter imports from it.
+
+    Polygraphy imports ``tensorrt`` only when one of these is called, so importing them succeeds on a host without
+    TensorRT; this stand-in reproduces that on hosts where polygraphy is not installed at all.
+
+    Returns:
+        A module object suitable for ``monkeypatch.setitem(sys.modules, "polygraphy.backend.trt", ...)``.
+
+    Examples:
+        >>> sorted(name for name in vars(_fake_polygraphy_trt()) if not name.startswith("__"))
+        ['CreateConfig', 'Profile', 'engine_from_network', 'network_from_onnx_path', 'save_engine']
+    """
+    module = types.ModuleType("polygraphy.backend.trt")
+    for name in ("CreateConfig", "Profile", "engine_from_network", "network_from_onnx_path", "save_engine"):
+        setattr(module, name, object())
     return module
 
 
@@ -532,15 +567,68 @@ class TestBuildEngineDryRun:
         assert result == r"C:\out\my-engine.trt"
 
 
-class TestBuildEngineDependencyGuard:
-    """A missing polygraphy/tensorrt install raises an actionable ImportError."""
+class TestTensorRTAvailability:
+    """TensorRT counts as available only when ``tensorrt`` itself is installed, and its absence is reported first."""
 
-    def test_missing_polygraphy_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A missing polygraphy/tensorrt install must raise an actionable ImportError."""
-        monkeypatch.setattr(tensorrt_export, "engine_from_network", None)
+    @pytest.mark.parametrize(
+        ("polygraphy_installed", "tensorrt_layout", "available"),
+        [
+            pytest.param(True, "package", True, id="both-installed"),
+            pytest.param(True, "absent", False, id="polygraphy-only"),
+            pytest.param(True, "bare-directory", False, id="bare-tensorrt-directory"),
+            pytest.param(False, "package", False, id="tensorrt-only"),
+        ],
+    )
+    def test_flag_requires_the_tensorrt_package(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        polygraphy_installed: bool,
+        tensorrt_layout: str,
+        available: bool,
+    ) -> None:
+        """Polygraphy alone, which ``rfdetr[onnx]`` installs, must not mark TensorRT as available.
+
+        Polygraphy imports ``tensorrt`` lazily, so its own import succeeds without it. A bare ``tensorrt/`` directory,
+        such as an export folder named after the format, is importable as a namespace package but is no install either.
+        The exporter source is executed under a private module name, with only *tmp_path* searched for ``tensorrt``, so
+        a real TensorRT on the host cannot answer and the real module keeps its identity for the other tests.
+        """
+        if tensorrt_layout != "absent":
+            (tmp_path / "tensorrt").mkdir()
+        if tensorrt_layout == "package":
+            (tmp_path / "tensorrt" / "__init__.py").touch()
+        for name in ("polygraphy", "polygraphy.backend"):
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+        # ``None`` in sys.modules is how the import system spells "cannot be imported".
+        monkeypatch.setitem(
+            sys.modules, "polygraphy.backend.trt", _fake_polygraphy_trt() if polygraphy_installed else None
+        )
+        monkeypatch.delitem(sys.modules, "tensorrt", raising=False)
+        monkeypatch.setattr(sys, "path", [str(tmp_path)])
+        spec = importlib.util.spec_from_file_location("_tensorrt_exporter_probe", tensorrt_export.__file__)
+        probe = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, spec.name, probe)
+
+        spec.loader.exec_module(probe)
+
+        assert probe._IS_TENSORRT_AVAILABLE is available
+
+    def test_missing_tensorrt_raises_the_install_hint(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Building from an existing ONNX file without TensorRT raises an actionable ImportError, not a polygraphy
+        one."""
+        monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", False)
 
         with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
-            TensorRTExporter(TensorRTConfig()).build_engine("/tmp/model.onnx")
+            TensorRTExporter(TensorRTConfig()).build_engine(str(tmp_path / "model.onnx"))
+
+    def test_dry_run_needs_no_tensorrt(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """``dry_run`` is documented as needing no TensorRT, so the availability check stays behind it."""
+        monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", False)
+
+        result = TensorRTExporter(TensorRTConfig()).build_engine(str(tmp_path / "model.onnx"), dry_run=True)
+
+        assert result == str(tmp_path / "model_fp16.trt")
 
 
 class TestBuildEngineWiring:
@@ -552,14 +640,19 @@ class TestBuildEngineWiring:
         config_kwargs: dict = {}
         build_args: dict = {}
         saved: dict = {}
+        network = _FakeNetwork(_STATIC_INPUT)
 
         # Pin a weakly typed TensorRT: this asserts the builder-flag wiring, and without the pin the
         # assertions would flip on a host that really has TensorRT >= 11 installed.
         monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
-        monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
+        monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
         monkeypatch.setattr(
             tensorrt_export, "CreateConfig", lambda **kwargs: config_kwargs.update(kwargs) or "config-sentinel"
         )
+
+        def _network_from_onnx_path(path: str) -> tuple:
+            build_args["source"] = path
+            return ("builder", network, "parser")
 
         def _engine_from_network(network, config):
             build_args["network"] = network
@@ -570,15 +663,20 @@ class TestBuildEngineWiring:
             saved["engine"] = engine
             saved["path"] = path
 
+        monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
         monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
         monkeypatch.setattr(tensorrt_export, "save_engine", _save_engine)
 
-        result = TensorRTExporter(TensorRTConfig(fp16=fp16)).build_engine("/tmp/model.onnx")
-        expected_path = f"/tmp/model_{'fp16' if fp16 else 'fp32'}.trt"
+        result = TensorRTExporter(TensorRTConfig(fp16=fp16)).build_engine("model.onnx")
+        expected_path = f"model_{'fp16' if fp16 else 'fp32'}.trt"
 
         assert result == expected_path
         assert config_kwargs == {"fp16": fp16}
-        assert build_args == {"network": ("network", "/tmp/model.onnx"), "config": "config-sentinel"}
+        assert build_args == {
+            "source": "model.onnx",
+            "network": ("builder", network, "parser"),
+            "config": "config-sentinel",
+        }
         assert saved == {"engine": "engine-sentinel", "path": expected_path}
 
 
@@ -602,6 +700,10 @@ class _FakeNetwork:
 
     def get_input(self, index: int) -> _FakeNetworkInput:
         return self._inputs[index]
+
+
+#: The one input an RF-DETR graph exported without ``dynamic_batch`` has: every axis fixed at trace time.
+_STATIC_INPUT = _FakeNetworkInput("input", (1, 3, 384, 384))
 
 
 class _FakeProfile:
@@ -630,11 +732,12 @@ def _patch_dynamic_polygraphy_chain(monkeypatch: pytest.MonkeyPatch, network: _F
         under ``"network"``.
 
     Examples:
-        Cannot be called directly — it requires a live ``pytest.MonkeyPatch`` instance supplied by
-        pytest's fixture machinery. See ``TestBuildEngineDynamicBatch`` for real invocations.
-
-        >>> callable(_patch_dynamic_polygraphy_chain)  # doctest: +SKIP
-        True
+        >>> network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)))
+        >>> with pytest.MonkeyPatch.context() as monkeypatch:
+        ...     captured = _patch_dynamic_polygraphy_chain(monkeypatch, network)
+        ...     _ = tensorrt_export.CreateConfig(fp16=False, profiles=["profile"])
+        >>> captured
+        {'config': {'fp16': False, 'profiles': ['profile']}}
     """
     captured: dict = {}
 
@@ -649,6 +752,7 @@ def _patch_dynamic_polygraphy_chain(monkeypatch: pytest.MonkeyPatch, network: _F
         return "config"
 
     monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
+    monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
     monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("builder", network, "parser"))
     monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
     monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
@@ -732,7 +836,10 @@ class TestDynamicBatchConfig:
 
 
 class TestBuildEngineDynamicBatch:
-    """A dynamic-batch build hands polygraphy one optimization profile spanning batch 1 through ``max_batch_size``."""
+    """A dynamic-batch build hands polygraphy one optimization profile spanning batch 1 through ``max_batch_size``.
+
+    A graph whose batch axis disagrees with the request is refused in either direction, before anything is built.
+    """
 
     def test_profile_spans_one_to_max_on_the_dynamic_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Min/opt/max keep the traced spatial shape and vary only the batch axis."""
@@ -758,9 +865,12 @@ class TestBuildEngineDynamicBatch:
 
         assert captured["network"] == ("builder", network, "parser")
 
-    def test_static_inputs_are_left_out_of_the_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Only inputs with a dynamic batch axis get a profile entry."""
-        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)), _FakeNetworkInput("orig_size", (1, 2)))
+    @pytest.mark.parametrize("static_shape", [pytest.param((1, 2), id="fixed-batch"), pytest.param((), id="rank-0")])
+    def test_static_inputs_are_left_out_of_the_profile(
+        self, monkeypatch: pytest.MonkeyPatch, static_shape: tuple[int, ...]
+    ) -> None:
+        """Only inputs with a dynamic batch axis get a profile entry; a rank-0 input has no batch axis at all."""
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)), _FakeNetworkInput("aux", static_shape))
         captured = _patch_dynamic_polygraphy_chain(monkeypatch, network)
         exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, max_batch_size=8))
 
@@ -778,11 +888,77 @@ class TestBuildEngineDynamicBatch:
         with pytest.raises(ValueError, match="no network input has a dynamic batch axis"):
             exporter.build_engine("/tmp/model.onnx")
 
-    def test_batch_profile_failure_releases_the_parsed_network(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A `_batch_profile` failure must release the parsed builder/network/parser rather than leak them.
+    @pytest.mark.parametrize(
+        ("inputs", "named"),
+        [
+            pytest.param((_FakeNetworkInput("input", (-1, 3, 384, 384)),), "['input']", id="dynamic-input"),
+            pytest.param(
+                (_FakeNetworkInput("input", (1, 3, 384, 384)), _FakeNetworkInput("aux", (-1, 4))),
+                "['aux']",
+                id="one-of-two-inputs-dynamic",
+            ),
+        ],
+    )
+    def test_dynamic_graph_under_static_request_is_an_error(
+        self, monkeypatch: pytest.MonkeyPatch, inputs: tuple[_FakeNetworkInput, ...], named: str
+    ) -> None:
+        """Without a profile, polygraphy fixes a dynamic batch axis to 1, so the engine would accept batch 1 only.
 
-        `_batch_profile` can raise between `network_from_onnx_path` (which owns TensorRT resources) and
-        `engine_from_network` (which only takes ownership of them on success). Regression test for that gap.
+        The error names exactly the inputs that carry a dynamic batch axis.
+        """
+        _patch_polygraphy_build_capture(monkeypatch, _FakeNetwork(*inputs))
+
+        with pytest.raises(ValueError, match=rf"dynamic batch axis on {re.escape(named)}"):
+            TensorRTExporter(TensorRTConfig(fp16=False)).build_engine("model.onnx")
+
+    def test_dynamic_graph_under_static_request_is_not_built(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The refusal comes before the builder runs, so no batch-1 engine is left behind."""
+        build_args = _patch_polygraphy_build_capture(
+            monkeypatch, _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384)))
+        )
+
+        with pytest.raises(ValueError):
+            TensorRTExporter(TensorRTConfig(fp16=False)).build_engine("model.onnx")
+
+        assert "network" not in build_args
+
+    def test_static_request_error_names_the_callers_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """On a strongly typed TensorRT the network is parsed from an fp16 copy, but the user only knows their own
+        file."""
+        source = tmp_path / "model.onnx"
+        _patch_polygraphy_build_capture(monkeypatch, _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384))))
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("11.2.1.2", has_fp16_flag=False))
+        monkeypatch.setattr(
+            tensorrt_export, "_cast_onnx_to_fp16", lambda path: str(tmp_path / "model.fp16-abcd1234.onnx")
+        )
+
+        with pytest.raises(ValueError, match=re.escape(f"'{source}'")):
+            TensorRTExporter(TensorRTConfig(fp16=True)).build_engine(str(source))
+
+    def test_static_request_builds_a_graph_with_a_scalar_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A rank-0 input has no batch axis to inspect; the batch-axis check must skip it, not index into it."""
+        network = _FakeNetwork(_STATIC_INPUT, _FakeNetworkInput("score_threshold", ()))
+        build_args = _patch_polygraphy_build_capture(monkeypatch, network)
+
+        TensorRTExporter(TensorRTConfig(fp16=False)).build_engine("model.onnx")
+
+        assert build_args["network"] == ("builder", network, "parser")
+
+    @pytest.mark.parametrize(
+        ("dynamic_batch", "input_shape"),
+        [
+            pytest.param(True, (1, 3, 384, 384), id="dynamic-request-on-static-graph"),
+            pytest.param(False, (-1, 3, 384, 384), id="static-request-on-dynamic-graph"),
+        ],
+    )
+    def test_rejected_graph_releases_the_parsed_network(
+        self, monkeypatch: pytest.MonkeyPatch, dynamic_batch: bool, input_shape: tuple[int, ...]
+    ) -> None:
+        """A graph refused for its batch axis must release the parsed builder/network/parser rather than leak them.
+
+        The refusal comes between `network_from_onnx_path` (which owns TensorRT resources) and `engine_from_network`
+        (which only takes ownership of them on success). Regression test for that gap, in both directions a request and
+        a graph can disagree.
         """
         released: list[str] = []
 
@@ -793,7 +969,7 @@ class TestBuildEngineDynamicBatch:
             def __del__(self) -> None:
                 released.append(self._name)
 
-        network = _FakeNetwork(_FakeNetworkInput("input", (1, 3, 384, 384)))  # no dynamic axis -> raises
+        network = _FakeNetwork(_FakeNetworkInput("input", input_shape))
 
         def _fake_network_from_onnx_path(path: str) -> tuple:
             # A fresh tuple per call, so the only reference once returned lives in `_compile`'s frame -- the
@@ -801,19 +977,23 @@ class TestBuildEngineDynamicBatch:
             return (_RefCountedSentinel("builder"), network, _RefCountedSentinel("parser"))
 
         monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
+        monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
         monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _fake_network_from_onnx_path)
         monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
-        # `_batch_profile` raises before these are reached; only present so `_require_tensorrt`'s
-        # `engine_from_network is None` guard (checked before `_compile` runs) does not itself fail the build.
+        # The refusal comes before these are reached; they are stubbed so that a build which wrongly goes ahead fails
+        # on the missing ValueError rather than inside the real (or absent) polygraphy.
         monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda *args, **kwargs: "engine")
         monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
         monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
-        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=True, max_batch_size=8))
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=dynamic_batch, max_batch_size=8))
 
-        with pytest.raises(ValueError, match="no network input has a dynamic batch axis"):
-            exporter.build_engine("/tmp/model.onnx")
+        # Bound so the traceback, and with it every frame of the failed build, is still alive at the assertion, as it
+        # is for a caller that holds on to the error (or an IPython session keeping the last one). Dropped at once,
+        # the frame would free `parsed` whether or not the production code releases it, and the test could not fail.
+        with pytest.raises(ValueError, match="dynamic batch axis") as rejection:
+            exporter.build_engine("model.onnx")
 
-        assert set(released) == {"builder", "parser"}
+        assert set(released) == {"builder", "parser"}, f"parsed resources outlive the held {rejection.value!r}"
 
     def test_static_build_passes_no_profile(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Without ``dynamic_batch`` the builder configuration carries no ``profiles`` key at all."""
@@ -845,6 +1025,7 @@ class TestBuildEngineDynamicBatch:
             return "config"
 
         monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("11.2.1.2", has_fp16_flag=False))
+        monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
         monkeypatch.setattr(tensorrt_export, "_cast_onnx_to_fp16", lambda path: str(cast_path))
         monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
         monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
@@ -908,9 +1089,9 @@ class TestBuildEngineWeaklyTyped:
         monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
         monkeypatch.setattr(tensorrt_export, "_cast_onnx_to_fp16", _unexpected_cast)
 
-        TensorRTExporter(TensorRTConfig(fp16=True)).build_engine("/tmp/model.onnx")
+        TensorRTExporter(TensorRTConfig(fp16=True)).build_engine("model.onnx")
 
-        assert build_args["network"] == ("network", "/tmp/model.onnx")
+        assert build_args["source"] == "model.onnx"
 
     def test_engine_name_reports_fp16(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Naming is unchanged from before the strong-typing branch existed."""
@@ -997,7 +1178,7 @@ class TestBuildEngineStrongTyping:
 
         TensorRTExporter(TensorRTConfig(fp16=True)).build_engine(str(tmp_path / "model.onnx"))
 
-        assert build_args["network"] == ("network", str(cast_path))
+        assert build_args["source"] == str(cast_path)
 
     def test_engine_name_reports_fp16(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Regression guard for #1453: the engine really is FP16, so the filename must not say ``_fp32``."""
@@ -1035,7 +1216,7 @@ class TestBuildEngineStrongTyping:
 
         TensorRTExporter(TensorRTConfig(fp16=True)).build_engine(str(tmp_path / "model.onnx"))
 
-        assert build_args["network"] == ("network", str(cast_path))
+        assert build_args["source"] == str(cast_path)
 
     def test_a_surviving_fp16_flag_is_not_requested(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A strongly typed builder reads precision off the graph, so the flag must stay unrequested."""
@@ -1103,7 +1284,10 @@ class TestBuildEngineCastArtifactCleanup:
         cast_path = tmp_path / "model.fp16-abcd1234.onnx"
         cast_path.write_bytes(b"cast-graph")
 
-        monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("network", path))
+        monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
+        monkeypatch.setattr(
+            tensorrt_export, "network_from_onnx_path", lambda path: ("builder", _FakeNetwork(_STATIC_INPUT), "parser")
+        )
         monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
         monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: "engine")
 
