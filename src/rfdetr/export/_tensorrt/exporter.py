@@ -41,10 +41,9 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
-# polygraphy ships in the ``rfdetr[tensorrt]`` extra alongside ``tensorrt``. Import it
-# lazily at module scope (guarded) so importing this module never fails on hosts
-# without TensorRT, and so tests can monkeypatch these names without polygraphy
-# installed.
+# polygraphy ships in the ``rfdetr[tensorrt]`` extra alongside ``tensorrt``, and without it in ``rfdetr[onnx]`` (and
+# ``rfdetr[tflite]`` on Python 3.12). Import it lazily at module scope (guarded) so importing this module never fails
+# on hosts without TensorRT, and so tests can monkeypatch these names without polygraphy installed.
 try:
     from polygraphy.backend.trt import (
         CreateConfig,
@@ -54,8 +53,11 @@ try:
         save_engine,
     )
 
-    _IS_TENSORRT_AVAILABLE = True
-except ImportError:  # pragma: no cover - exercised via TensorRTExporter._require_tensorrt
+    #: Whether ``tensorrt`` itself is installed, probed without loading its CUDA libraries. polygraphy imports it only
+    #: once a build runs, so polygraphy importing proves nothing. A bare ``tensorrt/`` directory on ``sys.path`` (an
+    #: export folder named after the format, say) is a namespace package with no origin, not an install.
+    _IS_TENSORRT_AVAILABLE = getattr(importlib.util.find_spec("tensorrt"), "origin", None) is not None
+except ImportError:  # pragma: no cover - exercised by TestTensorRTAvailability on a separately executed copy
     CreateConfig = None
     Profile = None
     engine_from_network = None
@@ -165,6 +167,35 @@ def resolve_fp16_strategy(trt_module: Any | None) -> tuple[Fp16Strategy, str]:
     if hasattr(getattr(trt_module, "BuilderFlag", None), "FP16"):
         return Fp16Strategy.BUILDER_FLAG, version
     return Fp16Strategy.UNAVAILABLE, version
+
+
+def _dynamic_batch_inputs(network: Any) -> dict[str, tuple[int, ...]]:
+    """Collect the network inputs whose batch axis is dynamic (``-1``), in input order.
+
+    Args:
+        network: A parsed TensorRT network, or anything exposing ``num_inputs`` and ``get_input(index)`` with a
+            ``name`` and a ``shape``.
+
+    Returns:
+        Each such input's name mapped to its full shape. A rank-0 input has no batch axis and is never included.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> inputs = [
+        ...     SimpleNamespace(name="input", shape=(-1, 3, 384, 384)),
+        ...     SimpleNamespace(name="orig_size", shape=(1, 2)),
+        ...     SimpleNamespace(name="threshold", shape=()),
+        ... ]
+        >>> _dynamic_batch_inputs(SimpleNamespace(num_inputs=len(inputs), get_input=inputs.__getitem__))
+        {'input': (-1, 3, 384, 384)}
+    """
+    dynamic_inputs = {}
+    for index in range(network.num_inputs):
+        tensor = network.get_input(index)
+        shape = tuple(int(dim) for dim in tensor.shape)
+        if len(shape) > BATCH_AXIS and shape[BATCH_AXIS] == -1:
+            dynamic_inputs[tensor.name] = shape
+    return dynamic_inputs
 
 
 def _subgraphs(node: Any) -> Iterator[Any]:
@@ -713,9 +744,15 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             )
 
     def _convert(self, graph: ExportGraph) -> str:
-        """Export to ONNX, build the engine from it, and return the engine's path."""
+        """Export to ONNX, build the engine from it, and return the engine's path.
+
+        Raises:
+            ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, before the ONNX export runs.
+        """
         from rfdetr.export._onnx.exporter import OnnxExporter
 
+        # build_engine checks this too, but only after the ONNX export has been paid for.
+        self._require_tensorrt()
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
         # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
@@ -751,6 +788,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 strongly typed TensorRT without ``onnx``/``onnxconverter-common`` available to cast the graph.
             Fp16CastUnsupportedError: If ``fp16`` is requested on a strongly typed TensorRT for a graph that
                 cannot be cast to fp16 (already fp16, or explicitly quantized).
+            ValueError: If the graph's batch axis disagrees with ``dynamic_batch``: a dynamic batch axis without
+                ``dynamic_batch`` (the engine would accept batch 1 only), or ``dynamic_batch`` on a graph that has
+                none.
 
         Examples:
             The build logs its progress, so this is documentation rather than a doctest:
@@ -823,17 +863,19 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         Raises:
             ImportError: If ``polygraphy``/``tensorrt`` are not installed.
         """
-        if engine_from_network is None:
+        if not _IS_TENSORRT_AVAILABLE:
             raise ImportError(
-                "TensorRT export requires the 'tensorrt' extra. Install with: pip install rfdetr[tensorrt]"
+                "TensorRT export requires both the 'tensorrt' and 'polygraphy' packages ('rfdetr[onnx]' installs only "
+                "polygraphy). Install them with: pip install rfdetr[tensorrt]"
             )
 
     def _fp16_strategy(self) -> tuple[Fp16Strategy, str]:
         """Resolve how the installed TensorRT can produce the requested FP16 engine.
 
         Returns:
-            The strategy from :func:`resolve_fp16_strategy`, paired with the version TensorRT reports. A
-            missing/broken ``tensorrt`` import is left to the polygraphy build chain to surface.
+            The strategy from :func:`resolve_fp16_strategy`, paired with the version TensorRT reports. A missing
+            ``tensorrt`` was already refused by :meth:`_require_tensorrt`; one that is installed but fails to import
+            is left to the polygraphy build chain to surface.
         """
         try:
             import tensorrt as trt_module
@@ -873,28 +915,51 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             if self.config.verbose:
                 logger.info(f"Building TensorRT engine (fp16={fp16}) from {onnx_path}")
 
-            if self.config.dynamic_batch:
-                # A profile needs every dynamic input's full shape, so the parsed (builder, network, parser) tuple
-                # is inspected first and then handed on, rather than letting engine_from_network parse it again.
-                parsed = network_from_onnx_path(build_source)
-                try:
-                    profile = self._batch_profile(parsed[1])
-                except Exception:
-                    # _batch_profile can raise (e.g. no dynamic-batch input) before engine_from_network ever takes
-                    # ownership of `parsed`. Only that call frees the parsed builder/network/parser on success, so
-                    # release them here explicitly rather than leaking them on this error path; adding `parsed` to
-                    # `cleanup` unconditionally would double-close it once engine_from_network also releases it.
-                    del parsed
-                    raise
-                engine = engine_from_network(parsed, config=CreateConfig(fp16=builder_fp16, profiles=[profile]))
-            else:
-                engine = engine_from_network(
-                    network_from_onnx_path(build_source),
-                    config=CreateConfig(fp16=builder_fp16),
-                )
+            # The builder configuration depends on the network's input shapes, so the parsed (builder, network, parser)
+            # tuple is inspected first and then handed on, rather than letting engine_from_network parse it again.
+            parsed = network_from_onnx_path(build_source)
+            try:
+                build_config = self._build_config(parsed[1], onnx_path, fp16=builder_fp16)
+            except Exception:
+                # _build_config refuses a graph whose batch axis disagrees with the request before engine_from_network
+                # ever takes ownership of `parsed`. Only that call frees the parsed builder/network/parser on success,
+                # so release them here explicitly rather than leaking them on this error path; adding `parsed` to
+                # `cleanup` unconditionally would double-close it once engine_from_network also releases it.
+                del parsed
+                raise
+            engine = engine_from_network(parsed, config=build_config)
             save_engine(engine, path=engine_path)
 
         logger.info(f"Successfully built TensorRT engine: {engine_path}")
+
+    def _build_config(self, network: Any, onnx_path: str, *, fp16: bool) -> Any:
+        """Create the builder configuration, with a batch profile when ``dynamic_batch`` is set and none otherwise.
+
+        Without a profile, polygraphy fixes every dynamic dimension to 1 and only warns, so a graph with a dynamic
+        batch axis is refused here rather than quietly built into an engine that accepts batch 1 only.
+
+        Args:
+            network: The parsed TensorRT network.
+            onnx_path: The caller's ``.onnx`` file, named in errors even when *network* was parsed from an fp16 copy.
+            fp16: The FP16 builder flag.
+
+        Returns:
+            A polygraphy ``CreateConfig``.
+
+        Raises:
+            ValueError: If the graph's batch axis disagrees with ``dynamic_batch``, in either direction.
+        """
+        if self.config.dynamic_batch:
+            return CreateConfig(fp16=fp16, profiles=[self._batch_profile(network)])
+        dynamic_inputs = _dynamic_batch_inputs(network)
+        if dynamic_inputs:
+            raise ValueError(
+                f"'{onnx_path}' has a dynamic batch axis on {list(dynamic_inputs)}, but dynamic_batch is off, so "
+                "polygraphy would fix that axis to 1 and build an engine that accepts batch 1 only. Build it with "
+                "TensorRTConfig(dynamic_batch=True, max_batch_size=<largest batch>), or export the ONNX graph without "
+                "dynamic_batch for a fixed-batch engine."
+            )
+        return CreateConfig(fp16=fp16)
 
     def _batch_profile(self, network: Any) -> Any:
         """Build the batch optimization profile for every dynamic input.
@@ -915,23 +980,18 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         """
         opt = self.config.opt_batch_size
         max_batch = self.config.max_batch_size
-        profile = Profile()
-        dynamic_inputs = []
-        for index in range(network.num_inputs):
-            tensor = network.get_input(index)
-            shape = tuple(int(dim) for dim in tensor.shape)
-            if shape[BATCH_AXIS] != -1:
-                continue
-            dynamic_inputs.append(tensor.name)
-            # BATCH_AXIS is the only dynamic axis, so everything past it is the fixed shape each bound repeats.
-            trailing = shape[BATCH_AXIS + 1 :]
-            profile.add(tensor.name, min=(1, *trailing), opt=(opt, *trailing), max=(max_batch, *trailing))
+        dynamic_inputs = _dynamic_batch_inputs(network)
         if not dynamic_inputs:
             raise ValueError(
                 "dynamic_batch=True was requested but no network input has a dynamic batch axis; export the ONNX "
                 "graph with dynamic_batch=True first."
             )
+        profile = Profile()
+        for name, shape in dynamic_inputs.items():
+            # BATCH_AXIS is the only dynamic axis, so everything past it is the fixed shape each bound repeats.
+            trailing = shape[BATCH_AXIS + 1 :]
+            profile.add(name, min=(1, *trailing), opt=(opt, *trailing), max=(max_batch, *trailing))
         logger.info(
-            f"Building TensorRT engine with a batch profile min=1 opt={opt} max={max_batch} on {dynamic_inputs}"
+            f"Building TensorRT engine with a batch profile min=1 opt={opt} max={max_batch} on {list(dynamic_inputs)}"
         )
         return profile

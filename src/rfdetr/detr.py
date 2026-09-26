@@ -1893,7 +1893,7 @@ class RFDETR:
                 ``"fp32"``.
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
-                ``rfdetr[onnx]``, ``rfdetr[executorch]``,
+                ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
                 ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
                 ``backend="coreml"``, ``openvino`` for OpenVINO export,
                 ``rfdetr[litert]`` for LiteRT export,
