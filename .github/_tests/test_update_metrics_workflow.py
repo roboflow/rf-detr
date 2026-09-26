@@ -209,8 +209,8 @@ class TestUpdateMetricsWorkflow:
         assert "workflow_dispatch" in triggers
 
     def test_workflow_has_only_required_write_permissions(self, metrics_workflow: dict[str, Any]) -> None:
-        """Automation must receive only permissions needed to update its pull request."""
-        assert metrics_workflow["permissions"] == {"contents": "write", "pull-requests": "write"}
+        """Automation must receive only permissions needed to update the metrics branch."""
+        assert metrics_workflow["permissions"] == {"contents": "write"}
 
     def test_runs_never_cancel_one_another(self, metrics_workflow: dict[str, Any]) -> None:
         """Overlapping runs must queue behind one another instead of cancelling.
@@ -234,11 +234,6 @@ class TestUpdateMetricsWorkflow:
         [
             pytest.param("📥 Checkout the repository", "actions/checkout", id="checkout"),
             pytest.param("🐍 Install uv and set Python", "astral-sh/setup-uv", id="setup-uv"),
-            pytest.param(
-                "📨 Create or update metrics pull request",
-                "peter-evans/create-pull-request",
-                id="create-pull-request",
-            ),
         ],
     )
     def test_third_party_actions_are_pinned_to_commit_shas(
@@ -291,14 +286,19 @@ class TestUpdateMetricsWorkflow:
         assert "> docs/assets/weekly-metrics.svg.tmp" in run
         assert "mv docs/assets/weekly-metrics.svg.tmp docs/assets/weekly-metrics.svg" in run
 
-    def test_pull_request_updates_only_metrics_svg(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
-        """Pull-request action must write only generated SVG on stable automation branch."""
-        create_pull_request = metrics_steps["📨 Create or update metrics pull request"]
+    def test_commit_step_updates_only_metrics_svg_on_the_automation_branch(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+    ) -> None:
+        """Commit step must write only the generated SVG and force-update the fixed branch."""
+        commit_step = metrics_steps["📤 Commit and push metrics update"]
+        run = commit_step["run"]
 
-        assert create_pull_request["with"]["add-paths"] == "docs/assets/weekly-metrics.svg"
-        assert create_pull_request["with"]["base"] == "${{ github.event.repository.default_branch }}"
-        assert create_pull_request["with"]["branch"] == "automation/update-weekly-metrics"
-        assert create_pull_request["with"]["delete-branch"] is True
+        assert commit_step["env"]["METRICS_BRANCH"] == "automation/update-weekly-metrics"
+        assert "git diff --quiet -- docs/assets/weekly-metrics.svg" in run
+        assert "git add -- docs/assets/weekly-metrics.svg" in run
+        assert 'git commit -m "docs: update weekly project metrics"' in run
+        assert 'git push --force-with-lease origin HEAD:"$METRICS_BRANCH"' in run
 
 
 @requires_bash
