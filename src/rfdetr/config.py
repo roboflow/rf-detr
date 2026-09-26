@@ -556,7 +556,9 @@ class ModelConfig(BaseConfig):
             final batch or a different ``TrainConfig.eval_batch_size``, recompiles once) and the default
             IA-BCE detection losses run layer-batched in one compiled function. Target packing and
             assignment stay eager, and every other configuration, including segmentation and keypoint
-            models, keeps its dynamic model compile and eager per-layer losses. Defaults to ``False``.
+            models, keeps its dynamic model compile and eager per-layer losses. Detection training on one BF16
+            CUDA device with ``TrainConfig.use_ema=True`` also runs gradient clipping, AdamW and the EMA update
+            as one Triton pass; the advanced training guide lists the exact conditions. Defaults to ``False``.
         cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
             graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
             sizes it matches eager and ``compile`` is the better lever. Combined with
@@ -1365,7 +1367,11 @@ class TrainConfig(BaseConfig):
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
-    clip_max_norm: float = 0.1
+    # ge=0.0 keeps 0.0 as the documented "clipping off" value while rejecting negatives at
+    # construction time. Both consumers gate clipping behind ``> 0`` —
+    # RFDETRModelModule._clip_manual_optimization_gradients and FusedAdamWEMA (which maps any non-positive norm to
+    # math.inf) — so a negative value would otherwise train unclipped for the whole run without raising or warning.
+    clip_max_norm: float = Field(default=0.1, ge=0.0)
     seed: int | None = None
     sync_bn: bool = False
     # strategy maps to PTL Trainer(strategy=...). Common values: "auto", "ddp",
