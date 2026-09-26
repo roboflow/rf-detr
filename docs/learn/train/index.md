@@ -216,7 +216,7 @@ The output directory also holds `training_config.json`, a record of how the run 
 
 ## Load and Run Fine-Tuned Model
 
-`RFDETR.from_checkpoint("<CHECKPOINT_PATH>")` picks the model class and restores the trained resolution and architecture when the checkpoint contains `model_config`. Best-total checkpoints written by RF-DETR 1.9.0 through 1.11.0 lack that metadata; load the matching unstripped `checkpoint_best_<source>.pth` or pass the training architecture explicitly. The variant constructors below read only the weights, so pass `resolution=` explicitly if you trained at a non-default resolution.
+`RFDETR.from_checkpoint("<CHECKPOINT_PATH>")` picks the model class and restores the trained resolution and architecture when the checkpoint contains `model_config`. Best-total checkpoints written by RF-DETR 1.11.0 and earlier lack that metadata; load the matching unstripped `checkpoint_best_<source>.pth` when it is still beside the file, or pass the training architecture explicitly. The variant constructors below read only the weights, so pass `resolution=` explicitly if you trained at a non-default resolution.
 
 === "Object Detection"
 
