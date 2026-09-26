@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-24T16:16:08">
+  <meta property="article:modified_time" content="2026-09-26T17:44:40">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-24T16:16:08",
+    "dateModified": "2026-09-26T17:44:40",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3211,7 +3211,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><code>checkpoint_best_regular.pth</code> – best checkpoint based on validation score, using the raw (non-EMA) model weights.</p>
 </li>
 <li>
-<p><code>checkpoint_best_total.pth</code> – final checkpoint selected for inference and benchmarking. It contains model weights, epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.</p>
+<p><code>checkpoint_best_total.pth</code> – final checkpoint selected for inference and benchmarking. It contains model weights, the model config (so <code>RFDETR.from_checkpoint()</code> rebuilds the trained resolution and architecture), epoch/PTL metadata, and callback state when available, but no optimizer or scheduler state. It is chosen as the better of the EMA and non-EMA models based on validation performance.</p>
 </li>
 <li>
 <p><code>last_ema.pth</code> – final EMA weights, written at the end of training when EMA is enabled (the default). Mirrors <code>last.ckpt</code> for the EMA model.</p>
@@ -3235,6 +3235,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 </details>
 <h2 id="load-and-run-fine-tuned-model">Load and Run Fine-Tuned Model<a class="headerlink" href="#load-and-run-fine-tuned-model" title="Permanent link">&para;</a></h2>
+<p><code>RFDETR.from_checkpoint("&lt;CHECKPOINT_PATH&gt;")</code> picks the model class and restores the trained resolution and architecture when the checkpoint contains <code>model_config</code>. Best-total checkpoints written by RF-DETR 1.11.0 and earlier lack that metadata; load the matching unstripped <code>checkpoint_best_&lt;source&gt;.pth</code> when it is still beside the file, or pass the training architecture explicitly. The variant constructors below read only the weights, so pass <code>resolution=</code> explicitly if you trained at a non-default resolution.</p>
 <div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Object Detection</label><label for="__tabbed_2_2">Image Segmentation</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
@@ -3296,7 +3297,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 24, 2026 16:16:08 UTC">2026-09-24 16:16:08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 26, 2026 17:44:40 UTC">2026-09-26 17:44:40</span>
   </span>
 
     
