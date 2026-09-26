@@ -651,6 +651,19 @@ class RFDETR:
                 dataset's class count.  Pass an explicit ``num_classes=N`` to pin
                 the head and prevent adaptation.
 
+                The checkpoint's other ``model_config`` fields (``resolution``,
+                ``num_select``, ``dec_layers`` and the rest of the trained
+                architecture) are restored the same way: an explicit caller kwarg
+                always wins over the saved value.  ``device`` and
+                ``pretrain_weights`` are the two exceptions — *path* itself supplies
+                the weights, and ``device`` is never restored, so the loading host's
+                own default applies unless ``device=`` is passed, letting a
+                GPU-trained checkpoint load on a CPU-only machine.  When the checkpoint carries no
+                ``model_config`` at all (best-total files written before it was
+                strip-preserved), the lost fields fall back to class defaults and a
+                warning names them, together with the unstripped sibling checkpoint
+                or ``training_config.json`` to recover them from.
+
         Returns:
             An instance of the appropriate :class:`RFDETR` subclass loaded from the checkpoint.
 
@@ -835,11 +848,61 @@ class RFDETR:
         saved_model_config = ckpt.get("model_config")
         if isinstance(saved_model_config, dict):
             for key, value in saved_model_config.items():
-                if key == "pretrain_weights":
+                # device records the training host (e.g. "cuda"); the loading host keeps its own default.
+                if key in ("pretrain_weights", "device"):
                     continue
                 if not _mc_fields or key in _mc_fields:
                     constructor_kwargs[key] = value
                     checkpoint_config_keys.add(key)
+        elif "rfdetr_version" in ckpt or "best_total_source" in ckpt:
+            # checkpoint_best_total.pth files written before strip_checkpoint kept model_config have lost it; the
+            # unstripped file they were copied from, named by best_total_source, still has it. These settings then
+            # fall back to class defaults without an error (a changed num_queries or group_detr fails loudly on the
+            # weight shapes instead), so keep warning until the caller has passed all of them.
+            # Both keys discriminate, because neither is present on its own in every affected file: rfdetr_version
+            # reaches back to 1.7.0 but is omitted when get_version() cannot resolve a version (editable install
+            # without package metadata), while best_total_source covers those but only exists since 1.9.0.
+            silent_fields = ["resolution", "num_select", "dec_layers"]
+            segmentation_field = _mc_fields.get("segmentation_head")
+            if kwargs.get("segmentation_head", getattr(segmentation_field, "default", False)) is True:
+                silent_fields.append("mask_downsample_ratio")
+            missing = [name for name in silent_fields if name not in kwargs]
+            if missing:
+                # A best-total file often travels alone (the Roboflow SDK upload path sends only this one), so the
+                # sibling it was copied from is not always there to point at. Only the two source names the training
+                # stack writes become a filename; anything else is reported as-is so an anomaly stays visible.
+                best_total_source = ckpt.get("best_total_source")
+                sibling = (
+                    Path(path).with_name(f"checkpoint_best_{best_total_source}.pth")
+                    if best_total_source in ("ema", "regular")
+                    else None
+                )
+                if sibling is not None and sibling.exists():
+                    remedy = (
+                        f"Load {sibling.name} from the same output directory instead, or pass the training values "
+                        "to from_checkpoint(); training_config.json in that directory lists them."
+                    )
+                elif sibling is not None:
+                    remedy = (
+                        f"{sibling.name} is not beside it, so pass the values above to from_checkpoint() "
+                        "explicitly; training_config.json from the original training run lists them."
+                    )
+                else:
+                    remedy = (
+                        f"Its best_total_source is {best_total_source!r}, so check for an unstripped "
+                        "checkpoint_best_*.pth beside it, or pass the values above to from_checkpoint() "
+                        "explicitly; training_config.json from the original training run lists them."
+                    )
+                written_by = f" (written by rfdetr {ckpt['rfdetr_version']})" if "rfdetr_version" in ckpt else ""
+                logger.warning(
+                    "Checkpoint %r%s has no model_config, which checkpoint_best_total.pth files lost when "
+                    "stripped, so these settings fall back to %s defaults: %s. %s",
+                    str(path),
+                    written_by,
+                    getattr(model_cls, "__name__", repr(model_cls)),
+                    ", ".join(missing),
+                    remedy,
+                )
 
         if num_classes is not None and "num_classes" not in kwargs:
             constructor_kwargs["num_classes"] = num_classes

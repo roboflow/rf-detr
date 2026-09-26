@@ -5,8 +5,11 @@
 # ------------------------------------------------------------------------
 """Tests for RFDETR.from_checkpoint classmethod.
 
-The inference logic is isolated by patching ``torch.load`` and the target model class inside ``rfdetr.variants`` (or
-``rfdetr.platform.models`` for plus models).  No model weights are downloaded or GPU memory allocated.
+Most tests isolate the inference logic by patching ``torch.load`` and the target model class inside ``rfdetr.variants``
+(or ``rfdetr.platform.models`` for plus models). The round-trip cases in ``TestFromCheckpointStrippedBestTotal`` instead
+build a real, small CPU model (Nano or keypoint preview) and run it through a real ``strip_checkpoint`` +
+``from_checkpoint`` cycle, to prove a working model actually comes out the other end. Either way, no model weights are
+downloaded and no GPU memory is allocated.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import warnings
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 
@@ -24,7 +28,8 @@ from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
-from rfdetr.variants import RFDETRSmall
+from rfdetr.utilities.state_dict import strip_checkpoint
+from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSmall
 
 
 class _CustomObj:
@@ -922,3 +927,293 @@ class TestFromCheckpointWeightInference:
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["num_keypoints_per_class"] == [0, 33]
         assert call_kwargs["num_classes"] == 2
+
+
+# ---------------------------------------------------------------------------
+# checkpoint_best_total.pth after strip_checkpoint
+# ---------------------------------------------------------------------------
+
+
+class TestFromCheckpointStrippedBestTotal:
+    """``checkpoint_best_total.pth`` goes through ``strip_checkpoint``; reloading it must keep the architecture."""
+
+    def test_stripped_checkpoint_restores_trained_resolution(self, tmp_path: Path) -> None:
+        """A model trained at a non-default resolution reloads at that resolution and predicts the same boxes."""
+        torch.manual_seed(0)
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=3, resolution=224)
+        path = tmp_path / "checkpoint_best_total.pth"
+        # The payload BestModelCallback writes before on_fit_end strips it into checkpoint_best_total.pth.
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b", "c"]},
+                "model_name": "RFDETRNano",
+                "model_config": model.model_config.model_dump(),
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path, device="cpu")
+
+        assert loaded.model_config.resolution == 224, "resolution must survive strip_checkpoint"
+        image = torch.rand(3, 160, 200, generator=torch.Generator().manual_seed(0))
+        expected = model.predict(image, threshold=0.0)
+        actual = loaded.predict(image, threshold=0.0)
+        np.testing.assert_allclose(actual.xyxy, expected.xyxy, atol=1e-4, err_msg="boxes differ after reload")
+
+    def test_stripped_checkpoint_does_not_forward_training_host_device(self, tmp_path: Path) -> None:
+        """The training host's device is never restored, even through a real strip_checkpoint round trip.
+
+        A ``device="cpu"`` build with a plain ``device="cpu"`` reload cannot fail whether or not the skip clause in
+        ``from_checkpoint`` fires, since the checkpoint value and the explicit kwarg already agree. This test instead
+        simulates a checkpoint written on a GPU training host (``model_config["device"] = "cuda"``) and reloads with
+        no ``device=`` override, so only the host-policy skip clause — not kwarg precedence — can make it pass.
+        """
+        model = RFDETRNano(pretrain_weights=None, device="cpu", num_classes=3, resolution=224)
+        model_config_dict = model.model_config.model_dump()
+        model_config_dict["device"] = "cuda"  # simulate a checkpoint written on a GPU training host
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b", "c"]},
+                "model_name": "RFDETRNano",
+                "model_config": model_config_dict,
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path)
+
+        assert loaded.model_config.device != "cuda", "the training host's device must not be restored"
+
+    def test_stripped_checkpoint_restores_keypoint_model_resolution(self, tmp_path: Path) -> None:
+        """A real (unmocked) keypoint model trained at a non-default resolution reloads and predicts at it.
+
+        The existing mocked coverage (``test_checkpoint_model_config_forwarded_to_constructor``) only proves the
+        restored fields are forwarded as kwargs to a ``MagicMock`` constructor, never that a real keypoint model
+        (a non-default schema, unlike plain detection) actually builds and runs from them — the exact gap the
+        CHANGELOG's own keypoint-model repro describes.
+        """
+        torch.manual_seed(0)
+        model = RFDETRKeypointPreview(
+            pretrain_weights=None,
+            device="cpu",
+            resolution=96,
+            num_queries=4,
+            num_classes=2,
+            num_keypoints_per_class=[3, 3],
+        )
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": model.model.model.state_dict(),
+                "args": {"class_names": ["a", "b"]},
+                "model_name": "RFDETRKeypointPreview",
+                "model_config": model.model_config.model_dump(),
+                "optimizer_states": [],
+            },
+            path,
+        )
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        loaded = RFDETR.from_checkpoint(path, device="cpu")
+
+        assert loaded.model_config.resolution == 96, "resolution must survive strip_checkpoint for keypoint models"
+        image = torch.rand(3, 120, 160, generator=torch.Generator().manual_seed(0))
+        result = loaded.predict(image, threshold=0.0)
+        assert hasattr(result, "xy"), "restored keypoint model must actually predict at the restored resolution"
+
+    @pytest.mark.parametrize(
+        ("extra", "kwargs", "expected_file"),
+        [
+            pytest.param({"best_total_source": "ema"}, {}, "checkpoint_best_ema.pth", id="old-best-total-ema"),
+            pytest.param(
+                {"best_total_source": "regular"}, {}, "checkpoint_best_regular.pth", id="old-best-total-regular"
+            ),
+            pytest.param(
+                {"best_total_source": "ema", "model_config": {"resolution": 224}}, {}, None, id="model-config-present"
+            ),
+            pytest.param({}, {}, None, id="no-best-total-source"),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224},
+                "checkpoint_best_ema.pth",
+                id="caller-passes-only-resolution",
+            ),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224, "num_select": 50, "dec_layers": 3},
+                None,
+                id="caller-passes-every-silent-field",
+            ),
+            pytest.param(
+                {"best_total_source": "ema"},
+                {"resolution": 224, "num_select": 50, "dec_layers": 3, "segmentation_head": True},
+                "checkpoint_best_ema.pth",
+                id="segmentation-still-missing-mask-downsample-ratio",
+            ),
+        ],
+    )
+    def test_missing_model_config_warning(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        extra: dict,
+        kwargs: dict,
+        expected_file: str | None,
+    ) -> None:
+        """An old stripped best-total file warns and names its source until the caller passes every setting it lost."""
+        ckpt = {"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano", **extra}
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano", **kwargs)
+
+        warnings_about_config = [record.message for record in caplog.records if "no model_config" in record.message]
+        if expected_file is None:
+            assert not warnings_about_config, f"unexpected warning: {warnings_about_config}"
+        else:
+            assert any(expected_file in message for message in warnings_about_config), (
+                f"expected a warning naming {expected_file}, got {warnings_about_config}"
+            )
+
+    def test_missing_model_config_warning_names_the_settings_still_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Passing some settings keeps the warning, which lists only the settings still falling back to defaults."""
+        ckpt = {"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano", "best_total_source": "ema"}
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(
+                ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano", resolution=224
+            )
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert messages, "expected the missing model_config warning"
+        assert "defaults: num_select, dec_layers." in messages[0], f"missing settings not listed: {messages[0]}"
+        assert "resolution" not in messages[0], f"resolution was passed but is still listed: {messages[0]}"
+
+    def test_strip_checkpoint_without_model_config_key_still_warns_on_reload(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """strip_checkpoint on a file with no model_config key adds no phantom key, and the reload still warns.
+
+        Every other test in this module supplies a model_config key (present, present-but-empty, or absent only through
+        mocked construction); this exercises a real strip_checkpoint round trip on a file that never had the key at all,
+        which must not invent one, and must still round-trip into the best-total-source warn path.
+        """
+        path = tmp_path / "checkpoint_best_total.pth"
+        torch.save({"model": {}, "args": {"class_names": ["a"]}, "model_name": "RFDETRNano"}, path)
+
+        strip_checkpoint(path, extra_metadata={"best_total_source": "ema"})
+
+        stripped = torch.load(path, weights_only=False)
+        assert "model_config" not in stripped, "strip_checkpoint must not invent a model_config key"
+
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(stripped, path, "rfdetr.variants.RFDETRNano")
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert any("checkpoint_best_ema.pth" in message for message in messages), (
+            f"expected the best-total warning naming the ema sibling, got {messages}"
+        )
+
+    def test_missing_model_config_warning_empty_dict_restores_nothing_and_does_not_warn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An empty model_config dict is still a dict, so it takes the restore branch and skips the warning branch.
+
+        Documents current behavior at the boundary: ``model_config: {}`` passes ``isinstance(value, dict)``, so
+        ``from_checkpoint`` never falls through to the ``best_total_source`` warning check even though the empty
+        dict restores zero fields — the caller silently gets class defaults with no warning either way.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {},
+            "best_total_source": "ema",
+        }
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _, mock_cls = _call_from_checkpoint(
+                ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano"
+            )
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert not messages, f"unexpected warning despite the model_config key being present: {messages}"
+        call_kwargs = mock_cls.call_args.kwargs
+        assert not {"resolution", "num_select", "dec_layers"} & call_kwargs.keys(), (
+            f"an empty model_config unexpectedly restored fields: {call_kwargs}"
+        )
+
+    def test_missing_model_config_warning_fires_for_rfdetr_version_without_best_total_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A resolvable rfdetr_version with no best_total_source still warns, citing the version.
+
+        This is the 1.7.0-1.8.x shape the union discriminator (``"rfdetr_version" in ckpt or "best_total_source" in
+        ckpt``) exists to catch: model_config persistence started in 1.7.0 but best_total_source was only added in
+        1.9.0, so a checkpoint from that window has no best_total_source to key off yet still lost model_config.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "rfdetr_version": "1.7.0",
+        }
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        messages = [record.message for record in caplog.records if "no model_config" in record.message]
+        assert messages, "expected the missing model_config warning to fire from rfdetr_version alone"
+        assert "written by rfdetr 1.7.0" in messages[0], f"warning should cite the rfdetr_version: {messages[0]}"
+
+    def test_training_host_device_is_not_restored(self, tmp_path: Path) -> None:
+        """A checkpoint trained on a GPU host must not force ``device="cuda"`` on the loading host."""
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {"device": "cuda", "resolution": 224},
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        assert "device" not in mock_cls.call_args.kwargs, "the training host's device must not be forwarded"
+
+    def test_training_host_optimization_flags_are_restored(self, tmp_path: Path) -> None:
+        """Unlike device, compile/cuda_graphs/gradient_checkpointing/freeze_encoder ARE restored from model_config.
+
+        The host-policy skip list in ``from_checkpoint`` only excludes ``pretrain_weights`` and ``device``; every other
+        ``model_config`` field, including these training-time performance flags, is forwarded to the constructor like
+        any other schema field.
+        """
+        ckpt = {
+            "model": {},
+            "args": {"class_names": ["a"]},
+            "model_name": "RFDETRNano",
+            "model_config": {
+                "device": "cuda",
+                "resolution": 224,
+                "compile": True,
+                "cuda_graphs": True,
+                "gradient_checkpointing": True,
+                "freeze_encoder": True,
+            },
+        }
+        _, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "checkpoint_best_total.pth", "rfdetr.variants.RFDETRNano")
+
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["compile"] is True
+        assert call_kwargs["cuda_graphs"] is True
+        assert call_kwargs["gradient_checkpointing"] is True
+        assert call_kwargs["freeze_encoder"] is True
+        assert "device" not in call_kwargs, "device stays host policy, unlike the other flags"
+        assert mock_cls.call_args.kwargs["resolution"] == 224, "other model_config fields must still be restored"
