@@ -157,6 +157,7 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
             args.num_keypoints_per_class = _mc_kp
 
     if model_config.backbone_lora:
+        # No-op when load_pretrain_weights already wrapped the encoder to load a LoRA checkpoint.
         apply_lora(nn_model)
 
     # Adapt patch-embedding projection for non-RGB channel counts

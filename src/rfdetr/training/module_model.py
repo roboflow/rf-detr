@@ -441,6 +441,7 @@ class RFDETRModelModule(LightningModule):
                         "Reset keypoint Gaussian precision outputs to unit values after pretrained weight load."
                     )
         if model_config.backbone_lora:
+            # No-op when load_pretrain_weights already wrapped the encoder to load a LoRA checkpoint.
             apply_lora(self.model)
 
         # Build criterion/postprocessors after potential num_classes alignment so
