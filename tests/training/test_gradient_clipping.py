@@ -292,9 +292,9 @@ class _OverflowCriterion(_KeypointCriterion):
 def test_overflowing_gradient_is_safely_skipped_by_scaler(tmp_path: Path) -> None:
     """An overflowing (non-finite) loss makes the ``GradScaler`` skip the optimizer step, not clip garbage.
 
-        Every other case in this suite uses a clean finite gradient, so none of them exercise the scaler's own overflow-
-        detection path. A forced-inf loss must make ``GradScaler`` skip ``optimizer.step()`` entirely (the post-hook that
-        records a consumed gradient must never fire), back off its scale, and leave the model's parameters finite.
+    Every other case in this suite uses a clean finite gradient, so none of them exercise the scaler's own overflow-
+    detection path. A forced-inf loss must make ``GradScaler`` skip ``optimizer.step()`` entirely (the post-hook that
+    records a consumed gradient must never fire), back off its scale, and leave the model's parameters finite.
     """
     mc = RFDETRBaseConfig(
         pretrain_weights=None,
