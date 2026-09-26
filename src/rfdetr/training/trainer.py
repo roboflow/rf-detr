@@ -915,7 +915,9 @@ def build_trainer(
 
     # Manual optimization (currently scoped to keypoint models) owns gradient accumulation
     # and clipping inside ``RFDETRModelModule`` so the box-count denominator
-    # spans the full effective batch.  Detection and segmentation models keep Lightning's
+    # spans the full effective batch.  Lightning's configuration validator requires
+    # accumulate_grad_batches=1 and rejects positive gradient_clip_val under manual
+    # optimization, so pass None for clipping.  Detection and segmentation models keep Lightning's
     # automatic optimization, which means ``accumulate_grad_batches`` and ``gradient_clip_val``
     # must flow through to the Trainer as usual for them.
     manual_optimization = has_keypoints
@@ -971,8 +973,8 @@ def build_trainer(
     trainer_config["strategy"] = strategy
     if manual_optimization:
         # Re-apply manual-optimization invariants so a caller-supplied trainer_kwargs
-        # value cannot silently re-enable Lightning-owned accumulation or clipping while
-        # the module is doing its own.  Warn loudly so the override is visible — silent
+        # value cannot violate Lightning's configuration validator while the module owns
+        # accumulation and clipping.  Warn loudly so the override is visible — silent
         # coercion has historically masked subtle gradient-scaling bugs on this code path.
         for key in ("accumulate_grad_batches", "gradient_clip_val"):
             if key in trainer_kwargs:
@@ -990,7 +992,7 @@ def build_trainer(
         # gradient_clip_val=None here does NOT disable gradient clipping — clipping is
         # performed inside RFDETRModelModule.on_before_optimizer_step using train_config.clip_max_norm
         # (see src/rfdetr/training/module_model.py), after the precision plugin unscales fp16 gradients.
-        # Under manual optimization the module owns the clipping step; passing None to the PTL Trainer
-        # simply prevents PTL from doing a second redundant clip on top of the module's own.
+        # Passing None satisfies Lightning's configuration validator, which rejects positive
+        # gradient_clip_val under manual optimization; its precision plugin skips automatic clipping.
         trainer_config["gradient_clip_val"] = None
     return Trainer(**trainer_config)
