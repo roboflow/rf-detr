@@ -4,9 +4,12 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
+import contextlib
 import json
+import re
 import sys
 from collections import OrderedDict
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, call
@@ -17,7 +20,8 @@ import torch
 from PIL import Image
 
 import rfdetr.export.benchmark as benchmark
-from rfdetr.export._tensorrt.inference import TRTInference
+from rfdetr.export._tensorrt import inference as trt_inference
+from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
 from rfdetr.export.benchmark import infer_transforms
 
 #: Minimal indexed COCO dataset used to verify evaluator construction.
@@ -29,10 +33,11 @@ _MINIMAL_COCO = {
 
 
 class TestTRTInference:
-    def test_synchronize_sync_mode_does_not_require_stream(self, monkeypatch) -> None:
+    def test_synchronize_sync_mode_does_not_require_stream(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """`synchronize()` should not access stream in sync mode."""
         inference = TRTInference.__new__(TRTInference)
         inference.sync_mode = True
+        inference._engine_device = torch.device("cuda", 0)
 
         mock_is_available = Mock(return_value=True)
         mock_cuda_sync = Mock()
@@ -58,6 +63,35 @@ class TestTRTInference:
         inference.stream.synchronize.assert_called_once()
         mock_cuda_sync.assert_not_called()
 
+    @pytest.mark.parametrize("sync_mode", [True, False])
+    def test_synchronize_waits_on_the_engine_device(self, monkeypatch: pytest.MonkeyPatch, sync_mode: bool) -> None:
+        """Without a stream to drain, ``synchronize()`` waits on the engine's device, not whichever one is current.
+
+        A bare ``torch.cuda.synchronize()`` waits on the current device, which is ``cuda:0`` for a caller that never
+        switched -- so an engine on ``cuda:1`` would be reported finished while its work is still running.
+        """
+        inference = TRTInference.__new__(TRTInference)
+        inference.sync_mode = sync_mode
+        inference.stream = None
+        inference._engine_device = torch.device("cuda", 1)
+        monkeypatch.setattr("torch.cuda.is_available", Mock(return_value=True))
+        mock_cuda_sync = Mock()
+        monkeypatch.setattr("torch.cuda.synchronize", mock_cuda_sync)
+
+        inference.synchronize()
+
+        mock_cuda_sync.assert_called_once_with(torch.device("cuda", 1))
+
+    def test_time_profiler_synchronizes_its_own_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The profiler waits on the device it times, so work queued there is not charged to the next measurement."""
+        monkeypatch.setattr("torch.cuda.is_available", Mock(return_value=True))
+        mock_cuda_sync = Mock()
+        monkeypatch.setattr("torch.cuda.synchronize", mock_cuda_sync)
+
+        TimeProfiler(device="cuda:1").time()
+
+        mock_cuda_sync.assert_called_once_with("cuda:1")
+
     def test_infer_transforms_accepts_none_target(self) -> None:
         """Benchmark inference preprocessing should support image-only input."""
         image = Image.new("RGB", (320, 240))
@@ -70,25 +104,67 @@ class TestTRTInference:
         assert target is None
 
 
+class _FakeRuntime:
+    """``tensorrt.Runtime`` stand-in whose ``deserialize_cuda_engine`` hands back :attr:`engine`.
+
+    ``None`` models a file TensorRT cannot deserialize (another TensorRT version or GPU, or a truncated file), which
+    TensorRT reports by returning ``None`` rather than raising.
+
+    Examples:
+        >>> runtime = _FakeRuntime()
+        >>> runtime.deserialize_cuda_engine(b"engine bytes") is None
+        True
+        >>> runtime.engine = "engine"
+        >>> runtime.deserialize_cuda_engine(b"engine bytes")
+        'engine'
+    """
+
+    def __init__(self) -> None:
+        self.engine: _FakeEngine | None = None
+        self.deserialize_cuda_engine = Mock(side_effect=lambda payload: self.engine)
+
+    def __enter__(self) -> "_FakeRuntime":
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+
 class _FakeTensorRTModule(ModuleType):
-    """Stand-in ``tensorrt`` module with the two symbols ``get_bindings`` reads: ``TensorIOMode`` and ``nptype``."""
+    """Stand-in ``tensorrt`` module covering what ``TRTInference.__init__`` and ``get_bindings`` touch.
+
+    Every ``trt.Runtime(...)`` returns the same :attr:`runtime`, so a test sets ``runtime.engine`` to the engine the
+    file should deserialize to before constructing a ``TRTInference``.
+    """
 
     def __init__(self) -> None:
         super().__init__("tensorrt")
+        self.__version__ = "11.3.0.99"
         self.TensorIOMode = SimpleNamespace(INPUT="input", OUTPUT="output")
         self.nptype = lambda dtype: dtype
+        self.Logger = Mock()
+        self.init_libnvinfer_plugins = Mock()
+        self.runtime = _FakeRuntime()
+        self.Runtime = Mock(return_value=self.runtime)
 
 
 class _FakeEngine:
     """Deserialized-engine stand-in: iterates tensor names and answers the shape/dtype/mode/profile queries.
 
     Shapes use ``-1`` for a dynamic batch axis, as TensorRT reports them; ``profile_max`` is the batch upper bound the
-    single optimization profile declares on every dynamic input.
+    single optimization profile declares on every dynamic input, whose minimum is batch 1. ``input_dtype`` is the numpy
+    type the engine reports for its inputs (outputs are always float32).
     """
 
-    def __init__(self, tensors: dict[str, tuple[str, tuple[int, ...]]], profile_max: int = 4) -> None:
+    def __init__(
+        self,
+        tensors: dict[str, tuple[str, tuple[int, ...]]],
+        profile_max: int = 4,
+        input_dtype: type = np.float32,
+    ) -> None:
         self._tensors = tensors
         self.profile_max = profile_max
+        self.input_dtype = input_dtype
 
     def __iter__(self):
         return iter(self._tensors)
@@ -99,22 +175,26 @@ class _FakeEngine:
     def get_tensor_shape(self, name: str) -> tuple[int, ...]:
         return self._tensors[name][1]
 
-    def get_tensor_dtype(self, name: str):
-        return np.float32
+    def get_tensor_dtype(self, name: str) -> type:
+        return self.input_dtype if self.get_tensor_mode(name) == "input" else np.float32
 
     def get_tensor_profile_shape(self, name: str, profile_index: int):
         shape = self._tensors[name][1]
         return ((1, *shape[1:]), (2, *shape[1:]), (self.profile_max, *shape[1:]))
+
+    def create_execution_context(self) -> "_FakeContext":
+        return _FakeContext(self)
 
 
 class _FakeContext:
     """Execution-context stand-in that resolves every dynamic shape from the input shapes it has been given.
 
     TensorRT sizes a dynamic engine's tensors on the execution context, not on the engine, so ``set_input_shape``
-    records the batch a call declares and ``get_tensor_shape`` then reports every dynamic tensor at it. A batch above
-    the engine's profile maximum is refused by returning ``False``, which is how TensorRT reports it instead of raising.
-    ``output_batch`` pins the outputs to a batch of their own, modelling an engine whose output batch is not its input
-    batch. The execution calls are plain ``Mock`` s so tests can assert on them.
+    records the batch a call declares and ``get_tensor_shape`` then reports every dynamic tensor at it. A shape outside
+    the profile -- a batch below 1 or above the engine's profile maximum, or any other axis differing from the engine's
+    -- is refused by returning ``False``, which is how TensorRT reports it instead of raising. ``output_batch`` pins the
+    outputs to a batch of their own, modelling an engine whose output batch is not its input batch. The execution calls
+    are plain ``Mock`` s so tests can assert on them.
     """
 
     def __init__(self, engine: _FakeEngine, output_batch: int | None = None) -> None:
@@ -128,7 +208,7 @@ class _FakeContext:
         self.execute_async_v3 = Mock()
 
     def _set_input_shape(self, name: str, shape: tuple[int, ...]) -> bool:
-        if shape[0] > self._engine.profile_max:
+        if not 1 <= shape[0] <= self._engine.profile_max or shape[1:] != self._engine.get_tensor_shape(name)[1:]:
             return False
         self._batch = int(shape[0])
         return True
@@ -143,18 +223,74 @@ class _FakeContext:
         return (-1 if self._batch is None else self._batch, *shape[1:])
 
 
+class _DeviceRecorder:
+    """Stand-in for ``torch.cuda.device``: tracks which device the code under test made current.
+
+    A CPU-only torch cannot enter ``torch.cuda.device`` at all, and a one-GPU machine cannot switch to a second device,
+    so the tests observe the device ``TRTInference`` makes current around each TensorRT call instead of TensorRT
+    itself. :attr:`current` is ``None`` outside every scope.
+
+    Examples:
+        >>> recorder = _DeviceRecorder()
+        >>> with recorder("cuda:1"):
+        ...     recorder.current
+        device(type='cuda', index=1)
+        >>> recorder.current is None
+        True
+    """
+
+    def __init__(self) -> None:
+        self.current: torch.device | None = None
+
+    @contextlib.contextmanager
+    def __call__(self, device: str | torch.device) -> Iterator[None]:
+        previous, self.current = self.current, torch.device(device)
+        try:
+            yield
+        finally:
+            self.current = previous
+
+
+@pytest.fixture
+def fake_tensorrt(monkeypatch: pytest.MonkeyPatch) -> _FakeTensorRTModule:
+    """Point the module-level ``trt`` handle at a :class:`_FakeTensorRTModule` so no real TensorRT is needed.
+
+    Examples:
+        A pytest fixture, so it only runs when a test requests it:
+
+        >>> fake_tensorrt.runtime.engine = _FakeEngine(_STATIC_ENGINE_TENSORS)  # doctest: +SKIP
+    """
+    module = _FakeTensorRTModule()
+    monkeypatch.setattr(trt_inference, "trt", module)
+    return module
+
+
+@pytest.fixture
+def cuda_device_recorder(monkeypatch: pytest.MonkeyPatch) -> _DeviceRecorder:
+    """Replace ``torch.cuda.device`` with a :class:`_DeviceRecorder`, which CPU-only CI can enter.
+
+    Examples:
+        A pytest fixture, so it only runs when a test requests it:
+
+        >>> cuda_device_recorder.current is None  # doctest: +SKIP
+        True
+    """
+    recorder = _DeviceRecorder()
+    monkeypatch.setattr(torch.cuda, "device", recorder)
+    return recorder
+
+
 def _runtime_around(
     engine: _FakeEngine, context: _FakeContext | None = None, *, sync_mode: bool = True
 ) -> TRTInference:
     """Assemble a ``TRTInference`` around a fake engine and context without touching ``__init__`` (needs a GPU).
 
     A context matching *engine* is built here unless the test needs a non-default one (see :class:`_FakeContext`).
-    The module-level ``trt`` handle must already point at ``_FakeTensorRTModule`` (see the autouse fixture in
-    ``TestTRTInferenceDynamicBatch``); the doctest patches it itself.
+    The engine "runs" on the CPU, so the fakes can hand it ordinary CPU tensors. Calling the runtime needs the
+    ``fake_tensorrt`` and ``cuda_device_recorder`` fixtures; the doctest only builds it, and patches ``trt`` itself.
 
     Examples:
         >>> from unittest.mock import patch
-        >>> from rfdetr.export._tensorrt import inference as trt_inference
         >>> engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
         >>> with patch.object(trt_inference, "trt", _FakeTensorRTModule()):
         ...     runtime = _runtime_around(engine)
@@ -165,6 +301,8 @@ def _runtime_around(
     runtime.engine = engine
     runtime.context = _FakeContext(engine) if context is None else context
     runtime.sync_mode = sync_mode
+    runtime.device = "cpu"
+    runtime._engine_device = torch.device("cpu")
     runtime.stream = None if sync_mode else Mock(handle=7)
     runtime.bindings = runtime.get_bindings(engine, runtime.context, device="cpu")
     runtime.bindings_addr = OrderedDict((n, v.ptr) for n, v in runtime.bindings.items())
@@ -174,15 +312,9 @@ def _runtime_around(
     return runtime
 
 
+@pytest.mark.usefixtures("fake_tensorrt", "cuda_device_recorder")
 class TestTRTInferenceDynamicBatch:
     """``TRTInference`` serves engines built with ``dynamic_batch=True`` (a ``-1`` batch axis on every tensor)."""
-
-    @pytest.fixture(autouse=True)
-    def _fake_tensorrt(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Point the module-level ``trt`` handle at the stand-in so no real TensorRT is needed."""
-        from rfdetr.export._tensorrt import inference as trt_inference
-
-        monkeypatch.setattr(trt_inference, "trt", _FakeTensorRTModule())
 
     def test_dynamic_tensors_are_allocated_at_the_profile_max(self) -> None:
         """A ``-1`` batch axis becomes the profile's max batch so any batch within the profile fits."""
@@ -315,22 +447,6 @@ class TestTRTInferenceDynamicBatch:
 
         assert runtime.bindings["input"].shape == (2, 3, 8, 8)
         assert runtime.bindings["input"].dynamic is False
-
-    def test_get_dummy_input_uses_the_runtime_device(self) -> None:
-        """Dummy input tensors land on ``self.device``, not a hardcoded ``cuda:0``.
-
-        Regression guard: ``get_dummy_input`` used to build every tensor with ``.to("cuda:0")``
-        regardless of the device the runtime was constructed with.
-        """
-        engine = _FakeEngine({"input": ("input", (2, 3, 8, 8)), "dets": ("output", (2, 5, 4))})
-        runtime = _runtime_around(engine, context=Mock())
-        runtime.device = "cpu"
-
-        blob = runtime.get_dummy_input(batch_size=3)
-
-        assert set(blob) == {"input"}
-        assert blob["input"].shape == (3, 3, 8, 8)
-        assert blob["input"].device.type == "cpu"
 
     def test_run_sync_declares_the_input_shape_and_trims_outputs(self) -> None:
         """Each call sets the real input shape on the context and returns only the rows the engine produced."""
@@ -471,19 +587,324 @@ class TestTRTInferenceDynamicBatch:
         ]
 
     def test_get_dummy_input_uses_the_configured_device(self) -> None:
-        """The dummy input must land on the runtime's own configured device, not a hardcoded ``"cuda:0"``.
+        """The dummy input must land on the engine's own device at the requested batch, not a hardcoded ``"cuda:0"``.
 
         Regression guard: ``get_dummy_input`` used to hardcode ``.to("cuda:0")``, so a runtime built for the CPU (as
         every fake-engine test in this module is) would still hand back a CUDA tensor.
         """
         engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
         runtime = _runtime_around(engine)
-        runtime.device = "cpu"
+        # ``meta`` stands in for a device other than the CPU, which is also torch's default device.
+        runtime._engine_device = torch.device("meta")
 
         blob = runtime.get_dummy_input(batch_size=2)
 
         assert blob["input"].shape == (2, 3, 8, 8)
-        assert torch.device(blob["input"].device) == torch.device("cpu")
+        assert blob["input"].device == torch.device("meta")
+
+
+#: A fixed-batch engine with one ``(1, 3, 8, 8)`` float32 input and one output, as the unit tests below build it.
+_STATIC_ENGINE_TENSORS = {"input": ("input", (1, 3, 8, 8)), "dets": ("output", (1, 5, 4))}
+
+
+@pytest.mark.usefixtures("fake_tensorrt", "cuda_device_recorder")
+class TestTRTInferenceInputValidation:
+    """TensorRT reads each input straight off its pointer, as a dense buffer of the engine's own dtype and device.
+
+    Anything else -- another memory layout, dtype or device -- is read as if it were that buffer, so the runtime has to
+    refuse it before binding rather than return detections computed from misread memory.
+    """
+
+    @pytest.mark.parametrize(
+        "make_input",
+        [
+            pytest.param(lambda: torch.rand(1, 3, 8, 8).to(memory_format=torch.channels_last), id="channels_last"),
+            pytest.param(lambda: torch.rand(1, 3, 8, 16)[..., ::2], id="strided"),
+        ],
+    )
+    def test_rejects_a_non_contiguous_input(self, make_input: Callable[[], torch.Tensor]) -> None:
+        """A strided tensor is read as dense memory; on a real engine ``channels_last`` took 13 detections to 0."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS))
+
+        with pytest.raises(ValueError, match="not contiguous"):
+            runtime({"input": make_input()})
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [pytest.param(torch.float16, id="float16"), pytest.param(torch.float64, id="float64")],
+    )
+    def test_rejects_an_input_of_another_dtype(self, dtype: torch.dtype) -> None:
+        """The engine reads ``4 * numel`` bytes of float32 whatever the tensor holds, past the end of a float16 one."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS))
+
+        with pytest.raises(ValueError, match="dtype"):
+            runtime({"input": torch.rand(1, 3, 8, 8, dtype=dtype)})
+
+    def test_the_accepted_dtype_is_the_engines_own(self) -> None:
+        """An engine that reports float16 inputs takes a float16 tensor: the dtype comes from the engine, not a literal.
+
+        Every engine RF-DETR exports today keeps float32 inputs, so this passes with a hard-coded float32 check too --
+        except for the engine this test builds.
+        """
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS, input_dtype=np.float16))
+        blob = {"input": torch.rand(1, 3, 8, 8, dtype=torch.float16)}
+
+        runtime(blob)
+
+        assert runtime.bindings_addr["input"] == blob["input"].data_ptr()
+
+    @pytest.mark.parametrize(
+        ("engine_device", "input_device"),
+        [("cpu", "meta"), ("cuda:0", "cpu"), ("cuda:0", "cuda:1")],
+    )
+    def test_rejects_an_input_on_another_device(self, engine_device: str, input_device: str) -> None:
+        """A tensor on another device, including another GPU, hands TensorRT a pointer it cannot read.
+
+        On a GPU engine a CPU tensor ended in ``cudaError 700: an illegal memory access``, which leaves the process's
+        CUDA context unusable. CPU CI has no CUDA tensor to hand over, so the input is a stand-in carrying the
+        attributes the checks read; the device is checked first.
+        """
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS))
+        runtime._engine_device = torch.device(engine_device)
+        stand_in = SimpleNamespace(
+            device=torch.device(input_device),
+            dtype=torch.float32,
+            shape=torch.Size((1, 3, 8, 8)),
+            is_contiguous=lambda: True,
+            data_ptr=lambda: 0,
+        )
+
+        with pytest.raises(ValueError, match="device"):
+            runtime({"input": stand_in})
+
+    @pytest.mark.parametrize(
+        ("engine_shape", "shape", "misleading_advice"),
+        [
+            pytest.param((-1, 3, 8, 8), (0, 3, 8, 8), "max_batch_size", id="dynamic-empty-batch"),
+            pytest.param((-1, 3, 8, 8), (2, 3, 9, 9), "max_batch_size", id="dynamic-other-image-size"),
+            pytest.param((-1, 3, 8, 8), (5, 3, 8), "max_batch_size", id="dynamic-missing-axis"),
+            pytest.param((-1, 3, 8, 8), (5, 3, 9, 9), "max_batch_size", id="dynamic-above-max-other-image-size"),
+            pytest.param((2, 3, 8, 8), (2, 3, 9, 9), "dynamic_batch", id="static-other-image-size"),
+            pytest.param((2, 3, 8, 8), (0, 3, 8, 8), "dynamic_batch", id="static-empty-batch"),
+            pytest.param((4,), (), "dynamic_batch", id="static-scalar-input"),
+        ],
+    )
+    def test_a_shape_refusal_advises_only_a_fix_that_applies(
+        self, engine_shape: tuple[int, ...], shape: tuple[int, ...], misleading_advice: str
+    ) -> None:
+        """A larger ``max_batch_size`` or ``dynamic_batch=True`` only fixes a batch the engine cannot take.
+
+        An empty batch or a different image size is refused too, and pointing at the batch bounds would have the user
+        export again an engine that refuses the same input.
+        """
+        engine = _FakeEngine({"input": ("input", engine_shape), "dets": ("output", (engine_shape[0], 5, 4))})
+        runtime = _runtime_around(engine)
+
+        with pytest.raises(ValueError, match=re.escape(str(shape))) as refusal:
+            runtime({"input": torch.zeros(shape)})
+
+        assert misleading_advice not in str(refusal.value)
+
+    @pytest.mark.parametrize(
+        ("engine_shape", "shape", "advice"),
+        [
+            pytest.param((-1, 3, 8, 8), (5, 3, 8, 8), "Export with a larger max_batch_size", id="dynamic-above-max"),
+            pytest.param((2, 3, 8, 8), (1, 3, 8, 8), "Export with dynamic_batch=True", id="static-other-batch"),
+        ],
+    )
+    def test_a_batch_refusal_keeps_its_advice(
+        self, engine_shape: tuple[int, ...], shape: tuple[int, ...], advice: str
+    ) -> None:
+        """Where only the batch is wrong, the refusal still names the export setting that fixes it (unchanged)."""
+        engine = _FakeEngine({"input": ("input", engine_shape), "dets": ("output", (engine_shape[0], 5, 4))})
+        runtime = _runtime_around(engine)
+
+        with pytest.raises(ValueError, match=re.escape(advice)):
+            runtime({"input": torch.zeros(shape)})
+
+    @pytest.mark.parametrize(
+        ("shape", "advised"),
+        [
+            pytest.param((5, 3, 4, 4), True, id="smallest-image"),
+            pytest.param((5, 3, 6, 6), True, id="mid-range-image"),
+            pytest.param((5, 3, 2, 2), False, id="image-below-range"),
+            pytest.param((5, 3, 9, 9), False, id="image-above-range"),
+        ],
+    )
+    def test_the_batch_advice_on_an_engine_with_a_dynamic_image_size(
+        self, shape: tuple[int, ...], advised: bool
+    ) -> None:
+        """Each image axis is compared with its own profile range (4x4 to 8x8 here), not with the maximum alone.
+
+        Five images of an in-range size are refused for the batch alone, so a larger ``max_batch_size`` fixes it; five
+        images outside the range would still be refused after that re-export.
+        """
+        engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
+        engine.get_tensor_profile_shape = lambda name, profile_index: ((1, 3, 4, 4), (2, 3, 8, 8), (4, 3, 8, 8))
+        runtime = _runtime_around(engine)
+
+        with pytest.raises(ValueError, match=re.escape(str(shape))) as refusal:
+            runtime({"input": torch.zeros(shape)})
+
+        assert ("Export with a larger max_batch_size" in str(refusal.value)) is advised
+
+
+@pytest.mark.usefixtures("cuda_device_recorder")
+class TestTRTInferenceEngineLoading:
+    """TensorRT reports an engine or context it cannot create by returning ``None``, never by raising."""
+
+    def test_an_undeserializable_engine_raises_a_rebuild_hint(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """An engine from another TensorRT version or GPU, or a truncated copy, names the file and the fix.
+
+        Using the ``None`` unchecked surfaced as ``AttributeError: 'NoneType' object has no attribute
+        'create_execution_context'``, which says nothing about the engine file.
+        """
+        engine_file = tmp_path / "foreign.trt"
+        engine_file.write_bytes(b"not an engine for this machine")
+        fake_tensorrt.runtime.engine = None
+
+        with pytest.raises(RuntimeError, match=re.escape(str(engine_file)) + ".*Rebuild"):
+            TRTInference(str(engine_file), device="cuda:0", sync_mode=True)
+
+    def test_a_missing_execution_context_is_reported(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
+        """A context TensorRT could not create is reported at construction, not at the first call."""
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+        engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
+        engine.create_execution_context = lambda: None
+        fake_tensorrt.runtime.engine = engine
+
+        with pytest.raises(RuntimeError, match="execution context"):
+            TRTInference(str(engine_file), device="cuda:0", sync_mode=True)
+
+
+@pytest.mark.usefixtures("fake_tensorrt")
+class TestTRTInferenceDevice:
+    """TensorRT binds an engine to the device current when it is loaded, and every launch must find it current again.
+
+    ``benchmark.main(device=1)`` asks for ``cuda:1``; before this was honoured, the engine was loaded and run on
+    whichever device was current (``cuda:0``) while its buffers and inputs sat on ``cuda:1``.
+    """
+
+    @pytest.mark.parametrize(
+        ("device", "expected"),
+        [
+            ("cuda:1", "cuda:1"),
+            ("cuda", "cuda:3"),
+            pytest.param(torch.device("cuda", 2), "cuda:2", id="torch.device"),
+        ],
+    )
+    def test_the_engine_is_loaded_on_the_requested_device(
+        self,
+        fake_tensorrt: _FakeTensorRTModule,
+        cuda_device_recorder: _DeviceRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        device: str | torch.device,
+        expected: str,
+    ) -> None:
+        """Deserialization and context creation both run with the requested device current.
+
+        A bare ``"cuda"`` is pinned to the device current at construction (3 here), since that is where TensorRT puts
+        the engine. The engine has no outputs, so no buffer is allocated on a CUDA device a CPU-only CI does not have.
+        """
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: 3)
+        engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
+        active: dict[str, torch.device | None] = {}
+
+        def deserialize(payload: bytes) -> _FakeEngine:
+            active["deserialize"] = cuda_device_recorder.current
+            return engine
+
+        def create_context() -> _FakeContext:
+            active["context"] = cuda_device_recorder.current
+            return _FakeContext(engine)
+
+        fake_tensorrt.runtime.deserialize_cuda_engine.side_effect = deserialize
+        engine.create_execution_context = create_context
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+
+        TRTInference(str(engine_file), device=device, sync_mode=True)
+
+        assert active == {"deserialize": torch.device(expected), "context": torch.device(expected)}
+
+    @pytest.mark.usefixtures("cuda_device_recorder")
+    def test_the_runtime_timer_waits_on_the_engine_device(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """The ``TimeProfiler`` that ``speed()`` times with waits on the engine's device, not on the current one."""
+        fake_tensorrt.runtime.engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+
+        runtime = TRTInference(str(engine_file), device="cuda:1", sync_mode=True)
+
+        assert runtime.time_profile.device == torch.device("cuda", 1)
+
+    @pytest.mark.parametrize("sync_mode", [True, False])
+    def test_execution_runs_on_the_engine_device(self, cuda_device_recorder: _DeviceRecorder, sync_mode: bool) -> None:
+        """Each launch makes the engine's device current, not whatever ``device`` resolves to at call time.
+
+        The caller asked for a bare ``"cuda"``, which construction pinned (to the fakes' CPU here); re-resolving
+        ``"cuda"`` per call would follow the caller's current device away from the engine.
+        """
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=sync_mode)
+        runtime.device = "cuda"
+        active: list[torch.device | None] = []
+
+        def launch(*args: object, **kwargs: object) -> bool:
+            active.append(cuda_device_recorder.current)
+            return True
+
+        runtime.context.execute_v2.side_effect = launch
+        runtime.context.execute_async_v3.side_effect = launch
+
+        runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        assert active == [torch.device("cpu")]
+
+    def test_a_non_cuda_device_is_refused(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
+        """TensorRT cannot run on the CPU; ``device="cpu"`` used to load the engine with its buffers in host memory."""
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+        fake_tensorrt.runtime.engine = _FakeEngine(_STATIC_ENGINE_TENSORS)
+
+        with pytest.raises(ValueError, match="CUDA"):
+            TRTInference(str(engine_file), device="cpu", sync_mode=True)
+
+    def test_output_buffers_default_to_the_engine_device(self) -> None:
+        """``get_bindings`` without a ``device`` allocates where the engine runs, as its docstring promises.
+
+        ``.to(None)`` is a no-op, so the default used to leave every output buffer in host memory. ``meta`` stands in
+        for a device other than the CPU the buffers start on.
+        """
+        engine = _FakeEngine(_STATIC_ENGINE_TENSORS)
+        runtime = _runtime_around(engine)
+        runtime._engine_device = torch.device("meta")
+
+        bindings = runtime.get_bindings(engine, _FakeContext(engine))
+
+        assert bindings["dets"].data.device == torch.device("meta")
+
+    @pytest.mark.parametrize(
+        "input_dtype", [pytest.param(np.float32, id="float32"), pytest.param(np.float16, id="float16")]
+    )
+    @pytest.mark.usefixtures("cuda_device_recorder")
+    def test_the_runtime_accepts_the_dummy_input_it_builds(self, input_dtype: type) -> None:
+        """``get_dummy_input`` builds what the input checks accept: the engine's own dtype, on the engine's device.
+
+        The caller asked for a bare ``"cuda"``, which construction pinned (to the fakes' CPU here); building on
+        ``"cuda"`` again would follow the caller's current device, and a float32 dummy is refused by a float16 engine.
+        """
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS, input_dtype=input_dtype))
+        runtime.device = "cuda"
+
+        runtime(runtime.get_dummy_input(batch_size=1))
+
+        runtime.context.execute_v2.assert_called_once()
 
 
 class TestBenchmarkMain:
@@ -521,6 +942,21 @@ class TestBenchmarkMain:
         assert infer_onnx.call_args.args[0] is session
         assert infer_onnx.call_args.kwargs["device"] == expected_torch_device
         assert infer_onnx.call_args.kwargs["repeats"] == 1
+
+    @pytest.mark.parametrize("device", [0, 7])
+    def test_trt_benchmark_uses_requested_cuda_device(self, monkeypatch: pytest.MonkeyPatch, device: int) -> None:
+        """The TensorRT branch hands the requested device to the runtime, the input pipeline and the latency timer."""
+        monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
+        runtime_class = Mock()
+        monkeypatch.setattr(benchmark, "TRTInference", runtime_class)
+        infer_engine = Mock()
+        monkeypatch.setattr(benchmark, "infer_engine", infer_engine)
+
+        benchmark.main("model.trt", device=device, disable_eval=True)
+
+        runtime_class.assert_called_once_with("model.trt", sync_mode=True, device=f"cuda:{device}")
+        assert infer_engine.call_args.kwargs["device"] == f"cuda:{device}"
+        assert infer_engine.call_args.args[2].device == f"cuda:{device}"
 
     def test_eval_enabled_passes_a_loaded_coco_object_to_the_evaluator(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
