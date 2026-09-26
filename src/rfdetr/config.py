@@ -1335,7 +1335,11 @@ class TrainConfig(BaseConfig):
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
-    clip_max_norm: float = 0.1
+    # ge=0.0 keeps 0.0 as the documented "clipping off" value while rejecting negatives at
+    # construction time. Both consumers gate clipping behind ``> 0`` —
+    # RFDETRModelModule._clip_manual_optimization_gradients and FusedAdamWEMA (which maps any non-positive norm to
+    # math.inf) — so a negative value would otherwise train unclipped for the whole run without raising or warning.
+    clip_max_norm: float = Field(default=0.1, ge=0.0)
     seed: int | None = None
     sync_bn: bool = False
     # strategy maps to PTL Trainer(strategy=...). Common values: "auto", "ddp",
