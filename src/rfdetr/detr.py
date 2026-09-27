@@ -449,6 +449,7 @@ def _prepare_run_config(
             model_context=detector.model,
             model_config=detector.model_config,
             train_config=config,
+            devices=_devices,
         )
         config.batch_size = auto_batch.safe_micro_batch
         config.grad_accum_steps = auto_batch.recommended_grad_accum_steps
