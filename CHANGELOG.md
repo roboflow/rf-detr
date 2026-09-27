@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - Multi-device XLA keypoint training now clips the reduced gradients; this path does not depend on GradScaler unscaling.
     - Callbacks now see unclipped gradients in the keypoint `on_before_optimizer_step` path, matching Lightning's automatic-optimization hook order.
 
+- `amp_dtype="auto"` (the default) now trains in fp16 on NVIDIA GPUs without native bf16, such as the T4 and V100. `torch.cuda.is_bf16_supported()` counts emulated bf16, so with torch 2.3 and newer those GPUs got `bf16-mixed`: on a Colab T4 an RF-DETR Nano training step took 443 ms, against 226 ms in fp16 and 386 ms in fp32. `"auto"` now picks bf16 only when every GPU the run trains on has it natively (Ampere and newer), as the docs describe. On older GPUs that means training and validation run in fp16 with a GradScaler, the `batch_size="auto"` probe measures in fp16, and `cuda_graphs=True` stays eager. An explicit `amp_dtype="bf16"` is still honoured there, now with a warning that it is emulated. ([#1535](https://github.com/roboflow/rf-detr/issues/1535))
+
+    - **Loss curves and checkpoints from before and after this change are not directly comparable on pre-Ampere GPUs** (different autocast dtype, GradScaler now active, fused AdamW path now off).
+    - The roughly 2x per-step timing above (443 ms vs. 226 ms) is a single RF-DETR Nano training step measured at default `compile`/`use_ema` settings (`compile=False`, `use_ema=True`), not an accuracy or throughput claim. Pre-Ampere GPUs also lose fused AdamW (`_fused_adamw_env_eligible`) and the Triton fused AdamW+EMA kernel (`_use_fused_adamw_ema`): both require the trainer's resolved precision to be a BF16 variant, which fp16 (`16-mixed`) is not — a required-for-correctness side effect of this fix, not a regression.
+
 - Validation and test mAP now ignore detections on COCO crowd regions (`iscrowd=1`) the way pycocotools does. The crowd annotations were dropped before the metric saw them, so a detection inside a crowd counted as a false positive.
 
     - Pretrained RF-DETR Nano on COCO val2017 scored 0.4802 mAP through `evaluate()` and now scores 0.4842, the same as pycocotools on the same predictions.
