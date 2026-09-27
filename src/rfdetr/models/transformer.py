@@ -353,7 +353,9 @@ class Transformer(nn.Module):
         """Cache immutable spatial-shape tensors before their captured reuse.
 
         The cache is opt-in so eager, compile, and export tensor construction remain unchanged. Device is part of the
-        key to keep a later model move safe.
+        key to keep a later model move safe. ``RFDETRModelModule._configure_cuda_graph_runner`` only builds the eager
+        graph runner that calls this when the module was not compiled, so the cached branch in ``forward`` and its
+        ``is_compiling()`` branch are mutually exclusive.
         """
         self._cuda_graph_spatial_shapes = {}
 
@@ -657,36 +659,34 @@ class Transformer(nn.Module):
             if len(lvl_pos_embed_flatten_parts) == 1
             else torch.cat(lvl_pos_embed_flatten_parts, 1)
         )  # bs, \sum{hxw}, c
-        # spatial_shapes must not be built by torch.empty(...) + in-place index assignment:
-        # that emits a ScatterND feeding a shape tensor (level_start_index), which TensorRT
-        # rejects ("IScatterLayer cannot be used to compute a shape tensor").
-        # torch.as_tensor(python-int list) avoids ScatterND but bakes values as a Constant.
-        # torch.stack of per-level torch._shape_as_tensor slices also produces a Constant
-        # node in TorchScript ONNX export (the tracer records concrete H,W values at trace
-        # time), but that Constant is accepted by TensorRT as a valid shape tensor source —
-        # unlike ScatterND. torch._shape_as_tensor(t) is a private ATen op that returns a
-        # 1-D int64 tensor of t's dimension sizes; [2:4] extracts (H, W) from NCHW.
-        # torch.export (ExecuTorch) cannot trace torch._shape_as_tensor — it raises "the tensor has
-        # a non-zero number of elements, but its data is not allocated yet". Under that trace build
-        # spatial_shapes directly from the concrete Python-int (H, W) pairs instead; ExecuTorch uses
-        # static shapes, so the baked constant is exact. torch.compile cannot use _shape_as_tensor
-        # either: Dynamo polyfills it to return a torch.Size, so torch.stack raises "expected Tensor
-        # as element 0 in argument 0, but got torch.Size" and the compile aborts. It cannot use
-        # torch.as_tensor (or, on older torch, torch.tensor) of the (H, W) pairs: under dynamic=True
-        # that specialises every size to its traced value, so each new input resolution recompiles
-        # the whole transformer frame and multi-scale training exhausts Dynamo's recompile limit.
-        # Stacking one 0-d tensor per size keeps the sizes symbolic. Neither guard is true in eager
-        # or under torch.jit.trace, so the eager and TorchScript-ONNX/TensorRT (#1155) paths keep the
-        # _shape_as_tensor form.
-        # ``torch.compiler.is_compiling`` is public from torch 2.3 onward. The compatibility
-        # helper uses the legacy Dynamo predicate for supported torch 2.2 environments, while
-        # ``is_exporting`` remains absent below torch 2.7.
+        # spatial_shapes: one form per execution mode, each forced by a constraint the others break. Never
+        # torch.empty(...) + in-place index assignment — the ScatterND it emits feeds a shape tensor
+        # (level_start_index), and TensorRT rejects "IScatterLayer cannot be used to compute a shape tensor".
+        #   cuda-graph capture -> as_tensor cached per (device, resolution): replay needs one immutable tensor
+        #                         per signature (see enable_cuda_graph_capture).
+        #   torch.export       -> as_tensor, ScatterND-free and constant-baking: _shape_as_tensor is untraceable
+        #                         there ("the tensor has a non-zero number of elements, but its data is not
+        #                         allocated yet"), and static export shapes make the baked Constant exact.
+        #   torch.compile      -> one 0-d tensor per size, the only symbolic form: Dynamo polyfills
+        #                         _shape_as_tensor to a torch.Size ("expected Tensor as element 0 in argument
+        #                         0, but got torch.Size" aborts the compile), while as_tensor (torch.tensor on
+        #                         older torch) specialises every size under dynamic=True, recompiling the whole
+        #                         transformer per resolution until multi-scale training exhausts Dynamo's
+        #                         recompile limit.
+        #   eager / jit.trace  -> _shape_as_tensor(src)[2:4], a private ATen op returning src's 1-D int64 dim
+        #                         sizes ([2:4] = (H, W) of NCHW): the Constant it bakes into a TorchScript ONNX
+        #                         graph is one TensorRT accepts as a shape-tensor source, unlike ScatterND (#1155).
+        # Predicates: is_compiling() is public from torch 2.3 (the compat helper uses the legacy Dynamo predicate
+        # on 2.2); is_exporting() is absent below 2.7, so its probe is always False there and a strict
+        # torch.export reports is_compiling() instead, taking the stacked-0-d branch for the same values —
+        # is_exporting() implies is_compiling(), not the reverse.
         if self._cuda_graph_spatial_shapes is not None:
             spatial_key = (srcs[0].device, tuple(spatial_shapes_hw))
             spatial_shapes = self._cuda_graph_spatial_shapes.get(spatial_key)
             if spatial_shapes is None:
                 spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
                 self._cuda_graph_spatial_shapes[spatial_key] = spatial_shapes
+        # Export must precede compile: non-strict export sets both flags; compile alone does not set is_exporting().
         elif getattr(torch.compiler, "is_exporting", _tracer_absent)():
             spatial_shapes = torch.as_tensor(spatial_shapes_hw, device=srcs[0].device, dtype=torch.long)
         elif is_compiling():
