@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-25T23:17:17">
+  <meta property="article:modified_time" content="2026-09-27T10:01:04">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-25T23:17:17",
+    "dateModified": "2026-09-27T10:01:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4241,7 +4241,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>An INFO line at train start confirms replay is enabled, and each captured input shape logs its own INFO line; without one of these the run is eager (and the reason was logged as a warning). The first batch at each input signature runs CUDA graph warm-up and capture. Later batches with the same batch size, resolution, dtype, device, and autocast mode replay the captured forward and backward. BF16 capture can cache one graph per signature, so multi-scale training retains one graph and memory pool per resolution. Graph pools are private CUDA allocations; compare peak memory and the largest usable batch size as well as step time on your own workload.</p>
 <p>There are two capture routes:</p>
 <ul>
-<li><strong>BF16/eager route:</strong> <code>cuda_graphs=True</code> with <code>compile=False</code> supports single-GPU detection with BF16 (<code>amp_dtype="bf16"</code> or <code>"auto"</code> resolving to BF16). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, FP16, FP32, and unsupported trainer combinations remain eager and log a warning. BF16 graph replay supports gradient accumulation; the runner preserves gradients already accumulated by earlier microbatches.</li>
+<li><strong>BF16/eager route:</strong> <code>cuda_graphs=True</code> with <code>compile=False</code> supports single-GPU detection with BF16 (<code>amp_dtype="bf16"</code> or <code>"auto"</code> resolving to BF16; on pre-Ampere GPUs such as the T4, <code>"auto"</code> resolves to FP16, so those runs stay eager). Segmentation, keypoints, distributed training, gradient checkpointing, CPU, MPS, FP16, FP32, and unsupported trainer combinations remain eager and log a warning. BF16 graph replay supports gradient accumulation; the runner preserves gradients already accumulated by earlier microbatches.</li>
 <li><strong>FP8/Transformer Engine route:</strong> with a tested-compatible Transformer Engine release (2.19.0 was tested), use <code>cuda_graphs=True</code>, <code>compile=False</code>, and <code>amp_dtype="fp8"</code>. This route calls Transformer Engine's native <code>make_graphed_callables</code> with the active Lightning FP8 recipe, disables quantized-parameter caching, and clones returned parameter gradients. It is intentionally limited to single-GPU detection, <code>grad_accum_steps=1</code>, no gradient checkpointing, <code>multi_scale=False</code> and <code>square_resize_div_64=True</code>. The last setting keeps the external image boundary on a fixed square shape; aspect-preserving batches with <code>square_resize_div_64=False</code> stay eager. It captures one fixed batch/resolution signature; a later shape change raises. Unsupported shape/accumulation combinations stay eager with a warning; an incompatible Transformer Engine version or precision-plugin misconfiguration stops training with an error instead.</li>
 </ul>
 <p><code>cuda_graphs=True</code> may be combined with <code>compile=True</code> (see <a href="#combining-cuda-graphs-with-compilation">Combining CUDA graphs with compilation</a>), but that is the Inductor route. Ordinary FP8 with <code>compile=False</code> still uses Lightning's normal Transformer Engine plugin. When all three flags — <code>cuda_graphs=True</code>, <code>compile=True</code>, and <code>amp_dtype="fp8"</code> — are selected, RF-DETR warns and keeps the run compile-only; it does not wrap the compiled module in the Transformer Engine graph helper. FP8 with <code>compile=True</code> but <code>cuda_graphs=False</code> uses ordinary compiled FP8 training without this graph-routing warning. A capture failure stops training with the original exception attached: an invalidated capture can leave CUDA state unsafe for further operations. Restart the process before retrying with graphs disabled; catching the exception and continuing in the same process is not a supported fallback.</p>
@@ -4468,7 +4468,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 25, 2026 23:17:17 UTC">2026-09-25 23:17:17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 27, 2026 10:01:04 UTC">2026-09-27 10:01:04</span>
   </span>
 
     
