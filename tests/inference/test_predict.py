@@ -958,10 +958,13 @@ class TestPredictUint8Conversion:
         image_path = tmp_path / "notes.png"
         image_path.write_bytes(b"not an image")
 
-        with pytest.raises(PIL.UnidentifiedImageError) as excinfo:
+        with pytest.raises(PIL.UnidentifiedImageError) as pillow_error:
+            PIL.Image.open(str(image_path))
+
+        with pytest.raises(type(pillow_error.value)) as predict_error:
             _DummyRFDETR().predict(str(image_path), include_source_image=False)
 
-        assert str(image_path) in str(excinfo.value)
+        assert str(predict_error.value) == str(pillow_error.value)
 
     @pytest.mark.parametrize("kind", ["missing", "empty", "directory"])
     def test_predict_unreadable_local_path_raises_the_error_pillow_raises(self, tmp_path: Path, kind: str) -> None:
