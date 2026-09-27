@@ -883,7 +883,7 @@ def test_production_parameter_groups_match_torch_update_on_identical_gradients(
         for module, trainer, optimizer, callback, parameters in (candidate, baseline):
             for parameter, gradient in zip(parameters, gradients, strict=True):
                 parameter.grad = gradient.clone()
-            module.clip_gradients(optimizer, gradient_clip_val=clip, gradient_clip_algorithm="norm")
+            module.configure_gradient_clipping(optimizer, gradient_clip_val=clip, gradient_clip_algorithm="norm")
             optimizer.step()
             trainer.global_step = step
             callback.on_train_batch_end(trainer, module, None, None, step - 1)

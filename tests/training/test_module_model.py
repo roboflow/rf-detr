@@ -3815,8 +3815,8 @@ class TestFusedOptimizerResumeStateNormalization:
         assert optimizer.state == {}
 
 
-class TestClipGradients:
-    """Tests for clip_gradients() — verifies precision gating mirrors configure_optimizers()."""
+class TestConfigureGradientClipping:
+    """Tests for configure_gradient_clipping() — verifies precision gating mirrors configure_optimizers()."""
 
     def _setup_module(self, tmp_path, precision: str):
         tc = _base_train_config(tmp_path)
@@ -3836,44 +3836,45 @@ class TestClipGradients:
     )
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
-    def test_clip_gradients_delegates_to_super_when_not_bf16(
+    def test_configure_gradient_clipping_delegates_to_clip_gradients_when_not_bf16(
         self,
         mock_cuda_available,
         mock_bf16_supported,
         precision,
         tmp_path,
     ):
-        """clip_gradients must delegate to super() when trainer precision is not a BF16 variant.
+        """configure_gradient_clipping must delegate to clip_gradients() when trainer precision is not a BF16 variant.
 
         On Ampere+ GPUs is_bf16_supported() is True regardless of actual precision. The method must check
         trainer.precision before choosing the fused path, mirroring the same gate in configure_optimizers() to prevent
-        silent divergence.
+        silent divergence. ``clip_gradients`` itself is never overridden (PTL documents it as "do not override"), so the
+        un-overridden base implementation on the module's own class is patched directly.
         """
         module = self._setup_module(tmp_path, precision=precision)
 
-        with patch.object(type(module).__bases__[0], "clip_gradients") as mock_super_clip:
-            module.clip_gradients(MagicMock(), gradient_clip_val=0.1)
+        with patch.object(type(module), "clip_gradients") as mock_clip_gradients:
+            module.configure_gradient_clipping(MagicMock(), gradient_clip_val=0.1)
 
-        mock_super_clip.assert_called_once()
+        mock_clip_gradients.assert_called_once()
 
     @patch("rfdetr.training.module_model.torch.cuda.is_bf16_supported", return_value=True)
     @patch("rfdetr.training.module_model.torch.cuda.is_available", return_value=True)
     @patch("rfdetr.training.module_model.torch.nn.utils.clip_grad_norm_")
-    def test_clip_gradients_uses_clip_grad_norm_when_bf16_mixed(
+    def test_configure_gradient_clipping_uses_clip_grad_norm_when_bf16_mixed(
         self,
         mock_clip_grad_norm,
         mock_cuda_available,
         mock_bf16_supported,
         tmp_path,
     ):
-        """clip_gradients must call clip_grad_norm_ directly when precision is bf16-mixed.
+        """configure_gradient_clipping must call clip_grad_norm_ directly when precision is bf16-mixed.
 
         When fused AdamW is active (BF16, no GradScaler), the standard PTL AMP plugin refuses to clip gradients.
         clip_grad_norm_ is called directly instead, bypassing the scaler-aware path that would otherwise raise.
         """
         module = self._setup_module(tmp_path, precision="bf16-mixed")
 
-        module.clip_gradients(MagicMock(), gradient_clip_val=0.5)
+        module.configure_gradient_clipping(MagicMock(), gradient_clip_val=0.5)
 
         mock_clip_grad_norm.assert_called_once()
         _, _call_kwargs = mock_clip_grad_norm.call_args
