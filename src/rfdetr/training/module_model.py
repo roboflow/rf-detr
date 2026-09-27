@@ -455,8 +455,13 @@ class RFDETRModelModule(LightningModule):
             )
         if compile_enabled:
             # Dynamic shapes let one graph handle all multi-scale input sizes instead of
-            # recompiling per (H, W) pair. Fixed-resolution training uses a static graph so
-            # Inductor can specialize dimensions that stay fixed across training batches
+            # recompiling per (H, W) pair. The backbone projector is the exception on CUDA:
+            # Inductor's convolution-backward lowering (pytorch/pytorch#178945) pins the strides of
+            # convolutions that need an input gradient, so that frame still recompiles per size up
+            # to Dynamo's recompile limit. Past that limit the resolutions still unseen run the
+            # projector eager, while the sizes compiled before it keep their graphs and the rest of
+            # the model stays compiled at every scale. Fixed-resolution training uses a static graph
+            # so Inductor can specialize dimensions that stay fixed across training batches
             # (a validation batch of another shape recompiles once). Positional
             # interpolation has its own eager boundary for unsupported symbolic bicubic backward.
             # Do not suppress other compiler errors: nested retries can flood logs and conceal
