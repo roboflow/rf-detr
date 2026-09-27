@@ -301,30 +301,49 @@ def _cuda_training_device_indices(devices: int | str | Sequence[int]) -> list[in
     Lightning reads ``devices`` as a count (``2``, ``"2"``), explicit indices (``[1]``, ``"0,2"``), or every visible
     device (``"auto"``, ``-1``). ``RFDETR.train(device="cuda:1")`` forwards ``devices=[1]``.
 
+    ``"auto"`` and ``-1`` therefore mean *every* visible device, never some idle subset of them, and the callers read
+    that set conservatively — every selected GPU has to qualify. That is deliberate: Lightning gives the whole set to
+    the run and precision must be identical across DDP ranks, which one rank cannot decide for another. The cost is
+    that a single pre-Ampere GPU anywhere in a mixed host keeps an ``amp_dtype="auto"`` run (and the bf16-only paths
+    that follow from it) in fp16; naming the fast GPUs explicitly (``devices=[1]``) is how a caller opts out.
+
+    Indices this host cannot see are dropped, so every returned index is safe to hand to a per-device probe such as
+    ``torch.cuda.get_device_capability``: an over-count (``devices=4`` on a two-GPU host) or an out-of-range explicit
+    index otherwise reaches that probe and trips a bare internal ``assert`` there, replacing Lightning's own named
+    misconfiguration error with an opaque ``AssertionError``.
+
+    The two ways of selecting nothing are left as they fall out — ``devices=0`` reads as the every-visible-device case
+    and ``devices=[]`` returns an empty list — because neither reaches here in practice: Lightning rejects both while
+    validating its own ``devices`` value, before any precision is resolved. Nothing downstream depends on which way
+    they lean, so neither is special-cased.
+
     Args:
         devices: The ``devices`` value passed to the Lightning ``Trainer``.
 
     Returns:
-        The device indices, in the order given. Empty when nothing is visible for an "every device" value.
+        The visible device indices, in the order given. Empty when no requested index is visible, which on a host
+        without CUDA is every form.
 
     Examples:
-        >>> _cuda_training_device_indices([1])
-        [1]
-        >>> _cuda_training_device_indices("0,2")
-        [0, 2]
-        >>> _cuda_training_device_indices(2)
-        [0, 1]
+        >>> from unittest.mock import patch
+        >>> with patch("torch.cuda.device_count", return_value=4):
+        ...     _cuda_training_device_indices([1]), _cuda_training_device_indices("0,2")
+        ([1], [0, 2])
+        >>> with patch("torch.cuda.device_count", return_value=2):
+        ...     _cuda_training_device_indices(2), _cuda_training_device_indices(4)
+        ([0, 1], [0, 1])
     """
+    visible = range(torch.cuda.device_count())
     if not isinstance(devices, (int, str)):
-        return [int(index) for index in devices]
+        return [int(index) for index in devices if int(index) in visible]
     if isinstance(devices, str):
         devices_name = devices.strip().lower()
         if "," in devices_name:
-            return [int(entry) for entry in devices_name.split(",") if entry.strip()]
+            return [int(entry) for entry in devices_name.split(",") if entry.strip() and int(entry) in visible]
         devices = int(devices_name) if devices_name.isdigit() else -1
     if devices > 0:
-        return list(range(devices))
-    return list(range(torch.cuda.device_count()))
+        return [index for index in range(devices) if index in visible]
+    return list(visible)
 
 
 def _cuda_native_bf16_on_devices(devices: int | str | Sequence[int]) -> bool:
@@ -346,6 +365,7 @@ def _cuda_native_bf16_on_devices(devices: int | str | Sequence[int]) -> bool:
         >>> with (
         ...     patch("torch.cuda.is_available", return_value=True),
         ...     patch("torch.version.hip", None),
+        ...     patch("torch.cuda.device_count", return_value=2),
         ...     patch("torch.cuda.get_device_capability", side_effect=lambda index=None: capability[index or 0]),
         ... ):
         ...     _cuda_native_bf16_on_devices([0]), _cuda_native_bf16_on_devices(2)
@@ -353,6 +373,44 @@ def _cuda_native_bf16_on_devices(devices: int | str | Sequence[int]) -> bool:
     """
     indices: list[int | None] = list(_cuda_training_device_indices(devices)) or [None]
     return all(_cuda_supports_native_bf16(index) for index in indices)
+
+
+def _cuda_bf16_supported_on_devices(devices: int | str | Sequence[int]) -> bool:
+    """Return whether the CUDA devices a Lightning ``devices`` value trains on can run bfloat16 at all.
+
+    This is the wider question ``torch.cuda.is_bf16_supported()`` answers — native bfloat16 *or* emulation — asked for
+    the devices a run trains on instead of only the current one. An explicit ``amp_dtype="bf16"`` is honoured on
+    emulated bfloat16 (with a warning), so its gate needs this test rather than the stricter
+    :func:`_cuda_native_bf16_on_devices`; reading the same device set is what keeps the gate and that warning from
+    disagreeing on a mixed-GPU host.
+
+    Only the native half of the question is answered per device. Whether *emulated* bfloat16 is available is left to
+    PyTorch's own probe of the current device, because answering it per index means materialising a bfloat16 tensor on
+    every selected GPU, creating a CUDA context on each of them in the parent process.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        ``True`` when bfloat16 is usable on the selected devices, natively or through emulation.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with (
+        ...     patch("torch.cuda.is_available", return_value=True),
+        ...     patch("torch.version.hip", None),
+        ...     patch("torch.cuda.device_count", return_value=2),
+        ...     patch("torch.cuda.get_device_capability", return_value=(7, 5)),
+        ...     patch("torch.cuda.is_bf16_supported", return_value=True),
+        ... ):
+        ...     _cuda_bf16_supported_on_devices([1])
+        True
+    """
+    if not torch.cuda.is_available():
+        # Checked here rather than left to the probe below: torch.cuda.is_bf16_supported() reads torch.version.hip
+        # before torch.cuda.is_available(), so on a ROCm build with no visible GPU the bare call answers True.
+        return False
+    return _cuda_native_bf16_on_devices(devices) or torch.cuda.is_bf16_supported()
 
 
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}

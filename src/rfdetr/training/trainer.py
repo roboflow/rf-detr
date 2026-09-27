@@ -32,7 +32,9 @@ from rfdetr.config import (
     KeypointTrainConfig,
     ModelConfig,
     TrainConfig,
+    _cuda_bf16_supported_on_devices,
     _cuda_native_bf16_on_devices,
+    _cuda_training_device_indices,
     _resolve_amp_dtype,
 )
 from rfdetr.training.callbacks import (
@@ -255,8 +257,14 @@ def _xla_resolves_to_single_device(devices: int | str | Sequence[int], num_nodes
     return XLAAccelerator.auto_device_count() == 1
 
 
-def _requests_multiple_devices(devices: int | str, accelerator: str | None = None) -> bool:
-    """Return whether the configured devices value explicitly requests multiple devices."""
+def _requests_multiple_devices(devices: int | str | Sequence[int], accelerator: str | None = None) -> bool:
+    """Return whether the configured devices value explicitly requests multiple devices.
+
+    ``RFDETR.train(device="cuda:1")`` forwards ``devices=[1]``, so an explicit sequence of device indices reaches here
+    next to Lightning's count (``2``, ``"2"``), comma-separated (``"0,2"``) and every-device (``"auto"``, ``-1``) forms.
+    """
+    if not isinstance(devices, (int, str)):
+        return len(devices) > 1
     if isinstance(devices, int):
         if devices == -1:
             return _accelerator_has_multiple_auto_devices(accelerator)
@@ -618,7 +626,16 @@ def build_trainer(
         # plugin's dependency error would otherwise mask this unsupported FP8 request.
         raise ValueError("FP8 training requires an NVIDIA CUDA GPU supported by Transformer Engine.")
 
-    def _resolve_precision() -> str:
+    def _resolve_precision(devices: int | str | Sequence[int]) -> str:
+        """Resolve the Lightning ``precision`` string for this run's ``amp_dtype`` and hardware.
+
+        Args:
+            devices: The ``devices`` value this run trains on, resolved below from ``trainer_kwargs``/``tc``. Passed in
+                rather than read from the enclosing scope so this stays independent of where that value gets bound.
+
+        Returns:
+            The ``precision`` string to hand to the Lightning ``Trainer``.
+        """
         if amp_dtype is None:
             return "32-true"
         if tpu_accelerator and amp_dtype in {"bf16", "auto"}:
@@ -646,7 +663,7 @@ def build_trainer(
         # Training from random init with very small LR may underflow; pass
         # ``amp_dtype="fp16"`` if needed.
         #
-        # Note: torch.cuda.is_available() and the bf16 probes (torch.cuda.is_bf16_supported(),
+        # Note: torch.cuda.is_available() and the bf16 probes (_cuda_bf16_supported_on_devices(),
         # _cuda_native_bf16_on_devices()) create a CUDA driver context in the parent process.  This is intentional
         # and safe for the multi-process launch modes we rely on here because we
         # avoid fork-based launching in notebook contexts (see
@@ -660,10 +677,12 @@ def build_trainer(
                 # Hopper (9.0), or newer (e.g. Blackwell) — older CUDA GPUs such as A100/T4 are
                 # CUDA-visible but not FP8-capable and would otherwise reach TE's plugin/kernel
                 # initialization and fail there instead of at this clear rejection.
+                # Scoped to the GPUs this run trains on, like the bf16 probe below: an fp8-capable
+                # devices=[1] must not be rejected for an older GPU the run never touches.
                 _min_fp8_capability = (8, 9)
                 unsupported_devices = [
                     index
-                    for index in range(torch.cuda.device_count())
+                    for index in _cuda_training_device_indices(devices)
                     if torch.cuda.get_device_capability(index) < _min_fp8_capability
                 ]
                 if unsupported_devices:
@@ -673,7 +692,7 @@ def build_trainer(
                     raise ValueError(
                         "amp_dtype='fp8' requires a Transformer Engine-supported NVIDIA GPU "
                         "(Ada, Hopper, or newer; compute capability >= 8.9). "
-                        f"Unsupported visible device(s): {names}."
+                        f"Unsupported device(s) selected for this run: {names}."
                     )
                 return "transformer-engine"
             if amp_dtype == "fp16":
@@ -681,9 +700,11 @@ def build_trainer(
             # Native bf16 on every GPU this run trains on, not just the current device: train(device="cuda:1")
             # forwards devices=[1] without changing the current device, and a mixed-GPU host can differ per index.
             # The batch_size="auto" probe asks the same question with the same devices value.
+            # Single-node only — devices names local indices, so on a multi-node run (num_nodes > 1) whose nodes carry
+            # different GPU types each rank answers for its own node and ranks can still resolve different precision.
             native_bf16 = _cuda_native_bf16_on_devices(devices)
             if amp_dtype == "bf16":
-                if torch.cuda.is_bf16_supported():
+                if _cuda_bf16_supported_on_devices(devices):
                     if not native_bf16:
                         emulated_message = (
                             "amp_dtype='bf16' runs bfloat16 through emulation on a GPU without native bfloat16 "
@@ -694,12 +715,12 @@ def build_trainer(
                         warnings.warn(emulated_message, UserWarning, stacklevel=2)
                     return "bf16-mixed"
                 _logger.warning(
-                    "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
-                    "falling back to fp16 ('16-mixed')."
+                    "amp_dtype='bf16' was requested but the CUDA device(s) this run trains on do not support "
+                    "bfloat16; falling back to fp16 ('16-mixed')."
                 )
                 warnings.warn(
-                    "amp_dtype='bf16' was requested but this CUDA device does not support bfloat16; "
-                    "falling back to fp16 ('16-mixed').",
+                    "amp_dtype='bf16' was requested but the CUDA device(s) this run trains on do not support "
+                    "bfloat16; falling back to fp16 ('16-mixed').",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -968,7 +989,7 @@ def build_trainer(
         "num_sanity_val_steps": tc.num_sanity_val_steps,
     }
     if not xla_accelerator:
-        trainer_config["precision"] = _resolve_precision()
+        trainer_config["precision"] = _resolve_precision(devices)
     trainer_config.update(trainer_kwargs)
     if xla_accelerator:
         from pytorch_lightning.plugins import XLAPrecision
@@ -986,7 +1007,7 @@ def build_trainer(
         xla_precision = (
             "32-true"
             if not tpu_accelerator
-            else _normalize_xla_precision(_resolve_precision().replace("-mixed", "-true"))
+            else _normalize_xla_precision(_resolve_precision(devices).replace("-mixed", "-true"))
         )
         trainer_config["plugins"] = [*plugins, XLAPrecision(xla_precision)]
     trainer_config["strategy"] = strategy

@@ -1066,6 +1066,50 @@ def test_resolve_auto_batch_config_probe_dtype_follows_every_training_gpu(
     assert fused is (expected_dtype is torch.bfloat16), f"shadow optimizer fused={fused} for {expected_dtype}"
 
 
+def test_resolve_auto_batch_config_explicit_bf16_follows_the_training_gpu() -> None:
+    """An explicit amp_dtype='bf16' probes in bf16 on the strength of the training GPU, not the probe's own device.
+
+    The host has a pre-Ampere GPU at index 0 and an A100 at index 1, on a CUDA build without bfloat16 emulation — so
+    ``torch.cuda.is_bf16_supported()``, which only ever reads the current device, says no. A run pinned to the A100 with
+    ``devices=[1]`` trains in bf16, so the probe has to measure memory in bf16 too.
+    """
+    capabilities = {0: (7, 5), 1: (8, 0)}
+
+    def device_capability(device: torch.device | int | None = None) -> tuple[int, int]:
+        """Return the mocked compute capability of ``device``; ``None`` is the current device, cuda:0."""
+        index = device.index if isinstance(device, torch.device) else device
+        return capabilities[0 if index is None else index]
+
+    model_context = SimpleNamespace(device=torch.device("cuda", 0), model=MagicMock())
+    model_config = SimpleNamespace(resolution=64, num_classes=5, amp=True, segmentation_head=True, fused_optimizer=True)
+    train_config = SimpleNamespace(
+        batch_size="auto",
+        auto_batch_target_effective=16,
+        lr=1e-4,
+        weight_decay=1e-4,
+        optimizer="adamw",
+        amp_dtype="bf16",
+        devices=1,
+    )
+    criterion = MagicMock()
+    criterion.to.return_value = criterion
+
+    with (
+        patch("rfdetr.training.auto_batch.torch.cuda.is_available", return_value=True),
+        patch("rfdetr.training.auto_batch.torch.cuda.device_count", return_value=len(capabilities)),
+        patch("rfdetr.training.auto_batch.torch.cuda.is_bf16_supported", return_value=False),
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_capability", side_effect=device_capability),
+        patch("rfdetr.training.auto_batch.torch.version.hip", None),
+        patch("rfdetr.training.auto_batch.build_criterion_from_config", return_value=(criterion, None)),
+        patch("rfdetr.training.auto_batch.probe_max_micro_batch", return_value=5) as mock_probe,
+        patch("rfdetr.training.auto_batch.torch.cuda.get_device_name", return_value="Fake GPU"),
+    ):
+        auto_batch.resolve_auto_batch_config(model_context, model_config, train_config, devices=[1])
+
+    probed_dtype = mock_probe.call_args.kwargs["autocast_dtype"]
+    assert probed_dtype is torch.bfloat16, f"probe ran under {probed_dtype}; the run trains on the A100 in bf16"
+
+
 @patch("rfdetr.detr.is_main_process", return_value=False)
 @patch("rfdetr.training.auto_batch.resolve_auto_batch_config")
 @patch("rfdetr.training.build_trainer")
