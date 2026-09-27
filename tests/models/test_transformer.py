@@ -454,15 +454,23 @@ def test_gen_encoder_output_proposals_accepts_int_tuple_spatial_shapes() -> None
     assert output_proposals.shape == (batch, ht * wd, 4)
 
 
-@pytest.mark.parametrize("padded", [False, True])
-def test_gen_encoder_output_proposals_centres_each_cell(padded: bool) -> None:
+@pytest.mark.parametrize(
+    ("height", "width", "padded"),
+    [
+        pytest.param(3, 5, False, id="3x5-unpadded"),
+        pytest.param(3, 5, True, id="3x5-padded"),
+        pytest.param(1, 1, False, id="1x1-unpadded"),
+        pytest.param(1, 3, False, id="1x3-unpadded"),
+    ],
+)
+def test_gen_encoder_output_proposals_centres_each_cell(height: int, width: int, padded: bool) -> None:
     """Unsigmoided proposal centres are ``((x + 0.5) / W, (y + 0.5) / H)`` over the unpadded region, 0 where padded.
 
     The grid behind the proposals feeds every path (eager, ``torch.compile`` and each export format), so its values
     are pinned here independently of how it is built: an off-by-one grid such as ``arange(1, n + 1)`` would shift every
-    proposal by one cell without changing any shape.
+    proposal by one cell without changing any shape. The ``1x1``/``1x3`` cases pin the height/width == 1 boundary,
+    where a centring formula that divides by ``(dim - 1)`` instead of ``dim`` would divide by zero or shift the grid.
     """
-    height, width = 3, 5
     valid_height, valid_width = (2, 3) if padded else (height, width)
     padding_mask = torch.ones(1, height, width, dtype=torch.bool)
     padding_mask[:, :valid_height, :valid_width] = False
@@ -1632,7 +1640,12 @@ def test_two_stage_topk_gather_broadcasts_correctly_across_groups_in_training_mo
 
 
 def _build_two_stage_transformer_with_production_shaped_heads(
-    hidden_dim: int, num_queries: int, group_detr: int, num_classes: int, bbox_reparam: bool
+    hidden_dim: int,
+    num_queries: int,
+    group_detr: int,
+    num_classes: int,
+    bbox_reparam: bool,
+    num_feature_levels: int = 2,
 ) -> Transformer:
     """Build a two-stage ``Transformer`` whose group heads are the concrete types LWDETR constructs.
 
@@ -1648,6 +1661,8 @@ def _build_two_stage_transformer_with_production_shaped_heads(
         group_detr: Number of independent groups.
         num_classes: Class-head output width.
         bbox_reparam: Whether the transformer uses the reparameterised box-delta path.
+        num_feature_levels: Number of feature-map levels the decoder's deformable attention expects; the caller's
+            ``srcs``/``masks``/``pos_embeds`` lists must have this many entries.
 
     Returns:
         A two-stage ``Transformer`` left in its default training mode.
@@ -1663,7 +1678,7 @@ def _build_two_stage_transformer_with_production_shaped_heads(
         num_decoder_layers=1,
         sa_nhead=4,
         ca_nhead=4,
-        num_feature_levels=2,
+        num_feature_levels=num_feature_levels,
         dec_n_points=1,
         return_intermediate_dec=True,
         lite_refpoint_refine=True,
@@ -2079,20 +2094,28 @@ def test_two_stage_group_selection_bf16_produces_finite_valid_selection_with_gra
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-def test_two_stage_group_selection_compiles_with_finite_gradients() -> None:
-    """The batched fast path must be compatible with torch.compile.
+@pytest.mark.parametrize(
+    "spatial_shapes_hw",
+    [
+        pytest.param([(8, 8), (4, 4)], id="2-level"),
+        pytest.param([(8, 8)], id="1-level"),
+    ],
+)
+def test_two_stage_group_selection_compiles_with_finite_gradients(spatial_shapes_hw: list[tuple[int, int]]) -> None:
+    """The batched fast path must be compatible with torch.compile, at both 1 and 2 feature levels.
 
     Unlike ONNX/TorchScript export (which always forces `group_detr=1` and never reaches this code), `module_model.py`
     applies `torch.compile` directly to the training model, where `group_detr>1` and this new path are exactly what
     training exercises. This asserts compile-time and run-time compatibility (finite outputs and gradients through a
     compiled call, using the same `capture_scalar_outputs` config `module_model.py` itself sets before compiling) -- not
     a timing claim; a local single-GPU smoke run is not a substitute for this project's separately reported L4 step-time
-    evidence.
+    evidence. Production RF-DETR models (Base, Small, Nano, Medium, Large) use a single feature level, so the 1-level
+    case exercises the `is_compiling()` stacked-scalar_tensor spatial_shapes branch at the level count training actually
+    compiles most, not only the 2-level case the other real-compile coverage in this file used exclusively.
     """
     torch._dynamo.reset()
     torch.manual_seed(0)
     hidden_dim, num_queries, group_detr = 16, 5, 4
-    spatial_shapes_hw = [(8, 8), (4, 4)]
     device = "cuda"
 
     srcs = [torch.randn(2, hidden_dim, ht, wd, device=device, requires_grad=True) for ht, wd in spatial_shapes_hw]
@@ -2102,7 +2125,7 @@ def test_two_stage_group_selection_compiles_with_finite_gradients() -> None:
     query_feat = torch.randn(num_queries * group_detr, hidden_dim, device=device)
 
     transformer = _build_two_stage_transformer_with_production_shaped_heads(
-        hidden_dim, num_queries, group_detr, num_classes=7, bbox_reparam=True
+        hidden_dim, num_queries, group_detr, num_classes=7, bbox_reparam=True, num_feature_levels=len(spatial_shapes_hw)
     ).to(device)
     assert transformer._two_stage_batching_eligible()
     with torch._dynamo.config.patch(capture_scalar_outputs=True):
@@ -2136,7 +2159,11 @@ def test_dynamic_compile_reuses_graph_across_resolutions() -> None:
     training compile setup in ``module_model.py``. The first-traced sizes avoid 0 and 1, which Dynamo would specialise
     to constants, and differ from the other input dimensions, which duck sizing would tie to a shared symbol. Counts are
     taken relative to the global Dynamo counter, and the first resolution must add a graph, so the test also fails if
-    nothing gets compiled at all.
+    nothing gets compiled at all. Every resolution is non-square (H != W) and each level within a resolution swaps
+    which axis is larger, so a [W, H] axis swap anywhere in the compiled ``spatial_shapes`` construction --
+    undetectable by the graph-count assertion alone -- would still change the numeric output compared against the
+    eager, uncompiled ``transformer`` (built with the default ``dropout=0.0``, so its forward is deterministic and
+    directly comparable against the compiled call on the same inputs).
     """
     torch._dynamo.reset()
     torch.manual_seed(0)
@@ -2154,10 +2181,66 @@ def test_dynamic_compile_reuses_graph_across_resolutions() -> None:
             srcs = [torch.randn(2, hidden_dim, height, width) for height, width in spatial_shapes_hw]
             masks = [torch.zeros(2, height, width, dtype=torch.bool) for height, width in spatial_shapes_hw]
             pos_embeds = [torch.randn(2, hidden_dim, height, width) for height, width in spatial_shapes_hw]
-            compiled_transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+            compiled_out = compiled_transformer(
+                srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None
+            )
             graph_counts.append(torch._dynamo.utils.counters["stats"]["unique_graphs"] - baseline)
+            uncompiled_out = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+            torch.testing.assert_close(compiled_out, uncompiled_out)
 
     assert graph_counts[0] > 0 and graph_counts[1:] == [graph_counts[0]] * 2, f"graphs per resolution: {graph_counts}"
+
+
+def test_is_exporting_branch_builds_spatial_shapes_with_as_tensor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Transformer.forward`` must build ``spatial_shapes`` via ``torch.as_tensor`` while ``is_exporting()`` is True.
+
+    ``torch.export`` (ExecuTorch) cannot trace ``torch._shape_as_tensor`` (the eager branch's op), and the
+    ``is_compiling()`` branch stacks per-size ``torch.scalar_tensor`` calls to stay symbolic under ``torch.compile`` --
+    neither is what ``torch.export`` needs. The ``is_exporting()`` branch exists to route around both by baking
+    ``spatial_shapes`` from the concrete (H, W) pairs with a single ``torch.as_tensor`` call. This branch had zero test
+    coverage before and after this PR. Mirrors the ``is_compiling()`` polyfill regression
+    (``test_spatial_shapes_survives_dynamo_shape_as_tensor_polyfill``): monkeypatch the compile-state predicate, spy on
+    both candidate tensor constructors to pin exactly which branch ran, and check the output still matches an
+    unpatched eager run.
+    """
+    hidden_dim, num_queries, group_detr = 16, 3, 2
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim, num_queries, group_detr, num_classes=5, bbox_reparam=False
+    )
+    spatial_shapes_hw = [(6, 8), (3, 4)]
+    srcs = [torch.randn(2, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+    masks = [torch.zeros(2, height, width, dtype=torch.bool) for height, width in spatial_shapes_hw]
+    pos_embeds = [torch.randn(2, hidden_dim, height, width) for height, width in spatial_shapes_hw]
+    refpoint_embed = torch.rand(num_queries * group_detr, 4)
+    query_feat = torch.randn(num_queries * group_detr, hidden_dim)
+
+    with torch.no_grad():
+        eager_out = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    original_as_tensor = torch.as_tensor
+    as_tensor_calls = 0
+    scalar_tensor_calls = 0
+
+    def _spy_as_tensor(*args, **kwargs):
+        nonlocal as_tensor_calls
+        as_tensor_calls += 1
+        return original_as_tensor(*args, **kwargs)
+
+    def _spy_scalar_tensor(*args, **kwargs):
+        nonlocal scalar_tensor_calls
+        scalar_tensor_calls += 1
+        raise AssertionError("is_exporting() branch must not build spatial_shapes with torch.scalar_tensor")
+
+    monkeypatch.setattr(torch.compiler, "is_exporting", lambda: True, raising=False)
+    monkeypatch.setattr(torch, "as_tensor", _spy_as_tensor)
+    monkeypatch.setattr(torch, "scalar_tensor", _spy_scalar_tensor)
+
+    with torch.no_grad():
+        exporting_out = transformer(srcs, masks, pos_embeds, refpoint_embed, query_feat, cross_attn_srcs=None)
+
+    assert as_tensor_calls == 1, "is_exporting() branch must build spatial_shapes with exactly one torch.as_tensor call"
+    assert scalar_tensor_calls == 0
+    torch.testing.assert_close(eager_out, exporting_out)
 
 
 def _build_two_stage_transformer_with_keypoints(
