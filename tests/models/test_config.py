@@ -35,6 +35,9 @@ from rfdetr.config import (
     RFDETRSmallConfig,
     SegmentationTrainConfig,
     TrainConfig,
+    _cuda_bf16_supported_on_devices,
+    _cuda_supports_native_bf16,
+    _cuda_training_device_indices,
     _detect_device,
     _resolve_amp_dtype,
 )
@@ -1145,6 +1148,204 @@ class TestDetectDevice:
 
         mock_torch.accelerator.current_accelerator = raises_on_fallback
         assert _detect_device() == "cpu"
+
+
+class TestCudaTrainingDeviceIndicesClamping:
+    """``_cuda_training_device_indices`` returns only indices this host can actually see.
+
+    Every index it returns is handed straight to a per-device probe such as ``torch.cuda.get_device_capability``, which
+    trips a bare internal ``assert`` on an unknown index. A run configured with more devices than the host has (or with
+    an explicit index that does not exist) must still fail in Lightning's own words, not with that ``AssertionError``.
+    """
+
+    @pytest.mark.parametrize(
+        ("devices", "expected"),
+        [
+            pytest.param(4, [0, 1], id="count-above-device-count"),
+            pytest.param([0, 3], [0], id="index-above-device-count"),
+            pytest.param("0,3", [0], id="comma-index-above-device-count"),
+            pytest.param("auto", [0, 1], id="auto-is-every-visible-device"),
+        ],
+    )
+    def test_requested_indices_are_clamped_to_the_visible_devices(
+        self, devices: int | str | list[int], expected: list[int]
+    ) -> None:
+        """Indices beyond ``torch.cuda.device_count()`` are dropped instead of forwarded to a per-device probe.
+
+        The host here has two GPUs, so ``devices=4``, ``[0, 3]`` and ``"0,3"`` all name at least one device that does
+        not exist — the shapes a user hits by copying a multi-GPU recipe onto a smaller machine.
+        """
+        with patch("torch.cuda.device_count", return_value=2):
+            assert _cuda_training_device_indices(devices) == expected
+
+    def test_a_host_without_cuda_selects_no_device(self) -> None:
+        """With no visible CUDA device every ``devices`` form resolves to an empty index list.
+
+        This is the CPU-only case (CI, laptops): the callers then fall back to probing the current device, which reports
+        no bfloat16 support because CUDA is unavailable.
+        """
+        with patch("torch.cuda.device_count", return_value=0):
+            assert _cuda_training_device_indices(2) == []
+
+
+class TestCudaSupportsNativeBf16:
+    """``_cuda_supports_native_bf16`` answers "native bfloat16 on this device?", which ``is_bf16_supported()`` does
+    not."""
+
+    @pytest.mark.parametrize(
+        ("capability", "hip", "native"),
+        [
+            pytest.param((7, 5), None, False, id="t4"),
+            pytest.param((7, 0), None, False, id="v100"),
+            pytest.param((8, 0), None, True, id="a100"),
+            pytest.param((8, 9), None, True, id="rtx-4090"),
+            pytest.param((7, 5), "5.7.31921", True, id="rocm-pre-ampere-shaped-capability"),
+        ],
+    )
+    def test_native_means_compute_capability_8_or_newer(
+        self, capability: tuple[int, int], hip: str | None, native: bool
+    ) -> None:
+        """Only Ampere and newer run bfloat16 natively on CUDA, even though ``is_bf16_supported()`` says True on a T4.
+
+        Every ROCm device (``torch.version.hip`` truthy) is the exception: it short-circuits to native bf16 without
+        consulting compute capability at all, so a pre-Ampere-shaped capability tuple paired with a truthy hip must
+        still resolve to True, not fall through to the capability comparison.
+        """
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.is_bf16_supported", return_value=True),
+            patch("torch.cuda.get_device_capability", return_value=capability),
+            patch("torch.version.hip", hip),
+        ):
+            assert _cuda_supports_native_bf16() is native
+
+    def test_checks_the_requested_device_not_the_current_one(self) -> None:
+        """On a host with a T4 at index 0 and an A100 at index 1, each index gets its own answer."""
+        capabilities = {0: (7, 5), 1: (8, 0)}
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.get_device_capability", side_effect=lambda device=None: capabilities[device or 0]),
+            patch("torch.version.hip", None),
+        ):
+            assert _cuda_supports_native_bf16(0) is False, "the T4 at index 0 has no native bf16"
+            assert _cuda_supports_native_bf16(1) is True, "the A100 at index 1 has native bf16"
+
+    @pytest.mark.parametrize(
+        "capability",
+        [
+            pytest.param((8, 0), id="a100-shaped-capability"),
+            pytest.param((7, 5), id="t4-shaped-capability"),
+        ],
+    )
+    def test_returns_false_when_cuda_is_unavailable_regardless_of_capability(self, capability: tuple[int, int]) -> None:
+        """``is_available() == False`` short-circuits to False before the capability check ever runs.
+
+        The mocked capability is Ampere-shaped in one case, so a True result here could only come from skipping the
+        ``is_available()`` guard, not from a capability read that never happens.
+        """
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.cuda.get_device_capability", return_value=capability),
+            patch("torch.version.hip", None),
+        ):
+            assert _cuda_supports_native_bf16() is False
+
+    def test_accepts_a_torch_device_argument(self) -> None:
+        """Type-hint completeness only: ``device`` accepts a ``torch.device``, matching its declared ``torch.device |
+        int | None`` annotation.
+
+        No production call site passes a ``torch.device`` here today -- ``auto_batch.py`` never calls
+        ``_cuda_supports_native_bf16`` directly; it goes through ``_cuda_native_bf16_on_devices``, which only ever
+        forwards int indices or ``None`` derived from ``TrainConfig.devices``. This case exists to cover the annotated
+        type, not to reproduce a real call path.
+        """
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.get_device_capability", return_value=(8, 0)),
+            patch("torch.version.hip", None),
+        ):
+            assert _cuda_supports_native_bf16(torch.device("cuda", 0)) is True
+
+
+class TestCudaTrainingDeviceIndices:
+    """``_cuda_training_device_indices`` turns a Lightning ``devices`` value into the CUDA indices it trains on."""
+
+    @pytest.mark.parametrize(
+        "devices",
+        [
+            "auto",
+            -1,
+            0,
+            "gpu0",
+        ],
+    )
+    def test_every_all_visible_sentinel_falls_through_to_every_device(self, devices: int | str) -> None:
+        """``"auto"``, ``-1``, and ``0`` are the documented "every visible device" sentinels.
+
+        A non-numeric typo like ``"gpu0"`` is not distinguished from those sentinels: it fails the same ``isdigit()``
+        check ``"auto"`` does and silently takes the identical fallback path instead of raising. This test documents
+        that identical behaviour explicitly rather than asserting a distinction that does not exist.
+        """
+        with patch("torch.cuda.device_count", return_value=3):
+            assert _cuda_training_device_indices(devices) == [0, 1, 2]
+
+    def test_empty_sequence_returns_empty_not_every_device(self) -> None:
+        """An empty explicit sequence (``devices=[]``) returns an empty list, not every visible device.
+
+        The fallback to the current device (``[None]``) for an empty result happens one layer up, in
+        ``_cuda_native_bf16_on_devices``, not inside this function.
+        """
+        assert _cuda_training_device_indices([]) == []
+
+
+class TestCudaBf16SupportedOnDevices:
+    """``_cuda_bf16_supported_on_devices`` gates an explicit ``amp_dtype="bf16"``, emulated bfloat16 included.
+
+    The gate and the "this GPU only emulates bfloat16" warning beside it must read the same devices, so this asks
+    ``torch.cuda.is_bf16_supported()``'s wider question for the GPUs a run trains on rather than the current device.
+    """
+
+    def test_a_device_that_only_emulates_bf16_still_counts_as_supported(self) -> None:
+        """A pre-Ampere training GPU reports bfloat16 through emulation, so an explicit request is honoured.
+
+        This is the T4/V100 case: ``amp_dtype="bf16"`` stays bf16 (with a warning about the cost) instead of silently
+        falling back to fp16.
+        """
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.version.hip", None),
+            patch("torch.cuda.device_count", return_value=2),
+            patch("torch.cuda.get_device_capability", return_value=(7, 5)),
+            patch("torch.cuda.is_bf16_supported", return_value=True),
+        ):
+            assert _cuda_bf16_supported_on_devices([1]) is True
+
+    def test_no_bf16_even_through_emulation_is_unsupported(self) -> None:
+        """When PyTorch reports no bfloat16 at all the gate is False, which is what triggers the fp16 fallback.
+
+        A device below Ampere on a CUDA build without bfloat16 emulation, so neither half of the question passes.
+        """
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.version.hip", None),
+            patch("torch.cuda.device_count", return_value=1),
+            patch("torch.cuda.get_device_capability", return_value=(6, 1)),
+            patch("torch.cuda.is_bf16_supported", return_value=False),
+        ):
+            assert _cuda_bf16_supported_on_devices(1) is False
+
+    def test_a_rocm_build_without_a_visible_gpu_is_unsupported(self) -> None:
+        """No CUDA device means no bfloat16, even on a build whose bare PyTorch probe answers True.
+
+        ``torch.cuda.is_bf16_supported()`` reads ``torch.version.hip`` before ``torch.cuda.is_available()``, so a ROCm
+        wheel on a machine with no GPU returns True from it — the helper must not inherit that answer.
+        """
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.version.hip", "6.0.0"),
+            patch("torch.cuda.is_bf16_supported", return_value=True),
+        ):
+            assert _cuda_bf16_supported_on_devices(1) is False
 
 
 class TestPretrainWeightsCompatibilityWarning:

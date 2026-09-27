@@ -126,7 +126,7 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 ### Training precision
 
-`amp_dtype` accepts `None`, `"auto"`, `"bf16"`, `"fp16"`, or `"fp8"`, and is the single setting controlling mixed precision. Pass `amp_dtype=None` to train in full FP32. FP8 selects Lightning's Transformer Engine precision plugin, which replaces eligible linear and layer-normalization layers while retaining BF16 weights. FP8 requires a Transformer Engine-supported NVIDIA GPU; it is rejected for CPU, MPS, TPU/XLA, FSDP, and DeepSpeed. Use DDP for multi-GPU FP8 training. Hardware support and speedups vary, so benchmark the exact model and GPU before adopting it.
+`amp_dtype` accepts `None`, `"auto"`, `"bf16"`, `"fp16"`, or `"fp8"`, and is the single setting controlling mixed precision. Pass `amp_dtype=None` to train in full FP32. The default `"auto"` picks BF16 on NVIDIA GPUs with native BF16 (Ampere and newer) and FP16 on older ones such as the T4 and V100, where BF16 is only emulated (on a T4, RF-DETR Nano trained about 2x slower in emulated BF16 than in FP16). An explicit `"bf16"` is still honoured on those GPUs, with a warning. FP8 selects Lightning's Transformer Engine precision plugin, which replaces eligible linear and layer-normalization layers while retaining BF16 weights. FP8 requires a Transformer Engine-supported NVIDIA GPU; it is rejected for CPU, MPS, TPU/XLA, FSDP, and DeepSpeed. Use DDP for multi-GPU FP8 training. Hardware support and speedups vary, so benchmark the exact model and GPU before adopting it.
 
 The constructor-only `amp` boolean is deprecated: it is consulted only when `amp_dtype` has its default value `"auto"`, and any non-default `amp_dtype` overrides it. Replace `amp=False` with `amp_dtype=None`.
 
