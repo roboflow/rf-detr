@@ -51,6 +51,7 @@ from rfdetr.datasets.webdataset.load import (
 )
 from rfdetr.datasets.webdataset.pack import _pack_generation, pack_coco_to_shards, tar_member_bytes
 from rfdetr.utilities.tensors import make_collate_fn
+from tests.datasets._memory import peak_traced_bytes
 
 _CATEGORIES = [{"id": 3, "name": "cat"}, {"id": 9, "name": "dog"}]
 
@@ -685,8 +686,9 @@ class TestWebDatasetDetection:
         image_ids = [int(target["image_id"]) for _, target in dataset]
         assert sorted(image_ids) == list(range(1000, 1012))
 
-    def test_output_matches_the_loose_file_dataset(self, tmp_path: Path) -> None:
-        image_dir, annotations = _build_coco_split(tmp_path, count=6)
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_output_matches_the_loose_file_dataset(self, tmp_path: Path, extension: str) -> None:
+        image_dir, annotations = _build_coco_split(tmp_path, count=6, extension=extension)
         shard_dir = tmp_path / "shards"
         pack_coco_to_shards(image_dir, annotations, shard_dir, split="train", max_shard_bytes=4096)
         transforms = make_coco_transforms("val", 224)
@@ -755,6 +757,34 @@ class TestWebDatasetDetection:
         loose_image, loose_target = loose[0]
         assert torch.equal(streamed_image, loose_image)
         assert torch.equal(streamed_target["boxes"], loose_target["boxes"])
+
+    def test_png_member_is_not_copied_through_numpy(self, tmp_path: Path) -> None:
+        """A PNG shard member reaches the transforms without a frame-sized NumPy copy (#1544).
+
+        The member is a smooth gradient so that its encoded bytes, which the tar reader holds in memory, stay far below
+        the 1.44 MB frame; a round trip through ``np.array`` and ``Image.fromarray`` peaks at about twice the frame.
+        """
+        image_dir = tmp_path / "images"
+        image_dir.mkdir()
+        rows, columns = np.mgrid[0:600, 0:800]
+        gradient = np.stack([columns % 256, rows % 256, (rows + columns) % 256], axis=-1).astype(np.uint8)
+        Image.fromarray(gradient).save(image_dir / "img_0000.png")
+        annotations = tmp_path / "annotations.json"
+        annotations.write_text(
+            json.dumps(
+                {
+                    "images": [{"id": 1000, "file_name": "img_0000.png", "height": 600, "width": 800}],
+                    "annotations": [],
+                    "categories": list(_CATEGORIES),
+                }
+            ),
+            encoding="utf-8",
+        )
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(image_dir, annotations, shard_dir, split="train")
+        dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
+
+        assert peak_traced_bytes(lambda: next(iter(dataset))) < 800 * 600 * 3 // 2
 
     def test_segmentation_masks_match_the_loose_file_dataset(self, tmp_path: Path) -> None:
         image_dir, annotations = _build_coco_split(tmp_path, count=4, segmentation=True)
