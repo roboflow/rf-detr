@@ -811,8 +811,8 @@ class TestCudaGraphInferenceModel:
             """Queue a device-side delay ahead of the replay so a call from another stream could overtake it.
 
             Examples:
-                >>> callable(delayed_replay)
-                True
+                Requires the live CUDA graph captured by this test.
+                >>> delayed_replay()  # doctest: +SKIP
             """
             torch.cuda._sleep(20_000_000)
             graph.replay()
@@ -857,8 +857,8 @@ class TestCudaGraphInferenceModel:
             """Fail the wrapper's second fenced synchronize; torch's own argument-less calls pass through.
 
             Examples:
-                >>> callable(fail_completion_fence)
-                True
+                Requires the live CUDA device and closure created by this test.
+                >>> fail_completion_fence()  # doctest: +SKIP
             """
             nonlocal fences
             if target is not None:
