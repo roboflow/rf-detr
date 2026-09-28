@@ -533,6 +533,19 @@ class TRTInference:
             torch.cuda.synchronize(self._engine_device)
 
     def speed(self, blob: Mapping[str, Tensor], n: int) -> float:
+        """Return the mean wall-clock time of *n* calls to this runtime, in seconds.
+
+        The timed region is whatever ``__call__`` does: input validation (:meth:`_check_input_memory`) and the
+        ``torch.cuda.device`` scope run inside it, so the returned mean includes their overhead alongside the
+        TensorRT launch itself -- it is not engine-only.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+            n: Number of calls to time.
+
+        Returns:
+            Mean seconds per call.
+        """
         self.time_profile.reset()
         with self.time_profile:
             for _ in range(n):
