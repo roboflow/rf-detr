@@ -25,6 +25,7 @@ from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.models.transformer import (
     Transformer,
+    TransformerDecoder,
     TransformerDecoderLayer,
     _AddInDtype,
     _CastThenExpand,
@@ -3039,6 +3040,8 @@ def test_grouped_self_attention_uses_a_view_for_the_regrouping() -> None:
 
 
 class _MultiheadAttentionSubclass(nn.MultiheadAttention):
+    """Test double that must keep the generic multi-head-attention call path."""
+
     pass
 
 
@@ -3059,6 +3062,7 @@ class _MultiheadAttentionSubclass(nn.MultiheadAttention):
         "global_backward_hook",
         "instance_forward",
         "compiled_call_impl",
+        "dropout",
         "indivisible_queries",
         "compiling",
         "no_in_proj_bias",
@@ -3095,6 +3099,8 @@ def test_grouped_self_attention_eligibility_falls_back_to_the_module_call(
         layer.self_attn.forward = layer.self_attn.forward  # type: ignore[method-assign]
     elif case == "compiled_call_impl":
         layer.self_attn._compiled_call_impl = Mock()
+    elif case == "dropout":
+        layer.self_attn.dropout = 0.1
     elif case == "indivisible_queries":
         tgt = torch.randn(2, 11, 16, device=device)
     elif case == "compiling":
@@ -3215,6 +3221,126 @@ def test_pos_embed_for_linear_emits_the_autocast_dtype_under_cuda_autocast() -> 
     assert torch.equal(fused, (tensor + pos).to(torch.bfloat16))
     assert in_eval.dtype == torch.float32
     assert torch.equal(in_eval, tensor + pos)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize("target", ["ref_point_head", "first_linear"])
+@pytest.mark.parametrize("feature", ["forward_pre_hook", "instance_forward"])
+def test_ref_point_head_observers_keep_the_full_precision_embedding_input(
+    target: str, feature: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An observer on the embedding consumer must receive the fp32 input the original module path exposed.
+
+    The first call is a positive control proving the unobserved production path writes the sine embedding directly in
+    bf16. The second call installs a real forward-pre hook on either consumer boundary and requires both the write and
+    the hook-visible input to stay fp32.
+    """
+    decoder = TransformerDecoder(_decoder_layer(), num_layers=1, d_model=16, lite_refpoint_refine=True).cuda()
+    tgt = torch.randn(2, 12, 16, device="cuda")
+    memory = torch.randn(2, 20, 16, device="cuda")
+    refpoints = torch.randn(2, 12, 4, device="cuda")
+    spatial_shapes = torch.tensor([[4, 4], [2, 2]], device="cuda")
+    level_start_index = torch.tensor([0, 16], device="cuda")
+    valid_ratios = torch.ones(2, 2, 2, device="cuda")
+    written_dtypes: list[torch.dtype] = []
+    real_apply = _InterleavedSinCos.apply
+    monkeypatch.setattr(
+        _InterleavedSinCos,
+        "apply",
+        lambda angle, dtype: (written_dtypes.append(dtype), real_apply(angle, dtype))[1],
+    )
+
+    def run() -> None:
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            decoder(
+                tgt,
+                memory,
+                refpoints_unsigmoid=refpoints,
+                spatial_shapes=spatial_shapes,
+                spatial_shapes_hw=[(4, 4), (2, 2)],
+                level_start_index=level_start_index,
+                valid_ratios=valid_ratios,
+            )
+
+    run()
+    assert written_dtypes == [torch.bfloat16]
+    written_dtypes.clear()
+
+    watched = decoder.ref_point_head if target == "ref_point_head" else decoder.ref_point_head.layers[0]
+    observed_dtypes: list[torch.dtype] = []
+    forward_mock = None
+    if feature == "forward_pre_hook":
+        watched.register_forward_pre_hook(lambda _module, args: observed_dtypes.append(args[0].dtype))
+    else:
+        forward_mock = Mock(side_effect=watched.forward)
+        watched.forward = forward_mock  # type: ignore[method-assign]
+    run()
+    if forward_mock is not None:
+        observed_dtypes.append(forward_mock.call_args.args[0].dtype)
+
+    assert written_dtypes == [torch.float32]
+    assert observed_dtypes == [torch.float32]
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize("target", ["cross_attn", "sampling_offsets", "attention_weights"])
+@pytest.mark.parametrize("feature", ["forward_pre_hook", "instance_forward"])
+def test_cross_attention_observers_keep_the_full_precision_query(
+    target: str, feature: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cross-attention and its query-consuming linears must observe the original fp32 positional sum.
+
+    A positive control first proves that both the self- and cross-attention positional adds take the fused path. After
+    installing a real hook, only self-attention may keep the folded add and the watched cross-attention boundary must
+    receive fp32.
+    """
+    layer = _decoder_layer().cuda()
+    tgt = torch.randn(2, 12, 16, device="cuda")
+    memory = torch.randn(2, 20, 16, device="cuda")
+    query_pos = torch.randn(2, 12, 16, device="cuda")
+    reference_points = torch.rand(2, 12, 2, 4, device="cuda")
+    spatial_shapes = torch.tensor([[4, 4], [2, 2]], device="cuda")
+    level_start_index = torch.tensor([0, 16], device="cuda")
+    folded_adds: list[object] = []
+    real_apply = _AddInDtype.apply
+    monkeypatch.setattr(
+        _AddInDtype,
+        "apply",
+        lambda *args: (folded_adds.append(args), real_apply(*args))[1],
+    )
+
+    def run() -> None:
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            layer.forward_post(
+                tgt,
+                memory,
+                query_pos=query_pos,
+                reference_points=reference_points,
+                spatial_shapes=spatial_shapes,
+                spatial_shapes_hw=[(4, 4), (2, 2)],
+                level_start_index=level_start_index,
+            )
+
+    run()
+    assert len(folded_adds) == 2
+    folded_adds.clear()
+
+    watched = layer.cross_attn if target == "cross_attn" else getattr(layer.cross_attn, target)
+    observed_dtypes: list[torch.dtype] = []
+    forward_mock = None
+    if feature == "forward_pre_hook":
+        watched.register_forward_pre_hook(lambda _module, args: observed_dtypes.append(args[0].dtype))
+    else:
+        forward_mock = Mock(side_effect=watched.forward)
+        watched.forward = forward_mock  # type: ignore[method-assign]
+    run()
+    if forward_mock is not None:
+        observed_dtypes.append(forward_mock.call_args.args[0].dtype)
+
+    assert len(folded_adds) == 1
+    assert observed_dtypes == [torch.float32]
 
 
 @pytest.mark.gpu
@@ -3585,6 +3711,39 @@ def test_two_stage_group_selection_cast_once_matches_expanded_cast_under_autocas
     for expected_out, actual_out in zip(expected, actual, strict=True):
         assert torch.equal(actual_out, expected_out)
     torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_two_stage_group_selection_keeps_expand_then_cast_while_tracing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TorchScript tracing must not record the custom cast-then-expand autograd function.
+
+    The first call is a positive control proving bf16 CUDA autocast normally takes the rewrite. The tracing call then
+    requires the previous expand-then-cast graph, so this fails if the tracing predicate is absent from the guard.
+    """
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    ).cuda()
+    memory = torch.randn(2, 20, 16, device="cuda")
+    proposals = torch.rand(2, 20, 4, device="cuda")
+    cast_once_calls: list[object] = []
+    real_apply = _CastThenExpand.apply
+    monkeypatch.setattr(
+        _CastThenExpand,
+        "apply",
+        lambda *args: (cast_once_calls.append(args), real_apply(*args))[1],
+    )
+
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        transformer._two_stage_group_selection(memory, proposals, transformer.group_detr)
+    assert len(cast_once_calls) == 1
+    cast_once_calls.clear()
+
+    monkeypatch.setattr("rfdetr.models.transformer._is_tracing", lambda: True)
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        transformer._two_stage_group_selection(memory, proposals, transformer.group_detr)
+
+    assert cast_once_calls == []
 
 
 @pytest.mark.gpu

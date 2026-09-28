@@ -702,8 +702,8 @@ class Transformer(nn.Module):
 
         Only called for ``group_detr > 1``, which the caller (:meth:`forward`) only reaches while
         training -- the ``assert self.training`` below enforces that mechanically. Eval/export always
-        pass ``group_detr=1`` and use the original single-group code path, so this method never touches
-        ONNX/TorchScript tracing (#1155) or ``torch.compile`` export graphs recorded in eval mode.
+        pass ``group_detr=1`` and use the original single-group code path. If a training-mode call is
+        nevertheless traced, the cast-once rewrite below also keeps the plain expand-then-cast graph.
 
         The batched GEMMs can use a different accumulation order than separate calls. The paths match
         within float32 tolerance at real model scale, but under bf16/fp16 a near-tied class score can
@@ -742,7 +742,7 @@ class Transformer(nn.Module):
         norm_eps = cast(nn.LayerNorm, self.enc_output_norm[0]).eps
 
         compute_dtype = _cuda_autocast_dtype() if output_memory.is_cuda else None
-        if compute_dtype is None or compute_dtype == output_memory.dtype or is_compiling():
+        if compute_dtype is None or compute_dtype == output_memory.dtype or is_compiling() or _is_tracing():
             memory_expanded = output_memory.unsqueeze(0).expand(group_detr, -1, -1, -1)
         else:
             # Under autocast the batched GEMM casts its input: cast the shared memory once instead of its
@@ -1312,12 +1312,22 @@ class TransformerDecoder(nn.Module):
             else:
                 assert valid_ratios is not None
                 refpoints_input = obj_center[:, :, None] * torch.cat([valid_ratios, valid_ratios], -1)[:, None]
-                # ``ref_point_head`` is the embedding's only consumer and autocast casts its input, so under
-                # CUDA autocast the embedding is produced in the compute dtype directly (bitwise the cast).
+                # ``ref_point_head`` and its first Linear are the embedding's only consumers. When their calls are
+                # plain, autocast casts the input inside Linear, so producing it in the compute dtype is bitwise the
+                # same. Hooks, overrides, subclasses and compile wrappers keep the original fp32 module input.
+                first_ref_point_layer = self.ref_point_head.layers[0]
+                ref_point_head_is_plain = (
+                    refpoints_input.is_cuda
+                    and not is_compiling()
+                    and not _is_tracing()
+                    and type(self.ref_point_head) is MLP
+                    and type(first_ref_point_layer) is nn.Linear
+                    and _module_call_is_plain(self.ref_point_head, first_ref_point_layer)
+                )
                 query_sine_embed = gen_sineembed_for_position(
                     refpoints_input[:, :, 0, :],
                     self.d_model // 2,
-                    out_dtype=_cuda_autocast_dtype() if refpoints_input.is_cuda else None,
+                    out_dtype=(_cuda_autocast_dtype() if refpoints_input.is_cuda and ref_point_head_is_plain else None),
                 )
 
             query_pos = self.ref_point_head(query_sine_embed)
@@ -1583,9 +1593,9 @@ class TransformerDecoderLayer(nn.Module):
         The explicit path reads ``in_proj_weight``/``in_proj_bias``/``out_proj`` and never calls the module, so it is
         limited to the plain ``nn.MultiheadAttention`` ``__init__`` builds (exact type, a call nothing overrides or
         observes, see :func:`_module_call_is_plain`, packed projections with bias, no
-        ``bias_k``/``bias_v``/``add_zero_attn``), to training on CUDA without masks (the only configuration that
-        regroups), and to eager execution: under ``torch.compile`` or tracing the module call is what Inductor and the
-        exporters expect.
+        ``bias_k``/``bias_v``/``add_zero_attn``), to training on CUDA with zero attention dropout and without masks (the
+        only configuration that regroups without changing seeded dropout masks), and to eager execution: under
+        ``torch.compile`` or tracing the module call is what Inductor and the exporters expect.
         """
         attn = self.self_attn
         if type(attn) is not nn.MultiheadAttention:
@@ -1605,6 +1615,7 @@ class TransformerDecoderLayer(nn.Module):
             and attn.bias_k is None
             and attn.bias_v is None
             and not attn.add_zero_attn
+            and attn.dropout == 0.0
         )
 
     def _grouped_self_attention(self, tgt: Tensor, query_pos: Tensor | None) -> Tensor:
@@ -1619,8 +1630,8 @@ class TransformerDecoderLayer(nn.Module):
         through ``matmul`` on a non-contiguous tensor: a copy per projection) and, under autocast, one of the
         two casts of the shared query/key input.
 
-        With ``dropout > 0`` the attention dropout mask is drawn on the batch-major layout, so it differs from
-        the module path's; the configured decoder dropout is ``0``.
+        Eligibility requires zero attention dropout because a nonzero mask would be drawn in batch-major rather than
+        the module path's group-major order.
         """
         attn = self.self_attn
         bs, num_queries, d_model = tgt.shape
@@ -1690,11 +1701,23 @@ class TransformerDecoderLayer(nn.Module):
         # ========== End of Self-Attention =============
 
         # ========== Begin of Cross-Attention =============
-        # MSDeformAttn only reads ``query`` through its two ``nn.Linear`` heads, which autocast would cast
-        # anyway, so under autocast the positional add is emitted in the compute dtype directly.
+        # A plain MSDeformAttn only reads ``query`` through its two Linear heads, which autocast would cast anyway, so
+        # under autocast the positional add can be emitted in the compute dtype directly. Anything that observes or
+        # overrides those three calls keeps the original fp32 query input.
+        cross_attn = self.cross_attn
+        cross_attn_query_is_plain = (
+            self.training
+            and tgt.is_cuda
+            and not is_compiling()
+            and not _is_tracing()
+            and type(cross_attn) is MSDeformAttn
+            and type(cross_attn.sampling_offsets) is nn.Linear
+            and type(cross_attn.attention_weights) is nn.Linear
+            and _module_call_is_plain(cross_attn, cross_attn.sampling_offsets, cross_attn.attention_weights)
+        )
         cross_attn_query = (
             self._pos_embed_for_linear(tgt, query_pos)
-            if type(self.cross_attn) is MSDeformAttn
+            if cross_attn_query_is_plain
             else self.with_pos_embed(tgt, query_pos)
         )
         tgt2 = self.cross_attn(
