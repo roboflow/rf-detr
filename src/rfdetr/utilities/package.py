@@ -3,13 +3,43 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Package version and git-status helpers."""
+"""Package version, install-probe, and git-status helpers."""
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
+
+
+def is_installed(name: str) -> bool:
+    """Report whether a module is installed, without importing it.
+
+    ``find_spec`` answers from the import system's metadata, so an optional package whose import pulls in heavy
+    machinery (CUDA libraries, a compiler backend) costs nothing to ask about. Two of its answers fold into ``False``
+    here. A spec with no ``origin`` is a namespace package -- a bare directory that happens to carry the name, such as
+    an export folder, rather than an install. A ``ValueError`` means ``sys.modules`` already holds an entry whose
+    ``__spec__`` is missing or ``None``: a stub left behind by a test or by a library that builds its own module
+    object, which is likewise nothing to build against. (``ImportError`` covers the separate case of a missing parent
+    package.)
+
+    Args:
+        name: Absolute module name, e.g. ``"tensorrt"``.
+
+    Returns:
+        Whether *name* resolves to an installed module.
+
+    Examples:
+        >>> is_installed("json")
+        True
+        >>> is_installed("a_module_that_is_not_installed")
+        False
+    """
+    try:
+        return getattr(importlib.util.find_spec(name), "origin", None) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def get_version(package_name: str = "rfdetr") -> str | None:
