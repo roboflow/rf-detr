@@ -553,14 +553,19 @@ class TRTInference:
             max_batch_size: Unused; retained for call-site compatibility.
 
         Returns:
-            The serialized engine, or ``None`` if the ONNX file failed to parse.
+            The serialized engine.
 
         Raises:
             Fp16CastUnsupportedError: If a strongly typed TensorRT needs the graph cast to fp16 and it
                 cannot be (already fp16, or explicitly quantized).
-            RuntimeError: If TensorRT parses the model but cannot build an engine from it, for example a
-                dynamic-batch ONNX, since this builder declares no optimization profile. Nothing is written to
-                *engine_file_path* then, so an engine already there is kept.
+            RuntimeError: If TensorRT cannot parse the ONNX file, or parses it but cannot build an engine from
+                it -- for example a dynamic-batch ONNX, since this builder declares no optimization profile.
+                Nothing is written to *engine_file_path* in either case, so an engine already there is kept.
+
+        Note:
+            Unlike ``__init__``, ``run_sync``, and ``run_async``, this method does not enter
+            ``torch.cuda.device(self._engine_device)``: it builds on whatever device is current when it is
+            called, not necessarily the device this runtime otherwise runs on.
 
         Examples:
             >>> TRTInference.build_engine(trt_inference, "model.onnx", "model.trt")  # doctest: +SKIP
@@ -603,10 +608,11 @@ class TRTInference:
 
                 with open(build_source, "rb") as model:
                     if not parser.parse(model.read()):
-                        logger.error("ERROR: Failed to parse the ONNX file.")
-                        for error in range(parser.num_errors):
-                            logger.error(parser.get_error(error))
-                        return None
+                        parser_errors = "; ".join(str(parser.get_error(error)) for error in range(parser.num_errors))
+                        raise RuntimeError(
+                            f"TensorRT could not parse the ONNX file '{onnx_file_path}'; the parser reported: "
+                            f"{parser_errors}"
+                        )
 
                 serialized_engine = builder.build_serialized_network(network, config)
                 # TensorRT reports a failed build by returning None; opening the target first would truncate it.

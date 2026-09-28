@@ -1740,7 +1740,8 @@ def _run_benchmark_build(
         cast_path: File the stubbed caster returns, or ``None`` to leave the caster untouched.
 
     Returns:
-        Whatever ``build_engine`` returned — the serialized engine, or ``None`` when parsing failed.
+        Whatever ``build_engine`` returned — the serialized engine. Raises ``RuntimeError`` when parsing or
+        building fails; it never returns ``None``.
 
     Examples:
         Needs live ``monkeypatch`` and ``tmp_path`` fixtures, so it cannot run standalone.
@@ -1840,21 +1841,25 @@ class TestBenchmarkBuildEngine:
         assert not cast_path.exists()
 
     def test_cast_graph_is_removed_after_a_failed_parse(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """A parse failure returns early rather than raising, and must still not leak the intermediate."""
+        """A parse failure raises rather than returning silently, and must still not leak the intermediate."""
         cast_path = tmp_path / "model.fp16-abcd1234.onnx"
         trt_module = _fake_benchmark_tensorrt("11.2.1.2", has_fp16_flag=False, parse_succeeds=False)
 
-        _run_benchmark_build(monkeypatch, tmp_path, trt_module, cast_path)
+        with pytest.raises(RuntimeError, match="could not parse the ONNX file"):
+            _run_benchmark_build(monkeypatch, tmp_path, trt_module, cast_path)
 
         assert not cast_path.exists()
 
-    def test_a_failed_parse_returns_none(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """An unparsable ONNX yields ``None`` rather than an engine the caller would go on to use."""
+    def test_a_failed_parse_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """An unparsable ONNX raises ``RuntimeError`` rather than returning ``None`` for the caller to go on and use.
+
+        Before this, a parse failure logged and returned ``None`` -- the sibling build failure already raised, so a
+        caller checking only for an exception would proceed with ``None`` as if it were an engine.
+        """
         trt_module = _fake_benchmark_tensorrt("11.2.1.2", has_fp16_flag=False, parse_succeeds=False)
 
-        result = _run_benchmark_build(monkeypatch, tmp_path, trt_module, tmp_path / "model.fp16-abcd1234.onnx")
-
-        assert result is None
+        with pytest.raises(RuntimeError, match="could not parse the ONNX file"):
+            _run_benchmark_build(monkeypatch, tmp_path, trt_module, tmp_path / "model.fp16-abcd1234.onnx")
 
     def test_a_failed_build_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A build TensorRT refused is an error, not a ``TypeError`` from ``f.write(None)``.
