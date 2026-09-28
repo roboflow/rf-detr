@@ -34,6 +34,11 @@ _PTL_COMPAT_KEYS = (
     "lr_schedulers",
 )
 
+#: Where a ``backbone_lora=True`` run saves the DINOv2 encoder's keys. PEFT nests the wrapped encoder at
+#: ``PeftModel.base_model.model``, so ``backbone.0.encoder.encoder.…`` is saved as
+#: ``backbone.0.encoder.base_model.model.encoder.…``.
+_LORA_ENCODER_KEY_PREFIX = "backbone.0.encoder.base_model.model."
+
 
 def _raise_patch_size_mismatch(ckpt_patch_size: int, model_patch_size: int) -> None:
     """Raise a descriptive ValueError for a patch_size incompatibility.
@@ -145,8 +150,9 @@ def strip_checkpoint(
 ) -> None:
     """Strip a checkpoint file down to ``model``, ``args``, and PTL-compatible keys.
 
-    Preserves ``model_name`` (when present) so that ``RFDETR.from_checkpoint()`` can still resolve the model class from
-    the stripped file.  Also preserves ``rfdetr_version`` (when present) for provenance tracking.
+    Preserves ``model_name`` and ``model_config`` (when present) so that ``RFDETR.from_checkpoint()`` can still resolve
+    the model class and rebuild the trained architecture (e.g. ``resolution``, ``num_queries``, ``dec_layers``) from the
+    stripped file.  Also preserves ``rfdetr_version`` (when present) for provenance tracking.
 
     Also preserves ``state_dict``, ``global_step``, ``pytorch-lightning_version``, ``loops``, ``optimizer_states``, and
     ``lr_schedulers`` when present so the stripped checkpoint can still be used directly with
@@ -188,6 +194,10 @@ def strip_checkpoint(
     # Preserve model_name when present (#887).
     if "model_name" in state_dict:
         new_state_dict["model_name"] = state_dict["model_name"]
+    # Preserve model_config when present: without it from_checkpoint rebuilds the class-default
+    # architecture (e.g. resolution) around weights trained with a different one.
+    if "model_config" in state_dict:
+        new_state_dict["model_config"] = state_dict["model_config"]
     # Preserve rfdetr_version when present for provenance tracking.
     if "rfdetr_version" in state_dict:
         new_state_dict["rfdetr_version"] = state_dict["rfdetr_version"]
@@ -305,11 +315,12 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
 
         When ``"args"`` is absent or ``args.patch_size`` is not set, a fallback infers ``patch_size`` from the DINOv2
         patch-embedding projection weight shape (key
-        ``backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight``). This fallback **can raise**
-        :class:`ValueError` on a mismatch, providing a clear error before the cryptic :class:`RuntimeError` from
-        :meth:`~torch.nn.Module.load_state_dict` would otherwise fire. For all other attributes (e.g.
-        ``segmentation_head``), if either side is missing, that check is skipped silently — preserving backward
-        compatibility.
+        ``backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight``, or
+        ``backbone.0.encoder.base_model.model.encoder.embeddings.patch_embeddings.projection.weight`` in a checkpoint
+        saved by a ``backbone_lora=True`` run). This fallback **can raise** :class:`ValueError` on a mismatch,
+        providing a clear error before the cryptic :class:`RuntimeError` from :meth:`~torch.nn.Module.load_state_dict`
+        would otherwise fire. For all other attributes (e.g. ``segmentation_head``), if either side is missing, that
+        check is skipped silently — preserving backward compatibility.
 
         Two class-count scenarios are distinguished:
 
@@ -362,8 +373,13 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
         _ckpt_patch_size_from_args = _ckpt_args_get(_ckpt_args, "patch_size")
 
     if _ckpt_patch_size_from_args is None:
-        _patch_proj_key = "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight"
-        _ckpt_proj_w = checkpoint.get("model", {}).get(_patch_proj_key)
+        _patch_proj_suffix = "encoder.embeddings.patch_embeddings.projection.weight"
+        _ckpt_model = checkpoint.get("model", {})
+        # A backbone_lora=True run saves the same weight under the PEFT prefix, and its args (a TrainConfig dump)
+        # carry no patch_size, so this fallback is its only clear error before load_state_dict's (#1540).
+        _ckpt_proj_w = _ckpt_model.get(f"backbone.0.encoder.{_patch_proj_suffix}")
+        if _ckpt_proj_w is None:
+            _ckpt_proj_w = _ckpt_model.get(f"{_LORA_ENCODER_KEY_PREFIX}{_patch_proj_suffix}")
         _ckpt_proj_shape = getattr(_ckpt_proj_w, "shape", None)
         if _ckpt_proj_shape is not None and len(_ckpt_proj_shape) == 4 and _ckpt_proj_shape[2] == _ckpt_proj_shape[3]:
             _inferred_ps = int(_ckpt_proj_shape[-1])
