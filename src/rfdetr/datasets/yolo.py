@@ -684,7 +684,8 @@ def _parse_yaml_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Pat
     parts = split_images.parts
     is_dir = split_images.is_dir()
     if is_dir and "images" in parts:
-        idx = parts.index("images")
+        # Swap the last ``images`` segment, as Ultralytics does: an earlier one can belong to a parent of the root.
+        idx = len(parts) - 1 - parts[::-1].index("images")
         split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
         if split_labels.is_dir():
             return split_images, split_labels

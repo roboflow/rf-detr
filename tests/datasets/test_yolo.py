@@ -1027,6 +1027,21 @@ class TestResolveYoloSplitDirs:
         assert lb.name == "labels"
         assert lb.parent == (tmp_path / "val")
 
+    def test_labels_dir_swaps_last_images_segment(self, tmp_path: Path) -> None:
+        """An ``images`` directory above the dataset root must not be the segment swapped to ``labels``."""
+        root = tmp_path / "images" / "coco8"
+        for split in ("train", "val"):
+            (root / "images" / split).mkdir(parents=True)
+            (root / "labels" / split).mkdir(parents=True)
+        data_file = root / "data.yaml"
+        data_file.write_text(
+            "path: .\ntrain: images/train\nval: images/val\nnames:\n  0: person\n",
+            encoding="utf-8",
+        )
+        img, lb = _resolve_yolo_split_dirs(root, data_file, "val")
+        assert img == root / "images" / "val"
+        assert lb == root / "labels" / "val"
+
     def test_fallback_val_dir_when_no_yaml_paths_and_no_valid(self, tmp_path: Path) -> None:
         """When yaml has no path keys and valid/ does not exist but val/ does, use val/."""
         (tmp_path / "data.yaml").write_text("names:\n  0: person\n", encoding="utf-8")
