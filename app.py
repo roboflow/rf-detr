@@ -4,348 +4,208 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 
-import os
-import tempfile
+"""Streamlit demo for RF-DETR Nano.
 
-import cv2
+Install the demo dependencies with ``pip install 'rfdetr[demo]'`` and start the app with ``streamlit run app.py``.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Protocol
+
 import numpy as np
-import streamlit as st
 import supervision as sv
-import torch
 from PIL import Image
-from streamlit_webrtc import (
-    RTCConfiguration,
-    VideoProcessorBase,
-    webrtc_streamer,
-)
-
-from rfdetr import RFDETRNano
-
-# --------------------------------------------------
-# Page Configuration
-# --------------------------------------------------
-
-st.set_page_config(page_title="RF-DETR Object Detection", page_icon="🔍", layout="wide")
-
-# --------------------------------------------------
-# Title
-# --------------------------------------------------
-
-st.title("🔍 RF-DETR Object Detection")
-
-st.write("Real-time object detection using RF-DETR Nano with NVIDIA GPU acceleration.")
-
-# --------------------------------------------------
-# GPU Information
-# --------------------------------------------------
-
-if torch.cuda.is_available():
-    st.success(f"GPU Acceleration: {torch.cuda.get_device_name(0)}")
-
-else:
-    st.warning("CUDA GPU is not available. RF-DETR will run on CPU.")
-
-# --------------------------------------------------
-# Load Model
-# --------------------------------------------------
 
 
-@st.cache_resource
-def load_model():
+class Detector(Protocol):
+    """Prediction interface used by the image demo."""
 
-    model = RFDETRNano()
-
-    # Enable optimized FP16 inference on NVIDIA GPU
-    if torch.cuda.is_available():
-        model.inference(dtype=torch.float16)
-
-    return model
+    def predict(self, image: Image.Image, threshold: float) -> sv.Detections:
+        """Return detections for an in-memory image."""
 
 
-with st.spinner("Loading RF-DETR Nano and optimizing inference..."):
-    model = load_model()
+def get_class_names(detections: sv.Detections) -> list[str]:
+    """Return the display name for each detection, preserving sparse class IDs.
 
-st.success("RF-DETR Nano is ready.")
-
-# --------------------------------------------------
-# Helper: Get Correct RF-DETR Class Names
-# --------------------------------------------------
-
-
-def get_class_names(detections):
-    """RF-DETR's pretrained COCO model can use sparse COCO category IDs.
-
-    Therefore, do NOT use:
-
-    model.class_names[class_id]
-
-    Instead, use the class_name mapping created internally by RF-DETR's predict() method.
+    Examples:
+        >>> detections = sv.Detections(
+        ...     xyxy=np.array([[0, 0, 20, 20]]),
+        ...     class_id=np.array([17]),
+        ...     data={"class_name": np.array(["cat"])},
+        ... )
+        >>> get_class_names(detections)
+        ['cat']
     """
-    if hasattr(detections, "data") and "class_name" in detections.data:
-        return list(detections.data["class_name"])
-
-    # Fallback
+    class_names = detections.data.get("class_name")
+    if class_names is not None:
+        return [str(name) for name in class_names]
+    if detections.class_id is None:
+        return ["unknown"] * len(detections)
     return [str(class_id) for class_id in detections.class_id]
 
 
-# --------------------------------------------------
-# Helper: Remove Very Small Detections
-# --------------------------------------------------
+def filter_small_detections(
+    detections: sv.Detections,
+    min_width: int = 12,
+    min_height: int = 12,
+) -> sv.Detections:
+    """Remove detections whose boxes are smaller than the requested dimensions.
 
-
-def filter_small_detections(detections, min_width=12, min_height=12):
-
-    if len(detections) == 0:
+    Examples:
+        >>> detections = sv.Detections(
+        ...     xyxy=np.array([[0, 0, 20, 20], [0, 0, 5, 5]]),
+        ...     class_id=np.array([1, 2]),
+        ... )
+        >>> len(filter_small_detections(detections))
+        1
+    """
+    if not len(detections):
         return detections
 
-    boxes = detections.xyxy
-
-    widths = boxes[:, 2] - boxes[:, 0]
-    heights = boxes[:, 3] - boxes[:, 1]
-
-    keep = (widths >= min_width) & (heights >= min_height)
-
-    return detections[keep]
+    widths = detections.xyxy[:, 2] - detections.xyxy[:, 0]
+    heights = detections.xyxy[:, 3] - detections.xyxy[:, 1]
+    return detections[(widths >= min_width) & (heights >= min_height)]
 
 
-# --------------------------------------------------
-# Image Detection Function
-# --------------------------------------------------
+def detect_image(image: Image.Image, threshold: float, model: Detector) -> tuple[np.ndarray, sv.Detections]:
+    """Predict and annotate an image without writing it to a temporary file.
 
-
-def detect_image(image, threshold):
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
-        image.save(temp_file.name)
-        temp_path = temp_file.name
-
-    try:
-        detections = model.predict(temp_path, threshold=threshold)
-
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-
-    # Remove extremely small detections
-    detections = filter_small_detections(detections, min_width=12, min_height=12)
-
-    image_np = np.array(image)
-
-    box_annotator = sv.BoxAnnotator()
-
-    label_annotator = sv.LabelAnnotator()
-
+    Examples:
+        >>> class Model:
+        ...     def predict(self, image, threshold):
+        ...         return sv.Detections(
+        ...             xyxy=np.empty((0, 4)),
+        ...             class_id=np.empty((0,), dtype=int),
+        ...             confidence=np.empty((0,)),
+        ...         )
+        >>> result, detections = detect_image(Image.new("RGB", (32, 32)), 0.5, Model())
+        >>> result.shape
+        (32, 32, 3)
+    """
+    detections = filter_small_detections(model.predict(image, threshold=threshold))
+    image_array = np.asarray(image)
     class_names = get_class_names(detections)
+    labels = [f"{name} {confidence:.2f}" for name, confidence in zip(class_names, detections.confidence)]
 
-    labels = [f"{class_name} {confidence:.2f}" for class_name, confidence in zip(class_names, detections.confidence)]
-
-    annotated_image = box_annotator.annotate(scene=image_np.copy(), detections=detections)
-
-    annotated_image = label_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)
-
-    return annotated_image, detections
+    annotated = sv.BoxAnnotator().annotate(scene=image_array.copy(), detections=detections)
+    annotated = sv.LabelAnnotator().annotate(scene=annotated, detections=detections, labels=labels)
+    return annotated, detections
 
 
-# --------------------------------------------------
-# Live Webcam Processor
-# --------------------------------------------------
+def main() -> None:
+    """Run the Streamlit app.
 
+    Examples:
+        The live UI launches a server and loads pretrained model weights, so it is not run as a doctest.
 
-class RFDETRVideoProcessor(VideoProcessorBase):
-    def __init__(self):
+        >>> main()  # doctest: +SKIP
+    """
+    import cv2
+    import streamlit as st
+    import torch
+    from av import VideoFrame
+    from streamlit_webrtc import RTCConfiguration, VideoProcessorBase, webrtc_streamer
 
-        self.threshold = 0.5
+    from rfdetr import RFDETRNano
 
-    def recv(self, frame):
+    st.set_page_config(page_title="RF-DETR Object Detection", page_icon="🔍", layout="wide")
+    st.title("🔍 RF-DETR Object Detection")
+    st.write("Real-time object detection using RF-DETR Nano.")
 
-        try:
-            # ------------------------------------------
-            # Convert WebRTC frame to BGR
-            # ------------------------------------------
+    if torch.cuda.is_available():
+        st.success(f"GPU acceleration: {torch.cuda.get_device_name(0)}")
+    else:
+        st.info("CUDA is unavailable; RF-DETR will run on CPU.")
 
-            img = frame.to_ndarray(format="bgr24")
+    @st.cache_resource
+    def load_model() -> RFDETRNano:
+        """Load and cache the pretrained detector."""
+        model = RFDETRNano()
+        if torch.cuda.is_available():
+            model.inference(dtype=torch.float16)
+        return model
 
-            # ------------------------------------------
-            # Resize large webcam frames
-            # ------------------------------------------
+    with st.spinner("Loading RF-DETR Nano..."):
+        model = load_model()
+    st.success("RF-DETR Nano is ready.")
 
-            height, width = img.shape[:2]
+    mode = st.radio("Detection mode", ["Image", "Webcam"], horizontal=True)
+    threshold = st.slider("Confidence threshold", min_value=0.1, max_value=0.9, value=0.5, step=0.05)
 
-            max_width = 960
+    if mode == "Image":
+        st.subheader("Image detection")
+        uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+        if uploaded_file is None:
+            return
 
-            if width > max_width:
-                scale = max_width / width
+        with Image.open(uploaded_file) as uploaded_image:
+            image = uploaded_image.convert("RGB")
+        st.image(image, caption="Input image", use_container_width=True)
 
-                new_width = int(width * scale)
-
-                new_height = int(height * scale)
-
-                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-
-            # ------------------------------------------
-            # BGR → RGB
-            # ------------------------------------------
-
-            rgb_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-            # ------------------------------------------
-            # Convert to PIL
-            # ------------------------------------------
-
-            pil_image = Image.fromarray(rgb_image)
-
-            temp_path = None
-
-            try:
-                # --------------------------------------
-                # Create temporary image
-                # --------------------------------------
-
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-                    pil_image.save(temp_file.name, quality=90)
-
-                    temp_path = temp_file.name
-
-                # --------------------------------------
-                # RF-DETR Detection
-                # --------------------------------------
-
-                detections = model.predict(temp_path, threshold=self.threshold)
-
-            finally:
-                # --------------------------------------
-                # Always remove temporary file
-                # --------------------------------------
-
-                if temp_path is not None and os.path.exists(temp_path):
-                    os.remove(temp_path)
-
-            # ------------------------------------------
-            # Remove tiny detections
-            # ------------------------------------------
-
-            detections = filter_small_detections(detections, min_width=12, min_height=12)
-
-            # ------------------------------------------
-            # Correct Class Names
-            # ------------------------------------------
-
-            class_names = get_class_names(detections)
-
-            labels = [
-                f"{class_name} {confidence:.2f}" for class_name, confidence in zip(class_names, detections.confidence)
-            ]
-
-            # ------------------------------------------
-            # Create Annotators
-            # ------------------------------------------
-
-            box_annotator = sv.BoxAnnotator()
-
-            label_annotator = sv.LabelAnnotator()
-
-            # ------------------------------------------
-            # Draw Bounding Boxes
-            # ------------------------------------------
-
-            annotated = box_annotator.annotate(scene=img.copy(), detections=detections)
-
-            # ------------------------------------------
-            # Draw Labels
-            # ------------------------------------------
-
-            annotated = label_annotator.annotate(scene=annotated, detections=detections, labels=labels)
-
-            # ------------------------------------------
-            # Return Webcam Frame
-            # ------------------------------------------
-
-            return frame.from_ndarray(annotated, format="bgr24")
-
-        except Exception as e:
-            print("Detection error:", e)
-
-            return frame
-
-
-# --------------------------------------------------
-# Detection Mode
-# --------------------------------------------------
-
-mode = st.radio("Select Detection Mode", ["Image Detection", "Live Webcam"], horizontal=True)
-
-# --------------------------------------------------
-# Confidence Threshold
-# --------------------------------------------------
-
-threshold = st.slider("Detection Confidence Threshold", min_value=0.1, max_value=0.9, value=0.5, step=0.05)
-
-# ==================================================
-# IMAGE DETECTION
-# ==================================================
-
-if mode == "Image Detection":
-    st.subheader("📷 Image Detection")
-
-    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert("RGB")
-
-        st.image(image, caption="Input Image", use_container_width=True)
-
-        if st.button("🚀 Detect Objects", key="image_detect"):
+        if st.button("Detect objects", key="image_detect"):
             with st.spinner("Running RF-DETR detection..."):
-                annotated_image, detections = detect_image(image, threshold)
-
-            st.subheader("Detection Results")
-
+                annotated_image, detections = detect_image(image, threshold, model)
+            st.subheader("Detection results")
             st.image(annotated_image, use_container_width=True)
-
-            st.subheader("Detected Objects")
-
-            if len(detections) == 0:
+            if not len(detections):
                 st.warning("No objects were detected.")
+                return
 
-            else:
-                st.success(f"{len(detections)} object(s) detected")
+            st.success(f"{len(detections)} object(s) detected")
+            for name, confidence in zip(get_class_names(detections), detections.confidence):
+                st.write(f"**{name}** — Confidence: **{confidence:.2f}**")
+        return
 
-                class_names = get_class_names(detections)
-
-                for class_name, confidence in zip(class_names, detections.confidence):
-                    st.write(f"**{class_name}** — Confidence: **{confidence:.2f}**")
-
-
-# ==================================================
-# LIVE WEBCAM
-# ==================================================
-
-else:
-    st.subheader("🎥 Live Webcam Detection")
-
+    st.subheader("Live webcam detection")
     st.info("Start the camera below and allow browser camera access.")
+    rtc_configuration = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
 
-    # --------------------------------------------------
-    # WebRTC Configuration
-    # --------------------------------------------------
+    class RFDETRVideoProcessor(VideoProcessorBase):
+        """Run RF-DETR on incoming webcam frames."""
 
-    RTC_CONFIGURATION = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+        def __init__(self) -> None:
+            """Initialize the frame processor."""
+            self.threshold = 0.5
 
-    # --------------------------------------------------
-    # Start Webcam
-    # --------------------------------------------------
+        def recv(self, frame: VideoFrame) -> VideoFrame:
+            """Detect objects in one BGR frame and return its annotated image."""
+            try:
+                image_bgr = frame.to_ndarray(format="bgr24")
+                height, width = image_bgr.shape[:2]
+                if width > 960:
+                    scale = 960 / width
+                    image_bgr = cv2.resize(
+                        image_bgr,
+                        (960, int(height * scale)),
+                        interpolation=cv2.INTER_AREA,
+                    )
 
-    ctx = webrtc_streamer(
+                image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                image = Image.fromarray(image_rgb)
+                detections = filter_small_detections(model.predict(image, threshold=self.threshold))
+                labels = [
+                    f"{name} {confidence:.2f}"
+                    for name, confidence in zip(get_class_names(detections), detections.confidence)
+                ]
+                annotated = sv.BoxAnnotator().annotate(scene=image_bgr, detections=detections)
+                annotated = sv.LabelAnnotator().annotate(scene=annotated, detections=detections, labels=labels)
+                return VideoFrame.from_ndarray(annotated, format="bgr24")
+            except Exception:
+                logging.getLogger(__name__).exception("Webcam inference failed")
+                return frame
+
+    context = webrtc_streamer(
         key="rfdetr-webcam",
-        video_processor_factory=(RFDETRVideoProcessor),
-        rtc_configuration=(RTC_CONFIGURATION),
+        video_processor_factory=RFDETRVideoProcessor,
+        rtc_configuration=rtc_configuration,
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True,
     )
+    if context.video_processor is not None:
+        context.video_processor.threshold = threshold
 
-    # --------------------------------------------------
-    # Update Detection Threshold
-    # --------------------------------------------------
 
-    if ctx.video_processor:
-        ctx.video_processor.threshold = threshold
+if __name__ == "__main__":
+    main()
