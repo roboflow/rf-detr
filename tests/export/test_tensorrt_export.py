@@ -1634,6 +1634,7 @@ def _fake_benchmark_tensorrt(
     has_fp16_flag: bool,
     has_explicit_batch: bool = True,
     parse_succeeds: bool = True,
+    build_succeeds: bool = True,
 ) -> types.ModuleType:
     """Extend ``_fake_tensorrt`` with the builder stack ``TRTInference.build_engine`` drives directly.
 
@@ -1646,6 +1647,8 @@ def _fake_benchmark_tensorrt(
         has_fp16_flag: Whether ``BuilderFlag`` should carry an ``FP16`` member.
         has_explicit_batch: Whether ``NetworkDefinitionCreationFlag`` should carry ``EXPLICIT_BATCH``.
         parse_succeeds: Whether ``OnnxParser.parse`` reports success.
+        build_succeeds: Whether ``Builder.build_serialized_network`` returns an engine; TensorRT reports a failed
+            build (for instance a dynamic-batch network with no optimization profile) by returning ``None``.
 
     Returns:
         A module object suitable for ``monkeypatch.setattr(inference, "trt", ...)``.
@@ -1656,6 +1659,9 @@ def _fake_benchmark_tensorrt(
         False
         >>> module.record["flags_set"]
         []
+        >>> failing = _fake_benchmark_tensorrt("11.2.1.2", has_fp16_flag=False, build_succeeds=False)
+        >>> failing.Builder("logger").build_serialized_network(None, None) is None
+        True
     """
     module = _fake_tensorrt(version, has_fp16_flag=has_fp16_flag)
     record: dict = {"flags_set": [], "network_flags": None, "parsed": None, "written": None}
@@ -1686,8 +1692,8 @@ def _fake_benchmark_tensorrt(
         def create_builder_config(self):
             return _Config()
 
-        def build_serialized_network(self, network, config):
-            return b"serialized-engine"
+        def build_serialized_network(self, network: object, config: object) -> bytes | None:
+            return b"serialized-engine" if build_succeeds else None
 
     class _Parser(_Closeable):
         num_errors = 1
@@ -1734,7 +1740,8 @@ def _run_benchmark_build(
         cast_path: File the stubbed caster returns, or ``None`` to leave the caster untouched.
 
     Returns:
-        Whatever ``build_engine`` returned — the serialized engine, or ``None`` when parsing failed.
+        Whatever ``build_engine`` returned — the serialized engine. Raises ``RuntimeError`` when parsing or
+        building fails; it never returns ``None``.
 
     Examples:
         Needs live ``monkeypatch`` and ``tmp_path`` fixtures, so it cannot run standalone.
@@ -1834,21 +1841,66 @@ class TestBenchmarkBuildEngine:
         assert not cast_path.exists()
 
     def test_cast_graph_is_removed_after_a_failed_parse(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """A parse failure returns early rather than raising, and must still not leak the intermediate."""
+        """A parse failure raises rather than returning silently, and must still not leak the intermediate."""
         cast_path = tmp_path / "model.fp16-abcd1234.onnx"
         trt_module = _fake_benchmark_tensorrt("11.2.1.2", has_fp16_flag=False, parse_succeeds=False)
 
-        _run_benchmark_build(monkeypatch, tmp_path, trt_module, cast_path)
+        with pytest.raises(RuntimeError, match="could not parse the ONNX file"):
+            _run_benchmark_build(monkeypatch, tmp_path, trt_module, cast_path)
 
         assert not cast_path.exists()
 
-    def test_a_failed_parse_returns_none(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """An unparsable ONNX yields ``None`` rather than an engine the caller would go on to use."""
+    def test_a_failed_parse_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """An unparsable ONNX raises ``RuntimeError`` rather than returning ``None`` for the caller to go on and use.
+
+        Before this, a parse failure logged and returned ``None`` -- the sibling build failure already raised, so a
+        caller checking only for an exception would proceed with ``None`` as if it were an engine.
+        """
         trt_module = _fake_benchmark_tensorrt("11.2.1.2", has_fp16_flag=False, parse_succeeds=False)
 
-        result = _run_benchmark_build(monkeypatch, tmp_path, trt_module, tmp_path / "model.fp16-abcd1234.onnx")
+        with pytest.raises(RuntimeError, match="could not parse the ONNX file"):
+            _run_benchmark_build(monkeypatch, tmp_path, trt_module, tmp_path / "model.fp16-abcd1234.onnx")
 
-        assert result is None
+    def test_a_failed_build_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A build TensorRT refused is an error, not a ``TypeError`` from ``f.write(None)``.
+
+        The error names the caller's own model: on a strongly typed TensorRT the parser read the cast intermediate,
+        whose ``model.fp16-<suffix>.onnx`` name the caller never chose.
+        """
+        trt_module = _fake_benchmark_tensorrt("11.2.1.2", has_fp16_flag=False, build_succeeds=False)
+
+        with pytest.raises(RuntimeError, match=r"could not build an engine from '[^']*model\.onnx'"):
+            _run_benchmark_build(monkeypatch, tmp_path, trt_module, tmp_path / "model.fp16-abcd1234.onnx")
+
+    @pytest.mark.parametrize("previous_engine", [None, b"engine from an earlier build"])
+    def test_a_failed_build_leaves_the_engine_path_untouched(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, previous_engine: bytes | None
+    ) -> None:
+        """Nothing is written for a failed build: no empty ``.trt`` appears, and an earlier engine is not truncated.
+
+        Scenario: a dynamic-batch ONNX, which this builder cannot build because it declares no optimization profile.
+        The target used to be opened for writing before the result was checked, so a failure left a zero-byte file
+        where a previous engine may have been.
+        """
+        engine_path = tmp_path / "model.trt"
+        if previous_engine is not None:
+            engine_path.write_bytes(previous_engine)
+        trt_module = _fake_benchmark_tensorrt("10.16.1.11", has_fp16_flag=True, build_succeeds=False)
+
+        with pytest.raises(RuntimeError):
+            _run_benchmark_build(monkeypatch, tmp_path, trt_module, None)
+
+        assert (engine_path.read_bytes() if engine_path.exists() else None) == previous_engine
+
+    def test_cast_graph_is_removed_after_a_failed_build(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The error raised for a failed build still unwinds the cast intermediate beside the user's model."""
+        cast_path = tmp_path / "model.fp16-abcd1234.onnx"
+        trt_module = _fake_benchmark_tensorrt("11.2.1.2", has_fp16_flag=False, build_succeeds=False)
+
+        with pytest.raises(RuntimeError):
+            _run_benchmark_build(monkeypatch, tmp_path, trt_module, cast_path)
+
+        assert not cast_path.exists()
 
 
 def _distinct_batch(batch: int, resolution: int) -> torch.Tensor:
@@ -2099,11 +2151,15 @@ class TestTensorRTEndToEnd:
         with TrtRunner(load_engine) as runner, pytest.raises(PolygraphyException, match="failed to set shape"):
             runner.infer(feed_dict=feed)
 
+    @pytest.mark.parametrize("device", ["cuda:0", "cuda"])
     def test_trt_inference_helper_serves_the_dynamic_engine(
-        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path], device: str
     ) -> None:
         """``TRTInference`` allocates at the profile's max batch, trims outputs to the batch run, and agrees with
-        polygraphy."""
+        polygraphy.
+
+        A bare ``"cuda"`` resolves to the current device, so its ``cuda:0`` input must be accepted as the engine's own.
+        """
         import numpy as np
         from polygraphy.backend.common import BytesFromPath
         from polygraphy.backend.trt import EngineFromBytes, TrtRunner
@@ -2117,7 +2173,7 @@ class TestTensorRTEndToEnd:
                 for name, value in runner.infer(feed_dict={"input": np.ascontiguousarray(example.numpy())}).items()
             }
 
-        runtime = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        runtime = tensorrt_inference.TRTInference(str(engine_path), device=device, sync_mode=True)
         assert runtime.bindings["input"].shape[0] == 4
         outputs = runtime({"input": example.to("cuda:0")})
 
@@ -2136,3 +2192,75 @@ class TestTensorRTEndToEnd:
 
         with pytest.raises(ValueError, match="outside the engine's optimization profile"):
             runtime({"input": _distinct_batch(5, resolution).to("cuda:0")})
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+    def test_trt_inference_runs_on_a_non_default_device(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """A runtime constructed for ``cuda:1`` gives the same output as one on ``cuda:0``, not a device no-op.
+
+        Every other device test in this suite runs on a single-GPU host and only asserts which device the
+        constructor *asked* torch to make current -- a hardware no-op would pass those too. This is the one
+        real-placement check: it needs a second GPU, so it is skipped everywhere except a multi-GPU runner.
+        """
+        _, resolution, engine_path = trt_dynamic_engine
+        example = _distinct_batch(1, resolution)
+
+        reference = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        reference_out = reference({"input": example.to("cuda:0")})
+
+        runtime = tensorrt_inference.TRTInference(str(engine_path), device="cuda:1", sync_mode=True)
+        assert runtime.engine_device == torch.device("cuda", 1)
+        outputs = runtime({"input": example.to("cuda:1")})
+
+        for name in ("dets", "labels"):
+            got = outputs[name].detach().float().cpu().numpy()
+            expected = reference_out[name].detach().float().cpu().numpy()
+            diff = float(np.abs(got - expected).max())
+            assert diff < 1e-4, f"TRTInference on cuda:1 {name} differs from cuda:0: {diff}"
+
+    def test_trt_inference_refuses_a_channels_last_input(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """A ``channels_last`` input is refused before launch rather than read as dense NCHW memory.
+
+        Bound by pointer, it took pretrained RF-DETR Nano from 13 detections above 0.5 to none on a real image.
+        """
+        _, resolution, engine_path = trt_dynamic_engine
+        runtime = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        example = _distinct_batch(2, resolution).to("cuda:0", memory_format=torch.channels_last)
+
+        with pytest.raises(ValueError, match="not contiguous"):
+            runtime({"input": example})
+
+    def test_trt_inference_reports_a_truncated_engine(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path], tmp_path: Path
+    ) -> None:
+        """Real TensorRT returns ``None`` for a truncated engine rather than raising; the runtime reports it as such."""
+        _, _, engine_path = trt_dynamic_engine
+        truncated = tmp_path / "truncated.trt"
+        with open(engine_path, "rb") as engine_file:
+            truncated.write_bytes(engine_file.read(4096))
+
+        with pytest.raises(RuntimeError, match="Rebuild"):
+            tensorrt_inference.TRTInference(str(truncated), device="cuda:0", sync_mode=True)
+
+    def test_benchmark_build_engine_keeps_the_previous_engine_on_a_failed_build(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path], tmp_path: Path
+    ) -> None:
+        """Real TensorRT refuses a dynamic-batch ONNX in ``TRTInference.build_engine``, which declares no profile.
+
+        It reports that by returning ``None``; the engine already at the target path must survive the failure.
+        """
+        import tensorrt as trt
+
+        _, _, engine_path = trt_dynamic_engine
+        onnx_path = engine_path.with_name(engine_path.stem.removesuffix("_fp32") + ".onnx")
+        target = tmp_path / "benchmark.trt"
+        target.write_bytes(b"engine from an earlier build")
+        runtime_stand_in = types.SimpleNamespace(logger=trt.Logger(trt.Logger.ERROR))
+
+        with pytest.raises(RuntimeError, match="could not build an engine"):
+            tensorrt_inference.TRTInference.build_engine(runtime_stand_in, str(onnx_path), str(target))
+
+        assert target.read_bytes() == b"engine from an earlier build"
