@@ -6,17 +6,24 @@
 """Unit tests for ``rfdetr.models.weights`` — the unified weight-loading and LoRA module.
 
 These tests cover ``load_pretrain_weights`` and ``apply_lora`` directly, exercising the unified logic extracted from
-``detr.py`` and ``module_model.py``.
+``detr.py`` and ``module_model.py``. Checkpoints saved by a ``backbone_lora=True`` run (#1540) are also loaded through
+``RFDETR.from_checkpoint`` and ``RFDETRModelModule``, which reach them through the inference and training builders.
 """
 
+import sys
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Literal
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 import torch
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
-from rfdetr.models.weights import _warn_on_partial_load
+from rfdetr import RFDETR, RFDETRNano
+from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
+from rfdetr.models.weights import _warn_on_partial_load, apply_lora, load_pretrain_weights
+from rfdetr.training.module_model import RFDETRModelModule
+from rfdetr.utilities.reproducibility import seed_all
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -585,6 +592,19 @@ class TestLoadPretrainWeightsPTLCkptFormat(_PatchWeightsIO):
 # ---------------------------------------------------------------------------
 
 
+def _mock_peft_module() -> MagicMock:
+    """Return a stand-in ``peft`` module whose ``PeftModel`` is a real class, so ``isinstance`` checks work.
+
+    Examples:
+        >>> mock_peft = _mock_peft_module()
+        >>> isinstance(mock_peft.PeftModel(), mock_peft.PeftModel)
+        True
+        >>> isinstance(MagicMock(), mock_peft.PeftModel)
+        False
+    """
+    return MagicMock(PeftModel=type("PeftModel", (), {}))
+
+
 class TestApplyLora:
     """Verify that apply_lora applies LoRA adapters to the backbone encoder.
 
@@ -599,7 +619,7 @@ class TestApplyLora:
         nn_model = MagicMock()
         fake_peft_model = MagicMock()
 
-        mock_peft = MagicMock()
+        mock_peft = _mock_peft_module()
         mock_peft.get_peft_model.return_value = fake_peft_model
 
         with patch.dict("sys.modules", {"peft": mock_peft}):
@@ -619,7 +639,7 @@ class TestApplyLora:
         from rfdetr.models.weights import apply_lora
 
         nn_model = MagicMock()
-        mock_peft = MagicMock()
+        mock_peft = _mock_peft_module()
 
         with patch.dict("sys.modules", {"peft": mock_peft}):
             apply_lora(nn_model)
@@ -639,6 +659,218 @@ class TestApplyLora:
         assert actual_targets == expected_targets, (
             f"LoRA target_modules mismatch.\nExpected: {expected_targets}\nGot: {actual_targets}"
         )
+
+    def test_already_wrapped_encoder_is_left_alone(self) -> None:
+        """An encoder that ``load_pretrain_weights`` already wrapped for a LoRA checkpoint gets no second adapter set.
+
+        Both model builders call ``apply_lora`` after loading, so a second wrap would nest one PEFT model inside another
+        and rename every encoder key again.
+        """
+        mock_peft = _mock_peft_module()
+        nn_model = MagicMock()
+        nn_model.backbone[0].encoder = mock_peft.PeftModel()
+
+        with patch.dict("sys.modules", {"peft": mock_peft}):
+            apply_lora(nn_model)
+
+        mock_peft.get_peft_model.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# load_pretrain_weights — checkpoints saved by a backbone_lora=True run (#1540)
+# ---------------------------------------------------------------------------
+
+#: Seed for the synthetic LoRA and plain checkpoints below; module-scoped fixtures run before the autouse reseed.
+_LORA_CHECKPOINT_SEED = 1540
+
+
+def _perturb_parameters(model: torch.nn.Module) -> None:
+    """Shift every parameter so saved weights differ from any fresh initialization, even LoRA's all-zero ``lora_B``.
+
+    Examples:
+        >>> layer = torch.nn.Linear(2, 2)
+        >>> _ = torch.nn.init.zeros_(layer.weight)
+        >>> _perturb_parameters(layer)
+        >>> bool(layer.weight.abs().sum() > 0)
+        True
+    """
+    with torch.no_grad():
+        for param in model.parameters():
+            param.add_(torch.randn_like(param) * 0.02)
+
+
+def _build_nano(
+    builder: Literal["inference", "training"], pretrain_weights: Path | None, **config: Any
+) -> torch.nn.Module:
+    """Build a Nano ``LWDETR`` through one of the two entry points that load pretrained weights.
+
+    Args:
+        builder: ``"inference"`` for ``RFDETR.from_checkpoint`` (the issue's call, which goes through the same
+            builder as the ``RFDETRNano`` constructor), ``"training"`` for ``RFDETRModelModule`` (the path behind
+            ``train()``).
+        pretrain_weights: Checkpoint to load, or ``None`` for a randomly initialized model.
+        **config: Extra ``RFDETRNanoConfig`` fields, e.g. ``backbone_lora=True``.
+
+    Examples:
+        >>> type(_build_nano("training", None)).__name__
+        'LWDETR'
+    """
+    if builder == "inference":
+        if pretrain_weights is None:
+            return RFDETRNano(pretrain_weights=None, **config).model.model
+        return RFDETR.from_checkpoint(pretrain_weights, **config).model.model
+    weights = None if pretrain_weights is None else str(pretrain_weights)
+    model_config = RFDETRNanoConfig(pretrain_weights=weights, **config)
+    return RFDETRModelModule(model_config, _make_train_config()).model
+
+
+def _mismatched_keys(expected: dict[str, torch.Tensor], actual: dict[str, torch.Tensor]) -> list[str]:
+    """List the keys of *expected* that *actual* lacks or holds with a different value.
+
+    Examples:
+        >>> _mismatched_keys({"a": torch.zeros(1), "b": torch.ones(1)}, {"a": torch.zeros(1), "b": torch.zeros(1)})
+        ['b']
+        >>> _mismatched_keys({"a": torch.zeros(1)}, {})
+        ['a']
+    """
+    return [key for key, value in expected.items() if key not in actual or not torch.equal(actual[key], value)]
+
+
+def _encoder_features(model: torch.nn.Module) -> torch.Tensor:
+    """Run the backbone encoder of *model* in eval mode on a fixed image and flatten every feature map into one tensor.
+
+    Examples:
+        >>> _encoder_features(_build_nano("inference", None)).ndim
+        1
+    """
+    images = torch.rand(1, 3, 384, 384, generator=torch.Generator().manual_seed(0))
+    encoder = model.backbone[0].encoder.eval()
+    with torch.no_grad():
+        return torch.cat([feature.flatten() for feature in encoder(images)])
+
+
+@pytest.fixture(scope="module")
+def lora_checkpoint(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, torch.nn.Module]:
+    """Save a checkpoint the way a ``backbone_lora=True`` run does: PEFT-named encoder keys, trained adapters.
+
+    Returns:
+        The checkpoint path and the source model it was saved from, in eval mode.
+
+    Examples:
+        Pytest fixtures cannot be called directly outside fixture injection.
+
+        >>> lora_checkpoint(None)  # doctest: +SKIP
+    """
+    pytest.importorskip("peft")
+    seed_all(_LORA_CHECKPOINT_SEED)
+    source = _build_nano("inference", None, backbone_lora=True).eval()
+    _perturb_parameters(source)
+    path = tmp_path_factory.mktemp("lora_checkpoint") / "checkpoint_best_total.pth"
+    torch.save({"model": source.state_dict(), "args": {}, "model_name": "RFDETRNano"}, path)
+    return path, source
+
+
+@pytest.fixture(scope="module")
+def plain_checkpoint(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Save a checkpoint without LoRA, like the published COCO weights a LoRA fine-tune starts from.
+
+    Examples:
+        Pytest fixtures cannot be called directly outside fixture injection.
+
+        >>> plain_checkpoint(None)  # doctest: +SKIP
+    """
+    seed_all(_LORA_CHECKPOINT_SEED)
+    source = _build_nano("inference", None)
+    _perturb_parameters(source)
+    path = tmp_path_factory.mktemp("plain_checkpoint") / "plain_checkpoint.pth"
+    torch.save({"model": source.state_dict(), "args": {}, "model_name": "RFDETRNano"}, path)
+    return path
+
+
+class TestLoadPretrainWeightsLoraCheckpoint:
+    """A checkpoint saved by a ``backbone_lora=True`` run reloads with its trained encoder (#1540).
+
+    Such a checkpoint stores the encoder under PEFT names (``backbone.0.encoder.base_model.model.…``). Both builders
+    used to load it before wrapping the encoder with LoRA, so none of those keys matched and the encoder stayed at
+    random init: the issue's ``evaluate()`` reported mAP 0 on a model that scored 0.99 in training.
+    """
+
+    @pytest.mark.parametrize("builder", ["inference", "training"])
+    def test_lora_run_reloads_every_checkpoint_tensor(
+        self, lora_checkpoint: tuple[Path, torch.nn.Module], builder: Literal["inference", "training"]
+    ) -> None:
+        """With ``backbone_lora=True`` the base weights and the trained adapters all come back unchanged."""
+        checkpoint_path, source = lora_checkpoint
+        loaded = _build_nano(builder, checkpoint_path, backbone_lora=True)
+
+        assert _mismatched_keys(source.state_dict(), loaded.state_dict()) == []
+
+    def test_plain_run_encoder_computes_the_trained_lora_features(
+        self, lora_checkpoint: tuple[Path, torch.nn.Module]
+    ) -> None:
+        """With ``backbone_lora=False`` the encoder computes what the trained LoRA encoder computed.
+
+        ``test_plain_run_matches_a_model_built_without_lora`` checks that it is a plain encoder, not a wrapped one.
+        """
+        checkpoint_path, source = lora_checkpoint
+
+        loaded = _build_nano("inference", checkpoint_path)
+
+        torch.testing.assert_close(_encoder_features(loaded), _encoder_features(source), atol=1e-4, rtol=1e-4)
+
+    @pytest.mark.parametrize("freeze_encoder", [False, True])
+    def test_plain_run_matches_a_model_built_without_lora(
+        self, lora_checkpoint: tuple[Path, torch.nn.Module], freeze_encoder: bool
+    ) -> None:
+        """With ``backbone_lora=False`` the parameters and their trainable flags match a Nano that never had LoRA.
+
+        peft freezes the base encoder when it wraps it, and ``merge_and_unload`` keeps that flag. Without restoring it,
+        a ``train()`` started from a LoRA checkpoint with ``backbone_lora=False`` would silently keep the encoder
+        frozen.
+        """
+        checkpoint_path, _ = lora_checkpoint
+        loaded = _build_nano("training", checkpoint_path, freeze_encoder=freeze_encoder)
+        expected = _build_nano("training", None, freeze_encoder=freeze_encoder)
+
+        assert {name: param.requires_grad for name, param in loaded.named_parameters()} == {
+            name: param.requires_grad for name, param in expected.named_parameters()
+        }
+
+    def test_plain_checkpoint_loads_before_fresh_adapters(self, plain_checkpoint: Path) -> None:
+        """A plain checkpoint with ``backbone_lora=True`` still fills the encoder that LoRA then wraps.
+
+        This is how a LoRA fine-tune starts from the COCO weights. Fresh adapters are an identity, so the wrapped
+        encoder must compute what the same checkpoint computes without LoRA.
+        """
+        pytest.importorskip("peft")
+        with_lora = _build_nano("inference", plain_checkpoint, backbone_lora=True)
+        without_lora = _build_nano("inference", plain_checkpoint)
+
+        torch.testing.assert_close(_encoder_features(with_lora), _encoder_features(without_lora), atol=1e-4, rtol=1e-4)
+
+    def test_lora_checkpoint_without_peft_raises(
+        self, lora_checkpoint: tuple[Path, torch.nn.Module], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without ``peft`` a LoRA checkpoint raises instead of loading into a randomly initialized encoder."""
+        checkpoint_path, _ = lora_checkpoint
+        monkeypatch.setitem(sys.modules, "peft", None)
+
+        with pytest.raises(ImportError, match=r"backbone_lora=True run.*rfdetr\[lora\]"):
+            _build_nano("inference", checkpoint_path)
+
+    def test_already_wrapped_model_loads_without_merging(self, lora_checkpoint: tuple[Path, torch.nn.Module]) -> None:
+        """``load_pretrain_weights`` into a model the caller already wrapped loads every tensor and keeps the wrap.
+
+        Neither builder gets here, since both load before they wrap, but ``load_pretrain_weights`` is public: the merge
+        must not try to undo a wrap it did not make, even with the default ``backbone_lora=False``.
+        """
+        checkpoint_path, source = lora_checkpoint
+        model = _build_nano("inference", None)
+        apply_lora(model)
+
+        load_pretrain_weights(model, RFDETRNanoConfig(pretrain_weights=str(checkpoint_path)))
+
+        assert _mismatched_keys(source.state_dict(), model.state_dict()) == []
 
 
 # ---------------------------------------------------------------------------
