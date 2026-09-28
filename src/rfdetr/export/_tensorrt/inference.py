@@ -67,6 +67,43 @@ def _dynamic_batch_advice(max_batch: int) -> str:
     )
 
 
+def _resolve_engine_device(device: str | torch.device) -> torch.device:
+    """Return the CUDA device an engine requested on *device* is loaded and run on.
+
+    A bare ``"cuda"`` is pinned to the current device here, once: TensorRT places the engine on the device current
+    at deserialization, and resolving ``"cuda"`` again on a later call would follow the caller's current device
+    away from the engine and its buffers.
+
+    Args:
+        device: The device the caller asked for.
+
+    Returns:
+        A CUDA ``torch.device`` with an explicit index.
+
+    Raises:
+        ValueError: If *device* does not parse as a device, or is not a CUDA device; TensorRT runs on nothing else.
+
+    Examples:
+        >>> _resolve_engine_device("cuda:1")
+        device(type='cuda', index=1)
+        >>> _resolve_engine_device("cpu")
+        Traceback (most recent call last):
+        ...
+        ValueError: TensorRT runs on CUDA devices only, got device='cpu'. Pass a CUDA device such as 'cuda:0'.
+    """
+    try:
+        requested = torch.device(device)
+    except RuntimeError as exc:
+        raise ValueError(
+            f"device={device!r} is not a valid device string. Pass a CUDA device such as 'cuda:0'."
+        ) from exc
+    if requested.type != "cuda":
+        raise ValueError(
+            f"TensorRT runs on CUDA devices only, got device={device!r}. Pass a CUDA device such as 'cuda:0'."
+        )
+    return requested if requested.index is not None else torch.device("cuda", torch.cuda.current_device())
+
+
 class TRTInference:
     """Run a serialized TensorRT engine on torch tensors that already sit on its CUDA device.
 
@@ -90,6 +127,11 @@ class TRTInference:
         ValueError: If *device* is not a CUDA device, or the engine's tensor shapes cannot be resolved from its
             optimization profile (see :meth:`get_bindings`).
         RuntimeError: If TensorRT cannot deserialize the engine or create its execution context.
+
+    Attributes:
+        device: The *device* argument exactly as the caller passed it -- never re-resolved, so a bare ``"cuda"``
+            here does not track the engine's actual placement. The engine, its buffers, and every launch use
+            :attr:`engine_device` instead; read that to find out where this runtime actually runs.
     """
 
     def __init__(
@@ -104,7 +146,7 @@ class TRTInference:
 
         self.engine_path = engine_path
         self.device = device
-        self._engine_device = self._resolve_engine_device(device)
+        self._engine_device = _resolve_engine_device(device)
         self.sync_mode = sync_mode
 
         self.logger = trt.Logger(trt.Logger.VERBOSE) if verbose else trt.Logger(trt.Logger.INFO)
@@ -138,37 +180,14 @@ class TRTInference:
 
         self.time_profile = TimeProfiler(device=self._engine_device)
 
-    @staticmethod
-    def _resolve_engine_device(device: str | torch.device) -> torch.device:
-        """Return the CUDA device an engine requested on *device* is loaded and run on.
+    @property
+    def engine_device(self) -> torch.device:
+        """The resolved CUDA device this runtime's engine, buffers, and launches actually use.
 
-        A bare ``"cuda"`` is pinned to the current device here, once: TensorRT places the engine on the device current
-        at deserialization, and resolving ``"cuda"`` again on a later call would follow the caller's current device
-        away from the engine and its buffers.
-
-        Args:
-            device: The device the caller asked for.
-
-        Returns:
-            A CUDA ``torch.device`` with an explicit index.
-
-        Raises:
-            ValueError: If *device* is not a CUDA device; TensorRT runs on nothing else.
-
-        Examples:
-            >>> TRTInference._resolve_engine_device("cuda:1")
-            device(type='cuda', index=1)
-            >>> TRTInference._resolve_engine_device("cpu")
-            Traceback (most recent call last):
-            ...
-            ValueError: TensorRT runs on CUDA devices only, got device='cpu'. Pass a CUDA device such as 'cuda:0'.
+        Unlike :attr:`device` (the caller's raw, unresolved argument), this is always a ``torch.device`` with an
+        explicit index -- the value ``_resolve_engine_device`` computed once at construction.
         """
-        requested = torch.device(device)
-        if requested.type != "cuda":
-            raise ValueError(
-                f"TensorRT runs on CUDA devices only, got device={device!r}. Pass a CUDA device such as 'cuda:0'."
-            )
-        return requested if requested.index is not None else torch.device("cuda", torch.cuda.current_device())
+        return self._engine_device
 
     def _prime_context(self) -> None:
         """Register the state that never changes again, so the per-call path only touches what does.

@@ -883,14 +883,42 @@ class TestTRTInferenceDevice:
 
         assert active == [torch.device("cpu")]
 
-    def test_a_non_cuda_device_is_refused(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
-        """TensorRT cannot run on the CPU; ``device="cpu"`` used to load the engine with its buffers in host memory."""
+    @pytest.mark.parametrize("sync_mode", [True, False])
+    def test_a_launch_failure_propagates_and_exits_the_device_scope(
+        self, cuda_device_recorder: _DeviceRecorder, sync_mode: bool
+    ) -> None:
+        """An exception from the real TensorRT launch call is neither swallowed nor left holding the device scope.
+
+        Neither ``run_sync`` nor ``run_async`` wraps ``execute_v2``/``execute_async_v3`` in a ``try``/``except``, so an
+        exception there should propagate through Python's own ``with`` statement guarantee -- this proves that stays
+        true, and that ``torch.cuda.device``'s ``__exit__`` still runs on the way out.
+        """
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=sync_mode)
+        runtime.context.execute_v2.side_effect = RuntimeError("launch failed")
+        runtime.context.execute_async_v3.side_effect = RuntimeError("launch failed")
+
+        with pytest.raises(RuntimeError, match="launch failed"):
+            runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        assert cuda_device_recorder.current is None
+
+    @pytest.mark.parametrize("device", ["cpu", "mps", "xpu", pytest.param("cuda:x", id="malformed-index")])
+    def test_a_non_cuda_device_is_refused(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, device: str
+    ) -> None:
+        """TensorRT cannot run on anything but CUDA; ``device="cpu"`` used to load the engine with buffers in host
+        memory.
+
+        A malformed index (``"cuda:x"``) fails inside ``torch.device()`` itself, before rfdetr's own type check --
+        parametrized alongside the other non-CUDA types to prove both paths raise the same named ``ValueError`` rather
+        than a bare ``RuntimeError`` leaking out of ``torch.device()``.
+        """
         engine_file = tmp_path / "model.trt"
         engine_file.write_bytes(b"engine")
         fake_tensorrt.runtime.engine = _FakeEngine(_STATIC_ENGINE_TENSORS)
 
-        with pytest.raises(ValueError, match="CUDA"):
-            TRTInference(str(engine_file), device="cpu", sync_mode=True)
+        with pytest.raises(ValueError, match="CUDA|valid device"):
+            TRTInference(str(engine_file), device=device, sync_mode=True)
 
     def test_output_buffers_default_to_the_engine_device(self) -> None:
         """``get_bindings`` without a ``device`` allocates where the engine runs, as its docstring promises.

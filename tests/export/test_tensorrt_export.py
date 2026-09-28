@@ -2188,6 +2188,32 @@ class TestTensorRTEndToEnd:
         with pytest.raises(ValueError, match="outside the engine's optimization profile"):
             runtime({"input": _distinct_batch(5, resolution).to("cuda:0")})
 
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+    def test_trt_inference_runs_on_a_non_default_device(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """A runtime constructed for ``cuda:1`` gives the same output as one on ``cuda:0``, not a device no-op.
+
+        Every other device test in this suite runs on a single-GPU host and only asserts which device the
+        constructor *asked* torch to make current -- a hardware no-op would pass those too. This is the one
+        real-placement check: it needs a second GPU, so it is skipped everywhere except a multi-GPU runner.
+        """
+        _, resolution, engine_path = trt_dynamic_engine
+        example = _distinct_batch(1, resolution)
+
+        reference = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        reference_out = reference({"input": example.to("cuda:0")})
+
+        runtime = tensorrt_inference.TRTInference(str(engine_path), device="cuda:1", sync_mode=True)
+        assert runtime.engine_device == torch.device("cuda", 1)
+        outputs = runtime({"input": example.to("cuda:1")})
+
+        for name in ("dets", "labels"):
+            got = outputs[name].detach().float().cpu().numpy()
+            expected = reference_out[name].detach().float().cpu().numpy()
+            diff = float(np.abs(got - expected).max())
+            assert diff < 1e-4, f"TRTInference on cuda:1 {name} differs from cuda:0: {diff}"
+
     def test_trt_inference_refuses_a_channels_last_input(
         self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
     ) -> None:
