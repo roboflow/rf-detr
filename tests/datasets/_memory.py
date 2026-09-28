@@ -17,6 +17,11 @@ def peak_traced_bytes(function: Callable[..., Any], *args: Any) -> int:
     through NumPy shows up here at the frame's size, while a Pillow-only decode stays at its read buffers. The warm-up
     call keeps one-time work, such as Pillow registering its format plugins on first open, out of the measurement.
 
+    This function assumes exclusive ownership of ``tracemalloc``'s peak counter for the duration of the call: it
+    resets the peak unconditionally, even when tracing was already on before it started. An enclosing measurement
+    that spans this call (for example a test run under ``-X tracemalloc`` or ``pytest-memray``) loses its own peak
+    when that happens.
+
     Examples:
         >>> import numpy as np
         >>> peak_traced_bytes(np.ones, 100_000) >= 800_000

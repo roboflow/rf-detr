@@ -358,7 +358,69 @@ class TestDecodePilImage:
         write_test_image(image_path, 800, 600)
         source = image_path.read_bytes() if source_kind == "bytes" else image_path
 
+        # The bound is loose on purpose: the real floor is Pillow's read buffers (~138-142 KB, frame-independent),
+        # not a fraction of the 800x600 frame. The bytes variant stays near that floor too, because CPython's
+        # `io.BytesIO(data)` shares `data`'s buffer instead of copying it.
         assert peak_traced_bytes(decode_pil, source) < 800 * 600 * 3 // 2
+
+    @requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_jpeg_over_pixel_limit_raises_decompression_bomb_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+    ) -> None:
+        """The simplejpeg path reached through the PIL entry points still enforces Pillow's pixel limit."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_image(jpeg_path, 64, 32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
+        source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil(source)
+
+    @requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
+        """A truncated JPEG falls through to Pillow, raising the same ``OSError`` for the PIL entry points."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_image(jpeg_path, 457, 301)
+        jpeg_path.write_bytes(jpeg_path.read_bytes()[:3000])
+        source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
+
+        with pytest.raises(OSError, match="truncated"):
+            decode_pil(source)
+
+    @requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_garbage_after_soi_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
+        """A JPEG SOI marker followed by a garbage payload raises Pillow's error through the PIL entry points.
+
+        Exercises the ``except ValueError`` fallback in ``_decode_with_simplejpeg`` the same way
+        ``TestDecodeImage.test_bytes_garbage_after_soi_raises_pillow_error`` does for the array entry point.
+        """
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        jpeg_path = tmp_path / "img.jpg"
+        data = b"\xff\xd8" + bytes(range(256))
+        jpeg_path.write_bytes(data)
+        source = data if source_kind == "bytes" else jpeg_path
+
+        with pytest.raises(Image.UnidentifiedImageError):
+            decode_pil(source)
+
+
+class TestReadSimplejpegCandidate:
+    """``_read_simplejpeg_candidate`` decides, by marker, whether a file is ``simplejpeg``'s to decode."""
+
+    @requires_simplejpeg
+    def test_jpeg_file_returns_its_bytes(self, tmp_path: Path) -> None:
+        """A JPEG file's raw bytes come back unchanged, the positive branch the module doctest does not cover."""
+        jpeg_path = tmp_path / "img.jpg"
+        write_test_image(jpeg_path, 8, 6)
+
+        candidate = io_utils._read_simplejpeg_candidate(jpeg_path)
+
+        assert candidate == jpeg_path.read_bytes()
 
 
 def single_image_coco_dataset(root: Path, file_name: str, width: int, height: int) -> CocoDetection:
