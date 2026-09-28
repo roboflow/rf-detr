@@ -2727,6 +2727,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>Training on COCO-format datasets of PNG, BMP or other non-JPEG images (and of JPEG files when <code>simplejpeg</code> is not installed) loads data as fast as 1.10 again. Since 1.11.0, <code>CocoDetection</code> copied every image Pillow decoded into a NumPy array and straight back into a PIL image. On Windows 11 (Ryzen 7 7800X3D), the train DataLoader with the default 2 workers and a batch size of 8 (<code>RFDETRLarge</code>, <code>resolution=1120</code>) took up to 27% longer per batch than 1.10.1 on 4096-px BMP files and 11% longer on 4096-px PNG files; JPEG files, which <code>simplejpeg</code> decodes, were not affected. <code>CocoDetection</code> and the WebDataset shard reader now use the image Pillow decoded as is. (<a href="https://github.com/roboflow/rf-detr/issues/1544">#1544</a>)</p>
+</li>
+<li>
 <p><code>format="coreai"</code> works with <code>coreai-torch</code> 0.4.3, which runs the optimization passes inside <code>TorchConverter.to_coreai()</code> and removed <code>AIProgram.optimize()</code>; with 1.11.0 a fresh <code>pip install "rfdetr[coreai]"</code> resolved 0.4.3 and every Core AI export failed with <code>'AIProgram' object has no attribute 'optimize'</code>. The <code>[coreai]</code> extra now pins <code>coreai-torch==0.4.3</code> and installs on Python 3.11 to 3.14, since <code>coreai-core</code> 1.0.0b3 ships cp314 wheels. It is declared as a uv conflict with <code>[tflite]</code>, whose <code>onnx2tf</code> pins cannot meet <code>coreai-core</code>'s <code>numpy&gt;=2.3</code>.</p>
 </li>
 <li>
