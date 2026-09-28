@@ -151,7 +151,9 @@ class Exporter(ABC, Generic[_ConfigT]):
     before the caller pays for a full forward pass through the model. A subclass may also override
     :meth:`_check_capabilities` (calling ``super()`` first) to validate settings the class attributes cannot
     express on their own — cross-field consistency within the format's own configuration, for example — raising
-    ``ValueError`` for that kind of rejection, distinct from the base class's own ``NotImplementedError``.
+    ``ValueError`` for that kind of rejection, distinct from the base class's own ``NotImplementedError``. Where
+    :meth:`_check_capabilities` judges the request, :meth:`check_dependencies` judges the host: a subclass overrides
+    it to refuse a missing optional dependency before that same forward pass, rather than deep inside the conversion.
 
     A subclass also owns its configuration: :attr:`config_class` names the dataclass it is constructed from, and
     :attr:`setting_names` maps that dataclass's format-specific fields onto the keyword arguments
@@ -268,6 +270,26 @@ class Exporter(ABC, Generic[_ConfigT]):
                 UserWarning,
                 stacklevel=4,
             )
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Refuse a host missing this format's optional dependencies, before any work on the model starts.
+
+        The default is a no-op, which is right for a format that imports its converter inside :meth:`_convert`: that
+        import failing is already its refusal, and nothing cheaper is available to ask. A format whose dependency can
+        be probed without importing it overrides this instead, so the refusal lands before
+        :func:`~rfdetr.export.prepare.prepare_export_graph` has paid for a full forward pass through the model. An
+        override is an addition, not a move: the format keeps its own check inside :meth:`_convert` for callers that
+        reach the conversion by another route.
+
+        Raises:
+            ImportError: If an override finds a package its format needs is not installed.
+
+        Examples:
+            >>> Exporter.check_dependencies() is None
+            True
+        """
+        return
 
     def __call__(self, graph: ExportGraph) -> Path:
         """Export *graph* and return the path to the artifact.
