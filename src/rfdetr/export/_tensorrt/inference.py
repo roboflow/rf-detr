@@ -644,7 +644,7 @@ class TimeProfiler(contextlib.ContextDecorator):
     """
 
     def __init__(self, device: str | torch.device | None = None) -> None:
-        self.device = device
+        self.device = None if device is None else torch.device(device)
         self.total = 0.0
         self.start = 0.0
 

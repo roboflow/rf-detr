@@ -91,7 +91,7 @@ class TestTRTInference:
 
         TimeProfiler(device="cuda:1").time()
 
-        mock_cuda_sync.assert_called_once_with("cuda:1")
+        mock_cuda_sync.assert_called_once_with(torch.device("cuda", 1))
 
     def test_infer_transforms_accepts_none_target(self) -> None:
         """Benchmark inference preprocessing should support image-only input."""
@@ -1001,7 +1001,7 @@ class TestBenchmarkMain:
 
         runtime_class.assert_called_once_with("model.trt", sync_mode=True, device=f"cuda:{device}")
         assert infer_engine.call_args.kwargs["device"] == f"cuda:{device}"
-        assert infer_engine.call_args.args[2].device == f"cuda:{device}"
+        assert infer_engine.call_args.args[2].device == torch.device(f"cuda:{device}")
 
     def test_eval_enabled_passes_a_loaded_coco_object_to_the_evaluator(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
