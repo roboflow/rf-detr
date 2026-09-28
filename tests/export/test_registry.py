@@ -71,8 +71,18 @@ class TestNormalizeFormat:
         """Format names and aliases match in any case, as ``backend`` already does."""
         assert normalize_format(spelling) == canonical
 
-    @pytest.mark.parametrize("spelling", ["nonesuch", "NoneSuch", None])
-    def test_unknown_name_passes_through_for_the_resolver_to_reject(self, spelling: str | None) -> None:
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "nonesuch",
+            "NoneSuch",
+            None,
+            123,
+            pytest.param(["onnx"], id="list"),
+            pytest.param(b"onnx", id="bytes"),
+        ],
+    )
+    def test_unknown_name_passes_through_for_the_resolver_to_reject(self, spelling: object) -> None:
         """An unknown spelling or a non-string value is not rewritten, so the resolver names it back verbatim."""
         assert normalize_format(spelling) == spelling
 

@@ -1406,6 +1406,13 @@ class TestExportRejectsBeforeForwardPass:
             pytest.param("tensorrt", {"notes": float("nan")}, ValueError, "notes", id="tensorrt-notes-nan"),
             pytest.param("coreai", {"notes": float("nan")}, ValueError, "notes", id="coreai-notes-nan"),
             pytest.param("onnx", {"notes": object()}, TypeError, "notes", id="notes-not-json"),
+            pytest.param(
+                "litert",
+                {"quantization": "int8"},
+                NotImplementedError,
+                "not supported",
+                id="litert-quantization",
+            ),
         ],
     )
     def test_invalid_setting_never_reaches_the_forward_pass(
@@ -1447,6 +1454,30 @@ class TestExportRejectsBeforeForwardPass:
                 shape=(14, 14),
                 notes=float("nan"),
             )
+
+    def test_invalid_executorch_backend_never_reaches_the_forward_pass(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An unsupported ``backend`` for ``format='executorch'`` is refused while resolving the backend -- before
+        ``make_infer_image`` builds the forward pass's input, and even before an exporter class is resolved.
+
+        This does not fit the table above: that table's default stubbing replaces ``_resolve_export_backend``
+        wholesale (every other row's format is backend-agnostic), which would silently discard the invalid
+        ``backend`` this test needs to reach the real validation.
+        """
+        make_infer_image = MagicMock()
+        monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", make_infer_image)
+
+        with pytest.raises(ValueError, match="Unsupported backend 'nonesuch'"):
+            _detr_module.RFDETR.export(
+                _make_tensorrt_export_model(),
+                output_dir=str(tmp_path),
+                format="executorch",
+                backend="nonesuch",
+                shape=(14, 14),
+            )
+
+        make_infer_image.assert_not_called()
 
 
 class TestExportWarningLocation:
@@ -1531,6 +1562,21 @@ class TestExportFormatSpelling:
 
         stubs["rfdetr.export._onnx.exporter.OnnxExporter._convert"].assert_called_once()
 
+    def test_non_string_format_is_refused_with_a_clear_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A non-string ``format`` (e.g. an int) fails with the same "unsupported format" message an unknown name gets,
+        not an opaque ``KeyError``/``TypeError`` from deep inside the registry, and no exporter is resolved."""
+        resolve_exporter_stub = MagicMock()
+        monkeypatch.setattr("rfdetr.export.registry.resolve_exporter", resolve_exporter_stub)
+
+        with pytest.raises(ValueError, match="Unsupported export format 123"):
+            _detr_module.RFDETR.export(
+                _make_tensorrt_export_model(), output_dir=str(tmp_path), format=123, shape=(14, 14)
+            )
+
+        resolve_exporter_stub.assert_not_called()
+
 
 class TestExportBatchSize:
     """``batch_size`` sizes the example batch for every format, so ``RFDETR.export`` checks it before anything else."""
@@ -1571,11 +1617,20 @@ class TestExportBatchSize:
 
         resolve_exporter_stub.assert_not_called()
 
-    @pytest.mark.parametrize("batch_size", [1, 3, pytest.param(np.int64(3), id="numpy-int64")])
+    @pytest.mark.parametrize(
+        "batch_size",
+        [1, 3, pytest.param(np.int64(3), id="numpy-int64"), pytest.param(2**31, id="no-upper-bound-enforced")],
+    )
     def test_integer_batch_size_sizes_the_example_batch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, batch_size: int | np.integer
     ) -> None:
-        """Every integer type the caller may hold, numpy's included, reaches the example batch as a plain ``int``."""
+        """Every integer type the caller may hold, numpy's included, reaches the example batch as a plain ``int``.
+
+        ``validate_batch_size`` only rejects a value below 1 (see :func:`rfdetr.export.prepare.validate_batch_size`);
+        there is no upper bound. The ``2**31`` case documents that an extreme ``batch_size`` is accepted verbatim —
+        Python ``int`` has no width to truncate to, unlike the fixed-width counters this size would overflow in
+        other languages — rather than silently clamped or wrapped.
+        """
         stubs = _stub_export_dependencies(monkeypatch, tmp_path, export_format="onnx")
 
         _detr_module.RFDETR.export(
@@ -1600,6 +1655,24 @@ class TestExportBatchSize:
         )
 
         stubs["rfdetr.export._tensorrt.exporter.TensorRTExporter.build_engine"].assert_called_once()
+
+    def test_numpy_batch_size_over_numpy_max_batch_size_is_refused(self, tmp_path: Path) -> None:
+        """A numpy ``batch_size`` over a numpy ``max_batch_size`` still hits the bound error.
+
+        Both are coerced to plain ``int`` via ``validate_batch_size`` before ``TensorRTConfig`` compares them, so a
+        numpy ``max_batch_size`` must not slip past the ``batch_size <= max_batch_size`` check the way an un-coerced one
+        previously would have (rejected instead as "not a plain int").
+        """
+        with pytest.raises(ValueError, match="1 <= batch_size <= max_batch_size"):
+            _detr_module.RFDETR.export(
+                _make_tensorrt_export_model(),
+                output_dir=str(tmp_path),
+                format="tensorrt",
+                dynamic_batch=True,
+                batch_size=np.int64(8),
+                max_batch_size=np.int64(4),
+                shape=(14, 14),
+            )
 
 
 class TestExportDependencyCheck:
