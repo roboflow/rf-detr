@@ -678,6 +678,22 @@ class TestTRTInferenceInputValidation:
         with pytest.raises(ValueError, match="device"):
             runtime({"input": stand_in})
 
+    def test_a_bad_input_is_named_among_several_good_ones(self) -> None:
+        """``_check_input_memory`` attributes the refusal to the one bad input, not the whole call.
+
+        Every other input-validation test above uses a single-input engine, so nothing confirms the per-name loop in
+        ``_bind_inputs`` reports the right name once an engine has more than one input.
+        """
+        engine = _FakeEngine(
+            {"a": ("input", (1, 3, 8, 8)), "b": ("input", (1, 3, 8, 8)), "dets": ("output", (1, 5, 4))}
+        )
+        runtime = _runtime_around(engine)
+        good = torch.rand(1, 3, 8, 8)
+        bad = torch.rand(1, 3, 8, 8).to(memory_format=torch.channels_last)  # non-contiguous, same shape as "good"
+
+        with pytest.raises(ValueError, match="'b'.*not contiguous"):
+            runtime({"a": good, "b": bad})
+
     @pytest.mark.parametrize(
         ("engine_shape", "shape", "misleading_advice"),
         [
