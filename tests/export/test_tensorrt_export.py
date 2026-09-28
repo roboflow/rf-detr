@@ -695,15 +695,12 @@ class TestConvertDependencyGuard:
     """
 
     def test_missing_polygraphy_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """`_convert()` must surface the same actionable ImportError `build_engine()` raises when TensorRT is absent.
+        """`_convert()` must raise its actionable ImportError before the ONNX export stage runs.
 
-        Note: `_convert()` currently runs the ONNX export stage before `build_engine()` checks TensorRT
-        availability (`_require_tensorrt()` lives inside `build_engine`, called after the ONNX conversion — see
-        `TensorRTExporter._convert`). There is no upfront dependency gate ahead of that ONNX stage yet, so this
-        test asserts the ONNX stage *does* still run (documenting the current, unfixed ordering) rather than
-        asserting it is skipped — asserting the latter would fail against the real implementation.
+        `_convert()` calls `_require_tensorrt()` first and only then exports to ONNX (see `TensorRTExporter._convert`),
+        so a host missing `tensorrt`/`polygraphy` never pays for the ONNX stage before being refused. This asserts the
+        ONNX stage does *not* run.
         """
-        monkeypatch.setattr(tensorrt_export, "engine_from_network", None)
         onnx_path = str(tmp_path / "model.onnx")
         onnx_calls: list[str] = []
         monkeypatch.setattr(
@@ -715,11 +712,7 @@ class TestConvertDependencyGuard:
         with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
             TensorRTExporter(TensorRTConfig())._convert(graph)
 
-        assert onnx_calls == ["called"], (
-            "expected the ONNX stage to run before the ImportError — if this now fails because ONNX was NOT "
-            "called, `_require_tensorrt()` has been moved ahead of the ONNX stage in `_convert()`; update this "
-            "test to assert `onnx_calls == []` instead."
-        )
+        assert onnx_calls == [], "expected the ONNX stage to be skipped — _require_tensorrt() runs ahead of it"
 
 
 class TestBuildEngineWiring:
