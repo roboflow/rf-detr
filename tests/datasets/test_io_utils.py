@@ -18,7 +18,7 @@ from rfdetr.datasets.io_utils import decode_image, decode_image_bytes, decode_pi
 from tests.datasets._memory import peak_traced_bytes
 
 
-def write_test_image(path: Path, width: int, height: int, mode: str = "RGB") -> None:
+def _write_test_image(path: Path, width: int, height: int, mode: str = "RGB") -> None:
     """Write deterministic noise in the format ``path``'s suffix names, so JPEG comparisons exercise real DCT content.
 
     JPEG files are written at quality 90; lossless formats keep the noise exactly.
@@ -27,7 +27,7 @@ def write_test_image(path: Path, width: int, height: int, mode: str = "RGB") -> 
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     jpeg_path = Path(tmp) / "img.jpg"
-        ...     write_test_image(jpeg_path, 8, 6)
+        ...     _write_test_image(jpeg_path, 8, 6)
         ...     with Image.open(jpeg_path) as image:
         ...         print(image.format, image.size)
         JPEG (8, 6)
@@ -40,15 +40,15 @@ def write_test_image(path: Path, width: int, height: int, mode: str = "RGB") -> 
         image.save(path)
 
 
-def pillow_decode(path: Path, draft_size: int | None = None) -> tuple[np.ndarray, tuple[float, float]]:
+def _pillow_decode(path: Path, draft_size: int | None = None) -> tuple[np.ndarray, tuple[float, float]]:
     """Reference decode through Pillow alone, mirroring what ``decode_image`` did before ``simplejpeg`` support.
 
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     jpeg_path = Path(tmp) / "img.jpg"
-        ...     write_test_image(jpeg_path, 64, 32)
-        ...     pixels, scales = pillow_decode(jpeg_path, draft_size=16)
+        ...     _write_test_image(jpeg_path, 64, 32)
+        ...     pixels, scales = _pillow_decode(jpeg_path, draft_size=16)
         ...     pixels.shape, scales
         ((16, 32, 3), (0.5, 0.5))
     """
@@ -60,14 +60,14 @@ def pillow_decode(path: Path, draft_size: int | None = None) -> tuple[np.ndarray
     return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
 
 
-def write_cmyk_jpeg(path: Path, width: int, height: int) -> None:
+def _write_cmyk_jpeg(path: Path, width: int, height: int) -> None:
     """Write an Adobe-marked CMYK JPEG with gradient content, for tolerance checks against RGB decoders.
 
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     jpeg_path = Path(tmp) / "cmyk.jpg"
-        ...     write_cmyk_jpeg(jpeg_path, 8, 6)
+        ...     _write_cmyk_jpeg(jpeg_path, 8, 6)
         ...     Image.open(jpeg_path).mode
         'CMYK'
     """
@@ -100,8 +100,8 @@ class TestDecodeImage:
     def test_jpeg_pixels_match_pillow(self, tmp_path: Path) -> None:
         """Full-resolution simplejpeg output equals Pillow's."""
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 457, 301)
-        expected, _ = pillow_decode(jpeg_path)
+        _write_test_image(jpeg_path, 457, 301)
+        expected, _ = _pillow_decode(jpeg_path)
 
         pixels, scales = decode_image(jpeg_path)
 
@@ -123,8 +123,8 @@ class TestDecodeImage:
     def test_draft_reduction_matches_pillow(self, tmp_path: Path, width: int, height: int, draft_size: int) -> None:
         """Reduced decodes pick Pillow's power-of-two factor, not libjpeg-turbo's finer N/8 steps."""
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, width, height)
-        expected, expected_scales = pillow_decode(jpeg_path, draft_size)
+        _write_test_image(jpeg_path, width, height)
+        expected, expected_scales = _pillow_decode(jpeg_path, draft_size)
 
         pixels, scales = decode_image(jpeg_path, draft_size)
 
@@ -136,8 +136,8 @@ class TestDecodeImage:
     def test_grayscale_jpeg_decodes_to_rgb(self, tmp_path: Path) -> None:
         """Single-channel JPEG sources come back as three-channel RGB like Pillow's ``convert``."""
         jpeg_path = tmp_path / "gray.jpg"
-        write_test_image(jpeg_path, 40, 30, mode="L")
-        expected, _ = pillow_decode(jpeg_path)
+        _write_test_image(jpeg_path, 40, 30, mode="L")
+        expected, _ = _pillow_decode(jpeg_path)
 
         pixels, _ = decode_image(jpeg_path)
 
@@ -153,8 +153,8 @@ class TestDecodeImage:
         does not assert exact equality — see the class docstring.
         """
         jpeg_path = tmp_path / "cmyk.jpg"
-        write_cmyk_jpeg(jpeg_path, 40, 32)
-        expected, _ = pillow_decode(jpeg_path)
+        _write_cmyk_jpeg(jpeg_path, 40, 32)
+        expected, _ = _pillow_decode(jpeg_path)
 
         pixels, scales = decode_image(jpeg_path)
 
@@ -166,7 +166,7 @@ class TestDecodeImage:
     def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path) -> None:
         """A JPEG simplejpeg rejects falls through to Pillow, so callers see the same ``OSError`` as before."""
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 457, 301)
+        _write_test_image(jpeg_path, 457, 301)
         jpeg_path.write_bytes(jpeg_path.read_bytes()[:3000])
 
         with pytest.raises(OSError, match="truncated"):
@@ -179,7 +179,7 @@ class TestDecodeImage:
         """The simplejpeg path enforces Pillow's pixel limit on the header size, as ``Image.open`` does."""
         monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 64, 32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
+        _write_test_image(jpeg_path, 64, 32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
 
         with pytest.raises(Image.DecompressionBombError):
             decode_image(jpeg_path)
@@ -191,7 +191,7 @@ class TestDecodeImage:
         """Above ``MAX_IMAGE_PIXELS`` but within twice it, the simplejpeg path warns and still decodes, like Pillow."""
         monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1500)
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 64, 32)  # 2048 pixels
+        _write_test_image(jpeg_path, 64, 32)  # 2048 pixels
 
         with pytest.warns(Image.DecompressionBombWarning):
             pixels, _ = decode_image(jpeg_path)
@@ -228,7 +228,7 @@ class TestDecodeImage:
     def test_bytes_entry_point_matches_path_entry_point(self, tmp_path: Path, draft_size: int | None) -> None:
         """``decode_image_bytes`` is the policy ``decode_image`` applies, so bytes and files decode alike."""
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 961, 541)
+        _write_test_image(jpeg_path, 961, 541)
         expected, expected_scales = decode_image(jpeg_path, draft_size)
 
         pixels, scales = decode_image_bytes(jpeg_path.read_bytes(), draft_size)
@@ -240,8 +240,8 @@ class TestDecodeImage:
         """With ``simplejpeg`` unavailable, JPEG decoding still drafts through Pillow."""
         monkeypatch.setattr(io_utils, "simplejpeg", None)
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 961, 541)
-        expected, expected_scales = pillow_decode(jpeg_path, 256)
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = _pillow_decode(jpeg_path, 256)
 
         pixels, scales = decode_image(jpeg_path, 256)
 
@@ -259,8 +259,8 @@ class TestDecodeImage:
         """
         monkeypatch.setattr(io_utils, "simplejpeg", None)
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 961, 541)
-        expected, expected_scales = pillow_decode(jpeg_path, draft_size)
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = _pillow_decode(jpeg_path, draft_size)
 
         pixels, scales = decode_image_bytes(jpeg_path.read_bytes(), draft_size)
 
@@ -304,7 +304,7 @@ class TestDecodePilImage:
         """Every format, drafted or not, yields the array entry point's RGB pixels and decode scales."""
         decode_pil, decode_array = _ENTRY_POINTS[source_kind]
         image_path = tmp_path / f"img.{extension}"
-        write_test_image(image_path, 961, 541)
+        _write_test_image(image_path, 961, 541)
         source = image_path.read_bytes() if source_kind == "bytes" else image_path
         expected, expected_scales = decode_array(source, draft_size)
 
@@ -319,9 +319,9 @@ class TestDecodePilImage:
         """Grayscale, palette and alpha sources come back as the three-channel RGB of Pillow's ``convert("RGB")``."""
         decode_pil, _ = _ENTRY_POINTS[source_kind]
         image_path = tmp_path / "img.png"
-        write_test_image(image_path, 40, 30, mode=mode)
+        _write_test_image(image_path, 40, 30, mode=mode)
         source = image_path.read_bytes() if source_kind == "bytes" else image_path
-        expected, _ = pillow_decode(image_path)
+        expected, _ = _pillow_decode(image_path)
 
         image, _ = decode_pil(source)
 
@@ -335,9 +335,9 @@ class TestDecodePilImage:
         monkeypatch.setattr(io_utils, "simplejpeg", None)
         decode_pil, _ = _ENTRY_POINTS[source_kind]
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 961, 541)
+        _write_test_image(jpeg_path, 961, 541)
         source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
-        expected, expected_scales = pillow_decode(jpeg_path, 256)
+        expected, expected_scales = _pillow_decode(jpeg_path, 256)
 
         image, scales = decode_pil(source, 256)
 
@@ -355,7 +355,7 @@ class TestDecodePilImage:
         """
         decode_pil, _ = _ENTRY_POINTS[source_kind]
         image_path = tmp_path / f"img.{extension}"
-        write_test_image(image_path, 800, 600)
+        _write_test_image(image_path, 800, 600)
         source = image_path.read_bytes() if source_kind == "bytes" else image_path
 
         # The bound is loose on purpose: the real floor is Pillow's read buffers (~138-142 KB, frame-independent),
@@ -372,7 +372,7 @@ class TestDecodePilImage:
         decode_pil, _ = _ENTRY_POINTS[source_kind]
         monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 64, 32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
+        _write_test_image(jpeg_path, 64, 32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
         source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
 
         with pytest.raises(Image.DecompressionBombError):
@@ -384,7 +384,7 @@ class TestDecodePilImage:
         """A truncated JPEG falls through to Pillow, raising the same ``OSError`` for the PIL entry points."""
         decode_pil, _ = _ENTRY_POINTS[source_kind]
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 457, 301)
+        _write_test_image(jpeg_path, 457, 301)
         jpeg_path.write_bytes(jpeg_path.read_bytes()[:3000])
         source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
 
@@ -416,26 +416,26 @@ class TestReadSimplejpegCandidate:
     def test_jpeg_file_returns_its_bytes(self, tmp_path: Path) -> None:
         """A JPEG file's raw bytes come back unchanged, the positive branch the module doctest does not cover."""
         jpeg_path = tmp_path / "img.jpg"
-        write_test_image(jpeg_path, 8, 6)
+        _write_test_image(jpeg_path, 8, 6)
 
         candidate = io_utils._read_simplejpeg_candidate(jpeg_path)
 
         assert candidate == jpeg_path.read_bytes()
 
 
-def single_image_coco_dataset(root: Path, file_name: str, width: int, height: int) -> CocoDetection:
+def _single_image_coco_dataset(root: Path, file_name: str, width: int, height: int) -> CocoDetection:
     """Write one noise image named ``file_name`` under ``root/images`` with an empty COCO annotation file and load it.
 
     Examples:
         >>> import contextlib, io, tempfile
         >>> with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
-        ...     size = single_image_coco_dataset(Path(tmp), "img1.png", 8, 6)[0][0].size
+        ...     size = _single_image_coco_dataset(Path(tmp), "img1.png", 8, 6)[0][0].size
         >>> size
         (8, 6)
     """
     img_dir = root / "images"
     img_dir.mkdir()
-    write_test_image(img_dir / file_name, width, height)
+    _write_test_image(img_dir / file_name, width, height)
     ann_file = root / "annotations.json"
     ann_file.write_text(
         json.dumps(
@@ -460,8 +460,8 @@ class TestCocoDetectionRealPathParity:
         instead -- ``CocoDetection._decode_image`` -> ``ConvertCoco`` -> the returned image -- so a mismatch introduced
         anywhere along that chain, not only inside ``io_utils``, would surface here.
         """
-        dataset = single_image_coco_dataset(tmp_path, f"img1.{extension}", 64, 48)
-        expected, _ = pillow_decode(tmp_path / "images" / f"img1.{extension}")
+        dataset = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 64, 48)
+        expected, _ = _pillow_decode(tmp_path / "images" / f"img1.{extension}")
 
         image, _ = dataset[0]
 
@@ -474,6 +474,6 @@ class TestCocoDetectionRealPathParity:
         #1544's scenario: 1.11.0 routed every non-JPEG sample through ``np.array`` and ``Image.fromarray``, which made
         the train DataLoader slower than 1.10.1 on large PNG and BMP files.
         """
-        dataset = single_image_coco_dataset(tmp_path, f"img1.{extension}", 800, 600)
+        dataset = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 800, 600)
 
         assert peak_traced_bytes(dataset.__getitem__, 0) < 800 * 600 * 3 // 2
