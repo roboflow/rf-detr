@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `format="coreai", coreai_precision="float16"` warns for keypoint models: that `.aimodel` terminates the process when Core AI runs it on the Neural Engine, which iOS and iPadOS pick for float16 by default.
 
-- `RFDETR.export()` checks `batch_size` before any other work: `batch_size=True`, which used to export a batch of 1, now raises `ValueError`, as does any other value that is not a positive integer (`2.0`, `"2"` and `None` raised a `TypeError` from inside the export). A numpy integer is passed on as a plain `int`.
+- Single-GPU compiled BF16 detection training now combines global-norm clipping, AdamW, and the per-step EMA update in one multi-tensor Triton path. The existing public configuration selects it automatically only for the built-in AdamW optimizer with `compile=True`, `fused_optimizer=True`, `use_ema=True`, and `ema_update_interval=1` on one device with the default `devices=1` and `strategy="auto"`; other `devices` or `strategy` values and older Triton versions retain the standard PyTorch path, and a step whose tensor layout the kernels do not support applies clipped, non-fused AdamW instead. On an NVIDIA L4, a public `RFDETRNano.train()` run over COCO128 (default batch 4, 384 px) improved the median settled training epoch from 3.593 s to 3.135 s across five independent pairs (12.66%, range 11.55-16.86%) against an explicitly optimized PyTorch baseline using foreach gradient clipping, fused AdamW, one-call foreach EMA, and a host-side EMA counter. The paired reduction for the complete six-epoch call with populated compile caches had a 5.56% median (range 3.33-10.99%); one-time setup and final validation dilute the recurring-epoch saving. Full-dataset accuracy and larger variants were not measured.
 
 ### Fixed
 
@@ -73,9 +73,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`.
 
-### Changed
+### Breaking Changes
 
-- Single-GPU compiled BF16 detection training now combines global-norm clipping, AdamW, and the per-step EMA update in one multi-tensor Triton path. The existing public configuration selects it automatically only for the built-in AdamW optimizer with `compile=True`, `fused_optimizer=True`, `use_ema=True`, and `ema_update_interval=1` on one device with the default `devices=1` and `strategy="auto"`; other `devices` or `strategy` values and older Triton versions retain the standard PyTorch path, and a step whose tensor layout the kernels do not support applies clipped, non-fused AdamW instead. On an NVIDIA L4, a public `RFDETRNano.train()` run over COCO128 (default batch 4, 384 px) improved the median settled training epoch from 3.593 s to 3.135 s across five independent pairs (12.66%, range 11.55-16.86%) against an explicitly optimized PyTorch baseline using foreach gradient clipping, fused AdamW, one-call foreach EMA, and a host-side EMA counter. The paired reduction for the complete six-epoch call with populated compile caches had a 5.56% median (range 3.33-10.99%); one-time setup and final validation dilute the recurring-epoch saving. Full-dataset accuracy and larger variants were not measured.
+- `RFDETR.export()` checks `batch_size` before any other work: `batch_size=True`, which used to export a batch of 1, now raises `ValueError`, as does any other value that is not a positive integer (`2.0`, `"2"` and `None` raised a `TypeError` from inside the export). A numpy integer is passed on as a plain `int`.
 
 ## [1.11.0] — 2026-09-23
 
