@@ -445,8 +445,17 @@ class TestRFDETRTrainPTL:
         mcls.assert_called_once_with(mock_self.model_config, config)
         dmcls.assert_called_once_with(mock_self.model_config, config)
 
-    def test_batch_size_auto_calls_resolver_with_expected_context(self, tmp_path, patch_lit):
-        """Auto-batch resolver receives model context, model config, and train config."""
+    @pytest.mark.parametrize(
+        ("train_kwargs", "expected_devices"),
+        [
+            pytest.param({}, None, id="no-device"),
+            pytest.param({"device": "cuda:1"}, [1], id="cuda-1"),
+        ],
+    )
+    def test_batch_size_auto_calls_resolver_with_expected_context(
+        self, tmp_path, patch_lit, train_kwargs: dict[str, str], expected_devices: list[int] | None
+    ):
+        """Auto-batch resolver receives model context, model config, train config, and the GPUs the run trains on."""
         mock_self = _make_rfdetr_self(tmp_path, batch_size="auto")
         auto_result = AutoBatchResult(
             safe_micro_batch=2,
@@ -461,13 +470,14 @@ class TestRFDETRTrainPTL:
             p_bt,
             patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result) as mock_resolve,
         ):
-            RFDETR.train(mock_self)
+            RFDETR.train(mock_self, **train_kwargs)
 
         config = mock_self.get_train_config.return_value
         mock_resolve.assert_called_once_with(
             model_context=mock_self.model,
             model_config=mock_self.model_config,
             train_config=config,
+            devices=expected_devices,
         )
 
 

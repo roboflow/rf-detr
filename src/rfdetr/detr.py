@@ -449,6 +449,7 @@ def _prepare_run_config(
             model_context=detector.model,
             model_config=detector.model_config,
             train_config=config,
+            devices=_devices,
         )
         config.batch_size = auto_batch.safe_micro_batch
         config.grad_accum_steps = auto_batch.recommended_grad_accum_steps
@@ -547,6 +548,10 @@ class RFDETR:
                 weights.
             **kwargs: ModelConfig field values (e.g. ``resolution``, ``num_classes``,
                 ``pretrain_weights``, ``gradient_checkpointing``).
+
+        Raises:
+            ImportError: If ``backbone_lora=True`` is set, or ``pretrain_weights`` was saved by a
+                ``backbone_lora=True`` run, and ``peft`` is not installed (``pip install "rfdetr[lora]"``).
         """
         self.model_config = self.get_model_config(**kwargs)
         self.maybe_download_pretrain_weights()
@@ -679,6 +684,8 @@ class RFDETR:
             KeyError: If the checkpoint does not contain an ``"args"`` key.
             ValueError: If the model class cannot be inferred from ``model_name``,
                 ``pretrain_weights``, or the checkpoint filename.
+            ImportError: If the checkpoint was saved by a ``backbone_lora=True`` run and ``peft``
+                is not installed (``pip install "rfdetr[lora]"``).
 
         Examples:
             >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
@@ -1956,7 +1963,7 @@ class RFDETR:
                 ``"fp32"``.
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
-                ``rfdetr[onnx]``, ``rfdetr[executorch]``,
+                ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
                 ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
                 ``backend="coreml"``, ``openvino`` for OpenVINO export,
                 ``rfdetr[litert]`` for LiteRT export,
@@ -2013,6 +2020,11 @@ class RFDETR:
         # Constructing the exporter validates the request against the format's capabilities — an unsupported
         # dynamic_batch is refused here, before the user pays for a full DINOv2 forward pass (seconds + GBs).
         exporter = exporter_class(config)
+        # The request holds up; now the host must too. A format that can probe its optional dependency cheaply (no
+        # import) refuses a missing install here rather than inside the conversion, which is reached only after that
+        # same forward pass. It follows the capability checks above so an invalid request is reported as one whether
+        # or not the format's dependency happens to be installed. The default is a no-op.
+        exporter_class.check_dependencies()
         logger.info(f"Exporting model to {format} format")
 
         device = self.model.device
