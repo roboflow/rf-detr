@@ -180,13 +180,20 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
 
         ``compress_to_fp16`` controls IR *storage* precision only -- execution precision still depends on the
         compiled device and is not guaranteed to match eager PyTorch on non-CPU devices. ``None`` keeps
-        OpenVINO's own compressing default, which ``"float16"`` states explicitly. :meth:`_check_capabilities` has
-        refused every other value, so only ``"float32"`` turns compression off.
+        OpenVINO's own compressing default, which ``"float16"`` states explicitly, and only ``"float32"`` turns
+        compression off.
+
+        The mapping spells out all three legal values rather than testing one of them, so a value that reached here
+        without :meth:`_check_capabilities` refusing it raises :class:`KeyError` instead of silently compressing a
+        model the caller asked to keep in FP32.
 
         Returns:
             Whether weights are stored compressed to FP16.
+
+        Raises:
+            KeyError: If *precision* is not one of ``None``, ``"float16"``, or ``"float32"``.
         """
-        return self.config.precision != "float32"
+        return {None: True, "float16": True, "float32": False}[self.config.precision]
 
     def _prepare_module_for_tracing(self, graph: ExportGraph) -> tuple[ModelWrapper, torch.Tensor]:
         """Announce the conversion, then move the graph onto CPU and wrap it for ``convert_model``.

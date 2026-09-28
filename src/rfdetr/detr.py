@@ -1955,7 +1955,8 @@ class RFDETR:
             ``.pte``, ``.mlpackage``, ``.aimodel`` or ``.xml`` for OpenVINO).
 
         Raises:
-            ValueError: If ``format`` is unrecognized; if ``batch_size`` is not a positive integer; if
+            ValueError: If ``format`` is unrecognized; if ``batch_size``, or ``max_batch_size`` when given, is not
+                a positive integer; if
                 ``format="executorch"`` and ``backend`` is missing, unrecognized, or (for ``backend="qnn"``)
                 ``soc`` is missing; if the resolved export shape is not divisible by ``patch_size * num_windows``;
                 if ``coreml_precision``/``coreai_precision``/``openvino_precision``, or ``quantization`` for
@@ -1986,11 +1987,17 @@ class RFDETR:
         """
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
-        from rfdetr.export.prepare import prepare_export_graph, validate_batch_size
+        from rfdetr.export.prepare import prepare_export_graph, validate_batch_size, validate_export_shape
         from rfdetr.export.registry import normalize_format, resolve_exporter
 
         # Every format builds its example batch from this, so it is checked before any exporter is imported.
         export_batch_size = validate_batch_size(batch_size)
+        export_max_batch_size = None
+        if max_batch_size is not None:
+            try:
+                export_max_batch_size = validate_batch_size(max_batch_size)
+            except ValueError:
+                raise ValueError(f"max_batch_size must be a positive integer, got {max_batch_size!r}.") from None
         format = normalize_format(format)
         if max_batch_size is not None and (format != "tensorrt" or not dynamic_batch):
             warnings.warn(
@@ -2011,21 +2018,14 @@ class RFDETR:
             )
         # The shape needs only the model's configuration, so it is checked with the arguments above, before the exporter
         # is resolved.
-        patch_size = _resolve_patch_size(patch_size, self.model_config, "export")
-        num_windows = getattr(self.model_config, "num_windows", 1)
-        if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
-            raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
-        block_size = patch_size * num_windows
-        if shape is None:
-            shape = (self.model.resolution, self.model.resolution)
-            if shape[0] % block_size != 0:
-                raise ValueError(
-                    f"Model's default resolution ({self.model.resolution}) is not divisible by "
-                    f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                    f"Provide an explicit shape divisible by {block_size}.",
-                )
-        else:
-            shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
+        shape = validate_export_shape(
+            shape,
+            patch_size,
+            self.model_config,
+            self.model.resolution,
+            resolve_patch_size=_resolve_patch_size,
+            validate_shape_dims=_validate_shape_dims,
+        )
         exporter_class = resolve_exporter(format)
         # The exporter class owns its configuration: it picks the settings its format reads out of this method's
         # union-of-every-format signature and drops the rest, so no dispatcher here has to know which is which.
@@ -2048,7 +2048,7 @@ class RFDETR:
             calibration_data=calibration_data,
             max_images=max_images,
             batch_size=export_batch_size,
-            max_batch_size=max_batch_size,
+            max_batch_size=export_max_batch_size,
         )
         # Constructing the exporter validates the format's own settings (precision, quantization, notes, ...), then
         # warns about the ones it ignores.

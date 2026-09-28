@@ -958,7 +958,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             ImportError: If TensorFlow, ``tf_keras`` or ``onnx`` is not installed, or ``onnx2tf`` cannot be imported or
                 is below 2.4.0.
         """
-        from rfdetr.export._backend import preload_tensorflow_before_onnx
+        from rfdetr.export._backend import check_onnx_available, preload_tensorflow_before_onnx
 
         preload_tensorflow_before_onnx()
         # onnx2tf lists TensorFlow as an optional extra, so it imports fine without it; its conversion does not run.
@@ -968,10 +968,9 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                 f"TFLite export requires TensorFlow, which onnx2tf does not install. {_TFLITE_INSTALL_HINT}"
             )
         _check_tf_keras_available()
-        # Imported only now: the ONNX exporter module loads onnx, which must come after TensorFlow.
-        from rfdetr.export._onnx.exporter import _check_onnx_available
-
-        _check_onnx_available(_TFLITE_INSTALL_HINT)
+        # check_onnx_available() imports onnx itself, lazily, only when called here -- after TensorFlow's preload
+        # above, so the ordering preload_tensorflow_before_onnx() exists to protect still holds.
+        check_onnx_available(_TFLITE_INSTALL_HINT, stage="TFLite export")
         _check_onnx2tf_available()
 
     def _convert(self, graph: ExportGraph) -> Path:
@@ -1082,10 +1081,10 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
 
     def _prepare_onnx2tf(self) -> None:
-        """Load TensorFlow ahead of ONNX, verify ``onnx2tf``, and import the submodules the patches target.
+        """Load TensorFlow ahead of ONNX, verify ``tf_keras``/``onnx2tf``, and import the patched submodules.
 
         Raises:
-            ImportError: If ``onnx2tf`` cannot be imported or is below 2.4.0.
+            ImportError: If ``tf_keras`` is not installed, or ``onnx2tf`` cannot be imported or is below 2.4.0.
         """
         # Load TensorFlow before the GridSample rewrite below imports onnx: a wrong load order makes
         # TensorFlow's SavedModel restore deadlock (see preload_tensorflow_before_onnx).  check_dependencies(), which
@@ -1095,6 +1094,10 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
 
         preload_tensorflow_before_onnx()
 
+        # Same order as check_dependencies(): tf_keras before onnx2tf, since the import below
+        # (onnx2tf.utils.common_functions) is what actually imports tf_keras — a direct convert_onnx()
+        # call never runs check_dependencies() and would otherwise hit tf_keras's unguarded ImportError.
+        _check_tf_keras_available()
         _check_onnx2tf_available()
 
         # Force-import onnx2tf submodules so that _patch_validation_download()
