@@ -58,7 +58,7 @@ This produces both `output/inference_model_fp32.tflite` and `output/inference_mo
 
 ## INT8 Quantization
 
-`quantization="int8"` produces a **dynamic-range** INT8 model: weights are stored as INT8, activations stay in float, and the weight scales are derived from the weights themselves. No calibration data is required, and supplying it does not change the result — static/full-integer INT8, the mode that *would* need representative data, is intentionally unsupported because RF-DETR's transformer activations do not survive it.
+`quantization="int8"` produces a **dynamic-range** INT8 model: weights are stored as INT8, activations stay in float, and the weight scales are derived from the weights themselves. No calibration data is required, and supplying it does not change the result — static/full-integer INT8, the mode that *would* need representative data, is intentionally unsupported because RF-DETR's transformer activations do not survive TFLite's full-integer mode, which gives every activation a per-tensor 8-bit scale and runs integer-only kernels with no float fallback. Other toolchains quantize transformers to 8 bits more gently — ONNX Runtime's QDQ `quantize_static` and OpenVINO's NNCF keep softmax, LayerNorm and the detection heads in float — so this is a limit of the TFLite route, not of 8-bit post-training quantization in general.
 
 Dynamic-range INT8 requires a float-capable runtime and is not suitable for integer-only accelerators such as the Coral Edge TPU or integer-only NPUs.
 

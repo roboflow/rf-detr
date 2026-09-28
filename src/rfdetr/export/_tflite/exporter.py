@@ -49,8 +49,12 @@ INT8 quantization
 ``quantization="int8"`` produces a **dynamic-range** INT8 model (INT8 weights, float activations, roughly 4x smaller
 than FP32, no calibration data needed), built from the ``onnx2tf`` SavedModel.
 
-Static (full-integer) INT8 is not supported and raises ``ValueError``: RF-DETR's transformer activations do not survive
-8-bit post-training quantization.  Because dynamic-range quantization derives its weight scales from the weights
+Static (full-integer) INT8 is not supported and raises ``ValueError``: TFLite's full-integer mode gives every
+activation a per-tensor 8-bit scale and runs integer-only kernels with no float fallback, which RF-DETR's transformer
+activations do not survive.  That is a limit of this mode, not of 8-bit post-training quantization in general --
+toolchains that keep softmax, LayerNorm and the detection heads in float behind Q/DQ boundaries (ONNX Runtime's QDQ
+``quantize_static``, OpenVINO's NNCF) are reported to hold RF-DETR within a few tenths of a point of FP32 mAP, and are
+not reachable from this route.  Because dynamic-range quantization derives its weight scales from the weights
 themselves, *calibration_data* cannot change the INT8 artifact — TFLite only consumes representative data through
 ``representative_dataset``, which this path never sets.
 
