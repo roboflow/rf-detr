@@ -2014,6 +2014,11 @@ class RFDETR:
         # Constructing the exporter validates the request against the format's capabilities — an unsupported
         # dynamic_batch is refused here, before the user pays for a full DINOv2 forward pass (seconds + GBs).
         exporter = exporter_class(config)
+        # The request holds up; now the host must too. A format that can probe its optional dependency cheaply (no
+        # import) refuses a missing install here rather than inside the conversion, which is reached only after that
+        # same forward pass. It follows the capability checks above so an invalid request is reported as one whether
+        # or not the format's dependency happens to be installed. The default is a no-op.
+        exporter_class.check_dependencies()
         logger.info(f"Exporting model to {format} format")
 
         device = self.model.device
