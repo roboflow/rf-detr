@@ -307,10 +307,10 @@ def draft_size_for_transforms(
     """Return the source extent below which the transform pipeline starts losing detail.
 
     :meth:`CocoDetection._decode_image` passes this to the decoder, which applies the reduction ``PIL.Image.draft``
-    would pick, so JPEG sources far larger than the training resolution are decoded at a reduced DCT scale instead of
-    at full size. ``draft`` never returns an image smaller than the requested box, so the box preserves the largest
-    direct-resize target. Scale jitter also preserves its
-    600-pixel pre-crop resize floor, avoiding an extra upsample after JPEG decoding.
+    would pick, so JPEG sources far larger than the training resolution are decoded at a reduced DCT scale instead of at
+    full size. ``draft`` never returns an image smaller than the requested box, so the box preserves the largest
+    direct-resize target. Scale jitter also preserves its 600-pixel pre-crop resize floor, avoiding an extra upsample
+    after JPEG decoding.
 
     Two cases return ``None`` (decode at full resolution):
 
