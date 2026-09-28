@@ -29,7 +29,12 @@ from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.logger import get_logger
-from rfdetr.utilities.state_dict import _ckpt_args_get, remap_projector_to_cross_attn, validate_checkpoint_compatibility
+from rfdetr.utilities.state_dict import (
+    _LORA_ENCODER_KEY_PREFIX,
+    _ckpt_args_get,
+    remap_projector_to_cross_attn,
+    validate_checkpoint_compatibility,
+)
 
 logger = get_logger()
 
@@ -329,6 +334,10 @@ def load_pretrain_weights(
       scenario), both reinitializations are applied: expand to checkpoint size for loading, then trim to configured
       size.
 
+    A checkpoint saved by a ``backbone_lora=True`` run is loaded into a LoRA-wrapped encoder. With
+    ``model_config.backbone_lora`` set the encoder stays wrapped with the trained adapters; otherwise the adapters are
+    merged into the encoder weights, unless the caller had already wrapped the encoder (see :func:`_load_model_state`).
+
     Class names stored in the checkpoint ``args`` are extracted and returned.
 
     Args:
@@ -346,6 +355,7 @@ def load_pretrain_weights(
 
     Raises:
         Exception: If the checkpoint file cannot be loaded even after a re-download.
+        ImportError: If the checkpoint was saved by a ``backbone_lora=True`` run and ``peft`` is not installed.
     """
     mc = model_config
     if mc.pretrain_weights is None:
@@ -621,7 +631,7 @@ def load_pretrain_weights(
         )
         checkpoint["model"].pop("_kp_active_mask", None)
     interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
-    incompatible = nn_model.load_state_dict(checkpoint["model"], strict=False)
+    incompatible = _load_model_state(nn_model, checkpoint["model"], backbone_lora=mc.backbone_lora)
     _warn_on_partial_load(incompatible, pretrain_weights)
 
     if should_restore_config_keypoint_schema and hasattr(nn_model, "reinitialize_keypoint_head"):
@@ -644,10 +654,57 @@ def load_pretrain_weights(
     return class_names
 
 
+def _load_model_state(nn_model: LWDETR, model_state: dict[str, Tensor], *, backbone_lora: bool) -> Any:
+    """Load *model_state* into *nn_model* with the encoder in the layout the checkpoint was saved from.
+
+    A ``backbone_lora=True`` run saves the encoder under PEFT names (``backbone.0.encoder.base_model.model.…``). A plain
+    encoder consumes none of them, so ``load_state_dict(strict=False)`` would skip them all and leave the encoder at
+    random init (#1540). The encoder is therefore wrapped with LoRA before such a checkpoint loads. A model configured
+    without LoRA then gets the loaded adapters merged into its encoder weights, and the trainable flags that peft froze
+    when wrapping are restored. An encoder the caller had already wrapped is loaded as is and stays wrapped.
+
+    Args:
+        nn_model: Model to load into, in-place.
+        model_state: Checkpoint weights, already aligned to the model's heads and query counts.
+        backbone_lora: Whether the model is configured to keep LoRA adapters on its encoder.
+
+    Returns:
+        The ``load_state_dict`` result listing missing and unexpected keys.
+
+    Raises:
+        ImportError: If *model_state* comes from a ``backbone_lora=True`` run and ``peft`` is not installed.
+    """
+    if not any(key.startswith(_LORA_ENCODER_KEY_PREFIX) for key in model_state):
+        return nn_model.load_state_dict(model_state, strict=False)
+
+    backbone = cast(Backbone, nn_model.backbone[0])
+    encoder = backbone.encoder
+    encoder_requires_grad = {name: param.requires_grad for name, param in encoder.named_parameters()}
+    try:
+        apply_lora(nn_model)
+    except ImportError as err:
+        raise ImportError(
+            "This checkpoint was saved by a backbone_lora=True run, and loading it needs the 'peft' dependency. "
+            'Install it with pip install "rfdetr[lora]".'
+        ) from err
+    incompatible = nn_model.load_state_dict(model_state, strict=False)
+    # Merge only a wrap made here: an encoder the caller had already wrapped stays as the caller left it.
+    if not backbone_lora and backbone.encoder is not encoder:
+        from peft import PeftModel  # optional dependency; apply_lora above has already required it
+
+        backbone.encoder = cast(DinoV2, cast(PeftModel, backbone.encoder).merge_and_unload())
+        for name, param in backbone.encoder.named_parameters():
+            param.requires_grad = encoder_requires_grad[name]
+        logger.info("Merged the checkpoint's LoRA adapters into the backbone encoder, since backbone_lora=False.")
+    return incompatible
+
+
 def apply_lora(nn_model: LWDETR) -> None:
     """Apply LoRA adapters to the backbone encoder of *nn_model*.
 
     Replaces ``nn_model.backbone[0].encoder`` in-place with a PEFT-wrapped encoder using DoRA with rank 16 and alpha 16.
+    Does nothing when the encoder is already wrapped, which :func:`load_pretrain_weights` does itself to load a
+    checkpoint saved by a ``backbone_lora=True`` run.
 
     Args:
         nn_model: LWDETR model whose backbone encoder will receive LoRA adapters.
@@ -661,7 +718,7 @@ def apply_lora(nn_model: LWDETR) -> None:
                 pip install "rfdetr[train]"
     """
     try:
-        from peft import LoraConfig, get_peft_model
+        from peft import LoraConfig, PeftModel, get_peft_model
         from transformers import PreTrainedModel
     except ImportError as exc:
         raise ImportError(
@@ -669,6 +726,10 @@ def apply_lora(nn_model: LWDETR) -> None:
             "Install it via RF-DETR extras, e.g.: "
             'pip install "rfdetr[lora]" or pip install "rfdetr[train]".'
         ) from exc
+
+    backbone = cast(Backbone, nn_model.backbone[0])
+    if isinstance(backbone.encoder, PeftModel):
+        return
 
     lora_config = LoraConfig(
         r=16,
@@ -686,7 +747,6 @@ def apply_lora(nn_model: LWDETR) -> None:
             "register_tokens",
         ],
     )
-    backbone = cast(Backbone, nn_model.backbone[0])
     # PEFT's type signature requires a PreTrainedModel, but DinoV2 is a compatible nn.Module
     # wrapper at runtime. Cast both sides of this dynamic wrapper boundary instead of relying
     # on an environment-sensitive ignore for PEFT's evolving type annotations.
