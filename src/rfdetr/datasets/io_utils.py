@@ -3,7 +3,20 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Image decoding shared by the dataset readers, independent of any annotation format."""
+"""Image decoding shared by the dataset readers, independent of any annotation format.
+
+The module exposes two output-type families sharing one decoder policy: :func:`decode_image` and
+:func:`decode_image_bytes` return NumPy arrays, while :func:`decode_pil_image` and :func:`decode_pil_image_bytes` return
+PIL images; see below for why the split exists.  Most of the array-out speedup :func:`decode_image` describes comes from
+skipping Pillow's ``convert("RGB")`` and ``np.array`` copies rather than from a faster codec: the raw libjpeg-turbo
+decode itself is only about 12% faster, since Pillow's wheels link the same library.  Readers whose transforms take a
+PIL image, ``CocoDetection`` and the WebDataset reader, use :func:`decode_pil_image` and :func:`decode_pil_image_bytes`
+instead: same policy, but a Pillow-decoded image is returned as is, because copying it into an array only for the caller
+to copy it back with ``Image.fromarray`` slowed their data loading on large PNG and BMP files (#1544). ``YoloDetection``
+still wraps the arrays of ``_LazyYoloDetectionDataset`` with ``Image.fromarray``, as it did before ``simplejpeg``
+support; that keeps its non-JPEG files (and any JPEG ``simplejpeg`` rejects) paying the same copy into an array and back
+that :func:`decode_pil_image` avoids for its own callers, a scope call deferred rather than folded into this fix.
+"""
 
 from __future__ import annotations
 
@@ -194,14 +207,7 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
 
     Returning an array rather than a PIL image lets a caller that wants an array skip a round trip, which is where the
     speedup lands: 1.3-1.8x over Pillow at the decode stage for array consumers such as ``_LazyYoloDetectionDataset``,
-    varying with image size and with how much high-frequency detail the JPEG carries.  Most of that array-out gain comes
-    from skipping Pillow's ``convert("RGB")`` and ``np.array`` copies rather than from a faster codec: the raw
-    libjpeg-turbo decode itself is only about 12% faster, since Pillow's wheels link the same library.  Readers whose
-    transforms take a PIL image, ``CocoDetection`` and the WebDataset reader, use :func:`decode_pil_image` and
-    :func:`decode_pil_image_bytes` instead: same policy, but a Pillow-decoded image is returned as is, because copying
-    it into an array only for the caller to copy it back with ``Image.fromarray`` slowed their data loading on large PNG
-    and BMP files (#1544).  ``YoloDetection`` still wraps the arrays of ``_LazyYoloDetectionDataset`` with
-    ``Image.fromarray``, as it did before ``simplejpeg`` support.
+    varying with image size and with how much high-frequency detail the JPEG carries.
 
     When ``draft_size`` is set, both decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to
     keep the image at least ``draft_size`` on both axes; it is a no-op for non-JPEG files.
@@ -254,7 +260,11 @@ def decode_pil_image(path: Path, draft_size: int | None = None) -> tuple[Image.I
     For readers whose transforms take a PIL image, such as ``CocoDetection``.  A JPEG that ``simplejpeg`` decodes is
     wrapped with ``Image.fromarray``; everything Pillow decodes is returned as Pillow produced it, without the copy
     into an array and back that :func:`decode_image` plus ``Image.fromarray`` would make.  Pixels and decode scales are
-    the ones :func:`decode_image` returns for the same file.
+    the ones :func:`decode_image` returns for the same file.  The default Albumentations CPU training wrapper still
+    round-trips a decoded JPEG through its own ``np.array``/``Image.fromarray`` pair on top of this, independent of
+    this policy.  The returned image's ``info`` dict is populated only when Pillow decoded it; a JPEG that
+    ``simplejpeg`` decoded goes through ``Image.fromarray``, which always starts with an empty ``info``, so ``info``
+    is not part of this function's contract.
 
     Args:
         path: Image file to decode.
@@ -276,7 +286,9 @@ def decode_pil_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[
     """Decode encoded image bytes to an RGB PIL image under the same decoder policy as :func:`decode_image_bytes`.
 
     The in-memory counterpart of :func:`decode_pil_image`, for readers such as the WebDataset loader that hold a shard
-    member's bytes and feed PIL-based transforms.
+    member's bytes and feed PIL-based transforms.  As in :func:`decode_pil_image`, the returned image's ``info`` dict
+    is populated only when Pillow decoded it, not when ``simplejpeg`` did (``Image.fromarray`` starts with an empty
+    ``info``); ``info`` is not part of this function's contract.
 
     Args:
         data: Encoded image bytes.
