@@ -1,3 +1,9 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
 import os
 import tempfile
 
@@ -67,18 +73,14 @@ st.success("RF-DETR Nano is ready.")
 
 
 def get_class_names(detections):
-    """
-    RF-DETR's pretrained COCO model can use sparse
-    COCO category IDs.
+    """RF-DETR's pretrained COCO model can use sparse COCO category IDs.
 
     Therefore, do NOT use:
 
-        model.class_names[class_id]
+    model.class_names[class_id]
 
-    Instead, use the class_name mapping created
-    internally by RF-DETR's predict() method.
+    Instead, use the class_name mapping created internally by RF-DETR's predict() method.
     """
-
     if hasattr(detections, "data") and "class_name" in detections.data:
         return list(detections.data["class_name"])
 
