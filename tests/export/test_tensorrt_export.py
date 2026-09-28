@@ -18,6 +18,7 @@ import importlib.util
 import re
 import sys
 import types
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,7 @@ from rfdetr.export._tensorrt.exporter import (
     TensorRTConfig,
     TensorRTExporter,
 )
+from rfdetr.export.prepare import ExportGraph
 from tests.export.conftest import (
     _structured_parity_input,
     eager_reference_tensors,
@@ -662,6 +664,64 @@ class TestTensorRTAvailability:
         assert result == str(tmp_path / "model_fp16.trt")
 
 
+def _minimal_export_graph() -> ExportGraph:
+    """Build the smallest static `ExportGraph` `TensorRTExporter._convert()` needs, without a real RF-DETR model.
+
+    Examples:
+        >>> graph = _minimal_export_graph()
+        >>> graph.backbone_only
+        False
+        >>> graph.input_tensors.shape
+        torch.Size([1, 3, 8, 8])
+    """
+    return ExportGraph(
+        model=torch.nn.Identity(),
+        input_tensors=torch.zeros(1, 3, 8, 8),
+        input_names=("input",),
+        output_names=("dets",),
+        dynamic_axes=None,
+        shape=(8, 8),
+        backbone_only=False,
+    )
+
+
+class TestConvertDependencyGuard:
+    """`TensorRTExporter._convert()` (not just `build_engine()`) must fail actionably without TensorRT.
+
+    Regression coverage for the gap the challenger flagged (L7): the existing `RFDETR.export()` E2E tests in
+    `test_export.py` monkeypatch `OnnxExporter._convert` and `build_engine` together, so a missing-TensorRT failure they
+    exercise is coupled to `RFDETR.export()`'s device-move/deepcopy plumbing. Calling `_convert()` directly here
+    decouples the two.
+    """
+
+    def test_missing_polygraphy_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """`_convert()` must surface the same actionable ImportError `build_engine()` raises when TensorRT is absent.
+
+        Note: `_convert()` currently runs the ONNX export stage before `build_engine()` checks TensorRT
+        availability (`_require_tensorrt()` lives inside `build_engine`, called after the ONNX conversion — see
+        `TensorRTExporter._convert`). There is no upfront dependency gate ahead of that ONNX stage yet, so this
+        test asserts the ONNX stage *does* still run (documenting the current, unfixed ordering) rather than
+        asserting it is skipped — asserting the latter would fail against the real implementation.
+        """
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", None)
+        onnx_path = str(tmp_path / "model.onnx")
+        onnx_calls: list[str] = []
+        monkeypatch.setattr(
+            "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+            lambda self, graph: onnx_calls.append("called") or onnx_path,
+        )
+        graph = _minimal_export_graph()
+
+        with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
+            TensorRTExporter(TensorRTConfig())._convert(graph)
+
+        assert onnx_calls == ["called"], (
+            "expected the ONNX stage to run before the ImportError — if this now fails because ONNX was NOT "
+            "called, `_require_tensorrt()` has been moved ahead of the ONNX stage in `_convert()`; update this "
+            "test to assert `onnx_calls == []` instead."
+        )
+
+
 class TestBuildEngineWiring:
     """``build_engine`` wires ONNX -> config -> engine -> save and returns the ``.trt`` path."""
 
@@ -712,12 +772,12 @@ class TestBuildEngineWiring:
         assert saved == {"engine": "engine-sentinel", "path": expected_path}
 
 
+@dataclass(frozen=True)
 class _FakeNetworkInput:
     """One parsed network input: a name and a TensorRT-style shape (``-1`` marks the dynamic batch axis)."""
 
-    def __init__(self, name: str, shape: tuple[int, ...]) -> None:
-        self.name = name
-        self.shape = shape
+    name: str
+    shape: tuple[int, ...]
 
 
 class _FakeNetwork:

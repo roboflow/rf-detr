@@ -554,23 +554,33 @@ def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.Monk
     """
     # Deliberately distinct from the "cpu" staging move inside export() — if this were "cpu" too, the
     # assertion below would pass even with the `finally` restore deleted (both moves would look identical).
-    original_device = "original-device"
+    # Must also be a string `torch.device()` actually accepts: `prepare_export_graph()` resolves this value
+    # via `torch.device(device)` before `_convert()`/`build_engine()` ever run, so an invalid string (e.g. the
+    # former "original-device") raises RuntimeError there instead — the `finally` restore still fires and the
+    # assertion below still passes, but for the wrong reason: the mocked `build_engine` failure is never reached.
+    original_device = "meta"
     model = _make_tensorrt_export_model(device=original_device)
     onnx_output = str(tmp_path / "inference_model.onnx")
-
-    def _raise_build_engine(*_args, **_kwargs):
-        raise RuntimeError("engine build failed")
+    mock_build_engine = MagicMock(side_effect=RuntimeError("engine build failed"))
 
     monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
     monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
     # Real deepcopy (not identity) — the exported `model` local must be a distinct object from
     # `self.model.model` so only the latter's `.to()` calls are tracked, matching production behavior.
-    monkeypatch.setattr("rfdetr.export._tensorrt.exporter.TensorRTExporter.build_engine", _raise_build_engine)
+    monkeypatch.setattr(
+        "rfdetr.export._tensorrt.exporter.TensorRTExporter.build_engine",
+        lambda _self, *args, **kwargs: mock_build_engine(*args, **kwargs),
+    )
     monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
     monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="engine build failed"):
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="tensorrt", shape=(14, 14))
+
+    # Proves the raised RuntimeError actually came from `build_engine` (i.e. `_convert` reached the TensorRT
+    # stage) rather than from an earlier failure — e.g. an invalid device string — that would raise before
+    # `build_engine` is ever called and make the restore assertion below pass for the wrong reason.
+    mock_build_engine.assert_called_once()
 
     core_model = model.model.model
     assert core_model.to_calls == ["cpu", original_device], (
