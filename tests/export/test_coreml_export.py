@@ -35,7 +35,7 @@ from supervision.assets import ImageAssets, download_assets
 import rfdetr
 from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
-from rfdetr.export._coreml.exporter import CoreMLConfig, CoreMLExporter, _check_coremltools_available
+from rfdetr.export._coreml.exporter import CoreMLConfig, CoreMLExporter, _check_coremltools_available, _CoreMLApi
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import (
@@ -331,6 +331,41 @@ class TestExportCoremlValidation:
         with pytest.raises(ImportError, match="rfdetr\\[coreml\\]"):
             exporter(_make_export_graph(torch.nn.Linear(1, 1)))
 
+    def test_unknown_precision_string_is_refused_at_construction(self, tmp_path: Path) -> None:
+        """A precision string that names neither float32 nor float16 fails before the forward pass."""
+        with pytest.raises(ValueError, match="compute_precision must be"):
+            CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision="int8"))
+
+    def test_non_string_precision_is_left_to_coremltools(self, tmp_path: Path) -> None:
+        """A ``coremltools.precision`` value cannot be recognized without coremltools, so construction accepts it."""
+        CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=object()))
+
+
+#: Stand-in for a ``coremltools.precision`` member a caller passes directly; the mapper must hand it on unchanged.
+_PRECISION_MEMBER = object()
+
+
+class TestResolveComputePrecision:
+    """``_resolve_compute_precision`` maps a validated precision onto the bound ``coremltools.precision`` members."""
+
+    @pytest.mark.parametrize(
+        "precision, expected",
+        [
+            (None, "fp32-member"),
+            ("float32", "fp32-member"),
+            ("float16", "fp16-member"),
+            pytest.param(_PRECISION_MEMBER, _PRECISION_MEMBER, id="coremltools-member"),
+        ],
+    )
+    def test_maps_the_configured_precision_to_a_member(
+        self, tmp_path: Path, precision: object, expected: object
+    ) -> None:
+        """Each name reaches its own member, no precision means float32, and a member is passed through."""
+        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=precision))
+
+        assert exporter._resolve_compute_precision(api) is expected
+
 
 class TestExportCoremlBareDefaultNaming:
     """``variant_name=None`` + ``output_name=None`` combined with a non-default ``compute_precision`` (fp16).
@@ -470,6 +505,8 @@ class TestExportFormatParameter:
                 return_value=mlpackage,
             )
         )
+        # The Linux and Windows CPU jobs have no coremltools, which RFDETR.export() checks for before the forward pass.
+        self._mock_stack.enter_context(mock.patch("rfdetr.export._coreml.exporter.CoreMLExporter.check_dependencies"))
         yield
         self._mock_stack.close()
 

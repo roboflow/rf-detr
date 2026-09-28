@@ -196,16 +196,18 @@ def preload_tensorflow_before_onnx() -> None:
 
     When ONNX wins that race, TensorFlow's executor blocks in ``absl::Notification::WaitForNotification()`` while
     restoring the SavedModel bundle and is never woken, hanging the export at 0% CPU with no traceback and no
-    ``.tflite``.  ``format="tflite"`` reaches ``onnx2tf`` only after a full ONNX export, so ONNX always wins unless
-    TensorFlow is preloaded here.  See https://github.com/roboflow/rf-detr/issues/1322 for the measured comparison.
+    ``.tflite``.  ``format="tflite"`` reaches ``onnx2tf``'s converter module (``onnx2tf.onnx2tf``) only after a full
+    ONNX export, so ONNX always wins unless TensorFlow is preloaded here.  See
+    https://github.com/roboflow/rf-detr/issues/1322 for the measured comparison.
 
     Importing ``onnx`` *after* TensorFlow is safe, so the warning below is keyed on the relative order of the two
     imports (:func:`_onnx_imported_before_tensorflow`) rather than on ``onnx`` merely being imported.
 
     Note:
         Does not re-import TensorFlow when it is already loaded, and stays silent when TensorFlow is not installed —
-        the actionable missing-dependency error is raised later, by
-        :func:`~rfdetr.export._tflite.exporter._check_onnx2tf_available`.
+        on the export path, the actionable missing-dependency error is raised by
+        :meth:`~rfdetr.export._tflite.exporter.TFLiteExporter.check_dependencies`; a direct
+        :meth:`~rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx` call checks only ``onnx2tf``.
 
     Examples:
         >>> preload_tensorflow_before_onnx()  # returns when the top-level tensorflow package is unavailable

@@ -123,21 +123,30 @@ ALIASES: Mapping[str, str] = {"trt": "tensorrt", "pte": "executorch"}
 
 
 def normalize_format(format: str) -> str:
-    """Resolve an alias to the canonical format name.
+    """Resolve a format name or alias, in any case, to the canonical format name.
 
     Args:
         format: Format name or alias as the caller spelled it.
 
     Returns:
-        The canonical format name, unchanged when *format* is already canonical.
+        The canonical format name. An unknown name comes back unchanged, so the error that rejects it names it as the
+        caller typed it.
 
     Examples:
         >>> normalize_format("trt")
         'tensorrt'
-        >>> normalize_format("onnx")
+        >>> normalize_format("ONNX")
         'onnx'
+        >>> normalize_format("NoneSuch")
+        'NoneSuch'
     """
-    return ALIASES.get(format, format)
+    # RFDETR.export does not type-check `format` at runtime: a value that is not a string reaches the resolver's
+    # error unchanged, as it did before names were matched in any case.
+    if not isinstance(format, str):
+        return format
+    name = format.lower()
+    canonical = ALIASES.get(name, name)
+    return canonical if canonical in REGISTRY else format
 
 
 def resolve_exporter(format: str) -> type[Exporter[Any]]:

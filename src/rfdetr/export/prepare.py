@@ -20,9 +20,10 @@ The result is an :class:`ExportGraph`: everything a converter needs, and nothing
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, SupportsIndex, cast
 
 import numpy as np
 import torch
@@ -92,6 +93,42 @@ class ExportGraph:
     dynamic_axes: Mapping[str, Mapping[int, str]] | None
     shape: tuple[int, int]
     backbone_only: bool
+
+
+def validate_batch_size(batch_size: object) -> int:
+    """Validate the ``batch_size`` argument of :meth:`rfdetr.detr.RFDETR.export` and return it as a plain ``int``.
+
+    Accepts every integer type :func:`operator.index` does, numpy's included, so the export sizes its example batch the
+    same way whatever integer type the caller holds. A boolean is refused, as for the other sizes ``export`` checks:
+    Python's, numpy's (which numpy 1.x still converts to an index) and a boolean tensor alike.
+
+    Args:
+        batch_size: The value the caller passed.
+
+    Returns:
+        The batch size as a plain ``int``.
+
+    Raises:
+        ValueError: If *batch_size* is a boolean, is not an integer, or is below 1.
+
+    Examples:
+        >>> validate_batch_size(np.int64(2))
+        2
+        >>> validate_batch_size(0)
+        Traceback (most recent call last):
+        ...
+        ValueError: batch_size must be a positive integer, got 0.
+    """
+    is_boolean = isinstance(batch_size, (bool, np.bool_)) or (
+        isinstance(batch_size, torch.Tensor) and batch_size.dtype == torch.bool
+    )
+    try:
+        value = None if is_boolean else operator.index(cast(SupportsIndex, batch_size))
+    except TypeError:
+        value = None
+    if value is None or value < 1:
+        raise ValueError(f"batch_size must be a positive integer, got {batch_size!r}.")
+    return value
 
 
 def make_infer_image(

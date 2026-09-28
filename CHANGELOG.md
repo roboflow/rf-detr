@@ -12,6 +12,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.from_checkpoint()` no longer restores `device` from a checkpoint's `model_config`. The loading host's default wins, so a checkpoint trained on a GPU loads on a CPU-only machine; pass `device=` explicitly to pick the device yourself. Every other `model_config` field except `pretrain_weights` (the checkpoint path itself supplies the weights) is still restored, with caller keyword arguments taking precedence.
 
+- `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`.
+
+- `format="litert"` refuses keypoint models with `NotImplementedError` naming the limitation. The refusal still comes after the forward pass, but before the conversion: litert-torch cannot lower the keypoint head, and the export used to fail inside it, after a full `torch.export` capture, with `RuntimeError: Failed to export model to LiteRT`. A `backbone_only=True` export of a keypoint model still converts.
+
+- `format="coreai", coreai_precision="float16"` warns for keypoint models: that `.aimodel` terminates the process when Core AI runs it on the Neural Engine, which iOS and iPadOS pick for float16 by default.
+
+- `RFDETR.export()` checks `batch_size` before any other work: `batch_size=True`, which used to export a batch of 1, now raises `ValueError`, as does any other value that is not a positive integer (`2.0`, `"2"` and `None` raised a `TypeError` from inside the export). A numpy integer is passed on as a plain `int`.
+
 ### Fixed
 
 - `format="coreai"` works with `coreai-torch` 0.4.3, which runs the optimization passes inside `TorchConverter.to_coreai()` and removed `AIProgram.optimize()`; with 1.11.0 a fresh `pip install "rfdetr[coreai]"` resolved 0.4.3 and every Core AI export failed with `'AIProgram' object has no attribute 'optimize'`. The `[coreai]` extra now pins `coreai-torch==0.4.3` and installs on Python 3.11 to 3.14, since `coreai-core` 1.0.0b3 ships cp314 wheels. It is declared as a uv conflict with `[tflite]`, whose `onnx2tf` pins cannot meet `coreai-core`'s `numpy>=2.3`.
@@ -39,6 +47,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `TensorRTExporter.build_engine` on an `.onnx` file exported with `dynamic_batch=True` now raises `ValueError` unless its `TensorRTConfig` sets `dynamic_batch=True` and `max_batch_size`. Before, Polygraphy fixed the dynamic batch axis to 1 with only a warning, and the engine accepted batch 1 only. `RFDETR.export(format="tensorrt")` is not affected, since it applies one `dynamic_batch` setting to both the ONNX graph and the engine. ([#1541](https://github.com/roboflow/rf-detr/issues/1541))
 
 - `compile=True` training with the default `multi_scale` no longer compiles a new transformer graph for every input resolution. Under `torch.compile(dynamic=True)` two constructs specialised the feature-map height and width to their traced values: `spatial_shapes` was built with `torch.as_tensor` of the Python-int `(H, W)` pairs (the compile branch added in #1411), and the encoder-proposal grid used `torch.linspace(0, n - 1, n)`. Each new multi-scale resolution therefore recompiled the transformer until Dynamo's recompile limit (8) left the remaining resolutions running eager; for RF-DETR Nano on an RTX 5070 with torch 2.14 that was the 9th to 11th scale, 54 of 200 training steps. `spatial_shapes` is now stacked from 0-d tensors, which keeps the sizes symbolic, and the grid uses `torch.arange`, which produces the same values, so the transformer stays compiled at every scale. The `spatial_shapes` change applies only under `torch.compile`; eager, TorchScript/ONNX, `torch.export` on torch 2.7+ and eager CUDA-graph capture (`cuda_graphs=True` without `compile`) build it as before. The backbone projector still recompiles per resolution on CUDA, because Inductor's convolution-backward lowering (added in pytorch/pytorch#178945) pins the strides of convolutions that need an input gradient. ([#1410](https://github.com/roboflow/rf-detr/issues/1410))
+
+- `RFDETR.export()` refuses a request it cannot complete before it copies or runs the model:
+
+    - an unknown `quantization` for `format="tflite"`, and an unknown `openvino_precision`, `coreai_precision` or `coreml_precision` name, which failed after the forward pass (TFLite's after the whole ONNX export);
+    - `notes` that JSON cannot encode (`float("nan")`, an arbitrary object), which failed after the forward pass and left a `.onnx` without the notes behind;
+    - a `batch_size` below 1, which failed while the example batch was built with `RuntimeError: stack expects a non-empty TensorList` and now raises a `ValueError` naming `batch_size`;
+    - a missing package for the chosen format: `onnx`, which TFLite and TensorRT need too; TensorFlow, tf-keras and `onnx2tf` for TFLite; `executorch`, `coremltools`, `coreai-torch`, `openvino` or `litert-torch`. The error names the `rfdetr[...]` extra that installs it. `format="onnx"` without `onnx` used to fail with torch's `Module onnx is not installed!` after the trace, and `format="tflite"` without `onnx2tf`, TensorFlow or tf-keras only after the whole ONNX export.
+
+- `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`.
 
 ### Changed
 

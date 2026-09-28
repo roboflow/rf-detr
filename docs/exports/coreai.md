@@ -93,7 +93,7 @@ The first load compiles the asset for the Neural Engine (5 to 9 s on these devic
 
 !!! warning "Keypoint models: do not run float16 on the Neural Engine"
 
-    A float16 `RFDETRKeypointPreview` `.aimodel` terminates the process when Core AI runs it on the Neural Engine: the first inference aborts inside MPSGraph (`ANERegion.mm:414: ANE inference operation failed`), and no error reaches the caller. iOS and iPadOS choose the Neural Engine for float16 by default. Measured on macOS 27.0 (26A428), M5 Pro, with a Neural Engine preference; the same asset is correct with `SpecializationOptions.cpu_only()` or a GPU preference, and float32 is correct on every compute unit. Export keypoint models in float32, which is the default.
+    A float16 `RFDETRKeypointPreview` `.aimodel` terminates the process when Core AI runs it on the Neural Engine: the first inference aborts inside MPSGraph (`ANERegion.mm:414: ANE inference operation failed`), and no error reaches the caller. iOS and iPadOS choose the Neural Engine for float16 by default. Measured on macOS 27.0 (26A428), M5 Pro, with a Neural Engine preference; the same asset is correct with `SpecializationOptions.cpu_only()` or a GPU preference, and float32 is correct on every compute unit. Export keypoint models in float32, which is the default; a float16 keypoint export warns.
 
 ## How the Conversion Works
 

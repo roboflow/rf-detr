@@ -235,9 +235,10 @@ uv run twine check --strict dist/*
 **Model Export:**
 
 - Each format is an `Exporter` subclass in `src/rfdetr/export/_<format>/exporter.py`, built from its own frozen config dataclass defined in the same module. `RFDETR.export()` is a facade — signature and return value are the public surface; everything below it is internal.
-- `src/rfdetr/export/base.py` names no format. It holds `ExportConfig` and `Exporter` only; per-format configs and their `RFDETR.export()` keyword mapping (`setting_names`) live with the exporter that reads them.
+- `src/rfdetr/export/base.py` names no format. It holds `ExportConfig`, `Exporter` and format-independent helpers only; per-format configs and their `RFDETR.export()` keyword mapping (`setting_names`) live with the exporter that reads them.
 - `src/rfdetr/export/registry.py` is data: format name → exporter dotted path, plus the facts needed *before* the heavy optional dependency is imported (`label`, `pip_extra`, `supports_dynamic_batch`, `dynamic_batch_reason`). Those mirror the exporter's class attributes; `tests/export/test_registry.py` is the only thing enforcing that.
 - `src/rfdetr/export/prepare.py` does the format-independent graph work once and returns an `ExportGraph`. Never duplicate it into a format.
+- Refuse a bad request before the forward pass: config values in `_check_capabilities` (config only), keywords that are derived, not stored, or hidden by a config default in `_format_settings`, missing packages in a `check_dependencies` override (called by `RFDETR.export` and `Exporter.__call__`, never by the constructor or the format itself). Only refusals that need the prepared graph go in `_convert`, first.
 - Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/exports/blueprint.md](docs/exports/blueprint.md).
 
 **Model Selection (examples, docs, CI, tests, defaults):**

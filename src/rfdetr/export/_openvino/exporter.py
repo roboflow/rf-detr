@@ -109,6 +109,25 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 
+    def _check_capabilities(self) -> None:
+        """Refuse an unrecognized *precision* before the forward pass.
+
+        Raises:
+            ValueError: If *precision* is not ``"float32"``, ``"float16"``, or ``None``.
+        """
+        super()._check_capabilities()
+        if self.config.precision not in (None, "float32", "float16"):
+            raise ValueError(f"precision must be 'float32', 'float16', or None, got {self.config.precision!r}")
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``openvino`` is installed.
+
+        Raises:
+            ImportError: If ``openvino`` is not installed.
+        """
+        _check_openvino_available()
+
     def _import_converters(self) -> tuple[Callable[..., Any], Callable[..., Any]]:
         """Verify ``openvino`` is installed and return the two entry points the conversion needs.
 
@@ -161,20 +180,13 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
 
         ``compress_to_fp16`` controls IR *storage* precision only -- execution precision still depends on the
         compiled device and is not guaranteed to match eager PyTorch on non-CPU devices. ``None`` keeps
-        OpenVINO's own compressing default, which ``"float16"`` states explicitly.
+        OpenVINO's own compressing default, which ``"float16"`` states explicitly. :meth:`_check_capabilities` has
+        refused every other value, so only ``"float32"`` turns compression off.
 
         Returns:
             Whether weights are stored compressed to FP16.
-
-        Raises:
-            ValueError: If *precision* is not ``"float32"``, ``"float16"``, or ``None``.
         """
-        precision = self.config.precision
-        if precision is None or precision == "float16":
-            return True
-        if precision == "float32":
-            return False
-        raise ValueError(f"precision must be 'float32', 'float16', or None, got {precision!r}")
+        return self.config.precision != "float32"
 
     def _prepare_module_for_tracing(self, graph: ExportGraph) -> tuple[ModelWrapper, torch.Tensor]:
         """Announce the conversion, then move the graph onto CPU and wrap it for ``convert_model``.
