@@ -281,6 +281,18 @@ class TestConvertCocoClassWithRle:
         assert target["masks"].shape == (2, _H, _W)
         assert target["labels"].tolist() == [0, 1]
 
+    def test_box_only_first_annotation_keeps_later_masks(self) -> None:
+        """A first annotation without a ``segmentation`` key must not drop the masks of the ones after it."""
+        box_only = self._make_annotation([], category_id=0)
+        del box_only["segmentation"]
+        poly_anno = self._make_annotation(_make_polygon(_make_reference_mask()), category_id=1)
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target([box_only, poly_anno]))
+
+        assert target["masks"].shape == (2, _H, _W)
+        assert target["masks"].flatten(1).any(dim=1).tolist() == [False, True]
+
     def test_no_masks_without_flag(self) -> None:
         """RLE annotations should not produce masks when include_masks=False."""
         rle = _encode_compressed_rle(_make_reference_mask())

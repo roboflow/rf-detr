@@ -856,7 +856,7 @@ class ConvertCoco:
 
         # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
         if self.include_masks:
-            if len(anno) > 0 and "segmentation" in anno[0]:
+            if any("segmentation" in obj for obj in anno):
                 segmentations = [obj.get("segmentation", []) for obj in anno]
                 masks = convert_coco_poly_to_mask(segmentations, h, w)
                 if masks.numel() > 0:
