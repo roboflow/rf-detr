@@ -827,6 +827,26 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 f"batch_size={self.config.opt_batch_size} and max_batch_size={self.config.max_batch_size}."
             )
 
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Refuse a host without TensorRT or ``onnx`` before the export prepares the graph.
+
+        The TensorRT probe reads a flag resolved at import time from ``find_spec``, so asking costs nothing on a host
+        that does have TensorRT — and everything it saves on one that does not: :meth:`_convert` is only reached once
+        :func:`~rfdetr.export.prepare.prepare_export_graph` has run a full forward pass through the model. It comes
+        first because the ``onnx`` check imports ``onnx``: a refused request must not leave it loaded ahead of
+        TensorFlow, or a ``format="tflite"`` export later in the same process starts in the import order that hangs
+        its conversion (see :func:`~rfdetr.export._backend.preload_tensorflow_before_onnx`). A missing ``onnx`` names
+        this format's extra, which installs it along with TensorRT.
+
+        Raises:
+            ImportError: If ``tensorrt``, ``polygraphy`` or ``onnx`` is not installed.
+        """
+        cls._require_tensorrt()
+        from rfdetr.export._backend import check_onnx_available
+
+        check_onnx_available('Install with: pip install "rfdetr[tensorrt]"', stage="TensorRT export")
+
     def _convert(self, graph: ExportGraph) -> str:
         """Export to ONNX, build the engine from it, and return the engine's path.
 
@@ -941,26 +961,6 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         # rewrites "/" to "\\" on Windows).
         onnx_stem = os.path.splitext(onnx_path)[0]
         return f"{onnx_stem}_{'fp16' if fp16_used else 'fp32'}.trt"
-
-    @classmethod
-    def check_dependencies(cls) -> None:
-        """Refuse a host without TensorRT or ``onnx`` before the export prepares the graph.
-
-        The TensorRT probe reads a flag resolved at import time from ``find_spec``, so asking costs nothing on a host
-        that does have TensorRT — and everything it saves on one that does not: :meth:`_convert` is only reached once
-        :func:`~rfdetr.export.prepare.prepare_export_graph` has run a full forward pass through the model. It comes
-        first because the ``onnx`` check imports ``onnx``: a refused request must not leave it loaded ahead of
-        TensorFlow, or a ``format="tflite"`` export later in the same process starts in the import order that hangs
-        its conversion (see :func:`~rfdetr.export._backend.preload_tensorflow_before_onnx`). A missing ``onnx`` names
-        this format's extra, which installs it along with TensorRT.
-
-        Raises:
-            ImportError: If ``tensorrt``, ``polygraphy`` or ``onnx`` is not installed.
-        """
-        cls._require_tensorrt()
-        from rfdetr.export._onnx.exporter import _check_onnx_available
-
-        _check_onnx_available('Install with: pip install "rfdetr[tensorrt]"')
 
     @classmethod
     def _require_tensorrt(cls) -> None:

@@ -23,6 +23,7 @@ from typing import Any, Protocol, TypeVar, cast
 import numpy as np
 import torch
 
+from rfdetr.export._backend import check_onnx_available as _check_onnx_available
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
 from rfdetr.export.base import ExportConfig, Exporter, serialize_notes, shared_settings
@@ -125,32 +126,6 @@ def _require_dependency(dependency: _DependencyT | None, name: str) -> _Dependen
     if dependency is None:
         raise _onnx_dependency_error([name])
     return dependency
-
-
-def _check_onnx_available(install_hint: str = 'Install with: pip install "rfdetr[onnx]"') -> None:
-    """Raise the install hint when ``onnx`` is missing.
-
-    ``torch.onnx.export`` needs ``onnx`` too, but reports it only once the whole trace has run, without the hint. The
-    TFLite and TensorRT exporters, which export through the ONNX stage, check it with this as well.
-
-    ``onnx`` is imported here rather than read from the module-level binding above, which is fixed when this module is
-    first imported: a user who installs it after a refused export and retries in the same process (a notebook) would
-    otherwise be refused by this check until they restart it. Only an ``onnx`` that is not installed gets the hint; an
-    installed one that fails to import (a broken native extension, say) raises its own error unchanged.
-
-    Args:
-        install_hint: The sentence that tells the user what to install. A format that exports through the ONNX stage
-            names its own extra, which installs ``onnx`` along with everything else the format needs.
-
-    Raises:
-        ImportError: If ``onnx`` is not installed, or, unchanged, if an installed ``onnx`` fails to import.
-    """
-    try:
-        importlib.import_module("onnx")
-    except ModuleNotFoundError as error:
-        if error.name != "onnx":
-            raise
-        raise ImportError(f"ONNX export dependencies are missing (onnx). {install_hint}") from error
 
 
 def _require_onnx_optimizer_dependencies() -> tuple[

@@ -126,7 +126,11 @@ def normalize_format(format: str) -> str:
     """Resolve a format name or alias, in any case, to the canonical format name.
 
     Args:
-        format: Format name or alias as the caller spelled it.
+        format: Format name or alias as the caller spelled it. Annotated ``str`` because that is what every real
+            caller passes; a non-``str`` (``RFDETR.export`` does not type-check ``format`` at runtime) is
+            deliberately passed through unchanged rather than raising here, so the caller further down the chain
+            (:func:`resolve_exporter`) reports it with a clear ``ValueError`` instead of an opaque ``AttributeError``
+            from ``.lower()``.
 
     Returns:
         The canonical format name. An unknown name comes back unchanged, so the error that rejects it names it as the

@@ -21,7 +21,7 @@ The result is an :class:`ExportGraph`: everything a converter needs, and nothing
 from __future__ import annotations
 
 import operator
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, SupportsIndex, cast
 
@@ -129,6 +129,54 @@ def validate_batch_size(batch_size: object) -> int:
     if value is None or value < 1:
         raise ValueError(f"batch_size must be a positive integer, got {batch_size!r}.")
     return value
+
+
+def validate_export_shape(
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+    model_config: object,
+    resolution: int,
+    *,
+    resolve_patch_size: Callable[[int | None, object, str], int],
+    validate_shape_dims: Callable[[object, int, int, int], tuple[int, int]],
+) -> tuple[int, int]:
+    """Resolve and validate the ``shape``/``patch_size`` arguments of :meth:`rfdetr.detr.RFDETR.export`.
+
+    ``resolve_patch_size`` and ``validate_shape_dims`` are injected rather than imported: both are module-private to
+    ``rfdetr.detr`` because :meth:`~rfdetr.detr.RFDETR.predict` shares them too, so this function borrows the caller's
+    copies instead of duplicating or publicizing them.
+
+    Args:
+        shape: ``(height, width)`` supplied by the caller, or ``None`` to default to a square at *resolution*.
+        patch_size: Backbone patch size supplied by the caller, or ``None`` to read it from *model_config*.
+        model_config: The model's configuration object; read for ``patch_size`` and ``num_windows``.
+        resolution: The model's default resolution, used when *shape* is ``None``.
+        resolve_patch_size: ``rfdetr.detr._resolve_patch_size``.
+        validate_shape_dims: ``rfdetr.detr._validate_shape_dims``.
+
+    Returns:
+        The validated ``(height, width)`` shape, both dimensions divisible by ``patch_size * num_windows``.
+
+    Raises:
+        ValueError: If ``num_windows`` is not a positive integer, if *shape* is ``None`` and the model's default
+            resolution is not divisible by ``patch_size * num_windows``, or if an explicit *shape* fails
+            ``validate_shape_dims``.
+    """
+    patch_size = resolve_patch_size(patch_size, model_config, "export")
+    num_windows = getattr(model_config, "num_windows", 1)
+    if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
+        raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
+    block_size = patch_size * num_windows
+    if shape is None:
+        shape = (resolution, resolution)
+        if shape[0] % block_size != 0:
+            raise ValueError(
+                f"Model's default resolution ({resolution}) is not divisible by "
+                f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                f"Provide an explicit shape divisible by {block_size}.",
+            )
+        return shape
+    return validate_shape_dims(shape, block_size, patch_size, num_windows)
 
 
 def make_infer_image(

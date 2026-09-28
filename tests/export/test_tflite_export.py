@@ -1443,6 +1443,8 @@ class TestPreloadTensorflowBeforeOnnx:
         ``onnx`` first is unrecoverable in-process, so the deadlock risk is logged.  ``tensorflow`` first — the safe
         order — must stay quiet, otherwise the warning trains callers who did the right thing to ignore it.
         """
+        # The warning is logged once per process, so every case starts from an unwarned module.
+        monkeypatch.setattr("rfdetr.export._backend._ONNX_ORDER_WARNED", False)
         for package in ("onnx", "tensorflow"):
             _drop_from_sys_modules(monkeypatch, package)
         for package in preloaded:
@@ -1486,6 +1488,7 @@ class TestExportTflitePreloadOrder:
                 "rfdetr.export._tflite.exporter._check_onnx2tf_available",
                 side_effect=lambda: calls.append("check"),
             ),
+            mock.patch("rfdetr.export._tflite.exporter._check_tf_keras_available"),
         ):
             _run_convert_onnx(onnx_model, tflite_output)
 
@@ -1569,7 +1572,7 @@ class TestTFLiteDependencyCheckOrder:
         (package / "onnx2tf.py").write_text("")
         monkeypatch.setattr("rfdetr.export._backend.preload_tensorflow_before_onnx", lambda: None)
         monkeypatch.setattr("rfdetr.export._tflite.exporter._check_tf_keras_available", lambda: None)
-        monkeypatch.setattr("rfdetr.export._onnx.exporter._check_onnx_available", lambda install_hint: None)
+        monkeypatch.setattr("rfdetr.export._backend.check_onnx_available", lambda install_hint, *, stage: None)
         monkeypatch.syspath_prepend(str(tmp_path))
 
         # Restores sys.modules afterwards, dropping the stand-in package this test imports.
@@ -1598,6 +1601,7 @@ class TestExportTfliteAppliesInterpreterPath:
     ) -> None:
         """``onnx2tf.convert`` runs with the interpreter script directory first on ``PATH``."""
         monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.setattr("rfdetr.export._tflite.exporter._check_tf_keras_available", lambda: None)
         seen: list[str] = []
         _, convert_mock = fake_onnx2tf
 

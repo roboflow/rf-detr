@@ -350,6 +350,11 @@ class Exporter(ABC, Generic[_ConfigT]):
             ImportError: If an override finds a package its format needs is not installed, naming the extra that
                 installs it.
 
+        Note:
+            Not thread-safe across concurrent exports in the same process: an override may probe or mutate
+            process-global state (``sys.modules``, import order, warning filters) that a concurrent call to this
+            method, on any format, could race with. Callers are assumed to invoke exports one at a time.
+
         Examples:
             >>> Exporter.check_dependencies() is None
             True
