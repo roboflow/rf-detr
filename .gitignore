@@ -232,3 +232,8 @@ docs/cookbooks/export_apple/
 
 # MacOS files
 .DS_Store
+
+# Local RF-DETR demo/test files
+outputs/
+test.jpg
+predict_test.py
