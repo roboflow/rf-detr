@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-25T17:47:43">
+  <meta property="article:modified_time" content="2026-09-29T11:52:13">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-25T17:47:43",
+    "dateModified": "2026-09-29T11:52:13",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3338,7 +3338,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>format</code></td>
 <td><code>"onnx"</code></td>
-<td>Export format: <code>"onnx"</code>, <code>"tflite"</code>, <code>"tensorrt"</code> (alias: <code>"trt"</code>), <code>"executorch"</code>, <code>"openvino"</code>, <code>"coreml"</code>, <code>"coreai"</code> or <code>"litert"</code>.</td>
+<td>Export format: <code>"onnx"</code>, <code>"tflite"</code>, <code>"tensorrt"</code> (alias: <code>"trt"</code>), <code>"executorch"</code>, <code>"openvino"</code>, <code>"coreml"</code>, <code>"coreai"</code> or <code>"litert"</code>, in any case.</td>
 </tr>
 <tr>
 <td><code>quantization</code></td>
@@ -3383,7 +3383,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>batch_size</code></td>
 <td><code>1</code></td>
-<td>Batch size for the exported model. With <code>dynamic_batch=True</code> and <code>format="tensorrt"</code>, also the batch the engine's optimization profile is tuned for.</td>
+<td>Batch size for the exported model: a positive integer (numpy integers work, <code>bool</code> does not); anything else raises <code>ValueError</code>. With <code>dynamic_batch=True</code> and <code>format="tensorrt"</code>, also the batch the engine's optimization profile is tuned for.</td>
 </tr>
 <tr>
 <td><code>dynamic_batch</code></td>
@@ -3418,7 +3418,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>notes</code></td>
 <td><code>None</code></td>
-<td>Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the <code>"rfdetr_notes"</code> metadata property.</td>
+<td>Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the <code>"rfdetr_notes"</code> metadata property. For a format that embeds it, a value JSON cannot encode raises before the model runs: <code>ValueError</code> for <code>NaN</code>/<code>Infinity</code> or a circular reference, <code>TypeError</code> for an arbitrary object.</td>
 </tr>
 <tr>
 <td><code>coreml_precision</code></td>
@@ -3428,7 +3428,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>coreai_precision</code></td>
 <td><code>None</code></td>
-<td>Compute precision for <code>format="coreai"</code>: <code>None</code>/<code>"float32"</code> (matches eager PyTorch on the GPU) or <code>"float16"</code> (half the size, and the precision Core AI runs on the Apple Neural Engine — at a measured accuracy cost, see <a href="coreai/#precision-compute-units-and-latency">Core AI</a>). Ignored for every other format.</td>
+<td>Compute precision for <code>format="coreai"</code>: <code>None</code>/<code>"float32"</code> (matches eager PyTorch on the GPU) or <code>"float16"</code> (half the size, and the precision Core AI runs on the Apple Neural Engine — at a measured accuracy cost, see <a href="coreai/#precision-compute-units-and-latency">Core AI</a>); a float16 keypoint model warns, since that asset aborts on the Neural Engine. Ignored for every other format.</td>
 </tr>
 <tr>
 <td><code>openvino_precision</code></td>
@@ -3603,7 +3603,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 25, 2026 17:47:43 UTC">2026-09-25 17:47:43</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 11:52:13 UTC">2026-09-29 11:52:13</span>
   </span>
 
     
