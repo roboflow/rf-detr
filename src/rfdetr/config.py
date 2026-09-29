@@ -1444,11 +1444,13 @@ class TrainConfig(BaseConfig):
     notes: Optional[Any] = Field(
         default=None,
         description=(
-            "User-defined provenance metadata embedded in best-model .pth checkpoints "
-            "under checkpoint['args']['notes'] and in exported ONNX files under the "
-            "'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
-            "(string, dict, list, int, float, bool). String values are stored verbatim; "
-            "all other types are JSON-encoded."
+            "User-defined provenance metadata embedded in best-model .pth and Lightning .ckpt "
+            "checkpoints under checkpoint['args']['notes'], and in exported ONNX/Core AI files "
+            "under the 'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
+            "(string, dict, list, int, float, bool). Checkpoints store the value as-is; a "
+            "Lightning .ckpt additionally replaces a value a weights-only torch.load cannot "
+            "read with its repr() (and warns) so Trainer.fit(ckpt_path=...) can still resume. "
+            "ONNX/Core AI exports store string values verbatim and JSON-encode all other types."
         ),
     )
 

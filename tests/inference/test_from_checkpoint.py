@@ -28,6 +28,7 @@ from rfdetr.config import PretrainWeightsCompatibilityWarning
 from rfdetr.detr import RFDETR
 from rfdetr.detr import logger as detr_logger
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
+from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.utilities.state_dict import strip_checkpoint
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSmall
 
@@ -80,10 +81,10 @@ def _call_from_checkpoint(ckpt: dict, path: Path, cls_patch_target: str, **kwarg
 
     Examples:
         This helper patches ``torch.load`` and a model class — it cannot be run without a real
-        ``Path`` argument or live imports, so the doctest is illustrative only.
+        ``Path`` argument or live imports, so the example below is illustrative only.
 
-        >>> callable(_call_from_checkpoint)  # doctest: +SKIP
-        True
+        callable(_call_from_checkpoint)
+        # True
     """
     mock_instance = MagicMock()
     with (
@@ -239,12 +240,37 @@ class TestFromCheckpointEdgeCases:
             with pytest.raises(ImportError):
                 RFDETR.from_checkpoint(tmp_path / "rf-detr-xlarge-starter.pth")
 
-    def test_characterization_missing_args_key_raises_key_error(self, tmp_path: Path) -> None:
-        """Checkpoint without 'args' key raises KeyError."""
+    def test_missing_args_key_names_where_the_settings_are(self, tmp_path: Path) -> None:
+        """A checkpoint recording no ``args`` is refused with the same guidance whatever its extension.
+
+        The refusal used to require a ``pytorch-lightning_version`` key as well, which every rfdetr ``.pth`` writes and
+        no converted ``.ckpt`` does, so files in between fell through to a bare ``KeyError: 'args'``.
+        """
         ckpt = {"model": {}}
         with patch("rfdetr.detr.torch.load", return_value=ckpt):
-            with pytest.raises(KeyError):
+            with pytest.raises(ValueError, match="training_config.json"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_converted_legacy_checkpoint_is_refused_with_guidance(self, tmp_path: Path) -> None:
+        """``convert_legacy_checkpoint`` output stores args under ``hyper_parameters``, so it names no model.
+
+        Real files, no mocked loader: the converted ``.ckpt`` carries neither ``args`` nor ``pytorch-
+        lightning_version``, which is exactly the combination that used to escape the check.
+        """
+        source = tmp_path / "legacy.pth"
+        torch.save({"model": {"class_embed.weight": torch.zeros(4, 8)}, "args": {"num_classes": 3}}, source)
+        converted = tmp_path / "converted.ckpt"
+        convert_legacy_checkpoint(str(source), str(converted))
+
+        with pytest.raises(ValueError, match="training_config.json"):
+            RFDETR.from_checkpoint(converted)
+
+    def test_lightning_ckpt_without_args_points_at_training_config(self, tmp_path: Path) -> None:
+        """A ``.ckpt`` from 1.11.0 or earlier records no model; the error names where its settings are (#1552)."""
+        ckpt = {"state_dict": {"model.class_embed.weight": torch.zeros(4, 8)}, "pytorch-lightning_version": "2.6.6"}
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ValueError, match="training_config.json"):
+                RFDETR.from_checkpoint(tmp_path / "last.ckpt")
 
     def test_characterization_callable_on_subclass(self, tmp_path: Path) -> None:
         """from_checkpoint can be called on a concrete subclass (RFDETRSmall)."""
