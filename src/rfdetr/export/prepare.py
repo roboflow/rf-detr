@@ -23,7 +23,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, SupportsIndex, cast
+from typing import Any, Protocol, SupportsIndex, cast, runtime_checkable
 
 import numpy as np
 import torch
@@ -70,6 +70,19 @@ class ExportModelConfig(Protocol):
     @property
     def use_grouppose_keypoints(self) -> bool:
         """Whether the model predicts keypoints."""
+
+
+@runtime_checkable
+class _ExportShapeAware(Protocol):
+    """A non-DINOv2 encoder that bakes its position embeddings for a fixed export shape.
+
+    Encoders plugged in through :func:`rfdetr.models.backbone.register_backbone` implement this when their forward
+    would otherwise resample position embeddings at a shape other than their native one (see
+    :meth:`rfdetr.models.backbone.backbone.Backbone._build_encoder`).
+    """
+
+    def set_export_shape(self, shape: tuple[int, int]) -> None:
+        """Freeze position embeddings to *shape* before tracing."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,7 +372,7 @@ def prepare_export_graph(
         if isinstance(backbone_module, DinoV2):
             backbone_module.shape = shape
             backbone_module.export()
-        elif callable(getattr(type(backbone_module), "set_export_shape", None)):
+        elif isinstance(backbone_module, _ExportShapeAware):
             # Encoders plugged in through ``rfdetr.models.backbone.register_backbone`` opt in to the same freeze.
             backbone_module.set_export_shape(shape)
 

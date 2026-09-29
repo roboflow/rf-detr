@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -85,8 +85,10 @@ class Backbone(BackboneBase):
         level2scalefactor = dict(P3=2.0, P4=1.0, P5=0.5)
         scale_factors = [level2scalefactor[lvl] for lvl in self.projector_scale]
 
+        # DinoV2 and every registered encoder expose their per-level channels (see _build_encoder).
+        encoder_channels = cast("list[int]", self.encoder._out_feature_channels)
         self.projector = MultiScaleProjector(
-            in_channels=self.encoder._out_feature_channels,
+            in_channels=encoder_channels,
             out_channels=out_channels,
             scale_factors=scale_factors,
             layer_norm=layer_norm,
@@ -94,7 +96,7 @@ class Backbone(BackboneBase):
         )
         self.cross_attn_projector = (
             MultiScaleProjector(
-                in_channels=self.encoder._out_feature_channels,
+                in_channels=encoder_channels,
                 out_channels=out_channels,
                 scale_factors=scale_factors,
                 layer_norm=layer_norm,
