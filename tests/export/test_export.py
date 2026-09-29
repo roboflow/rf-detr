@@ -460,7 +460,7 @@ def test_rfdetr_export_warns_when_max_batch_size_used_without_tensorrt(
 
     with pytest.warns(UserWarning, match=r"`max_batch_size`.*ignored"):
         _detr_module.RFDETR.export(
-            model, output_dir=str(tmp_path), format="onnx", dynamic_batch=True, max_batch_size=8, shape=(14, 14)
+            model, output_dir=str(tmp_path), format="onnx", dynamic_batch=True, max_batch_size=0, shape=(14, 14)
         )
 
 
@@ -470,7 +470,7 @@ def test_rfdetr_export_warns_when_max_batch_size_used_without_dynamic_batch(
     """`max_batch_size` on a static (`dynamic_batch=False`) TensorRT export is ignored and must warn.
 
     A static export builds the engine with the exact call it always made -- there is no optimization profile for
-    `max_batch_size` to bound -- so a value passed there is inert and should not vanish silently.
+    `max_batch_size` to bound -- so even an invalid value passed there is inert and should not fail validation.
     """
     model = _make_tensorrt_export_model()
     onnx_output = str(tmp_path / "inference_model.onnx")
@@ -487,7 +487,7 @@ def test_rfdetr_export_warns_when_max_batch_size_used_without_dynamic_batch(
 
     with pytest.warns(UserWarning, match=r"`max_batch_size`.*ignored"):
         _detr_module.RFDETR.export(
-            model, output_dir=str(tmp_path), format="tensorrt", dynamic_batch=False, max_batch_size=8, shape=(14, 14)
+            model, output_dir=str(tmp_path), format="tensorrt", dynamic_batch=False, max_batch_size=0, shape=(14, 14)
         )
 
 
@@ -1573,6 +1573,18 @@ class TestExportFormatSpelling:
         with pytest.raises(ValueError, match="Unsupported export format 123"):
             _detr_module.RFDETR.export(
                 _make_tensorrt_export_model(), output_dir=str(tmp_path), format=123, shape=(14, 14)
+            )
+
+        resolve_exporter_stub.assert_not_called()
+
+    def test_list_format_is_refused_with_a_clear_error(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A list format raises ValueError at the public export boundary instead of set-membership TypeError."""
+        resolve_exporter_stub = MagicMock()
+        monkeypatch.setattr("rfdetr.export.registry.resolve_exporter", resolve_exporter_stub)
+
+        with pytest.raises(ValueError, match=r"Unsupported export format \['onnx'\]"):
+            _detr_module.RFDETR.export(
+                _make_tensorrt_export_model(), output_dir=str(tmp_path), format=["onnx"], shape=(14, 14)
             )
 
         resolve_exporter_stub.assert_not_called()

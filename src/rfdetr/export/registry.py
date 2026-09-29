@@ -126,15 +126,14 @@ def normalize_format(format: str) -> str:
     """Resolve a format name or alias, in any case, to the canonical format name.
 
     Args:
-        format: Format name or alias as the caller spelled it. Annotated ``str`` because that is what every real
-            caller passes; a non-``str`` (``RFDETR.export`` does not type-check ``format`` at runtime) is
-            deliberately passed through unchanged rather than raising here, so the caller further down the chain
-            (:func:`resolve_exporter`) reports it with a clear ``ValueError`` instead of an opaque ``AttributeError``
-            from ``.lower()``.
+        format: Format name or alias as the caller spelled it.
 
     Returns:
         The canonical format name. An unknown name comes back unchanged, so the error that rejects it names it as the
         caller typed it.
+
+    Raises:
+        ValueError: If *format* is not a string.
 
     Examples:
         >>> normalize_format("trt")
@@ -144,10 +143,8 @@ def normalize_format(format: str) -> str:
         >>> normalize_format("NoneSuch")
         'NoneSuch'
     """
-    # RFDETR.export does not type-check `format` at runtime: a value that is not a string reaches the resolver's
-    # error unchanged, as it did before names were matched in any case.
     if not isinstance(format, str):
-        return format
+        raise ValueError(f"Unsupported export format {format!r}. Choose from: {sorted(REGISTRY)}.")
     name = format.lower()
     canonical = ALIASES.get(name, name)
     return canonical if canonical in REGISTRY else format

@@ -1993,13 +1993,13 @@ class RFDETR:
         # Every format builds its example batch from this, so it is checked before any exporter is imported.
         export_batch_size = validate_batch_size(batch_size)
         export_max_batch_size = None
-        if max_batch_size is not None:
+        format = normalize_format(format)
+        if max_batch_size is not None and format == "tensorrt" and dynamic_batch:
             try:
                 export_max_batch_size = validate_batch_size(max_batch_size)
             except ValueError:
                 raise ValueError(f"max_batch_size must be a positive integer, got {max_batch_size!r}.") from None
-        format = normalize_format(format)
-        if max_batch_size is not None and (format != "tensorrt" or not dynamic_batch):
+        elif max_batch_size is not None:
             warnings.warn(
                 f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
                 f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
