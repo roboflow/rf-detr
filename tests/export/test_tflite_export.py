@@ -1521,6 +1521,28 @@ class TestTFKerasCheck:
         _check_tf_keras_available()
 
 
+def _stop_at_onnx_import(name: str, path: object, target: object = None) -> None:
+    """``find_spec`` of a ``sys.meta_path`` finder that raises at an import of ``onnx`` and passes on every other one.
+
+    Returning ``None`` hands the import to the next finder, so only ``onnx`` is affected.
+
+    Args:
+        name: Fully qualified name of the module being imported.
+        path: Parent package's ``__path__``, or ``None`` for a top-level import.
+        target: Module object being reloaded, if any.
+
+    Examples:
+        >>> _stop_at_onnx_import("json", None) is None
+        True
+        >>> _stop_at_onnx_import("onnx", None)
+        Traceback (most recent call last):
+        ...
+        RuntimeError: stopped at the first onnx import
+    """
+    if name == "onnx":
+        raise RuntimeError("stopped at the first onnx import")
+
+
 class TestTFLiteDependencyCheckOrder:
     """``TFLiteExporter.check_dependencies`` loads TensorFlow before anything imports onnx (issue #1322), and imports
     nothing whose import has side effects the forward pass must not see.
@@ -1535,30 +1557,24 @@ class TestTFLiteDependencyCheckOrder:
         """The preload runs before the first import of ``onnx``, which loading the ONNX exporter module triggers.
 
         ``onnx`` and the ONNX exporter module are dropped from ``sys.modules``, so the check has to import them again,
-        and a finder first on ``sys.meta_path`` records the moment ``onnx`` is asked for and stops the check there. It
-        sees an ``import`` statement and ``importlib.import_module`` alike. Recording calls alone would miss an import
-        placed above the preload: patching a function of the ONNX exporter module imports that module first.
+        and a finder first on ``sys.meta_path`` stops the check the moment ``onnx`` is asked for: a preload placed after
+        that import never runs. The finder sees an ``import`` statement and ``importlib.import_module`` alike. Recording
+        calls alone would miss an import placed above the preload: patching a function of the ONNX exporter module
+        imports that module first.
         """
         events: list[str] = []
-
-        def stop_at_onnx(name: str, path: object, target: object = None) -> None:
-            """Stop at the first import of ``onnx``; leave every other import to the next finder."""
-            if name == "onnx":
-                events.append("import onnx")
-                raise RuntimeError("stopped at the first onnx import")
-
         exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
         monkeypatch.delitem(sys.modules, "rfdetr.export._onnx.exporter", raising=False)
         monkeypatch.delitem(sys.modules, "onnx", raising=False)
         monkeypatch.setitem(sys.modules, "tensorflow", types.ModuleType("tensorflow"))
         monkeypatch.setattr("rfdetr.export._backend.preload_tensorflow_before_onnx", lambda: events.append("preload"))
         monkeypatch.setattr("rfdetr.export._tflite.exporter._check_tf_keras_available", lambda: None)
-        monkeypatch.setattr(sys, "meta_path", [types.SimpleNamespace(find_spec=stop_at_onnx), *sys.meta_path])
+        monkeypatch.setattr(sys, "meta_path", [types.SimpleNamespace(find_spec=_stop_at_onnx_import), *sys.meta_path])
 
         with pytest.raises(RuntimeError, match="first onnx import"):
             exporter.check_dependencies()
 
-        assert events == ["preload", "import onnx"]
+        assert events == ["preload"], "the check imported onnx before it preloaded TensorFlow"
 
     def test_onnx2tf_converter_module_is_not_imported(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """The check imports the top-level ``onnx2tf`` only, never its converter module ``onnx2tf.onnx2tf``.
