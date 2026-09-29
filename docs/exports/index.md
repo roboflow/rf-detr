@@ -10,7 +10,7 @@ description: Overview of exporting RF-DETR models to ONNX, TensorRT, TFLite, Lit
     - Export to OpenVINO IR for optimized inference on CPU (x86, ARM), GPU (Intel integrated & discrete GPU) and AI accelerators (Intel NPU)
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
     - Export to LiteRT (`.tflite`) straight from PyTorch with `litert-torch` — no ONNX or TensorFlow step
-    - TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)
+    - TensorRT conversion delivers the lowest latency on NVIDIA GPUs — 2.3 ms for Nano on a T4, TensorRT FP16, model only, batch 1 (the architecture headline on the [Benchmarks page](../learn/benchmarks.md); this page's own L4 end-to-end numbers below are a different measurement, see "Which latency number is this?")
     - INT8 quantization is dynamic-range and needs no calibration data
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
@@ -35,14 +35,24 @@ This page covers the shared export API, parameters, output-file naming, and the 
 
 Which format is fastest depends entirely on the hardware you deploy to. The four per-hardware cookbooks each export every format targeting one class of device, run inference on it, and benchmark it against a PyTorch baseline on the same machine. Below is the fastest end-to-end result per hardware class, plus the PyTorch anchor it was measured against; the cookbooks carry the full tables, including forward-only timings, memory, and the slower configurations.
 
-| Hardware                 | Fastest format            | end2end [ms]   | FPS [img/s] | PyTorch `predict()` anchor | Cookbook                              |
-| ------------------------ | ------------------------- | -------------- | ----------- | -------------------------- | ------------------------------------- |
-| NVIDIA L4                | TensorRT (auto precision) | 4.91 ± 0.14    | 203.5       | 19.88 ms / 50.3 FPS        | [CUDA](../cookbooks/export-cuda/)     |
-| Apple M-series (ANE/GPU) | Core AI fp16              | 11.45 ± 0.18   | 87.3        | 22.62 ms / 44.2 FPS        | [Apple](../cookbooks/export-apple/)   |
-| x86 CPU (4 cores)        | OpenVINO fp32 IR          | 311.92 ± 46.04 | 3.2         | 345.76 ms / 2.9 FPS        | [CPU](../cookbooks/export-cpu/)       |
-| ARM CPU (edge proxy)     | ExecuTorch XNNPACK        | 87.33 ± 1.13   | 11.5        | —                          | [Mobile](../cookbooks/export-mobile/) |
+| Hardware                 | Fastest format                                                   | end2end [ms]   | FPS [img/s] | PyTorch `predict()` anchor | Cookbook                              |
+| ------------------------ | ---------------------------------------------------------------- | -------------- | ----------- | -------------------------- | ------------------------------------- |
+| NVIDIA L4                | TensorRT via `inference-models` (managed engine, auto precision) | 4.91 ± 0.14    | 203.5       | 19.88 ms / 50.3 FPS        | [CUDA](../cookbooks/export-cuda/)     |
+| Apple M-series (ANE/GPU) | Core AI fp16                                                     | 11.45 ± 0.18   | 87.3        | 22.62 ms / 44.2 FPS        | [Apple](../cookbooks/export-apple/)   |
+| x86 CPU (4 cores)        | OpenVINO fp32 IR                                                 | 311.92 ± 46.04 | 3.2         | 345.76 ms / 2.9 FPS        | [CPU](../cookbooks/export-cpu/)       |
+| ARM CPU (edge proxy)     | ExecuTorch XNNPACK                                               | 87.33 ± 1.13   | 11.5        | —                          | [Mobile](../cookbooks/export-mobile/) |
 
-All numbers are batch 1, `RFDETRSmall`, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare *within* a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 12–17% of the mean — on that machine no CPU format separates from the others by more than one standard deviation.
+All numbers are batch 1, `RFDETRSmall`, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare *within* a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 12–17% of the mean — on that machine no CPU format separates from the others by more than one standard deviation. The `inference-models` call in the L4 row selects and loads a separate prebuilt TensorRT engine package; the `.trt` file `model.export(format="trt")` writes is a standalone artifact this table does not time — see the [CUDA cookbook](../cookbooks/export-cuda/#6-tensorrt).
+
+!!! note "Which latency number is this?"
+
+    RF-DETR latency appears on three different pages, and they are three different measurements:
+
+    - **Architecture headline** (T4, TensorRT FP16, model only, batch 1) — the number that compares architectures. See the [Benchmarks page](../learn/benchmarks.md).
+    - **Deployed product** (L4, Roboflow Inference, model only, batch 1) — what a Roboflow Inference user gets. See [Roboflow's RF-DETR model page](https://docs.roboflow.com/models/supported-models/rf-detr).
+    - **Export cookbooks** (this page and below) — end-to-end and forward-only timings for every export format, on one machine per cookbook. Their value is **ratios within one machine**, not absolute milliseconds to set against the other two pages.
+
+    Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The L4 TensorRT figures on this page and on Roboflow's model page do not currently agree — see the [CUDA cookbook's Results section](../cookbooks/export-cuda/#7-results) for the open gap.
 
 !!! warning "fp16 pays off only where the silicon implements it"
 
