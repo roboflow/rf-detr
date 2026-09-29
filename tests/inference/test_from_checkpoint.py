@@ -1243,3 +1243,158 @@ class TestFromCheckpointStrippedBestTotal:
         assert call_kwargs["freeze_encoder"] is True
         assert "device" not in call_kwargs, "device stays host policy, unlike the other flags"
         assert mock_cls.call_args.kwargs["resolution"] == 224, "other model_config fields must still be restored"
+
+
+# ---------------------------------------------------------------------------
+# PE-Core-T plus models (RFDETRAtto / RFDETRFemto / RFDETRPico)
+# ---------------------------------------------------------------------------
+
+
+class TestFromCheckpointPEPlusModels:
+    """Resolution of the PE-Core-T plus models, independent of which rfdetr_plus (if any) is installed.
+
+    ``rfdetr.platform.models`` is patched into one of three states: a plus release that ships the PE models, an older
+    plus release without them (only the XLarge models), and no plus at all.
+    """
+
+    _PE_SYMBOLS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
+
+    @pytest.fixture
+    def platform_models(self, monkeypatch: pytest.MonkeyPatch):
+        """Patch ``rfdetr.platform.models`` so every plus symbol is controlled by the test."""
+        import rfdetr.platform
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        for symbol in (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"):
+            monkeypatch.delitem(platform_models.__dict__, symbol, raising=False)
+        return platform_models
+
+    def _install(self, monkeypatch: pytest.MonkeyPatch, platform_models, symbols) -> dict[str, MagicMock]:
+        fakes = {}
+        for symbol in symbols:
+            fakes[symbol] = MagicMock(name=symbol)
+            fakes[symbol].__name__ = symbol
+            monkeypatch.setitem(platform_models.__dict__, symbol, fakes[symbol])
+        return fakes
+
+    @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
+    def test_model_name_resolves_the_plus_class(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
+        fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        fakes[model_name].assert_called_once()
+        assert result is fakes[model_name].return_value
+
+    @pytest.mark.parametrize(
+        "pretrain_weights, expected",
+        [
+            pytest.param("rf-detr-atto.pth", "RFDETRAtto", id="atto"),
+            pytest.param("rf-detr-femto.pth", "RFDETRFemto", id="femto"),
+            pytest.param("/cache/rfdetr/rf-detr-pico.pth", "RFDETRPico", id="pico-full-path"),
+        ],
+    )
+    def test_pretrain_weights_name_resolves_the_plus_class(
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str
+    ) -> None:
+        fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights)):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert result is fakes[expected].return_value
+
+    @pytest.mark.parametrize(
+        "pretrain_weights",
+        [
+            pytest.param("/data/epicode/rf-detr-nano.pth", id="pico-inside-directory"),
+            pytest.param("/data/tomatto/rf-detr-nano.pth", id="atto-inside-directory"),
+        ],
+    )
+    def test_size_words_inside_paths_do_not_match(
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str
+    ) -> None:
+        """Only release-filename stems select a PE model; a bare size word elsewhere in the path does not."""
+        self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        result, mock_cls = _call_from_checkpoint(
+            _ns(pretrain_weights), tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano"
+        )
+
+        assert result is mock_cls.return_value
+
+    @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
+    def test_older_plus_model_name_raises_upgrade_hint(
+        self, monkeypatch, platform_models, tmp_path: Path, model_name: str
+    ) -> None:
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "rf-detr-nano.pth", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="predates it"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_older_plus_pretrain_weights_name_raises_upgrade_hint(
+        self, monkeypatch, platform_models, tmp_path: Path
+    ) -> None:
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth")):
+            with pytest.raises(ImportError, match="predates it"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    def test_older_plus_still_resolves_xlarge(self, monkeypatch, platform_models, tmp_path: Path) -> None:
+        fakes = self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRXLarge"}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert result is fakes["RFDETRXLarge"].return_value
+
+    @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
+    def test_without_plus_raises_install_hint(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
+        import rfdetr.platform
+
+        monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", False)
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="rfdetr_plus package"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+
+class TestPlatformModelsPEExports:
+    """``rfdetr.platform.models`` / ``rfdetr`` surface for the PE-Core-T plus models."""
+
+    @pytest.mark.parametrize("symbol", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
+    def test_listed_as_plus_exports(self, symbol: str) -> None:
+        import rfdetr
+        import rfdetr.platform.models as platform_models
+
+        assert symbol in rfdetr._PLUS_EXPORTS
+        assert symbol in platform_models._PLUS_EXPORTS
+
+    @pytest.mark.parametrize("symbol", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
+    def test_older_plus_access_raises_upgrade_hint(self, monkeypatch: pytest.MonkeyPatch, symbol: str) -> None:
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.delitem(platform_models.__dict__, symbol, raising=False)
+
+        with pytest.raises(ImportError, match="predates it"):
+            getattr(platform_models, symbol)
+
+    @pytest.mark.parametrize("symbol", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
+    def test_missing_plus_access_raises_install_hint(self, monkeypatch: pytest.MonkeyPatch, symbol: str) -> None:
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", False)
+        monkeypatch.delitem(platform_models.__dict__, symbol, raising=False)
+
+        with pytest.raises(ImportError, match="plus"):
+            getattr(platform_models, symbol)

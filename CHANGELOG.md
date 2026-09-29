@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `rfdetr.RFDETRAtto`, `rfdetr.RFDETRFemto` and `rfdetr.RFDETRPico`: real-time detection models with Meta's Perception Encoder PE-Core-T backbone, provided by `rfdetr_plus` (`pip install "rfdetr[plus]"`, Platform Model License 1.0) like the XLarge models. `RFDETR.from_checkpoint()` resolves their checkpoints by `model_name` or by their `rf-detr-atto.pth` / `rf-detr-femto.pth` / `rf-detr-pico.pth` release file names. An installed `rfdetr_plus` that predates them now raises an `ImportError` telling you to upgrade it, instead of breaking checkpoint loading for the XLarge models too.
+- `rfdetr.models.backbone.register_backbone(encoder, backbone_cls)` lets an extension package build a non-DINOv2 encoder for a `ModelConfig.encoder` name. `backbone_cls` subclasses `Backbone` and overrides `_build_encoder` (and `get_named_param_lr_pairs` when its parameter names need other layer-decay rules); the projector, padding masks and export path stay `Backbone`'s. Built-in DINOv2 encoder names cannot be re-registered. During export, a registered encoder that defines `set_export_shape(shape)` gets its position embeddings frozen to the export shape, as DINOv2's are.
+- `ModelConfig.dim_feedforward` (default `2048`, the value every model used before) sets the decoder feed-forward width, which was only reachable through `ModelDefaults`. Overriding it on a model with published weights triggers the usual `PretrainWeightsCompatibilityWarning`.
+
 ### Changed
 
 - `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))

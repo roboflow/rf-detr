@@ -147,3 +147,35 @@ class TestPrepareExportGraph:
         graph = prepare_export_graph(_DetectorStub(), _make_model_config(), shape=(16, 16), device="cuda")
 
         assert graph.input_tensors.device.type == "cpu"
+
+
+class _ShapeAwareEncoderStub(torch.nn.Module):
+    """Stand-in for a registered non-DINOv2 encoder that bakes its position embeddings per export shape."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.export_shapes: list[tuple[int, int]] = []
+
+    def set_export_shape(self, shape: tuple[int, int]) -> None:
+        """Record the shape export preparation froze this encoder to."""
+        self.export_shapes.append(shape)
+
+
+class _DetectorWithEncoderStub(_DetectorStub):
+    """Detector stub holding a shape-aware encoder somewhere in its module tree."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.backbone = torch.nn.ModuleList([torch.nn.Module()])
+        self.backbone[0].encoder = _ShapeAwareEncoderStub()
+
+
+class TestExportShapeFreeze:
+    """Non-DINOv2 encoders opt in to the export-shape freeze through ``set_export_shape``."""
+
+    def test_set_export_shape_is_called_with_the_export_shape(self) -> None:
+        model = _DetectorWithEncoderStub()
+
+        prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
+
+        assert model.backbone[0].encoder.export_shapes == [(32, 48)]

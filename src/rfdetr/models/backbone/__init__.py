@@ -7,10 +7,11 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
 
-from typing import Any
+from typing import Any, get_args
 
 from torch import Tensor, nn
 
+from rfdetr.config import EncoderName
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.position_encoding import build_position_encoding
 from rfdetr.utilities.tensors import NestedTensor
@@ -57,6 +58,38 @@ class Joiner(nn.Sequential):
         return feats, masks, poss, cross_attn_feats
 
 
+#: Backbone classes for encoders that are not built into ``rfdetr``, keyed by ``ModelConfig.encoder``.
+_BACKBONE_REGISTRY: dict[str, type[Backbone]] = {}
+
+
+def register_backbone(encoder: str, backbone_cls: type[Backbone]) -> None:
+    """Route :func:`build_backbone` for *encoder* to *backbone_cls*.
+
+    Extension packages (for example ``rfdetr_plus``) call this at import time to plug in an encoder that ``rfdetr``
+    does not ship. *backbone_cls* subclasses :class:`Backbone` and overrides ``_build_encoder`` (and, when its
+    parameters follow other naming rules, ``get_named_param_lr_pairs``); the projector, padding masks and export path
+    stay those of :class:`Backbone`.
+
+    Args:
+        encoder: The ``ModelConfig.encoder`` value that selects *backbone_cls*.
+        backbone_cls: The :class:`Backbone` subclass to build for *encoder*.
+
+    Raises:
+        TypeError: If *backbone_cls* is not a :class:`Backbone` subclass.
+        ValueError: If *encoder* names a built-in DINOv2 encoder, or is already registered to another class.
+    """
+    if not (isinstance(backbone_cls, type) and issubclass(backbone_cls, Backbone)):
+        raise TypeError(f"backbone_cls must be a Backbone subclass, got {backbone_cls!r}.")
+    if encoder in get_args(EncoderName):
+        raise ValueError(f"Encoder {encoder!r} is a built-in rfdetr encoder and cannot be re-registered.")
+    registered = _BACKBONE_REGISTRY.get(encoder)
+    if registered is not None and registered is not backbone_cls:
+        raise ValueError(
+            f"Encoder {encoder!r} is already registered to {registered.__module__}.{registered.__qualname__}."
+        )
+    _BACKBONE_REGISTRY[encoder] = backbone_cls
+
+
 def build_backbone(
     encoder: str,
     vit_encoder_num_layers: int,
@@ -92,7 +125,8 @@ def build_backbone(
     """
     position_embedding_module = build_position_encoding(hidden_dim, position_embedding)
 
-    backbone = Backbone(
+    backbone_cls = _BACKBONE_REGISTRY.get(encoder, Backbone)
+    backbone = backbone_cls(
         encoder,
         pretrained_encoder,
         window_block_indexes=window_block_indexes,

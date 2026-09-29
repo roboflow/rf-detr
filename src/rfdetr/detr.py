@@ -174,7 +174,13 @@ _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRLargeDeprecated", "R
 _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
     class_symbol for class_symbol in _VARIANT_EXPORTS if class_symbol not in _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS
 )
-_CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = ("RFDETRXLarge", "RFDETR2XLarge")
+_CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = (
+    "RFDETRXLarge",
+    "RFDETR2XLarge",
+    "RFDETRAtto",
+    "RFDETRFemto",
+    "RFDETRPico",
+)
 _CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("keypoint-preview", "RFDETRKeypointPreview"),
     ("seg-2xlarge", "RFDETRSeg2XLarge"),
@@ -195,6 +201,10 @@ _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("2xlarge", "RFDETR2XLarge"),
     ("xxlarge", "RFDETR2XLarge"),
     ("xlarge", "RFDETRXLarge"),
+    # Release-filename stems rather than bare size words: "pico"/"atto" occur inside unrelated path components.
+    ("rf-detr-atto", "RFDETRAtto"),
+    ("rf-detr-femto", "RFDETRFemto"),
+    ("rf-detr-pico", "RFDETRPico"),
 )
 
 
@@ -807,10 +817,16 @@ class RFDETR:
                 import rfdetr.platform.models as platform_models
 
                 for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS:
-                    plus_obj = getattr(platform_models, class_symbol)
+                    try:
+                        plus_obj = getattr(platform_models, class_symbol)
+                    except ImportError:
+                        # The installed rfdetr_plus predates this model; a checkpoint naming it is rejected below.
+                        continue
                     _plus_symbols[class_symbol] = plus_obj
                 _plus_entries = [
-                    (name, _plus_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
+                    (name, _plus_symbols[class_symbol])
+                    for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
+                    if class_symbol in _plus_symbols
                 ]
                 _plus_available = True
             except ModuleNotFoundError as ex:
@@ -918,7 +934,7 @@ class RFDETR:
             plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
             plus_by_weights_name = (
                 "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
-            )
+            ) or any(name in weights_name for name, _ in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES if "xlarge" not in name)
             if not _plus_available and (plus_by_model_name or plus_by_weights_name):
                 from rfdetr.platform import _INSTALL_MSG
 
@@ -926,11 +942,26 @@ class RFDETR:
                     f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
                     f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
                 )
+            # An installed rfdetr_plus that predates the checkpoint's model: never fall back to filename matching,
+            # which could resolve a different class.
+            if plus_by_model_name:
+                from rfdetr.platform.models import _UPGRADE_MSG
+
+                raise ImportError(
+                    f"Checkpoint model_name={saved_model_name!r}: " + _UPGRADE_MSG.format(name=normalized_name)
+                )
 
             for name, klass in _model_map:
                 if name in weights_name:
                     model_cls = klass
                     break
+
+            if model_cls is None and plus_by_weights_name:
+                from rfdetr.platform.models import _UPGRADE_MSG
+
+                raise ImportError(
+                    f"Checkpoint pretrain_weights={weights_name!r}: " + _UPGRADE_MSG.format(name="Its model")
+                )
 
             if _filename_fallback and model_cls is not None:
                 logger.info(

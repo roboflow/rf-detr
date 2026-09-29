@@ -20,7 +20,7 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import Tensor
+from torch import Tensor, nn
 
 from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -59,37 +59,16 @@ class Backbone(BackboneBase):
         dual_projector: bool = False,
     ) -> None:
         super().__init__()
-        # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
-        # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
-        # similarly, if "windowed" is in the name, then use_windowed_attn is set to True, otherwise it is set to False
-        # the last part of the name should be the size
-        # and the start should be dinov2
-        name_parts = name.split("_")
-        assert name_parts[0] == "dinov2"
-        # name_parts[-1]
-        use_registers = False
-        if "registers" in name_parts:
-            use_registers = True
-            name_parts.remove("registers")
-        use_windowed_attn = False
-        if "windowed" in name_parts:
-            use_windowed_attn = True
-            name_parts.remove("windowed")
-        assert len(name_parts) == 2, (
-            "name should be dinov2, then either registers, windowed, both, or none, then the size"
-        )
-        self.encoder = DinoV2(
-            size=name_parts[-1],
+        self.encoder = self._build_encoder(
+            name,
             out_feature_indexes=out_feature_indexes,
-            shape=target_shape,
-            use_registers=use_registers,
-            use_windowed_attn=use_windowed_attn,
+            target_shape=target_shape,
             gradient_checkpointing=gradient_checkpointing,
-            load_dinov2_weights=load_dinov2_weights,
+            load_pretrained_weights=load_dinov2_weights,
             patch_size=patch_size,
             num_windows=num_windows,
             positional_encoding_size=positional_encoding_size,
-            drop_path_rate=drop_path,
+            drop_path=drop_path,
             window_block_indexes=window_block_indexes,
         )
         # build encoder + projector as backbone module
@@ -126,6 +105,79 @@ class Backbone(BackboneBase):
         )
 
         self._export = False
+
+    def _build_encoder(
+        self,
+        name: str,
+        *,
+        out_feature_indexes: list[int] | None,
+        target_shape: tuple[int, int],
+        gradient_checkpointing: bool,
+        load_pretrained_weights: bool,
+        patch_size: int,
+        num_windows: int,
+        positional_encoding_size: int,
+        drop_path: float,
+        window_block_indexes: list[int] | None,
+    ) -> nn.Module:
+        """Build the vision encoder whose feature maps feed the projector.
+
+        Subclasses registered with :func:`rfdetr.models.backbone.register_backbone` override this to supply a
+        non-DINOv2 encoder. The returned module must map an image batch ``(B, 3, H, W)`` to a list of
+        ``(B, C, H / patch_size, W / patch_size)`` feature maps, one per entry of ``out_feature_indexes``, and expose
+        their channel counts as ``_out_feature_channels``. An encoder whose forward resamples position embeddings for
+        inputs other than ``target_shape`` should define ``set_export_shape(shape)``, which export preparation calls
+        before tracing so the resampling happens once, outside the traced graph.
+
+        Args:
+            name: Encoder identifier (``ModelConfig.encoder``).
+            out_feature_indexes: Encoder layers whose outputs are returned.
+            target_shape: Native ``(height, width)`` input resolution.
+            gradient_checkpointing: Whether to checkpoint encoder activations.
+            load_pretrained_weights: Whether to initialize the encoder from its upstream pretrained weights (set
+                when the detector itself has no ``pretrain_weights``).
+            patch_size: Patch size of the encoder's patch embedding.
+            num_windows: Windows per side for windowed attention.
+            positional_encoding_size: Side length, in patches, of the encoder's position-embedding grid.
+            drop_path: Stochastic-depth rate.
+            window_block_indexes: Layers using windowed attention, or ``None`` to derive them.
+
+        Returns:
+            The encoder module.
+        """
+        # an example name here would be "dinov2_base" or "dinov2_registers_windowed_base"
+        # if "registers" is in the name, then use_registers is set to True, otherwise it is set to False
+        # similarly, if "windowed" is in the name, then use_windowed_attn is set to True, otherwise it is set to False
+        # the last part of the name should be the size
+        # and the start should be dinov2
+        name_parts = name.split("_")
+        assert name_parts[0] == "dinov2"
+        # name_parts[-1]
+        use_registers = False
+        if "registers" in name_parts:
+            use_registers = True
+            name_parts.remove("registers")
+        use_windowed_attn = False
+        if "windowed" in name_parts:
+            use_windowed_attn = True
+            name_parts.remove("windowed")
+        assert len(name_parts) == 2, (
+            "name should be dinov2, then either registers, windowed, both, or none, then the size"
+        )
+        return DinoV2(
+            size=name_parts[-1],
+            out_feature_indexes=out_feature_indexes,
+            shape=target_shape,
+            use_registers=use_registers,
+            use_windowed_attn=use_windowed_attn,
+            gradient_checkpointing=gradient_checkpointing,
+            load_dinov2_weights=load_pretrained_weights,
+            patch_size=patch_size,
+            num_windows=num_windows,
+            positional_encoding_size=positional_encoding_size,
+            drop_path_rate=drop_path,
+            window_block_indexes=window_block_indexes,
+        )
 
     def export(self) -> None:
         self._export = True
