@@ -690,8 +690,8 @@ class RFDETR:
                 is not installed (``pip install "rfdetr[lora]"``).
 
         Examples:
-            >>> model = RFDETR.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
-            >>> model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")  # doctest: +SKIP
+            model = RFDETR.from_checkpoint("checkpoint_best_total.pth")
+            model = RFDETRSmall.from_checkpoint("checkpoint_best_total.pth")
         """
         # Local import breaks the variants → detr import cycle.
         import rfdetr.variants as rfdetr_variants

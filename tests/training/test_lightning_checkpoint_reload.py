@@ -45,7 +45,7 @@ def dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A tiny synthetic COCO detection dataset.
 
     Examples:
-        >>> dataset_dir(tmp_path_factory)  # doctest: +SKIP
+        dataset_dir(tmp_path_factory)
         # A pytest fixture; it cannot run standalone.
     """
     path = tmp_path_factory.mktemp("lightning_checkpoint_reload_dataset")
@@ -62,7 +62,7 @@ def training_output_dir(dataset_dir: Path, tmp_path_factory: pytest.TempPathFact
     and ``last_ema.pth`` described the same epoch differently.
 
     Examples:
-        >>> training_output_dir(dataset_dir, tmp_path_factory)  # doctest: +SKIP
+        training_output_dir(dataset_dir, tmp_path_factory)
         # A pytest fixture that trains a model; it cannot run standalone.
     """
     seed_all(_TRAIN_SEED)
@@ -88,7 +88,7 @@ def last_ckpt(training_output_dir: Path) -> dict[str, Any]:
     """The ``last.ckpt`` of the training run, fully unpickled.
 
     Examples:
-        >>> sorted(last_ckpt(training_output_dir))  # doctest: +SKIP
+        sorted(last_ckpt(training_output_dir))
         # A pytest fixture over the training run; it cannot run standalone.
     """
     return torch.load(training_output_dir / "last.ckpt", map_location="cpu", weights_only=False)
@@ -99,7 +99,7 @@ def last_ema_pth(training_output_dir: Path) -> dict[str, Any]:
     """The ``last_ema.pth`` of the same run, whose description ``last.ckpt`` must match.
 
     Examples:
-        >>> last_ema_pth(training_output_dir)["model_name"]  # doctest: +SKIP
+        last_ema_pth(training_output_dir)["model_name"]
         # A pytest fixture over the training run; it cannot run standalone.
     """
     return torch.load(training_output_dir / "last_ema.pth", map_location="cpu", weights_only=False)
@@ -110,7 +110,7 @@ def reloaded(training_output_dir: Path) -> RFDETR:
     """``last.ckpt`` reloaded on the CPU through ``RFDETR.from_checkpoint``.
 
     Examples:
-        >>> reloaded(training_output_dir).model_config.resolution  # doctest: +SKIP
+        reloaded(training_output_dir).model_config.resolution
         # A pytest fixture over the training run; it cannot run standalone.
     """
     return RFDETR.from_checkpoint(training_output_dir / "last.ckpt", device="cpu")
@@ -121,7 +121,7 @@ def constructed(training_output_dir: Path) -> RFDETRNano:
     """``last.ckpt`` passed as ``pretrain_weights`` to the class it was trained with.
 
     Examples:
-        >>> constructed(training_output_dir).class_names  # doctest: +SKIP
+        constructed(training_output_dir).class_names
         # A pytest fixture over the training run; it cannot run standalone.
     """
     return RFDETRNano(pretrain_weights=str(training_output_dir / "last.ckpt"), resolution=_RESOLUTION, device="cpu")

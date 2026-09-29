@@ -81,10 +81,10 @@ def _call_from_checkpoint(ckpt: dict, path: Path, cls_patch_target: str, **kwarg
 
     Examples:
         This helper patches ``torch.load`` and a model class — it cannot be run without a real
-        ``Path`` argument or live imports, so the doctest is illustrative only.
+        ``Path`` argument or live imports, so the example below is illustrative only.
 
-        >>> callable(_call_from_checkpoint)  # doctest: +SKIP
-        True
+        callable(_call_from_checkpoint)
+        # True
     """
     mock_instance = MagicMock()
     with (
