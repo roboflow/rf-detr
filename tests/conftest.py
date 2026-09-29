@@ -95,7 +95,7 @@ def sparsify_category_ids(annotations_path: Path) -> None:
     annotations_path.write_text(json.dumps(content))
 
 
-def build_synthetic_dataset(dataset_dir: Path, task: str) -> None:
+def build_synthetic_dataset(dataset_dir: Path, task: str, num_images: int = 100) -> None:
     """Generate a Roboflow-style synthetic COCO dataset in ``dataset_dir``.
 
     ``generate_dataset`` writes ``train``/``val`` splits; rf-detr's readers expect ``train``/``valid``/
@@ -105,18 +105,19 @@ def build_synthetic_dataset(dataset_dir: Path, task: str) -> None:
     Args:
         dataset_dir: Existing directory the dataset is written into.
         task: ``"detection"`` for boxes only, ``"segmentation"`` to also emit polygon annotations.
+        num_images: Images across the train and valid splits (80/20).
 
     Examples:
         >>> from pathlib import Path
         >>> from tempfile import TemporaryDirectory
         >>> with TemporaryDirectory() as tmp:
-        ...     build_synthetic_dataset(Path(tmp), task="detection")
+        ...     build_synthetic_dataset(Path(tmp), task="detection", num_images=10)
         ...     sorted(p.name for p in Path(tmp).iterdir())
         ['test', 'train', 'valid']
     """
     generate_dataset(
         output_dir=dataset_dir,
-        num_images=100,
+        num_images=num_images,
         fmt="coco",
         task=task,
         class_mode="shape",
