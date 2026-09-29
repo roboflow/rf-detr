@@ -20,16 +20,19 @@ This page describes how the export pipeline is assembled and what it takes to ad
 
 ## The pipeline
 
-One export is four steps, and only the third knows which format was asked for.
+One export is a short sequence of steps. Everything before `prepare_export_graph` needs no forward pass, so that is where a check belongs whenever it needs only the request or the installed packages.
 
 ```text
 RFDETR.export(format=..., **kwargs)
   |
-  |-- registry.normalize_format / resolve_exporter   -> ExporterClass      (no model work yet)
+  |-- prepare.validate_batch_size / registry.normalize_format                 (no model work yet)
+  |-- backend, dynamic_batch, in-place and shape checks                        (no exporter imported yet)
+  |-- registry.resolve_exporter                     -> ExporterClass
   |-- ExporterClass.build_config(**kwargs)           -> MyFormatConfig     (other formats' knobs dropped)
-  |-- ExporterClass(config)                          -> exporter           (capabilities validated)
-  |-- prepare.prepare_export_graph(model, ...)       -> ExportGraph        (format-independent)
-  \-- exporter(graph)                                -> Path to artifact
+  |-- ExporterClass(config)                          -> exporter           (configuration and notes validated)
+  |-- ExporterClass.check_dependencies()                                   (missing packages reported)
+  |-- prepare.prepare_export_graph(model, ...)       -> ExportGraph        (format-independent forward pass)
+  \-- exporter(graph)                                -> Path to artifact   (packages checked again, then _convert)
 ```
 
 **What the user asked for** and **what the model looks like** are kept apart on purpose. The configuration carries the first, `ExportGraph` carries the second, and an exporter is the only place they meet. That is what makes a format testable without a real model: most of the export test suite builds a throwaway `ExportGraph` and never traces anything.
@@ -49,7 +52,7 @@ It returns a frozen `ExportGraph`: `model`, `input_tensors`, `input_names`, `out
 
 ### `registry.py` — data, not imports
 
-Every format except ONNX sits behind an optional dependency, and none of them may be imported by `import rfdetr`. So the registry stores the *dotted path* of each exporter class rather than the class itself, and only `resolve_exporter()` imports it:
+Every format sits behind an optional dependency (ONNX's is `rfdetr[onnx]`), and none of them may be imported by `import rfdetr`. So the registry stores the *dotted path* of each exporter class rather than the class itself, and only `resolve_exporter()` imports it:
 
 ```python
 REGISTRY: Mapping[str, ExporterEntry] = {
@@ -62,15 +65,16 @@ An entry also carries the few facts that must be known *before* the import: the 
 
 ### `base.py` — what every format gets for free
 
-`rfdetr.export.base` names no format. It holds exactly two things: `ExportConfig`, the settings shared by all of them, and `Exporter`, the abstract class they subclass.
+`rfdetr.export.base` names no format. It holds `ExportConfig`, the settings shared by all of them, `Exporter`, the abstract class they subclass, and a few format-independent helpers such as `serialize_notes`.
 
 `Exporter.__call__` runs before and after your `_convert`:
 
+- checks the format's packages (`check_dependencies`), so an exporter handed a graph directly fails the same way `RFDETR.export()` does
 - switches the model into its export-friendly forward — exactly once, and idempotently, so a two-stage format composing another exporter stays safe
 - normalizes whatever `_convert` returned into a `Path`
 - logs the success line
 
-`Exporter.__init__` validates the configuration against the class's declared capabilities, so an unsupported request is refused at construction — before the caller pays for a full DINOv2 forward pass.
+`Exporter.__init__` validates the configuration against the class's declared capabilities, and checks that `notes` serialize for a format that embeds them, so an unsupported request is refused at construction. `RFDETR.export()` then calls `check_dependencies()`, so a missing package is reported too — both before the caller pays for a full DINOv2 forward pass.
 
 ## Adding a format
 
@@ -120,6 +124,17 @@ class MyFormatExporter(Exporter[MyFormatConfig]):
     experimental_note = "Upstream converter is unstable."
     pip_extra = "myformat"
 
+    def _check_capabilities(self) -> None:
+        """Refuse an unknown precision when the exporter is built, before the forward pass."""
+        super()._check_capabilities()
+        if self.config.precision not in (None, "float32", "float16"):
+            raise ValueError(f"precision must be 'float32', 'float16', or None, got {self.config.precision!r}")
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Report a missing converter before the forward pass; `RFDETR.export()` calls this."""
+        _check_myformat_available()  # raises ImportError naming `pip install "rfdetr[myformat]"`
+
     def _convert(self, graph: ExportGraph) -> Path:
         """Write the artifact and return where it landed."""
         from rfdetr.export._myformat.converter import convert  # heavy optional dependency
@@ -148,11 +163,12 @@ The capability attributes:
 | `experimental`           | Whether constructing the exporter warns that the format is work-in-progress                     |
 | `pip_extra`              | The `rfdetr[...]` extra that installs your dependencies                                         |
 
-If your format needs cross-field validation the class attributes above cannot express — TensorRT's dynamic-batch optimization-profile bounds (`opt_batch_size <= max_batch_size`, both present and integer) are the one existing example — override `_check_capabilities`, call `super()._check_capabilities()` first, and raise `ValueError` for your own rejections (distinct from the base class's `NotImplementedError` for an unsupported class-attribute capability).
+If your format needs validation the class attributes above cannot express — an unknown precision or quantization name (TFLite, OpenVINO, CoreML, Core AI), or TensorRT's dynamic-batch optimization-profile bounds (`opt_batch_size <= max_batch_size`, both present and integer) — override `_check_capabilities`, call `super()._check_capabilities()` first, and raise `ValueError` for your own rejections (distinct from the base class's `NotImplementedError` for an unsupported class-attribute capability). Check each setting there, not where `_convert` first reads it: `_convert` runs only after the forward pass, and a two-stage format reads some settings only after its whole ONNX stage.
 
-Three rules for `_convert`:
+Four rules for `_convert`:
 
-- **Import the heavy dependency inside a method, never at module scope of a file the registry might import early.** Raise `ImportError` with the exact `pip install "rfdetr[myformat]"` command; the other formats route this through a small `_check_<dep>_available()` helper so tests can monkeypatch one choke point.
+- **Import the heavy dependency inside a method, never at module scope of a file the registry might import early.** Raise `ImportError` with the exact `pip install "rfdetr[myformat]"` command; the other formats route this through a small `_check_<dep>_available()` helper so tests can monkeypatch one choke point. Wrap that helper in a `@classmethod` override of `check_dependencies` (keep it cheap: a metadata probe such as `rfdetr.utilities.package.is_installed`, or an import the conversion performs anyway; run the probes first and import only once they pass, so a refused request loads nothing, as TensorRT does before importing `onnx`), and never call `check_dependencies` yourself: `RFDETR.export()` runs it before the forward pass, and `Exporter.__call__` again before `_convert`. Calling the helper itself inside the conversion is fine where a public entry point skips `__call__`, as TFLite's `convert_onnx()` does. Never check dependencies in `__init__` or `_check_capabilities` — a TensorRT `dry_run` and the stubbed-converter tests construct exporters without them.
+- **Refuse what only the graph shows first.** An output the converter cannot lower (LiteRT refuses the keypoint head this way) is refused at the top of `_convert`, before any conversion work. Anything the configuration or the installed packages already decide belongs in the two hooks above instead.
 - **Return the path, do not log the success line.** The base class does that, and doing it twice is how log output drifted between formats before.
 - **Do not switch the model into export mode.** It already is — `__call__` did it.
 
@@ -209,7 +225,7 @@ Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to 
 
 ### 7. Test it
 
-Two suites in `tests/export/test_registry.py` are parametrized over `REGISTRY`, so they pick your format up the moment you register it: the capability mirror (registry entry versus class attributes) and the dynamic-batch guard, which also asserts a fixed-batch format explains what to do instead. Everything else is a hand-written case — add your format to the configuration-type list, and write `tests/export/test_myformat_export.py` for filename resolution, the backbone marker, the missing-dependency message, and numerical parity against eager PyTorch if the runtime can be installed in CI.
+Some tests are parametrized over `REGISTRY`, so they pick your format up the moment you register it: in `tests/export/test_registry.py`, the capability mirror (registry entry versus class attributes) and the dynamic-batch guard, which also asserts a fixed-batch format explains what to do instead; in `tests/export/test_export.py`, the check that an exporter handed a graph directly runs `check_dependencies` before `_convert`. Everything else is a hand-written case — add your format to the configuration-type list and to the per-format lists in `tests/export/test_export.py` (`TestExportDependencyCheck` for its missing package, `TestExportWarningLocation` if constructing it warns, `TestExportRejectsBeforeForwardPass` for each setting it validates), and write `tests/export/test_myformat_export.py` for filename resolution, the backbone marker, the missing-dependency message, and numerical parity against eager PyTorch if the runtime can be installed in CI.
 
 Most of those need no real model: build a throwaway `ExportGraph` around a `MagicMock` the way `tests/export/test_executorch_export.py` does, and only the parity test has to trace anything.
 
@@ -235,7 +251,7 @@ def _convert(self, graph: ExportGraph) -> str:
 
 ### Validating rather than copying a setting
 
-`setting_names` covers the common case of copying a keyword across. When a format must validate or derive one instead, override `_format_settings`. ExecuTorch does, because an unresolved backend must be an error rather than a quiet `"xnnpack"` default:
+`setting_names` covers the common case of copying a keyword across. Override `_format_settings` for what only the raw keywords show: a keyword that must be derived, one the configuration does not store (LiteRT's `quantization`), or a missing one that the configuration's default would hide. A value the configuration holds is validated in `_check_capabilities` instead (step 2). ExecuTorch overrides `_format_settings`, because an unresolved backend must be an error rather than a quiet `"xnnpack"` default:
 
 ```python
 @classmethod

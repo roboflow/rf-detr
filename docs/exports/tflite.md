@@ -32,6 +32,8 @@ Export your model to TFLite for deployment on mobile devices, microcontrollers, 
 pip install "rfdetr[tflite]"
 ```
 
+The `tflite` extra installs on Python 3.12 only: every package it pins carries a Python 3.12 marker, so on another interpreter it installs none of the TFLite packages.
+
 ## Basic TFLite Export (FP32)
 
 === "Object Detection"

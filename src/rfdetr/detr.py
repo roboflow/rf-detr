@@ -1795,8 +1795,8 @@ class RFDETR:
             verbose: Print export progress information.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
-            batch_size: Static batch size to bake into the ONNX graph. With ``dynamic_batch=True`` and
-                ``format="tensorrt"`` it is also the batch the engine's optimization profile is tuned for.
+            batch_size: Static batch size to bake into the ONNX graph; a positive integer. With ``dynamic_batch=True``
+                and ``format="tensorrt"`` it is also the batch the engine's optimization profile is tuned for.
             dynamic_batch: If True, export with a dynamic batch dimension
                 so the model accepts variable batch sizes at runtime
                 (spatial dimensions always stay fixed). Applies to the ONNX
@@ -1817,7 +1817,8 @@ class RFDETR:
                 patch size. Shape divisibility is validated against
                 ``patch_size * num_windows``.
             format: Export format — ``"onnx"`` (default), ``"tflite"``, ``"tensorrt"`` (alias: ``"trt"``),
-                ``"executorch"`` (alias: ``"pte"``), ``"coreml"``, ``"coreai"``, ``"openvino"`` or ``"litert"``.
+                ``"executorch"`` (alias: ``"pte"``), ``"coreml"``, ``"coreai"``, ``"openvino"`` or ``"litert"``,
+                in any case (``"ONNX"`` works too).
                 ``"tflite"`` and ``"tensorrt"`` both first export to ONNX,
                 then convert: ``"tflite"`` via ``onnx2tf`` (requires
                 ``pip install rfdetr[tflite]``); ``"tensorrt"`` via the
@@ -1834,8 +1835,8 @@ class RFDETR:
                 a LiteRT ``.tflite`` file via ``litert-torch`` (``torch.export`` capture, no ONNX or TensorFlow
                 step; requires ``pip install rfdetr[litert]``) — the same file type as ``"tflite"``, reached
                 without ``onnx2tf``. It writes a single float32 graph with the two-stage query selection
-                inside, so it runs on LiteRT's CPU (XNNPACK) delegate; keypoint models are not supported on
-                litert-torch 0.9.4 (its converter rejects the keypoint head's rank-4 matmul).
+                inside, so it runs on LiteRT's CPU (XNNPACK) delegate; keypoint models are refused before
+                conversion, because litert-torch cannot lower the keypoint head's rank-4 matmul.
                 When ``"coreml"`` is selected the model is exported via ``torch.export`` + ``coremltools`` to a
                 native ``.mlpackage`` (no ONNX step; requires
                 ``pip install rfdetr[coreml]``). This is distinct from
@@ -1917,14 +1918,16 @@ class RFDETR:
                 information. **Ignored for ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, and ``format="litert"``**: those artifacts have
                 no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
-                embedded.
+                embedded. Every other format refuses a value JSON cannot encode (``NaN``, ``Infinity``, an
+                arbitrary object) before any model work.
             coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
                 ``"float32"`` selects FP32 (tight CPU parity with eager
                 PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
             coreai_precision: Precision the graph is traced and stored in for ``format="coreai"`` — ``None``
                 (default) or ``"float32"``, or ``"float16"`` for a half-size asset whose input and outputs are
-                float16 too. Ignored for every other format.
+                float16 too. A float16 keypoint model warns: the asset aborts the process on the Neural Engine.
+                Ignored for every other format.
             openvino_precision: ``"float32"``, ``"float16"``, or ``None`` (default) for ``format="openvino"``
                 — ``None`` keeps OpenVINO's own ``compress_to_fp16=True`` default; ``"float32"`` disables
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
@@ -1952,15 +1955,20 @@ class RFDETR:
             ``.pte``, ``.mlpackage``, ``.aimodel`` or ``.xml`` for OpenVINO).
 
         Raises:
-            ValueError: If ``format`` is unrecognized; if ``format="executorch"`` and ``backend`` is missing,
-                unrecognized, or (for ``backend="qnn"``) ``soc`` is missing; if the resolved export shape is
-                not divisible by ``patch_size * num_windows``; if ``coreml_precision``/``openvino_precision``
-                is not one of their accepted values; or if ``format="tensorrt"`` with ``dynamic_batch=True``
-                lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+            ValueError: If ``format`` is unrecognized; if ``batch_size``, or ``max_batch_size`` when given, is not
+                a positive integer; if
+                ``format="executorch"`` and ``backend`` is missing, unrecognized, or (for ``backend="qnn"``)
+                ``soc`` is missing; if the resolved export shape is not divisible by ``patch_size * num_windows``;
+                if ``coreml_precision``/``coreai_precision``/``openvino_precision``, or ``quantization`` for
+                ``format="tflite"``, is not one of their accepted values; if ``notes`` holds a non-finite float or a
+                circular reference, for a format that embeds it; or if ``format="tensorrt"`` with
+                ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+            TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, or ``format="litert"`` — those paths require a fixed
-                batch size; or if ``format="litert"`` is combined with a ``quantization`` other than ``None`` /
-                ``"fp32"``.
+                batch size; if ``format="litert"`` is combined with a ``quantization`` other than ``None`` /
+                ``"fp32"``; or if ``format="litert"`` is asked to export a keypoint model (``backbone_only=True``
+                still converts).
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
@@ -1971,17 +1979,27 @@ class RFDETR:
                 ``backend="qnn"``); also raised for ``format="tensorrt"`` with ``fp16=True`` on a
                 strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
-                ``fp16=False``.
+                ``fp16=False``. Each format's availability check runs before the model does; what it does not
+                cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package) is found
+                missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
-        from rfdetr.export.prepare import prepare_export_graph
+        from rfdetr.export.prepare import prepare_export_graph, validate_batch_size, validate_export_shape
         from rfdetr.export.registry import normalize_format, resolve_exporter
 
+        # Every format builds its example batch from this, so it is checked before any exporter is imported.
+        export_batch_size = validate_batch_size(batch_size)
+        export_max_batch_size = None
         format = normalize_format(format)
-        if max_batch_size is not None and (format != "tensorrt" or not dynamic_batch):
+        if max_batch_size is not None and format == "tensorrt" and dynamic_batch:
+            try:
+                export_max_batch_size = validate_batch_size(max_batch_size)
+            except ValueError:
+                raise ValueError(f"max_batch_size must be a positive integer, got {max_batch_size!r}.") from None
+        elif max_batch_size is not None:
             warnings.warn(
                 f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
                 f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
@@ -1993,6 +2011,21 @@ class RFDETR:
         # exporter imports the format's heavy optional dependency (coremltools, executorch, openvino, ...) and long
         # before the user pays for a full DINOv2 forward pass.
         reject_unsupported_dynamic_batch(format, dynamic_batch=dynamic_batch)
+        if getattr(self, "_optimized_inplace", False) or self.model.model is None:
+            raise RuntimeError(
+                "RFDETR.export() is not available after inplace optimization. "
+                "The original model has been cleared. Create a new RFDETR instance."
+            )
+        # The shape needs only the model's configuration, so it is checked with the arguments above, before the exporter
+        # is resolved.
+        shape = validate_export_shape(
+            shape,
+            patch_size,
+            self.model_config,
+            self.model.resolution,
+            resolve_patch_size=_resolve_patch_size,
+            validate_shape_dims=_validate_shape_dims,
+        )
         exporter_class = resolve_exporter(format)
         # The exporter class owns its configuration: it picks the settings its format reads out of this method's
         # union-of-every-format signature and drops the rest, so no dispatcher here has to know which is which.
@@ -2014,26 +2047,20 @@ class RFDETR:
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,
-            batch_size=batch_size,
-            max_batch_size=max_batch_size,
+            batch_size=export_batch_size,
+            max_batch_size=export_max_batch_size,
         )
-        # Constructing the exporter validates the request against the format's capabilities — an unsupported
-        # dynamic_batch is refused here, before the user pays for a full DINOv2 forward pass (seconds + GBs).
+        # Constructing the exporter validates the format's own settings (precision, quantization, notes, ...), then
+        # warns about the ones it ignores.
         exporter = exporter_class(config)
-        # The request holds up; now the host must too. A format that can probe its optional dependency cheaply (no
-        # import) refuses a missing install here rather than inside the conversion, which is reached only after that
-        # same forward pass. It follows the capability checks above so an invalid request is reported as one whether
-        # or not the format's dependency happens to be installed. The default is a no-op.
+        # The request holds up; now the host must too. A missing install is refused here rather than inside the
+        # conversion, which is reached only after prepare_export_graph's full forward pass below. It follows every check
+        # of the request above, so an invalid request is reported as one whether or not the format's dependency happens
+        # to be installed: installing an extra would not help it.
         exporter_class.check_dependencies()
         logger.info(f"Exporting model to {format} format")
 
         device = self.model.device
-
-        if getattr(self, "_optimized_inplace", False) or self.model.model is None:
-            raise RuntimeError(
-                "RFDETR.export() is not available after inplace optimization. "
-                "The original model has been cleared. Create a new RFDETR instance."
-            )
 
         # Move the live model to CPU before deepcopying and keep it there during export. ``nn.Module.to(...)`` mutates
         # in place, so this frees GPU memory for the local export copy, ONNX tracing, TFLite conversion, and any
@@ -2043,29 +2070,13 @@ class RFDETR:
         model.to(device)
         try:
             os.makedirs(output_dir, exist_ok=True)
-            patch_size = _resolve_patch_size(patch_size, self.model_config, "export")
-            num_windows = getattr(self.model_config, "num_windows", 1)
-            if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
-                raise ValueError(f"num_windows must be a positive integer, got {num_windows!r}")
-            block_size = patch_size * num_windows
-            if shape is None:
-                shape = (self.model.resolution, self.model.resolution)
-                if shape[0] % block_size != 0:
-                    raise ValueError(
-                        f"Model's default resolution ({self.model.resolution}) is not divisible by "
-                        f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                        f"Provide an explicit shape divisible by {block_size}.",
-                    )
-            else:
-                shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
-
             graph = prepare_export_graph(
                 model,
                 self.model_config,
                 shape=shape,
                 device=device,
                 infer_dir=infer_dir,
-                batch_size=batch_size,
+                batch_size=export_batch_size,
                 dynamic_batch=dynamic_batch,
                 backbone_only=backbone_only,
             )
