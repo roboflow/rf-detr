@@ -381,13 +381,9 @@ class TestExportOpenvinoPrecision:
         assert fake_ov.save_model.call_args.kwargs["compress_to_fp16"] is expected_compress
 
     def test_invalid_precision_raises_value_error(self, tmp_path: Path) -> None:
-        """An unrecognized ``precision`` value must raise ``ValueError`` before any conversion is attempted."""
-        fake_ov = _stub_openvino_module()
-        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, precision="int8", verbose=False))
-        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
-            with pytest.raises(ValueError, match="precision must be"):
-                exporter(_export_graph())
-        fake_ov.convert_model.assert_not_called()
+        """An unrecognized ``precision`` value is refused when the exporter is built, before any conversion."""
+        with pytest.raises(ValueError, match="precision must be"):
+            OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, precision="int8", verbose=False))
 
 
 def _stub_openvino_runtime_module() -> tuple[types.ModuleType, mock.MagicMock]:
@@ -581,6 +577,8 @@ class TestExportFormatParameter:
             autospec=True,
             return_value=str(xml_out),
         ).start()
+        # The CPU job has no openvino, which RFDETR.export() checks for before the forward pass.
+        mock.patch("rfdetr.export._openvino.exporter.OpenVINOExporter.check_dependencies").start()
 
         yield
 
