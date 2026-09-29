@@ -856,17 +856,13 @@ class ConvertCoco:
 
         # add segmentation masks if requested, otherwise ensure consistent key when include_masks=True
         if self.include_masks:
-            if any("segmentation" in obj for obj in anno):
-                segmentations = [obj.get("segmentation", []) for obj in anno]
-                masks = convert_coco_poly_to_mask(segmentations, h, w)
-                if masks.numel() > 0:
-                    target["masks"] = masks[keep]
-                else:
-                    target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-            else:
-                target["masks"] = torch.zeros((0, h, w), dtype=torch.uint8)
-
-            target["masks"] = target["masks"].bool()
+            # Build one mask per annotation unconditionally, not gated on whether any annotation
+            # in the image has a segmentation key: convert_coco_poly_to_mask already falls back to
+            # a zero mask per box-only annotation, so gating the whole build on any(...) is what
+            # left an all-box-only image with (0, H, W) masks against K>0 kept boxes.
+            segmentations = [obj.get("segmentation", []) for obj in anno]
+            masks = convert_coco_poly_to_mask(segmentations, h, w)
+            target["masks"] = masks[keep].bool()
             if keypoint_keep is not None:
                 target["masks"] = target["masks"][keypoint_keep]
 
