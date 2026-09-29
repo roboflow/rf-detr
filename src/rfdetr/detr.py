@@ -201,10 +201,16 @@ _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("2xlarge", "RFDETR2XLarge"),
     ("xxlarge", "RFDETR2XLarge"),
     ("xlarge", "RFDETRXLarge"),
-    # Release-filename stems rather than bare size words: "pico"/"atto" occur inside unrelated path components.
+)
+# Release-file stems of the PE-Core-T plus models, matched before every other entry: they cannot collide with a core
+# name, whereas bare size words ("pico", "atto") occur inside unrelated path components.
+_CHECKPOINT_PLUS_STEM_ENTRIES: tuple[tuple[str, str], ...] = (
     ("rf-detr-atto", "RFDETRAtto"),
+    ("rfdetr-atto", "RFDETRAtto"),
     ("rf-detr-femto", "RFDETRFemto"),
+    ("rfdetr-femto", "RFDETRFemto"),
     ("rf-detr-pico", "RFDETRPico"),
+    ("rfdetr-pico", "RFDETRPico"),
 )
 
 
@@ -808,8 +814,12 @@ class RFDETR:
         import rfdetr.variants as rfdetr_variants
 
         _plus_available = False
+        # A broken rfdetr_plus install (e.g. a missing dependency) must not stop core checkpoints from loading; the
+        # error is raised only if the checkpoint turns out to need a plus class.
+        _plus_import_error: ImportError | None = None
         _plus_symbols: dict[str, type[RFDETR]] = {}
         _plus_entries: list[tuple[str, type[RFDETR]]] = []
+        _plus_stem_entries: list[tuple[str, type[RFDETR]]] = []
         from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 
         if _IS_RFDETR_PLUS_AVAILABLE:
@@ -828,10 +838,22 @@ class RFDETR:
                     for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
                     if class_symbol in _plus_symbols
                 ]
+                _plus_stem_entries = [
+                    (name, _plus_symbols[class_symbol])
+                    for name, class_symbol in _CHECKPOINT_PLUS_STEM_ENTRIES
+                    if class_symbol in _plus_symbols
+                ]
                 _plus_available = True
             except ModuleNotFoundError as ex:
                 if ex.name not in {"rfdetr_plus", "rfdetr_plus.models"}:
-                    raise
+                    _plus_import_error = ex
+            except ImportError as ex:
+                _plus_import_error = ex
+            if _plus_import_error is not None:
+                logger.warning(
+                    "rfdetr_plus is installed but failed to import (%s); plus model checkpoints cannot be loaded.",
+                    _plus_import_error,
+                )
 
         # Use the safe-load helper which tries weights_only=True first (with
         # legacy argparse.Namespace safe globals), falling back to full pickle
@@ -879,7 +901,9 @@ class RFDETR:
             for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
             if not name.startswith("seg-") and "keypoint" not in name
         ]
-        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _keypoint_map + _plus_entries + _base_map
+        _model_map: list[tuple[str, type[RFDETR]]] = (
+            _plus_stem_entries + _seg_map + _keypoint_map + _plus_entries + _base_map
+        )
 
         # New checkpoints store model_name directly — use it when available.
         _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
@@ -934,8 +958,13 @@ class RFDETR:
             plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
             plus_by_weights_name = (
                 "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
-            ) or any(name in weights_name for name, _ in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES if "xlarge" not in name)
+            ) or any(name in weights_name for name, _ in _CHECKPOINT_PLUS_STEM_ENTRIES)
             if not _plus_available and (plus_by_model_name or plus_by_weights_name):
+                if _plus_import_error is not None:
+                    raise ImportError(
+                        f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
+                        f"rfdetr_plus package, which is installed but failed to import: {_plus_import_error}"
+                    ) from _plus_import_error
                 from rfdetr.platform import _INSTALL_MSG
 
                 raise ImportError(
@@ -949,6 +978,22 @@ class RFDETR:
 
                 raise ImportError(
                     f"Checkpoint model_name={saved_model_name!r}: " + _UPGRADE_MSG.format(name=normalized_name)
+                )
+            # Same for a plus release-file stem whose class the installed rfdetr_plus lacks: a core size word elsewhere
+            # in the path (e.g. "rf-detr-pico-small-ft.pth") must not resolve it to a core class.
+            missing_stem_symbol = next(
+                (
+                    symbol
+                    for name, symbol in _CHECKPOINT_PLUS_STEM_ENTRIES
+                    if name in weights_name and symbol not in _plus_symbols
+                ),
+                None,
+            )
+            if missing_stem_symbol is not None:
+                from rfdetr.platform.models import _UPGRADE_MSG
+
+                raise ImportError(
+                    f"Checkpoint pretrain_weights={weights_name!r}: " + _UPGRADE_MSG.format(name=missing_stem_symbol)
                 )
 
             for name, klass in _model_map:

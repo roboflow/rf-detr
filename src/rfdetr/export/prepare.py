@@ -23,7 +23,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, SupportsIndex, cast, runtime_checkable
+from typing import Any, Protocol, SupportsIndex, cast
 
 import numpy as np
 import torch
@@ -72,7 +72,6 @@ class ExportModelConfig(Protocol):
         """Whether the model predicts keypoints."""
 
 
-@runtime_checkable
 class _ExportShapeAware(Protocol):
     """A non-DINOv2 encoder that bakes its position embeddings for a fixed export shape.
 
@@ -372,9 +371,10 @@ def prepare_export_graph(
         if isinstance(backbone_module, DinoV2):
             backbone_module.shape = shape
             backbone_module.export()
-        elif isinstance(backbone_module, _ExportShapeAware):
-            # Encoders plugged in through ``rfdetr.models.backbone.register_backbone`` opt in to the same freeze.
-            backbone_module.set_export_shape(shape)
+        elif callable(getattr(type(backbone_module), "set_export_shape", None)):
+            # Encoders plugged in through ``rfdetr.models.backbone.register_backbone`` opt in to the same freeze. The
+            # lookup is on the type so wrappers that forward attributes (PEFT/LoRA) do not freeze the encoder again.
+            cast(_ExportShapeAware, backbone_module).set_export_shape(shape)
 
     # Resolve the device once, up front: everything below — the example input, the model, the sanity pass — has to
     # land on the same one, and a CUDA request on a machine without CUDA has to degrade here rather than surface as

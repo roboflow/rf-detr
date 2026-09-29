@@ -153,7 +153,14 @@ class Backbone(BackboneBase):
         # the last part of the name should be the size
         # and the start should be dinov2
         name_parts = name.split("_")
-        assert name_parts[0] == "dinov2"
+        if name_parts[0] != "dinov2":
+            from rfdetr.models.backbone import _BACKBONE_REGISTRY
+
+            registered = ", ".join(sorted(_BACKBONE_REGISTRY)) or "none"
+            raise ValueError(
+                f"Unknown encoder {name!r}: expected a DINOv2 encoder name or a registered encoder "
+                f"(registered: {registered}). Import the package that registers it (e.g. rfdetr_plus) first."
+            )
         # name_parts[-1]
         use_registers = False
         if "registers" in name_parts:

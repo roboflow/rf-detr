@@ -179,3 +179,30 @@ class TestExportShapeFreeze:
         prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
 
         assert model.backbone[0].encoder.export_shapes == [(32, 48)]
+
+
+class _ForwardingWrapperStub(torch.nn.Module):
+    """Wrapper that forwards unknown attributes to the module it wraps, as PEFT's ``PeftModel`` does."""
+
+    def __init__(self, inner: torch.nn.Module) -> None:
+        super().__init__()
+        self.inner = inner
+
+    def __getattr__(self, name: str):
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.inner, name)
+
+
+class TestExportShapeFreezeThroughWrappers:
+    """A wrapper that forwards attributes must not freeze the wrapped encoder a second time."""
+
+    def test_forwarding_wrapper_does_not_repeat_the_freeze(self) -> None:
+        model = _DetectorWithEncoderStub()
+        encoder = model.backbone[0].encoder
+        model.backbone[0].encoder = _ForwardingWrapperStub(encoder)
+
+        prepare_export_graph(model, _make_model_config(), shape=(32, 48), device="cpu")
+
+        assert encoder.export_shapes == [(32, 48)]

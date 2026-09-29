@@ -156,9 +156,10 @@ class TestRegisterBackbone:
         with pytest.raises(TypeError, match="Backbone subclass"):
             register_backbone("toy_encoder", backbone_cls)
 
-    @pytest.mark.parametrize("encoder", ["dinov2_windowed_small", "dinov2_windowed_base"])
-    def test_builtin_encoder_names_cannot_be_overridden(self, encoder: str) -> None:
-        with pytest.raises(ValueError, match="built-in"):
+    @pytest.mark.parametrize("encoder", ["dinov2_windowed_small", "dinov2_windowed_base", "dinov2_base"])
+    def test_dinov2_encoder_names_cannot_be_registered(self, encoder: str) -> None:
+        """Every name Backbone would parse as DINOv2 stays DINOv2, including ones outside EncoderName."""
+        with pytest.raises(ValueError, match="DINOv2"):
             register_backbone(encoder, _ToyBackbone)
 
 
@@ -175,6 +176,46 @@ class TestUnregisteredEncoders:
         assert type(joiner[0]) is Backbone
         assert isinstance(joiner[0].encoder, DinoV2)
 
-    def test_unknown_non_dinov2_name_still_fails(self) -> None:
-        with pytest.raises(AssertionError):
+    def test_unknown_non_dinov2_name_names_the_registered_encoders(self) -> None:
+        register_backbone("toy_encoder", _ToyBackbone)
+
+        with pytest.raises(ValueError, match=r"Unknown encoder 'not_a_registered_encoder'.*registered: toy_encoder"):
             _build("not_a_registered_encoder")
+
+    def test_dinov2_encoder_receives_the_backbone_arguments(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pins Backbone -> DinoV2 argument forwarding, which moved into Backbone._build_encoder."""
+        from unittest.mock import MagicMock
+
+        import rfdetr.models.backbone.backbone as backbone_module
+
+        encoder = MagicMock(_out_feature_channels=[384])
+        dinov2 = MagicMock(return_value=encoder)
+        monkeypatch.setattr(backbone_module, "DinoV2", dinov2)
+
+        _build(
+            "dinov2_registers_windowed_small",
+            out_feature_indexes=[12],
+            window_block_indexes=[0, 1],
+            drop_path=0.2,
+            gradient_checkpointing=True,
+            load_dinov2_weights=True,
+            patch_size=14,
+            num_windows=4,
+            positional_encoding_size=37,
+            target_shape=(518, 518),
+        )
+
+        dinov2.assert_called_once_with(
+            size="small",
+            out_feature_indexes=[12],
+            shape=(518, 518),
+            use_registers=True,
+            use_windowed_attn=True,
+            gradient_checkpointing=True,
+            load_dinov2_weights=True,
+            patch_size=14,
+            num_windows=4,
+            positional_encoding_size=37,
+            drop_path_rate=0.2,
+            window_block_indexes=[0, 1],
+        )

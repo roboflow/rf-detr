@@ -76,12 +76,12 @@ def register_backbone(encoder: str, backbone_cls: type[Backbone]) -> None:
 
     Raises:
         TypeError: If *backbone_cls* is not a :class:`Backbone` subclass.
-        ValueError: If *encoder* names a built-in DINOv2 encoder, or is already registered to another class.
+        ValueError: If *encoder* is a DINOv2 encoder name, or is already registered to another class.
     """
     if not (isinstance(backbone_cls, type) and issubclass(backbone_cls, Backbone)):
         raise TypeError(f"backbone_cls must be a Backbone subclass, got {backbone_cls!r}.")
-    if encoder in get_args(EncoderName):
-        raise ValueError(f"Encoder {encoder!r} is a built-in rfdetr encoder and cannot be re-registered.")
+    if encoder in get_args(EncoderName) or encoder.split("_")[0] == "dinov2":
+        raise ValueError(f"Encoder {encoder!r} is a built-in rfdetr (DINOv2) encoder name and cannot be registered.")
     registered = _BACKBONE_REGISTRY.get(encoder)
     if registered is not None and registered is not backbone_cls:
         raise ValueError(

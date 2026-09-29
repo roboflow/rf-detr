@@ -1356,6 +1356,72 @@ class TestFromCheckpointPEPlusModels:
 
         assert result is fakes["RFDETRXLarge"].return_value
 
+    @pytest.mark.parametrize(
+        "pretrain_weights, expected",
+        [
+            pytest.param("/data/xlarge_runs/rf-detr-pico.pth", "RFDETRPico", id="xlarge-directory"),
+            pytest.param("/runs/seg-large-sweep/rf-detr-atto.pth", "RFDETRAtto", id="seg-directory"),
+            pytest.param("rfdetr-femto.pth", "RFDETRFemto", id="size-spelling"),
+        ],
+    )
+    def test_release_stems_win_over_other_names_in_the_path(
+        self, monkeypatch, platform_models, tmp_path: Path, pretrain_weights: str, expected: str
+    ) -> None:
+        fakes = self._install(monkeypatch, platform_models, (*self._PE_SYMBOLS, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns(pretrain_weights)):
+            result = RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert result is fakes[expected].return_value
+
+    def test_older_plus_stem_does_not_fall_back_to_a_core_size_word(
+        self, monkeypatch, platform_models, tmp_path: Path
+    ) -> None:
+        """``rf-detr-pico-small-ft.pth`` contains "small"; with an old plus it must not resolve to RFDETRSmall."""
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-pico-small-ft.pth")):
+            with pytest.raises(ImportError, match="RFDETRPico is not available"):
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+    @pytest.fixture
+    def broken_plus_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """rfdetr_plus is installed, but importing it fails on one of its own dependencies."""
+        import importlib.abc
+        import sys
+
+        import rfdetr.platform
+
+        class _FailingFinder(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path, target=None):
+                if fullname == "rfdetr.platform.models":
+                    raise ModuleNotFoundError("No module named 'timm'", name="timm")
+                return None
+
+        monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.delitem(sys.modules, "rfdetr.platform.models", raising=False)
+        monkeypatch.setattr(sys, "meta_path", [_FailingFinder(), *sys.meta_path])
+
+    def test_broken_plus_import_does_not_block_core_checkpoints(self, broken_plus_import, tmp_path: Path) -> None:
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRNano"}
+
+        result, mock_cls = _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+
+        assert result is mock_cls.return_value
+
+    @pytest.mark.parametrize("model_name", ["RFDETRAtto", "RFDETRXLarge"])
+    def test_broken_plus_import_is_raised_for_plus_checkpoints(
+        self, broken_plus_import, tmp_path: Path, model_name: str
+    ) -> None:
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": model_name}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="failed to import") as excinfo:
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
+        assert excinfo.value.__cause__.name == "timm"
+
     @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
     def test_without_plus_raises_install_hint(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
         import rfdetr.platform
@@ -1388,6 +1454,17 @@ class TestPlatformModelsPEExports:
 
         with pytest.raises(ImportError, match="predates it"):
             getattr(platform_models, symbol)
+
+    def test_top_level_access_with_older_plus_raises_upgrade_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import rfdetr
+        import rfdetr.platform.models as platform_models
+
+        monkeypatch.setattr(platform_models, "_IS_RFDETR_PLUS_AVAILABLE", True)
+        monkeypatch.delitem(platform_models.__dict__, "RFDETRAtto", raising=False)
+        monkeypatch.delitem(rfdetr.__dict__, "RFDETRAtto", raising=False)
+
+        with pytest.raises(ImportError, match="predates it"):
+            rfdetr.RFDETRAtto
 
     @pytest.mark.parametrize("symbol", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
     def test_missing_plus_access_raises_install_hint(self, monkeypatch: pytest.MonkeyPatch, symbol: str) -> None:
