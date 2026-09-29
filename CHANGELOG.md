@@ -12,13 +12,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.from_checkpoint()` no longer restores `device` from a checkpoint's `model_config`. The loading host's default wins, so a checkpoint trained on a GPU loads on a CPU-only machine; pass `device=` explicitly to pick the device yourself. Every other `model_config` field except `pretrain_weights` (the checkpoint path itself supplies the weights) is still restored, with caller keyword arguments taking precedence.
 
-- `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`.
+- `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
-- `format="litert"` refuses keypoint models with `NotImplementedError` naming the limitation. The refusal still comes after the forward pass, but before the conversion: litert-torch cannot lower the keypoint head, and the export used to fail inside it, after a full `torch.export` capture, with `RuntimeError: Failed to export model to LiteRT`. A `backbone_only=True` export of a keypoint model still converts.
+- `format="litert"` refuses keypoint models with `NotImplementedError` naming the limitation. The refusal still comes after the forward pass, but before the conversion: litert-torch cannot lower the keypoint head, and the export used to fail inside it, after a full `torch.export` capture, with `RuntimeError: Failed to export model to LiteRT`. A `backbone_only=True` export of a keypoint model still converts. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
-- `format="coreai", coreai_precision="float16"` warns for keypoint models: that `.aimodel` terminates the process when Core AI runs it on the Neural Engine, which iOS and iPadOS pick for float16 by default.
+- `format="coreai", coreai_precision="float16"` warns for keypoint models: that `.aimodel` terminates the process when Core AI runs it on the Neural Engine, which iOS and iPadOS pick for float16 by default. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
-- `RFDETR.export()` checks `batch_size` before any other work: `batch_size=True`, which used to export a batch of 1, now raises `ValueError`, as does any other value that is not a positive integer (`2.0`, `"2"` and `None` raised a `TypeError` from inside the export). A numpy integer is passed on as a plain `int`.
+- `RFDETR.export()` checks `batch_size` before any other work: `batch_size=True`, which used to export a batch of 1, now raises `ValueError`, as does any other value that is not a positive integer (`2.0`, `"2"` and `None` raised a `TypeError` from inside the export). A numpy integer is passed on as a plain `int`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
 ### Fixed
 
@@ -69,9 +69,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - an unknown `quantization` for `format="tflite"`, and an unknown `openvino_precision`, `coreai_precision` or `coreml_precision` name, which failed after the forward pass (TFLite's after the whole ONNX export);
     - `notes` that JSON cannot encode (`float("nan")`, an arbitrary object), which failed after the forward pass and left a `.onnx` without the notes behind;
     - a `batch_size` below 1, which failed while the example batch was built with `RuntimeError: stack expects a non-empty TensorList` and now raises a `ValueError` naming `batch_size`;
-    - a missing package for the chosen format: `onnx`, which TFLite and TensorRT need too; TensorFlow, tf-keras and `onnx2tf` for TFLite; `executorch`, `coremltools`, `coreai-torch`, `openvino` or `litert-torch`. The error names the `rfdetr[...]` extra that installs it. `format="onnx"` without `onnx` used to fail with torch's `Module onnx is not installed!` after the trace, and `format="tflite"` without `onnx2tf`, TensorFlow or tf-keras only after the whole ONNX export.
+    - a missing package for the chosen format: `onnx`, which TFLite and TensorRT need too; TensorFlow, tf-keras and `onnx2tf` for TFLite; `executorch`, `coremltools`, `coreai-torch`, `openvino` or `litert-torch`. The error names the `rfdetr[...]` extra that installs it. `format="onnx"` without `onnx` used to fail with torch's `Module onnx is not installed!` after the trace, and `format="tflite"` without `onnx2tf`, TensorFlow or tf-keras only after the whole ONNX export. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
-- `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`.
+- `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
 ### Changed
 
