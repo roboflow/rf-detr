@@ -27,6 +27,7 @@ import torch
 import torchvision.transforms.functional as F  # noqa: N812
 import yaml
 from PIL import Image
+from torchvision.io import ImageReadMode, decode_image, read_file
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
@@ -115,6 +116,54 @@ def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
     if image.ndim == 2:
         image = image[:, :, None]
     return torch.from_numpy(image.transpose((2, 0, 1)))
+
+
+#: Byte offset of the bit depth in a PNG file: the 8-byte signature, then the IHDR chunk's length, type, width and
+#: height (4 bytes each).
+_PNG_BIT_DEPTH_OFFSET = 24
+
+
+def _decode_local_image(path: str) -> torch.Tensor | None:
+    """Decode a local JPEG or PNG directly into RGB ``uint8`` CHW storage.
+
+    Pillow remains the compatibility path for every other format and for files that torchvision
+    cannot decode. Restricting the fast path to these two measured formats also avoids changing
+    animated-image semantics: torchvision represents animated GIFs as a four-dimensional tensor,
+    while Pillow exposes the first frame.
+
+    The file is read once. Pillow validates the header of those bytes and torchvision decodes the
+    same buffer, so a file replaced after the check cannot skip Pillow's decompression-bomb limit.
+
+    Args:
+        path: Local image path.
+
+    Returns:
+        An RGB ``uint8`` CHW tensor, or ``None`` when the caller should use Pillow.
+
+    Raises:
+        Image.DecompressionBombError: If Pillow's header check rejects an oversized image.
+    """
+    if Path(path).suffix.lower() not in {".jpeg", ".jpg", ".png"}:
+        return None
+    try:
+        encoded = read_file(path)
+        buffer = encoded.numpy()
+        # Opening is lazy: Pillow validates the header (including its decompression-bomb limit),
+        # while torchvision still owns the expensive pixel decode below.
+        with Image.open(io.BytesIO(buffer)) as header:
+            if header.format not in {"JPEG", "PNG"} or getattr(header, "n_frames", 1) != 1:
+                return None
+            # torchvision 0.21+ decodes a 16-bit PNG to uint16 (older releases raise), and either way the result is
+            # rejected below, so read the bit depth first rather than pay for a full decode.
+            if header.format == "PNG" and buffer[_PNG_BIT_DEPTH_OFFSET] == 16:
+                return None
+        decoded = decode_image(encoded, mode=ImageReadMode.RGB)
+    except (OSError, RuntimeError):
+        # torchvision raises RuntimeError for a missing or empty file and for bytes it cannot decode. The
+        # caller then opens the path with Pillow, which reports each of those cases with its usual error.
+        return None
+    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
+    return decoded if decoded.dtype == torch.uint8 else None
 
 
 def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
@@ -2671,10 +2720,10 @@ class RFDETR:
             that copy as well.
 
             Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.
-            PIL and uint8 NumPy images skip a redundant range scan because their byte-to-float conversion
-            guarantees values in ``[0, 1]`` for both. Any resulting ``ValueError`` is raised only after all inputs
-            have been inspected, so valid-shaped images later in a multi-image call still have their conversion and
-            transfer queued before an earlier validation failure raises.
+            PIL images, natively decoded local files and uint8 NumPy images skip a redundant range scan because
+            their byte-to-float conversion guarantees values in ``[0, 1]``. Any resulting ``ValueError`` is raised
+            only after all inputs have been inspected, so valid-shaped images later in a multi-image call still
+            have their conversion and transfer queued before an earlier validation failure raises.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -2735,16 +2784,26 @@ class RFDETR:
 
         for img_input in images:
             img: Any = img_input
+            decoded_local_file = False
             if isinstance(img, str):
                 if urlparse(img).scheme in ("http", "https"):
                     resp = requests.get(img, timeout=30)
                     resp.raise_for_status()
                     img = io.BytesIO(resp.content)
-                img = Image.open(img)
+                else:
+                    decoded = _decode_local_image(img)
+                    if decoded is not None:
+                        img = decoded
+                        decoded_local_file = True
+                if not decoded_local_file:
+                    img = Image.open(img)
 
-            range_known_valid = False
-            deferred_widen = False
-            if not isinstance(img, torch.Tensor):
+            range_known_valid = decoded_local_file
+            deferred_widen = decoded_local_file
+            if decoded_local_file:
+                if include_source_image:
+                    source_images.append(img.permute(1, 2, 0).numpy().copy())  # type: ignore[union-attr]
+            elif not isinstance(img, torch.Tensor):
                 # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
                 # etc.) to RGB before converting to tensor.  This matches the
                 # standard detector API contract: callers passing a file path or
