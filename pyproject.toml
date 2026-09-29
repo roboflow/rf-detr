@@ -547,6 +547,13 @@ overrides = [
     "rfdetr_plus", "rfdetr_plus.*",
     "webdataset", "webdataset.*",
   ], ignore_missing_imports = true },
+  # IPython ships without inline type hints or a stub package: on CI (not installed) mypy needs
+  # ignore_missing_imports; in a full dev venv (installed via the docs/notebook extras) the module
+  # resolves but its symbols are untyped, so follow_imports = "skip" treats it as Any either way
+  # instead of raising attr-defined/no-untyped-call only in the venv that happens to have it.
+  { module = [
+    "IPython", "IPython.*",
+  ], ignore_missing_imports = true, follow_imports = "skip" },
   # Optional-import None assignments in console.py: type: ignore[assignment, misc] is needed when
   # rich IS installed (full-venv mypy sees the assignment error) but flagged as unused by the
   # pre-commit hook (which runs mypy with --ignore-missing-imports so rich types are unresolved).

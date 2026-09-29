@@ -25,7 +25,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import supervision as sv
@@ -337,7 +337,7 @@ def _result_row(
     }
 
 
-def _tile_batch(single_nchw: np.ndarray, batch: int) -> np.ndarray:
+def _tile_batch(single_nchw: np.ndarray[Any, Any], batch: int) -> np.ndarray[Any, Any]:
     """Stack *batch* copies of one preprocessed ``(1, C, H, W)`` array into a ``(batch, C, H, W)`` array.
 
     All *batch* copies are the same image — this measures throughput at a larger batch dimension, not batch diversity.
@@ -346,7 +346,11 @@ def _tile_batch(single_nchw: np.ndarray, batch: int) -> np.ndarray:
 
 
 def _decode_batch(
-    boxes: np.ndarray, logits: np.ndarray, image_size: tuple[int, int], batch: int, threshold: float
+    boxes: np.ndarray[Any, Any],
+    logits: np.ndarray[Any, Any],
+    image_size: tuple[int, int],
+    batch: int,
+    threshold: float,
 ) -> None:
     """Run :func:`~rfdetr.export._runtime.decode.decode_detections` over every image in a batched raw-output pair.
 
