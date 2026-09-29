@@ -13,6 +13,8 @@ The move itself must therefore always run with inference mode disabled.
 
 from __future__ import annotations
 
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -139,3 +141,46 @@ class TestMoveModelContextIndexNormalization:
 
         assert module.to_call_count == 1
         assert next(module.parameters()).device == torch.device("cuda", 1)
+
+
+class _SlowCountingDeviceModule(_CountingDeviceModule):
+    """Counting stand-in whose ``.to()`` yields long enough for concurrent callers to overlap.
+
+    A real ``nn.Module.to()`` rewrites every parameter in place, which takes long enough for a second thread to observe
+    the still-unmoved first parameter. The sleep reproduces that window deterministically on a CPU-only runner.
+    """
+
+    def to(self, device: torch.device) -> "_SlowCountingDeviceModule":
+        """Record the call, hold the move open briefly, then move the fake parameter to *device*."""
+        self.to_call_count += 1
+        time.sleep(0.2)
+        self._device = device
+        return self
+
+
+class TestMoveModelContextConcurrency:
+    """Concurrent first calls must move the weights exactly once.
+
+    Several channel threads sharing one model can hit the deferred move at the same time. Two overlapping in-place
+    ``.to()`` calls on the same module race on the parameter storage and can leave corrupted weights behind without
+    raising, so the first move has to be serialised and the later callers must observe it as done.
+    """
+
+    def test_concurrent_first_calls_move_exactly_once(self) -> None:
+        """Four threads racing on a cold model must trigger a single ``.to()``."""
+        module = _SlowCountingDeviceModule(initial_device=torch.device("cpu"))
+        ctx = SimpleNamespace(device=torch.device("meta"), model=module)
+        barrier = threading.Barrier(4)
+
+        def worker() -> None:
+            barrier.wait()
+            _move_model_context_to_device(ctx)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert module.to_call_count == 1
+        assert next(module.parameters()).device == torch.device("meta")
