@@ -24,9 +24,17 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import NamedTuple
+from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
+import supervision as sv
+
+from rfdetr.assets.coco_classes import COCO_CLASSES
+from rfdetr.export._runtime.decode import decode_detections
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 
 class BenchmarkResult(NamedTuple):
@@ -269,3 +277,135 @@ def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
     """
     reader = _cuda_free_delta_mb if device == "cuda" else _rss_delta_mb
     yield from reader()
+
+
+def _fmt_ms(result: BenchmarkResult | None) -> str:
+    """Format one :class:`BenchmarkResult` as ``"mean ± std"``, or ``"—"`` when the row has no scope for it.
+
+    Examples:
+        >>> _fmt_ms(None)
+        '—'
+        >>> _fmt_ms(BenchmarkResult("cpu", 10.0, 0.5))
+        '10.00 ± 0.50'
+    """
+    if result is None:
+        return "—"
+    return f"{result.mean_ms:.2f} ± {result.std_ms:.2f}"
+
+
+def _result_row(
+    format_label: str,
+    batch: int,
+    config: str,
+    forward: BenchmarkResult | None,
+    end2end: BenchmarkResult | None,
+    memory_mb: float | None,
+) -> dict[str, str | int | float]:
+    """Build one row of a cookbook's results table, keyed the same way across every export cookbook.
+
+    ``forward``/``end2end`` are per-call latency for the whole batch, so FPS is derived as
+    ``batch * 1000 / scope.mean_ms`` (images per second), not ``scope.fps`` (calls per second) — a batch-4 call
+    that takes 4x as long as batch-1 must still report the same throughput at both rows if the format scales
+    perfectly, and only the images/second column makes that comparison read correctly across batch sizes.
+
+    Args:
+        format_label: Row label, e.g. ``"ONNX"`` or ``"TensorRT (raw .trt engine)"``.
+        batch: Batch size this row was measured at.
+        config: Precision/backend/execution-provider string for this row, e.g. ``"CUDA EP"`` or ``"fp16 IR, CPU"``.
+        forward: Forward-only timing, or ``None`` if the format has no forward-only scope.
+        end2end: End-to-end (preprocess + forward + decode) timing, or ``None`` if the format has no end-to-end
+            scope (e.g. a forward-only micro-benchmark).
+        memory_mb: Device- or host-memory growth attributed to this row, or ``None`` if this row reuses an
+            already-measured number (see each cookbook's own memory-scope note for which rows do).
+
+    Returns:
+        A dict with keys ``Format``, ``Batch``, ``Config``, ``forward [ms]``, ``end2end [ms]``,
+        ``FPS [img/s] (end2end)``, ``Memory [MB]`` — one row for a :class:`pandas.DataFrame`.
+    """
+    scope = end2end or forward
+    if scope is None:
+        raise ValueError(f"_result_row({format_label!r}, batch={batch}) needs at least one of forward/end2end.")
+    fps = batch * 1000.0 / scope.mean_ms
+    return {
+        "Format": format_label,
+        "Batch": batch,
+        "Config": config,
+        "forward [ms]": _fmt_ms(forward),
+        "end2end [ms]": _fmt_ms(end2end),
+        "FPS [img/s] (end2end)": round(fps, 1),
+        "Memory [MB]": f"{memory_mb:.1f}" if memory_mb is not None else "—",
+    }
+
+
+def _tile_batch(single_nchw: np.ndarray, batch: int) -> np.ndarray:
+    """Stack *batch* copies of one preprocessed ``(1, C, H, W)`` array into a ``(batch, C, H, W)`` array.
+
+    All *batch* copies are the same image — this measures throughput at a larger batch dimension, not batch diversity.
+    """
+    return np.concatenate([single_nchw] * batch, axis=0)
+
+
+def _decode_batch(
+    boxes: np.ndarray, logits: np.ndarray, image_size: tuple[int, int], batch: int, threshold: float
+) -> None:
+    """Run :func:`~rfdetr.export._runtime.decode.decode_detections` over every image in a batched raw-output pair.
+
+    Discards the decoded detections — callers use this inside a :func:`~rfdetr.export._benchmark.measure_latency` thunk,
+    where only the wall-clock cost of decoding matters, not the result.
+    """
+    for i in range(batch):
+        decode_detections(boxes[i], logits[i], image_size, threshold=threshold)
+
+
+def _artifact_size_mb(*paths: Path) -> float:
+    """Total on-disk size of *paths* in megabytes, summing a directory's files recursively.
+
+    A single-file export (``.onnx``, ``.trt``, ``.pte``) is one path; a bundle export (OpenVINO's ``.xml`` + ``.bin``,
+    CoreML's ``.mlpackage`` directory) is passed as multiple paths or one directory path.
+    """
+    total_bytes = 0
+    for path in paths:
+        if path.is_dir():
+            total_bytes += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+        else:
+            total_bytes += path.stat().st_size
+    return total_bytes / 1e6
+
+
+def _enable_notebook_inline_matplotlib() -> None:
+    """Enable inline matplotlib figures when running in IPython; a no-op outside a notebook/IPython kernel."""
+    get_ipython_func = globals().get("get_ipython")
+    if not callable(get_ipython_func):
+        return
+    ipython = get_ipython_func()
+    if ipython is not None:
+        ipython.run_line_magic("matplotlib", "inline")
+        ipython.run_line_magic("config", "InlineBackend.close_figures = True")
+
+
+def visualize_detections(detections: sv.Detections, image: Image.Image, save_path: Path | None = None) -> None:
+    """Annotate *detections* on *image* and display it inline (and optionally save it) in a notebook.
+
+    Falls back to :data:`~rfdetr.assets.coco_classes.COCO_CLASSES` for label text when *detections* carries no
+    ``class_name`` (e.g. a raw decoded output that never went through a class-name-aware decoder).
+
+    Args:
+        detections: Detections to draw, already thresholded by the caller.
+        image: The source image *detections* was decoded against.
+        save_path: When given, also saves the annotated image to this path.
+    """
+    if detections.class_id is None or detections.confidence is None:
+        raise ValueError("visualize_detections requires detections.class_id and detections.confidence to be set.")
+    names = detections.data.get("class_name") if detections.data else None
+    if names is None:
+        names = [COCO_CLASSES.get(int(c), str(c)) for c in detections.class_id]
+    labels = [f"{name} {conf:.2f}" for name, conf in zip(names, detections.confidence)]
+
+    annotated = sv.BoxAnnotator(thickness=3).annotate(scene=image.copy(), detections=detections)
+    annotated = sv.LabelAnnotator(text_scale=0.6, text_thickness=1, text_padding=4).annotate(
+        scene=annotated, detections=detections, labels=labels
+    )
+    if save_path is not None:
+        annotated.save(save_path)
+        print(f"Saved annotated image: {save_path}")
+    sv.plot_image(annotated)

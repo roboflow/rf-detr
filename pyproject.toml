@@ -428,6 +428,7 @@ ignore = [
 "docs/cookbooks/*.py" = [
     "E402",  # cell-local imports are intentional in percent-format scripts
     "E501",  # .py mirror of jupytext notebook — markdown prose lines are intentionally unwrapped
+    "F704",  # top-level await is valid in a Jupyter cell; the .py mirror keeps it for jupytext round-tripping
 ]
 
 [tool.docformatter]
