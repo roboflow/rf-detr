@@ -374,10 +374,12 @@ def _artifact_size_mb(*paths: Path) -> float:
 
 def _enable_notebook_inline_matplotlib() -> None:
     """Enable inline matplotlib figures when running in IPython; a no-op outside a notebook/IPython kernel."""
-    get_ipython_func = globals().get("get_ipython")
-    if not callable(get_ipython_func):
+    try:
+        from IPython import get_ipython
+    except ImportError:
         return
-    ipython = get_ipython_func()
+
+    ipython = get_ipython()
     if ipython is not None:
         ipython.run_line_magic("matplotlib", "inline")
         ipython.run_line_magic("config", "InlineBackend.close_figures = True")
