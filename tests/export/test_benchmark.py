@@ -7,21 +7,33 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections.abc import Callable
 from contextlib import contextmanager
-from types import SimpleNamespace
-from unittest.mock import Mock
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock, call
 
+import numpy as np
 import pytest
+import supervision as sv
 import torch
+from PIL import Image
 
+from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.export._benchmark import (
     BenchmarkResult,
+    _artifact_size_mb,
+    _decode_batch,
+    _enable_notebook_inline_matplotlib,
     _measure_cuda,
+    _result_row,
     _sampled_delta_mb,
+    _tile_batch,
     measure_latency,
     measure_memory,
+    visualize_detections,
 )
 
 
@@ -225,3 +237,238 @@ class TestMeasureMemory:
                 raise RuntimeError("benchmark block failed")
 
         assert result.delta_mb == pytest.approx(0.0)
+
+
+class TestResultRow:
+    """Check cookbook results-table row construction, including the FPS derivation."""
+
+    def test_fps_scales_by_batch_size(self) -> None:
+        """FPS is images-per-second, so it scales linearly with batch size at fixed per-call latency.
+
+        A batch-4 call that takes proportionally longer than batch-1 must still report the same throughput at both rows;
+        only multiplying by ``batch`` before dividing by ``mean_ms`` gives that.
+        """
+        end2end = BenchmarkResult("onnx", mean_ms=20.0, std_ms=1.0)
+
+        row = _result_row("ONNX", batch=4, config="CUDA EP", forward=None, end2end=end2end, memory_mb=12.5)
+
+        assert row["FPS [img/s] (end2end)"] == pytest.approx(200.0)
+        assert row == {
+            "Format": "ONNX",
+            "Batch": 4,
+            "Config": "CUDA EP",
+            "forward [ms]": "—",
+            "end2end [ms]": "20.00 ± 1.00",
+            "FPS [img/s] (end2end)": pytest.approx(200.0),
+            "Memory [MB]": "12.5",
+        }
+
+    def test_zero_mean_latency_reports_infinite_fps_without_raising(self) -> None:
+        """A zero-latency scope routes through ``BenchmarkResult.fps`` and reports ``inf``, never raises.
+
+        Regression guard for the pre-fix formula (``batch * 1000 / scope.mean_ms``), which raised ``ZeroDivisionError``
+        on a zero-latency row instead of reporting infinite throughput.
+        """
+        end2end = BenchmarkResult("instant", mean_ms=0.0, std_ms=0.0)
+
+        row = _result_row("ONNX", batch=4, config="CUDA EP", forward=None, end2end=end2end, memory_mb=None)
+
+        assert row["FPS [img/s] (end2end)"] == float("inf")
+
+    def test_prefers_end2end_scope_over_forward_for_fps(self) -> None:
+        """When both scopes are given, FPS is derived from ``end2end``, not ``forward``."""
+        forward = BenchmarkResult("forward", mean_ms=5.0, std_ms=0.0)
+        end2end = BenchmarkResult("end2end", mean_ms=10.0, std_ms=0.0)
+
+        row = _result_row("ONNX", batch=1, config="CPU", forward=forward, end2end=end2end, memory_mb=None)
+
+        assert row["FPS [img/s] (end2end)"] == pytest.approx(100.0)
+        assert row["forward [ms]"] == "5.00 ± 0.00"
+        assert row["end2end [ms]"] == "10.00 ± 0.00"
+
+    def test_missing_both_scopes_raises(self) -> None:
+        """A row needs at least one timing scope to derive FPS from."""
+        with pytest.raises(ValueError, match="needs at least one of forward/end2end"):
+            _result_row("ONNX", batch=1, config="CPU", forward=None, end2end=None, memory_mb=None)
+
+
+class TestTileBatch:
+    """Check that tiling repeats one preprocessed image along the batch axis."""
+
+    def test_stacks_copies_along_batch_axis(self) -> None:
+        """Tiling a ``(1, C, H, W)`` array *batch* times produces a ``(batch, C, H, W)`` array of copies."""
+        single = np.arange(12, dtype=np.float32).reshape(1, 3, 2, 2)
+
+        tiled = _tile_batch(single, batch=3)
+
+        assert tiled.shape == (3, 3, 2, 2)
+        for i in range(3):
+            np.testing.assert_array_equal(tiled[i], single[0])
+
+
+class TestDecodeBatch:
+    """Check that decoding dispatches once per image in the batch."""
+
+    def test_calls_decode_detections_once_per_image_with_matching_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Each image's boxes/logits row is decoded independently, in batch order."""
+        decode = Mock()
+        monkeypatch.setattr("rfdetr.export._benchmark.decode_detections", decode)
+        boxes = np.arange(2 * 4 * 4, dtype=np.float32).reshape(2, 4, 4)
+        logits = np.arange(2 * 4 * 3, dtype=np.float32).reshape(2, 4, 3)
+
+        _decode_batch(boxes, logits, image_size=(640, 480), batch=2, threshold=0.5)
+
+        assert decode.call_count == 2
+        for i, call_args in enumerate(decode.call_args_list):
+            args, kwargs = call_args
+            np.testing.assert_array_equal(args[0], boxes[i])
+            np.testing.assert_array_equal(args[1], logits[i])
+            assert args[2] == (640, 480)
+            assert kwargs == {"threshold": 0.5}
+
+
+class TestArtifactSizeMb:
+    """Check on-disk size summation across single files, directories, and multiple paths."""
+
+    def test_single_file_size(self, tmp_path: Path) -> None:
+        """A single file's size in bytes converts to megabytes."""
+        file_path = tmp_path / "model.onnx"
+        file_path.write_bytes(b"0" * 2_000_000)
+
+        assert _artifact_size_mb(file_path) == pytest.approx(2.0)
+
+    def test_directory_size_is_recursive(self, tmp_path: Path) -> None:
+        """A directory's size sums every file it contains, including nested subdirectories."""
+        bundle = tmp_path / "model.mlpackage"
+        (bundle / "nested").mkdir(parents=True)
+        (bundle / "top.bin").write_bytes(b"0" * 1_000_000)
+        (bundle / "nested" / "weights.bin").write_bytes(b"0" * 500_000)
+
+        assert _artifact_size_mb(bundle) == pytest.approx(1.5)
+
+    def test_multiple_paths_are_summed(self, tmp_path: Path) -> None:
+        """A bundle export passed as several paths (e.g. OpenVINO's ``.xml`` + ``.bin``) sums across all of them."""
+        xml_path = tmp_path / "model.xml"
+        bin_path = tmp_path / "model.bin"
+        xml_path.write_bytes(b"0" * 100_000)
+        bin_path.write_bytes(b"0" * 900_000)
+
+        assert _artifact_size_mb(xml_path, bin_path) == pytest.approx(1.0)
+
+
+class TestEnableNotebookInlineMatplotlib:
+    """Check IPython detection and the inline-backend magics it enables.
+
+    Every case injects a synthetic ``IPython`` module into ``sys.modules`` instead of importing
+    or patching the real package: the real IPython, first-imported inside a torch-loaded
+    pytest-xdist worker on this platform, intermittently SIGABRTs at interpreter teardown with a
+    native ``recursive_mutex lock failed`` error — reproduced in isolation (~1 in 3 runs) and never
+    on unrelated tests in this file, so it is specific to that first real import, not a logic bug.
+    A fake module sidesteps the real import path entirely and is deterministic on every platform.
+    """
+
+    def test_noop_when_ipython_is_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Outside a notebook/IPython kernel, the ``ImportError`` path is a silent no-op."""
+        monkeypatch.setitem(sys.modules, "IPython", None)
+
+        _enable_notebook_inline_matplotlib()
+
+    def test_noop_when_ipython_installed_but_no_active_shell(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A plain Python process has IPython importable but no active shell, so ``get_ipython()`` returns ``None``."""
+        fake_ipython = ModuleType("IPython")
+        fake_ipython.get_ipython = Mock(return_value=None)  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "IPython", fake_ipython)
+
+        _enable_notebook_inline_matplotlib()
+
+    def test_enables_inline_backend_when_ipython_shell_is_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Inside an active IPython shell, both documented magics are invoked in order."""
+        shell = Mock()
+        fake_ipython = ModuleType("IPython")
+        fake_ipython.get_ipython = Mock(return_value=shell)  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "IPython", fake_ipython)
+
+        _enable_notebook_inline_matplotlib()
+
+        assert shell.run_line_magic.call_args_list == [
+            call("matplotlib", "inline"),
+            call("config", "InlineBackend.close_figures = True"),
+        ]
+
+
+class TestVisualizeDetections:
+    """Check detection annotation, label sourcing, and optional saving."""
+
+    @pytest.fixture
+    def image(self) -> Image.Image:
+        """A small solid-color RGB image to annotate."""
+        return Image.new("RGB", (64, 48), color=(10, 20, 30))
+
+    @pytest.fixture
+    def detections(self) -> sv.Detections:
+        """One detection with confidence and class_id set, no ``class_name`` metadata."""
+        return sv.Detections(
+            xyxy=np.array([[5.0, 5.0, 30.0, 30.0]], dtype=np.float32),
+            confidence=np.array([0.9]),
+            class_id=np.array([1]),
+        )
+
+    def test_smoke_runs_without_raising(
+        self, monkeypatch: pytest.MonkeyPatch, image: Image.Image, detections: sv.Detections
+    ) -> None:
+        """Annotating and displaying valid detections completes without raising."""
+        monkeypatch.setattr("rfdetr.export._benchmark.sv.plot_image", Mock())
+
+        visualize_detections(detections, image)
+
+    def test_falls_back_to_coco_classes_for_label_text(
+        self, monkeypatch: pytest.MonkeyPatch, image: Image.Image, detections: sv.Detections
+    ) -> None:
+        """Detections with no ``class_name`` metadata get their label text from ``COCO_CLASSES``."""
+        plot_image = Mock()
+        monkeypatch.setattr("rfdetr.export._benchmark.sv.plot_image", plot_image)
+        label_annotator = Mock(wraps=sv.LabelAnnotator(text_scale=0.6, text_thickness=1, text_padding=4).annotate)
+        monkeypatch.setattr(sv.LabelAnnotator, "annotate", lambda self, **kwargs: label_annotator(**kwargs))
+
+        visualize_detections(detections, image)
+
+        expected_label = f"{COCO_CLASSES[1]} 0.90"
+        assert label_annotator.call_args.kwargs["labels"] == [expected_label]
+        plot_image.assert_called_once()
+
+    def test_missing_class_id_raises(self, image: Image.Image) -> None:
+        """Detections without a ``class_id`` array cannot be labeled, so the call is rejected up front."""
+        detections = sv.Detections(
+            xyxy=np.array([[5.0, 5.0, 30.0, 30.0]], dtype=np.float32),
+            confidence=np.array([0.9]),
+        )
+
+        with pytest.raises(ValueError, match="class_id and detections.confidence"):
+            visualize_detections(detections, image)
+
+    def test_missing_confidence_raises(self, image: Image.Image) -> None:
+        """Detections without a ``confidence`` array cannot be labeled, so the call is rejected up front."""
+        detections = sv.Detections(
+            xyxy=np.array([[5.0, 5.0, 30.0, 30.0]], dtype=np.float32),
+            class_id=np.array([1]),
+        )
+
+        with pytest.raises(ValueError, match="class_id and detections.confidence"):
+            visualize_detections(detections, image)
+
+    def test_saves_annotated_image_when_save_path_given(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        image: Image.Image,
+        detections: sv.Detections,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """When ``save_path`` is given, the annotated image is written to disk and the path is announced."""
+        monkeypatch.setattr("rfdetr.export._benchmark.sv.plot_image", Mock())
+        save_path = tmp_path / "annotated.png"
+
+        visualize_detections(detections, image, save_path=save_path)
+
+        assert save_path.is_file()
+        assert str(save_path) in capsys.readouterr().out
