@@ -19,6 +19,7 @@ from rfdetr.datasets.yolo import (
     YoloSplitUnavailableError,
     _extract_yolo_class_names,
     _LazyYoloDetectionDataset,
+    _parse_yaml_split_dirs,
     _resolve_yolo_split_dirs,
     build_roboflow_from_yolo,
     is_valid_yolo_dataset,
@@ -1090,6 +1091,63 @@ class TestResolveYoloSplitDirs:
         data_file = tmp_path / "data.yaml"
         img, _ = _resolve_yolo_split_dirs(tmp_path, data_file, "val")
         assert not str(img).startswith(str(tmp_path.parent / "outside_dataset"))
+
+    def test_split_labels_symlink_outside_root_rejected(self, tmp_path: Path) -> None:
+        """A labels directory symlinked outside root must not be returned."""
+        root = tmp_path / "root"
+        outside = tmp_path / "outside"
+        (root / "val" / "images").mkdir(parents=True)
+        outside.mkdir(parents=True)
+        (outside / "leak.txt").write_text("secret", encoding="utf-8")
+        try:
+            (root / "val" / "labels").symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"cannot create symlinks in this environment: {exc}")
+        data_file = root / "data.yaml"
+        data_file.write_text("path: .\nval: val/images\nnames:\n  0: person\n", encoding="utf-8")
+        assert _parse_yaml_split_dirs(root, data_file, "val") is None
+
+    def test_nested_split_with_no_images_segment_resolves_via_subdirectories(self, tmp_path: Path) -> None:
+        """A split path with no ``images`` segment under an images-named ancestor still resolves."""
+        root = tmp_path / "images" / "coco8"
+        (root / "splits" / "val" / "images").mkdir(parents=True)
+        (root / "splits" / "val" / "labels").mkdir(parents=True)
+        data_file = root / "data.yaml"
+        data_file.write_text("path: .\nval: splits/val\nnames:\n  0: person\n", encoding="utf-8")
+        img, lb = _resolve_yolo_split_dirs(root, data_file, "val")
+        assert img == root / "splits" / "val" / "images"
+        assert lb == root / "splits" / "val" / "labels"
+
+    def test_three_images_occurrences_swaps_rightmost(self, tmp_path: Path) -> None:
+        """With three ``images`` segments, the rightmost one is swapped, not an ancestor."""
+        root = tmp_path / "images" / "images" / "coco8"
+        (root / "val" / "images").mkdir(parents=True)
+        (root / "val" / "labels").mkdir(parents=True)
+        data_file = root / "data.yaml"
+        data_file.write_text("path: .\nval: val/images\nnames:\n  0: person\n", encoding="utf-8")
+        img, lb = _resolve_yolo_split_dirs(root, data_file, "val")
+        assert img == root / "val" / "images"
+        assert lb == root / "val" / "labels"
+
+    def test_capitalized_images_segment_is_not_matched(self, tmp_path: Path) -> None:
+        """The ``images`` segment match is case-exact; a capitalized ancestor is not swapped."""
+        root = tmp_path / "coco8"
+        (root / "Images" / "val").mkdir(parents=True)
+        (root / "labels" / "val").mkdir(parents=True)
+        data_file = root / "data.yaml"
+        data_file.write_text("path: .\nval: Images/val\nnames:\n  0: person\n", encoding="utf-8")
+        assert _parse_yaml_split_dirs(root, data_file, "val") is None
+
+    def test_bare_leaf_images_split_with_empty_tail(self, tmp_path: Path) -> None:
+        """A split path that is itself a bare ``images`` leaf swaps with an empty tail."""
+        root = tmp_path / "images" / "coco8"
+        (root / "images").mkdir(parents=True)
+        (root / "labels").mkdir(parents=True)
+        data_file = root / "data.yaml"
+        data_file.write_text("path: .\nval: images\nnames:\n  0: person\n", encoding="utf-8")
+        img, lb = _resolve_yolo_split_dirs(root, data_file, "val")
+        assert img == root / "images"
+        assert lb == root / "labels"
 
 
 class TestIsValidYoloDatasetUltralytics:
