@@ -1603,7 +1603,8 @@ class RFDETR:
                         _live_args.resolution = _orig_args_resolution
                     if hasattr(_live_args, "positional_encoding_size"):
                         _live_args.positional_encoding_size = _orig_args_pe
-        module = RFDETRModelModule(eval_model_config, config)
+        # Every weight is transplanted from the live model below, so skip fetching upstream encoder weights.
+        module = RFDETRModelModule(eval_model_config, config, load_encoder_weights=False)
 
         # Free the original model's accelerator memory for the transplant -- otherwise the resident
         # original and the freshly built (randomly initialized) eval module are both on the accelerator

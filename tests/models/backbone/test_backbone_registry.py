@@ -219,3 +219,17 @@ class TestUnregisteredEncoders:
             drop_path_rate=0.2,
             window_block_indexes=[0, 1],
         )
+
+
+class TestForceNoPretrain:
+    """``force_no_pretrain`` stops every encoder, registered or DINOv2, from fetching upstream weights."""
+
+    @pytest.mark.parametrize(
+        ("force", "expected"), [pytest.param(False, True, id="default"), pytest.param(True, False, id="forced")]
+    )
+    def test_force_no_pretrain_overrides_load_dinov2_weights(self, force: bool, expected: bool) -> None:
+        register_backbone("toy_encoder", _ToyBackbone)
+
+        _build("toy_encoder", load_dinov2_weights=True, force_no_pretrain=force)
+
+        assert _ToyBackbone.received["load_pretrained_weights"] is expected

@@ -141,7 +141,7 @@ def build_backbone(
         rms_norm=rms_norm,
         backbone_lora=backbone_lora,
         gradient_checkpointing=gradient_checkpointing,
-        load_dinov2_weights=load_dinov2_weights,
+        load_dinov2_weights=load_dinov2_weights and not force_no_pretrain,
         patch_size=patch_size,
         num_windows=num_windows,
         positional_encoding_size=positional_encoding_size,
