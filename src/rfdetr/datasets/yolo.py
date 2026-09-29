@@ -684,15 +684,30 @@ def _parse_yaml_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Pat
     parts = split_images.parts
     is_dir = split_images.is_dir()
     if is_dir and "images" in parts:
-        idx = parts.index("images")
-        split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
-        if split_labels.is_dir():
-            return split_images, split_labels
-    elif is_dir:
+        # Scan ``images`` segments right to left, as Ultralytics does: an earlier one can
+        # belong to a parent of the root, and the rightmost segment with an existing
+        # ``labels`` sibling is the correct swap target, not merely the last one in the path.
+        for idx in (i for i in range(len(parts) - 1, -1, -1) if parts[i] == "images"):
+            split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
+            # Path traversal guard mirroring the split_images check above: a crafted parts
+            # sequence could otherwise swap a component that lands outside root.
+            try:
+                split_labels.resolve().relative_to(root.resolve())
+            except ValueError:
+                continue  # traversal detected; skip this candidate
+            if split_labels.is_dir():
+                return split_images, split_labels
+    if is_dir:
         sub_images = split_images / "images"
         sub_labels = split_images / "labels"
         if sub_images.is_dir() and sub_labels.is_dir():
             return sub_images, sub_labels
+        logger.warning(
+            "YOLO split %r declared at %s exists but its labels directory could not be "
+            "derived — falling back to the Roboflow directory convention.",
+            split,
+            split_images,
+        )
     return None
 
 
@@ -745,11 +760,12 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     ``"val"`` key and, if absent, retries with a ``"valid"`` key before falling
     back to the filesystem convention.
 
-    Labels are derived from the resolved images path by replacing the
-    ``"images"`` segment with ``"labels"`` anywhere in the path, mirroring the
-    Ultralytics ``img2label_paths`` convention.  This handles both
-    trailing-images (``val/images``) and intermediate-images
-    (``images/val2017``) layouts.
+    Labels are derived from the resolved images path by scanning its
+    ``"images"`` segments right to left and swapping the rightmost one whose
+    sibling ``"labels"`` directory exists, mirroring the Ultralytics
+    ``img2label_paths`` convention.  This handles both trailing-images
+    (``val/images``) and intermediate-images (``images/val2017``) layouts,
+    including a dataset root nested under an ancestor also named ``images``.
 
     Args:
         root: Dataset root directory.
