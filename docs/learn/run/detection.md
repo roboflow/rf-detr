@@ -64,7 +64,15 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
     `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79). For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
 
-For long-running inference with the `rfdetr` package, a fixed batch size, and a fixed resolution, opt into the PyTorch Inductor backend. Compilation has a higher one-time setup cost than the default TorchScript backend, but can reduce steady-state latency. This example requires a compatible CUDA device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support. The external `inference` package API shown above does not expose `RFDETR.inference()`:
+For repeated inference with the `rfdetr` package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. It keeps static input/output buffers on the GPU, so it uses more device memory than the default TorchScript backend. Outputs are cloned before they leave the graph, so predictions returned by an earlier call are not overwritten by the next one. The default stays `"torchscript"`:
+
+```python
+model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")
+```
+
+An operator that CUDA Graphs cannot capture makes `inference()` raise a `RuntimeError`. A failed capture can leave CUDA random-number state unusable, so restart the process before choosing another backend.
+
+PyTorch Inductor is another opt-in backend for long-running inference. Cold compilation can have a higher one-time setup cost, but Inductor can apply broader graph optimizations and later processes may reuse its disk cache. Both examples require a compatible CUDA device, operators, and installed PyTorch version; `dtype="float16"` also requires FP16 support. The external `inference` package API shown above does not expose `RFDETR.inference()`:
 
 ```python
 model.inference(compile_backend="inductor", batch_size=1, dtype="float16")

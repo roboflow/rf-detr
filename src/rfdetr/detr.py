@@ -12,6 +12,7 @@ import json
 import operator
 import os
 import tempfile
+import threading
 import warnings
 from collections import defaultdict
 from collections.abc import Callable
@@ -145,6 +146,82 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """
     widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
     return widened.div_(scale)
+
+
+class _CUDAGraphInferenceModel:
+    """Replay a fixed-shape TorchScript module through one direct CUDA Graph.
+
+    The graph owns its input and output buffers. Each call copies the caller's tensor into the static input, replays the
+    captured kernels, then clones the outputs before returning them so a later replay cannot mutate a previous call's
+    result. A CUDA event serializes calls made from different streams without forcing the host to synchronize.
+    """
+
+    def __init__(self, model: Any, sample_input: torch.Tensor, device: torch.device) -> None:
+        """Warm up ``model``, capture one forward pass, and record the completion event.
+
+        Args:
+            model: TorchScript module to capture.
+            sample_input: Fixed-shape input on ``device``; it becomes the graph's static input buffer.
+            device: CUDA device the graph is captured on.
+
+        Raises:
+            RuntimeError: If CUDA Graph capture fails. A failed capture can leave CUDA random-number state unusable
+                for the rest of the process, so the message asks for a restart.
+        """
+        self._model = model
+        self._static_input = sample_input
+        self._lock = threading.Lock()
+
+        current_stream = torch.cuda.current_stream(device)
+        warmup_stream = torch.cuda.Stream(device=device)  # type: ignore[no-untyped-call]
+        warmup_stream.wait_stream(current_stream)
+        with torch.cuda.stream(warmup_stream), torch.inference_mode():
+            for _ in range(3):
+                model(self._static_input)
+        current_stream.wait_stream(warmup_stream)
+        torch.cuda.synchronize(device)
+
+        self._graph = torch.cuda.CUDAGraph()
+        try:
+            with torch.inference_mode(), torch.cuda.graph(self._graph):
+                self._static_output = model(self._static_input)
+            # An error that CUDA only reports at the completion fence gets the same restart instruction.
+            torch.cuda.synchronize(device)
+        except Exception as exc:
+            # On torch 2.9.1 a rejected capture leaves CUDA random ops raising "Offset increment outside graph capture"
+            # for the rest of the process, so even the default backend cannot be set up again after it.
+            raise RuntimeError(
+                "CUDA Graph capture failed for compile_backend='cudagraph'. A failed capture can leave CUDA "
+                "random-number state unusable for the rest of the process. Restart the process and use another "
+                "compile_backend."
+            ) from exc
+
+        self._completed = torch.cuda.Event()  # type: ignore[no-untyped-call]
+        self._completed.record(torch.cuda.current_stream(device))
+
+    @staticmethod
+    def _clone_output(value: Any) -> Any:
+        """Clone tensors recursively so graph-owned storage never escapes the wrapper."""
+        if isinstance(value, torch.Tensor):
+            return value.clone(memory_format=torch.preserve_format)
+        if isinstance(value, tuple):
+            return tuple(_CUDAGraphInferenceModel._clone_output(item) for item in value)
+        if isinstance(value, list):
+            return [_CUDAGraphInferenceModel._clone_output(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _CUDAGraphInferenceModel._clone_output(item) for key, item in value.items()}
+        return value
+
+    def __call__(self, value: torch.Tensor) -> Any:
+        """Copy one fixed-shape batch into the graph, replay it, and return owned outputs."""
+        with self._lock, torch.inference_mode():
+            stream = torch.cuda.current_stream(value.device)
+            stream.wait_event(self._completed)
+            self._static_input.copy_(value)
+            self._graph.replay()
+            output = self._clone_output(self._static_output)
+            self._completed.record(stream)
+        return output
 
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
@@ -1483,16 +1560,17 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
-        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
+        compile_backend: Literal["torchscript", "cudagraph", "inductor"] = "torchscript",
     ) -> None:
         """Optimize the model for inference with optional compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
         ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
         the model's current resolution. The default ``"torchscript"`` backend preserves the existing
-        ``torch.jit.trace`` path. ``"inductor"`` uses ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the
-        dummy input twice before synchronizing the selected device so setup is paid inside this method instead of the
-        first :meth:`predict` call. By default,
+        ``torch.jit.trace`` path. ``"cudagraph"`` freezes that trace and captures its fixed-shape CUDA work for direct
+        replay, cloning graph-owned outputs before returning them. ``"inductor"`` uses
+        ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the dummy input twice before synchronizing the
+        selected device so setup is paid inside this method instead of the first :meth:`predict` call. By default,
         optimization deep-copies the loaded model before exporting it so the original module remains available. Set
         ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
         cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
@@ -1518,16 +1596,21 @@ class RFDETR:
                 Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
                 memory savings come only from clearing the base model reference rather than from dtype reduction.
             compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
-                preserves the existing trace path. ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode;
-                it can reduce steady-state latency but has a substantially higher one-time compilation cost and its
-                device/operator support depends on the installed PyTorch version.
+                preserves the existing trace path. ``"cudagraph"`` is CUDA-only and captures a frozen TorchScript
+                trace; its static input/output buffers increase device memory, and setup captures once before replay.
+                ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode; it can reduce steady-state latency
+                but has a substantially higher one-time compilation cost and its device/operator support depends on the
+                installed PyTorch version.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, or if
-                ``inplace=True`` is used with ``compile=True``.
-            RuntimeError: If the base model has already been cleared by a previous inplace optimization.
+            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, if
+                ``inplace=True`` is used with ``compile=True``, or if ``compile=True`` with
+                ``compile_backend="cudagraph"`` targets a non-CUDA device.
+            RuntimeError: If the base model has already been cleared by a previous inplace optimization, or if
+                ``compile_backend="cudagraph"`` fails to capture the model. A failed capture can leave CUDA
+                random-number state unusable, so restart the process before trying another backend.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -1583,8 +1666,10 @@ class RFDETR:
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
         if not dtype.is_floating_point:
             raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
-        if compile_backend not in ("torchscript", "inductor"):
-            raise ValueError(f"compile_backend must be 'torchscript' or 'inductor', got {compile_backend!r}")
+        if compile_backend not in ("torchscript", "cudagraph", "inductor"):
+            raise ValueError(
+                f"compile_backend must be 'torchscript', 'cudagraph', or 'inductor', got {compile_backend!r}"
+            )
         if inplace and compile:
             raise ValueError(
                 "inference(inplace=True) requires compile=False. "
@@ -1592,6 +1677,8 @@ class RFDETR:
                 "model.model=None may not free the weight tensors and inplace=True would not reliably reduce "
                 "memory usage."
             )
+        if compile and compile_backend == "cudagraph" and self.model.device.type != "cuda":
+            raise ValueError("compile_backend='cudagraph' requires a CUDA device.")
 
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
@@ -1622,11 +1709,14 @@ class RFDETR:
                         device=self.model.device,
                         dtype=dtype,
                     )
-                    if compile_backend == "torchscript":
+                    if compile_backend in ("torchscript", "cudagraph"):
                         inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
                             inference_model,
                             dummy_input,
                         )
+                        if compile_backend == "cudagraph":
+                            inference_model = torch.jit.freeze(inference_model)
+                            inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
                     else:
                         inference_model = torch.compile(inference_model, mode="reduce-overhead")
                         with torch.inference_mode():
