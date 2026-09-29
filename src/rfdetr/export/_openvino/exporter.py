@@ -17,6 +17,7 @@ import torch
 from torch import nn
 
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -46,9 +47,16 @@ class OpenVINOConfig(ExportConfig):
 
     Attributes:
         precision: ``"float32"``, ``"float16"``, or ``None`` to keep OpenVINO's own FP16 compression default.
+        quantization: ``None`` / ``"fp32"`` write the converted IR; ``"int8"`` compresses it with NNCF first.
+        calibration_data: Representative images the INT8 activation ranges are collected from. Required for
+            ``"int8"``, unused otherwise.
+        max_images: Maximum images read from a *calibration_data* directory.
     """
 
     precision: str | None = None
+    quantization: str | None = None
+    calibration_data: Any = None
+    max_images: int = 100
 
 
 class ModelWrapper(nn.Module):
@@ -102,12 +110,40 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     """
 
     config_class = OpenVINOConfig
-    setting_names = {"precision": "openvino_precision"}
+    setting_names = {
+        "precision": "openvino_precision",
+        "quantization": "quantization",
+        "calibration_data": "calibration_data",
+        "max_images": "max_images",
+    }
     format = "openvino"
     display_name = "OpenVINO"
     dynamic_batch_reason = "(the IR graph bakes a fixed input shape). Export one model per batch size instead."
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
+
+    def _check_capabilities(self) -> None:
+        """Reject a quantization mode this format does not write, or an INT8 request with nothing to calibrate on.
+
+        Static INT8 derives its activation ranges from the data it is shown, so missing calibration data is a
+        refusal rather than a default: absent or out-of-domain data produces a model that loads, runs, and is
+        quietly wrong.
+
+        Raises:
+            ValueError: If *quantization* is not a recognized mode, or is ``"int8"`` without *calibration_data*.
+        """
+        super()._check_capabilities()
+        if self.config.quantization not in VALID_QUANTIZATIONS:
+            raise ValueError(
+                f"Unsupported quantization mode {self.config.quantization!r} for format='openvino'. "
+                f"Choose from: {sorted(q for q in VALID_QUANTIZATIONS if q is not None)}."
+            )
+        if self.config.quantization == "int8" and self.config.calibration_data is None:
+            raise ValueError(
+                "quantization='int8' requires calibration_data: a directory of representative images, a .npy path, "
+                "or a preprocessed array. Static quantization reads activation ranges from this data, so there is "
+                "no meaningful default."
+            )
 
     def _import_converters(self) -> tuple[Callable[..., Any], Callable[..., Any]]:
         """Verify ``openvino`` is installed and return the two entry points the conversion needs.
@@ -216,7 +252,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
             compress_to_fp16: Whether to store the weights compressed to FP16.
 
         Raises:
-            ImportError: If ``convert_model``'s lazy submodule imports fail on a partial/ABI-mismatched install.
+            ImportError: If ``convert_model``'s lazy submodule imports fail on a partial/ABI-mismatched install, or
+                if ``quantization="int8"`` was requested without ``nncf`` installed.
             NotImplementedError: If the model was not switched into export mode first (see :class:`ModelWrapper`).
             TypeError: If the model's forward returns an output type :class:`ModelWrapper` cannot wrap.
             ValueError: If the conversion rejects an argument.
@@ -226,6 +263,16 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         try:
             with torch.no_grad():
                 ov_model = convert_model(wrapped_model, example_input=input_tensors)
+            if self.config.quantization == "int8":
+                _, channels, height, width = input_tensors.shape
+                ov_model = quantize_int8(
+                    ov_model,
+                    self.config.calibration_data,
+                    height=int(height),
+                    width=int(width),
+                    channels=int(channels),
+                    max_images=self.config.max_images,
+                )
             save_model(ov_model, str(output_xml), compress_to_fp16=compress_to_fp16)
         except (ImportError, NotImplementedError, TypeError, ValueError):
             # ImportError: convert_model lazily imports private submodules that can still fail on a

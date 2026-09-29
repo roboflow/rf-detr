@@ -540,6 +540,7 @@ overrides = [
     "coreai", "coreai.*",
     "coreai_torch", "coreai_torch.*",
     "openvino", "openvino.*",
+    "nncf", "nncf.*",
     "litert_torch", "litert_torch.*",
     "ai_edge_litert", "ai_edge_litert.*",
     "roboflow", "roboflow.*",

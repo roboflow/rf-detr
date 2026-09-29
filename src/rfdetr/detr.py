@@ -1860,25 +1860,38 @@ class RFDETR:
                     and subject to change; upstream dependency instabilities
                     (``onnx2tf``, ``ai_edge_litert``, ``executorch``,
                     ``coremltools``, ``litert-torch``) may affect results.
-            quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``,
-                ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16
-                ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range INT8 model (INT8 weights,
-                float activations; needs no calibration data). ``format="litert"`` accepts only ``None`` /
-                ``"fp32"`` (it writes one float32 ``.tflite``) and raises ``NotImplementedError`` for the other
-                modes rather than silently ignoring them.
-            calibration_data: Optional data not consumed when building the exported ``.tflite`` models. Accepts:
+            quantization: Quantization mode (ignored when ``format="openvino"`` or ``format="executorch"``).
+                Its meaning is per format:
 
-                * ``None`` — auto-generate random data (the default, and adequate for every quantization mode).
+                * ``format="tflite"`` — one of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"``
+                  / ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces a
+                  **dynamic-range** INT8 model (INT8 weights, float activations; needs no calibration data).
+                * ``format="onnx"`` — one of ``None``, ``"fp32"``, ``"int8"``.  ``"int8"`` writes a **static** QDQ
+                  model alongside the FP32 graph, with 8-bit weights *and* activations on the matrix multiplies
+                  only, and **requires** *calibration_data*.  Attention scores, detection heads, normalization and
+                  the surrounding elementwise math stay in float; quantizing those costs accuracy and speed alike.
+                * ``format="litert"`` — accepts only ``None`` / ``"fp32"`` (it writes one float32 ``.tflite``) and
+                  raises ``NotImplementedError`` for the other modes rather than silently ignoring them.
+            calibration_data: Representative data for quantization.  **Required** for ``format="onnx"`` with
+                ``quantization="int8"``, where activation ranges are collected from it; not consumed when building
+                the exported ``.tflite`` models.  Accepts:
+
+                * ``None`` — auto-generate random data.  The default, and adequate for every TFLite mode; rejected
+                  for ``format="onnx"`` with ``quantization="int8"``, which has no meaningful default.
                 * A **directory path** (``str``) containing JPEG/PNG
                   images — the converter automatically loads, resizes, and prepares them.
-                * A path (``str``) to a ``.npy`` file of shape ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
+                * A path (``str``) to a ``.npy`` file: shape ``(N, H, W, 3)`` in ``[0, 1]`` for TFLite,
+                  ``(N, C, H, W)`` already normalized the way the model expects for ONNX.
                 * A :class:`numpy.ndarray` with the same format.
 
-                This does **not** improve INT8 accuracy: ``quantization="int8"`` produces a dynamic-range model whose
-                weight scales come from the weights themselves. When passed as ``None``, a directory, or an array, the
-                data is saved to an unused scratch file in *output_dir* but not consumed to build the model. An
-                existing ``.npy`` path is reused without writing a copy.
+                For ``format="onnx"``, the images are preprocessed exactly as :meth:`predict` does and the resulting
+                activation ranges decide the INT8 model's accuracy, so they must be representative of the deployment
+                domain — out-of-domain data yields a model that loads, runs, and is quietly wrong.
+
+                For ``format="tflite"`` this does **not** improve INT8 accuracy: ``quantization="int8"`` produces a
+                dynamic-range model whose weight scales come from the weights themselves. When passed as ``None``, a
+                directory, or an array, the data is saved to an unused scratch file in *output_dir* but not consumed
+                to build the model. An existing ``.npy`` path is reused without writing a copy.
             max_images: Maximum number of images to load from a *calibration_data* directory.  Defaults to ``100``.
                 Only used when *calibration_data* is a directory path.
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
