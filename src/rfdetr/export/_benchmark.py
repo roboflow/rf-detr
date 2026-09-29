@@ -325,7 +325,7 @@ def _result_row(
     scope = end2end or forward
     if scope is None:
         raise ValueError(f"_result_row({format_label!r}, batch={batch}) needs at least one of forward/end2end.")
-    fps = batch * 1000.0 / scope.mean_ms
+    fps = batch * scope.fps
     return {
         "Format": format_label,
         "Batch": batch,
