@@ -49,10 +49,13 @@ INT8 quantization
 ``quantization="int8"`` produces a **dynamic-range** INT8 model (INT8 weights, float activations, roughly 4x smaller
 than FP32, no calibration data needed), built from the ``onnx2tf`` SavedModel.
 
-Static (full-integer) INT8 is not supported and raises ``ValueError``: RF-DETR's transformer activations do not survive
-8-bit post-training quantization.  Because dynamic-range quantization derives its weight scales from the weights
-themselves, *calibration_data* cannot change the INT8 artifact — TFLite only consumes representative data through
-``representative_dataset``, which this path never sets.
+Static (full-integer) INT8 is not supported and raises ``ValueError``: TFLite's full-integer mode gives every
+activation a per-tensor 8-bit scale, which RF-DETR's transformer activations are not expected to survive (no
+TFLite full-integer measurement exists in this repo yet — this is the current best understanding, not a proven
+fact).  That is a limit of this mode, not of 8-bit post-training quantization in general — see :doc:`the TFLite
+export docs </exports/tflite>` for how other toolchains handle it.  Because dynamic-range quantization derives
+its weight scales from the weights themselves, *calibration_data* cannot change the INT8 artifact — TFLite only
+consumes representative data through ``representative_dataset``, which this path never sets.
 
 Note:
     The resulting ``.tflite`` model expects the same input normalization as the ONNX model: ImageNet mean/std
