@@ -89,6 +89,7 @@ def _make_rfdetr_self(tmp_path, **train_overrides):
         ('cpu', 'out')
     """
     mock = MagicMock()
+    mock._exported_context = None
     mock.model_config = _make_model_config()
     mock.model = MagicMock()  # exposes mock.model.model for sync-back assertions
     mock.get_train_config.return_value = _make_train_config(tmp_path, **train_overrides)
@@ -1354,6 +1355,7 @@ class TestClassNamesProperty:
         empty names. The fix uses `is not None` so that [] is preserved.
         """
         mock_self = MagicMock()
+        mock_self._exported_context = None
         mock_self.model.class_names = []
 
         result = RFDETR.class_names.fget(mock_self)
@@ -1365,6 +1367,7 @@ class TestClassNamesProperty:
         from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 
         mock_self = MagicMock()
+        mock_self._exported_context = None
         mock_self.model.class_names = None
 
         result = RFDETR.class_names.fget(mock_self)
@@ -1375,6 +1378,7 @@ class TestClassNamesProperty:
     def test_custom_class_names_returned_as_list(self, patch_lit):
         """Non-empty class_names are returned as a 0-indexed list."""
         mock_self = MagicMock()
+        mock_self._exported_context = None
         mock_self.model.class_names = ["cat", "dog"]
 
         result = RFDETR.class_names.fget(mock_self)
@@ -1384,6 +1388,7 @@ class TestClassNamesProperty:
     def test_custom_class_names_returns_shallow_copy(self, patch_lit):
         """Mutating the returned class_names list must not mutate model state."""
         mock_self = MagicMock()
+        mock_self._exported_context = None
         mock_self.model.class_names = ["cat", "dog"]
 
         result = RFDETR.class_names.fget(mock_self)
@@ -1410,6 +1415,7 @@ class TestDeployToRoboflow:
         """Return a minimal RFDETR-like mock for deploy_to_roboflow tests."""
         class_names = ["cat", "dog"]
         mock_self = MagicMock(spec=RFDETR)
+        mock_self._exported_context = None
         mock_self.size = "rfdetr-small"
         mock_self.class_names = class_names  # the property, resolved to a plain list
         # `model` is an instance attribute (set in __init__), not a class attribute, so
@@ -2169,6 +2175,7 @@ class TestRFDETRTrainNumClassesAutoDetect:
     def mock_self(self, tmp_path):
         """Return a RFDETR-like mock for num_classes auto-detect tests."""
         mock = MagicMock()
+        mock._exported_context = None
         mock.model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         mock.model = MagicMock()
         mock.get_train_config.return_value = _make_train_config(tmp_path)
@@ -2801,6 +2808,7 @@ class TestSharedCocoCategoryParse:
             >>> TestSharedCocoCategoryParse._train_on_coco_dataset(tmp_path, patch_lit)  # doctest: +SKIP
         """
         mock_self = MagicMock()
+        mock_self._exported_context = None
         mock_self.model_config = RFDETRBaseConfig(pretrain_weights=None, device="cpu")
         mock_self.model = MagicMock()
         mock_self.get_train_config.return_value = _make_train_config(tmp_path)

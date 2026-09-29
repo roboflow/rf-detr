@@ -63,6 +63,7 @@ from rfdetr.variants import (
 __all__ = [
     "ModelContext",
     "from_checkpoint",
+    "from_export",
     "RFDETRKeypointPreview",
     "RFDETRNano",
     "RFDETRSmall",
@@ -80,6 +81,11 @@ __all__ = [
 def from_checkpoint(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
     """Convenience wrapper for RFDETR.from_checkpoint(); see that method for full documentation."""
     return RFDETR.from_checkpoint(path, **kwargs)
+
+
+def from_export(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
+    """Load an exported model through :meth:`RFDETR.from_export`."""
+    return RFDETR.from_export(path, **kwargs)
 
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.

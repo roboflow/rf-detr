@@ -1149,6 +1149,7 @@ def test_train_auto_batch_ensures_model_on_device_before_resolve(
         tensorboard=False,
     )
     mock_self = MagicMock()
+    mock_self._exported_context = None
     mock_self.model_config = RFDETRBaseConfig(pretrain_weights=None, num_classes=3, device="cpu")
     mock_self.get_train_config.return_value = train_config
 

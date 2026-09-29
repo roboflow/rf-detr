@@ -1,0 +1,275 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+"""Inference metadata is part of the exported artifact contract."""
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import numpy as np
+import pytest
+import torch
+
+from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
+from rfdetr.export._runtime.metadata import ExportMetadata, metadata_from_model, read_metadata, write_metadata
+from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
+from rfdetr.export.prepare import ExportGraph
+
+
+def test_sidecar_round_trip_rejects_changed_artifact(tmp_path: Path) -> None:
+    """A companion file identifies the exact artifact it describes."""
+    artifact = tmp_path / "model.tflite"
+    artifact.write_bytes(b"model-v1")
+    metadata = ExportMetadata(
+        format="litert",
+        task="detect",
+        input_shape=(1, 3, 448, 448),
+        outputs={"pred_boxes": 0, "pred_logits": 1},
+        class_names=["object"],
+        num_classes=1,
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        num_select=100,
+        trace_alpha=0.2,
+        patch_size=16,
+        num_windows=1,
+    )
+
+    write_metadata(artifact, metadata)
+    assert read_metadata(artifact) == metadata
+
+    artifact.write_bytes(b"model-v2")
+    with pytest.raises(ValueError, match="digest"):
+        read_metadata(artifact)
+
+
+def test_tflite_export_uses_signature_to_map_reordered_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Signature tensor indices identify boxes when output detail names are generic."""
+    artifact = tmp_path / "model_fp32.tflite"
+    metadata = ExportMetadata(
+        format="tflite",
+        task="detect",
+        input_shape=(1, 3, 448, 448),
+        outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        class_names=["object"],
+        num_classes=1,
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        num_select=100,
+        trace_alpha=0.2,
+        patch_size=16,
+        num_windows=1,
+    )
+    graph = ExportGraph(
+        model=torch.nn.Identity(),
+        input_tensors=torch.zeros(1, 3, 448, 448),
+        input_names=("input",),
+        output_names=("dets", "labels"),
+        dynamic_axes=None,
+        shape=(448, 448),
+        backbone_only=False,
+        metadata=metadata,
+    )
+    interpreter = Mock()
+    interpreter.get_input_details.return_value = [{"index": 0, "dtype": np.float32}]
+    interpreter.get_output_details.return_value = [
+        {"name": "Identity", "index": 12},
+        {"name": "Identity_1", "index": 11},
+    ]
+    interpreter.get_signature_list.return_value = {"serving_default": {"outputs": ["dets", "labels"]}}
+    interpreter.get_signature_runner.return_value.get_output_details.return_value = {
+        "dets": {"index": 11},
+        "labels": {"index": 12},
+    }
+    monkeypatch.setattr("rfdetr.export._tflite.inference._create_interpreter", Mock(return_value=interpreter))
+    exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path))
+    monkeypatch.setattr(TFLiteExporter, "check_dependencies", Mock())
+    artifact.write_bytes(b"converted graph")
+    monkeypatch.setattr(exporter, "_convert", Mock(return_value=artifact))
+
+    exporter(graph)
+
+    loaded = read_metadata(artifact)
+    assert loaded.outputs == {"pred_boxes": 1, "pred_logits": 0}
+    assert loaded.input_layout == "NHWC"
+
+
+def test_onnx_metadata_keeps_user_notes(tmp_path: Path) -> None:
+    """The reserved inference key does not replace a caller's notes."""
+    onnx = pytest.importorskip("onnx")
+    artifact = tmp_path / "model.onnx"
+    graph = onnx.helper.make_graph([], "empty", [], [])
+    model = onnx.helper.make_model(graph)
+    notes = model.metadata_props.add()
+    notes.key = "rfdetr_notes"
+    notes.value = '{"run": 7}'
+    onnx.save(model, artifact)
+    metadata = ExportMetadata(
+        format="onnx",
+        task="detect",
+        input_shape=(1, 3, 448, 448),
+        outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        class_names=["object"],
+        num_classes=1,
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        num_select=100,
+        trace_alpha=0.2,
+        patch_size=16,
+        num_windows=1,
+    )
+
+    write_metadata(artifact, metadata)
+
+    assert read_metadata(artifact) == metadata
+    saved = onnx.load(artifact)
+    assert next(item.value for item in saved.metadata_props if item.key == "rfdetr_notes") == '{"run": 7}'
+    assert not artifact.with_name("model.onnx.rfdetr.json").exists()
+
+
+def test_openvino_sidecar_covers_weights_and_rejects_conflicting_override(tmp_path: Path) -> None:
+    """An IR companion covers both model files and fixed semantics cannot change."""
+    artifact = tmp_path / "model.xml"
+    weights = tmp_path / "model.bin"
+    artifact.write_text("<model/>", encoding="utf-8")
+    weights.write_bytes(b"weights-v1")
+    metadata = ExportMetadata(
+        format="openvino",
+        task="detect",
+        input_shape=(1, 3, 448, 448),
+        outputs={"pred_boxes": 0, "pred_logits": 1},
+        class_names=["object"],
+        num_classes=1,
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        num_select=100,
+        trace_alpha=0.2,
+        patch_size=16,
+        num_windows=1,
+    )
+
+    write_metadata(artifact, metadata)
+    with pytest.raises(ValueError, match="conflicts"):
+        read_metadata(artifact, {"task": "segment"})
+    weights.write_bytes(b"weights-v2")
+    with pytest.raises(ValueError, match="digest"):
+        read_metadata(artifact)
+
+
+def test_explicit_companion_cannot_describe_another_artifact(tmp_path: Path) -> None:
+    """An explicit JSON companion remains bound to its source artifact."""
+    source = tmp_path / "source.tflite"
+    destination = tmp_path / "destination.tflite"
+    source.write_bytes(b"source graph")
+    destination.write_bytes(b"different graph")
+    metadata = ExportMetadata(
+        format="litert",
+        task="detect",
+        input_shape=(1, 3, 448, 448),
+        outputs={"pred_boxes": 0, "pred_logits": 1},
+        class_names=["object"],
+        num_classes=1,
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        num_select=100,
+        trace_alpha=0.2,
+        patch_size=16,
+        num_windows=1,
+    )
+    companion = write_metadata(source, metadata)
+    assert companion is not None
+    envelope = json.loads(companion.read_text(encoding="utf-8"))
+
+    with pytest.raises(ValueError, match="digest"):
+        read_metadata(destination, envelope)
+
+
+def test_metadata_rejects_unsupported_preprocessing_and_schema() -> None:
+    """An explicit legacy config cannot change native scaling or schema rules."""
+    payload = {
+        "format": "onnx",
+        "task": "detect",
+        "input_shape": (1, 3, 448, 448),
+        "outputs": {"pred_boxes": "dets", "pred_logits": "labels"},
+        "class_names": ["object"],
+        "num_classes": 1,
+        "means": [0.485, 0.456, 0.406],
+        "stds": [0.229, 0.224, 0.225],
+        "num_select": 100,
+        "trace_alpha": 0.2,
+        "patch_size": 16,
+        "num_windows": 1,
+    }
+    with pytest.raises(ValueError, match="pixel_scale"):
+        ExportMetadata(**payload, pixel_scale=1.0)
+    with pytest.raises(ValueError, match="schema_version"):
+        ExportMetadata(**payload, schema_version=2)
+
+
+def test_missing_legacy_metadata_requires_explicit_semantics(tmp_path: Path) -> None:
+    """A raw artifact cannot choose a task or label space by shape alone."""
+    artifact = tmp_path / "legacy.tflite"
+    artifact.write_bytes(b"legacy graph")
+    with pytest.raises(ValueError, match="Pass metadata="):
+        read_metadata(artifact)
+
+
+def test_metadata_from_model_preserves_sparse_coco_ids() -> None:
+    """COCO names stay mapped to sparse category IDs, including gaps."""
+    model = SimpleNamespace(
+        model_config=SimpleNamespace(
+            segmentation_head=False,
+            use_grouppose_keypoints=False,
+            num_channels=3,
+            num_classes=90,
+            num_keypoints_per_class=[],
+            patch_size=16,
+            num_windows=1,
+        ),
+        model=SimpleNamespace(
+            args=SimpleNamespace(num_classes=90, num_keypoints_per_class=[]),
+            postprocess=SimpleNamespace(num_select=100, trace_alpha=0.2, upsample_masks_to_image_size=True),
+        ),
+        class_names=list(COCO_CLASS_NAMES),
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        size="rfdetr-nano",
+    )
+
+    metadata = metadata_from_model(model, format="onnx", shape=(448, 448), batch_size=1, dynamic_batch=False)
+
+    assert metadata.class_id_to_name[1] == "person"
+    assert metadata.class_id_to_name[90] == "toothbrush"
+    assert 12 not in metadata.class_id_to_name
+
+
+def test_metadata_from_model_preserves_background_first_keypoints() -> None:
+    """Legacy keypoint slot zero has no class name."""
+    model = SimpleNamespace(
+        model_config=SimpleNamespace(
+            segmentation_head=False,
+            use_grouppose_keypoints=True,
+            num_channels=3,
+            num_classes=2,
+            num_keypoints_per_class=[0, 3],
+            patch_size=16,
+            num_windows=1,
+        ),
+        model=SimpleNamespace(
+            args=SimpleNamespace(num_classes=2, num_keypoints_per_class=[0, 3]),
+            postprocess=SimpleNamespace(num_select=100, trace_alpha=0.2, upsample_masks_to_image_size=True),
+        ),
+        class_names=["person"],
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        size="rfdetr-keypoint-preview",
+    )
+
+    metadata = metadata_from_model(model, format="onnx", shape=(448, 448), batch_size=1, dynamic_batch=False)
+
+    assert metadata.class_id_to_name == {1: "person"}
+    assert metadata.num_keypoints_per_class == [0, 3]

@@ -48,6 +48,8 @@ from rfdetr.utilities.logger import get_logger
 if TYPE_CHECKING:
     from supervision import Detections, KeyPoints
 
+    from rfdetr.export._runtime.context import ExportedModelContext
+
 try:
     torch.set_float32_matmul_precision("high")
 except Exception:
@@ -527,6 +529,7 @@ class RFDETR:
     means = [0.485, 0.456, 0.406]
     stds = [0.229, 0.224, 0.225]
     size: str | None = None
+    _exported_context: ExportedModelContext | None = None
     _model_config_class: type[ModelConfig] = ModelConfig
     _train_config_class: type[TrainConfig] = TrainConfig
     #: Per-instance memo for :meth:`_memoized_coco_categories`, created on first use like ``_keypoint_schema_cache``.
@@ -569,6 +572,10 @@ class RFDETR:
             self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
 
         self.model.inference_model = None
+        self._initialize_inference_state()
+
+    def _initialize_inference_state(self) -> None:
+        """Initialize shared prediction flags for native and exported instances."""
         self._is_optimized_for_inference = False
         self._has_warned_about_not_being_optimized_for_inference = False
         self._optimized_has_been_compiled = False
@@ -589,6 +596,7 @@ class RFDETR:
         Paths that already contain a directory component are used as-is; the parent directory is created if it does not
         yet exist.
         """
+        RFDETR._require_native_model(self, "maybe_download_pretrain_weights")
         if self.model_config.pretrain_weights is None:
             return
         pretrain_weights = str(self.model_config.pretrain_weights)
@@ -605,6 +613,35 @@ class RFDETR:
     def get_model_config(self, **kwargs: Any) -> ModelConfig:
         """Retrieve the configuration parameters used by the model."""
         return self._model_config_class(**kwargs)
+
+    @classmethod
+    def from_export(
+        cls,
+        path: str | os.PathLike[str],
+        *,
+        device: str = "auto",
+        metadata: dict[str, Any] | str | os.PathLike[str] | None = None,
+    ) -> RFDETR:
+        """Load an exported artifact without constructing a native network.
+
+        Args:
+            path: Exported model file or bundle.
+            device: Runtime device, or automatic selection with ``"auto"``.
+            metadata: Missing legacy metadata as a mapping or JSON path.
+
+        Returns:
+            An RFDETR instance supporting the normal prediction interface.
+
+        Raises:
+            FileNotFoundError: If the artifact does not exist.
+            ValueError: If metadata or the requested device is incompatible.
+        """
+        artifact = Path(path)
+        if not artifact.exists():
+            raise FileNotFoundError(artifact)
+        from rfdetr.export._runtime.context import load_exported_model
+
+        return load_exported_model(cls, artifact, device=device, metadata=metadata)
 
     @classmethod
     def from_checkpoint(cls, path: str | os.PathLike[str], *, trust_checkpoint: bool = False, **kwargs: Any) -> RFDETR:
@@ -1086,6 +1123,7 @@ class RFDETR:
             ValueError: If ``resolution`` is not a positive integer or is not
                 divisible by ``patch_size * num_windows`` for the model variant.
         """
+        RFDETR._require_native_model(self, "train")
         # The training stack lives in the `rfdetr[train]` extras group — a missing
         # `pytorch_lightning` (or any other training-extras package) causes the import to fail,
         # and the remediation is `pip install "rfdetr[train,loggers]"`.
@@ -1366,6 +1404,7 @@ class RFDETR:
                 ``pip install "rfdetr[train,loggers]"``.
             ValueError: If ``split`` is not ``"test"`` or ``"val"``.
         """
+        RFDETR._require_native_model(self, "evaluate")
         from rfdetr.models.weights import interpolate_position_embeddings
 
         # Training extras (pytorch_lightning et al.) are optional; mirror train()'s import guard.
@@ -1574,6 +1613,7 @@ class RFDETR:
             >>> model._optimized_inplace
             True
         """
+        RFDETR._require_native_model(self, "inference")
         if isinstance(dtype, str):
             try:
                 dtype = getattr(torch, dtype)
@@ -1696,6 +1736,7 @@ class RFDETR:
             >>> model._is_optimized_for_inference
             False
         """
+        RFDETR._require_native_model(self, "remove_optimized_model")
         if getattr(self, "_optimized_inplace", False):
             warnings.warn(
                 "remove_optimized_model() has no effect after inplace optimization — the original model "
@@ -1985,6 +2026,7 @@ class RFDETR:
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
+        RFDETR._require_native_model(self, "export")
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
         from rfdetr.export.prepare import prepare_export_graph, validate_batch_size, validate_export_shape
@@ -2070,6 +2112,8 @@ class RFDETR:
         model.to(device)
         try:
             os.makedirs(output_dir, exist_ok=True)
+            from rfdetr.export._runtime.metadata import metadata_from_model
+
             graph = prepare_export_graph(
                 model,
                 self.model_config,
@@ -2079,6 +2123,16 @@ class RFDETR:
                 batch_size=export_batch_size,
                 dynamic_batch=dynamic_batch,
                 backbone_only=backbone_only,
+                metadata=metadata_from_model(
+                    self,
+                    format=format,
+                    shape=shape,
+                    batch_size=export_batch_size,
+                    dynamic_batch=dynamic_batch,
+                    backbone_only=backbone_only,
+                    backend=backend,
+                    max_batch_size=export_max_batch_size,
+                ),
             )
             return exporter(graph)
         finally:
@@ -2538,6 +2592,19 @@ class RFDETR:
         return _build_model_context(config, trust_checkpoint=trust_checkpoint)
 
     @property
+    def runtime_info(self) -> dict[str, Any]:
+        """Return a copy of the selected execution runtime and device information."""
+        exported = getattr(self, "_exported_context", None)
+        if exported is not None:
+            return dict(exported.runtime.info)
+        return {"backend": "pytorch", "device": str(self.model.device)}
+
+    def _require_native_model(self, operation: str) -> None:
+        """Reject operations that need native weights before they produce side effects."""
+        if getattr(self, "_exported_context", None) is not None:
+            raise RuntimeError(f"{operation}() requires native weights. Load them with RFDETR.from_checkpoint().")
+
+    @property
     def class_names(self) -> list[str]:
         """Retrieve the class names supported by the loaded model.
 
@@ -2545,6 +2612,8 @@ class RFDETR:
             A list of class name strings, 0-indexed.  When no custom class names are embedded in the checkpoint, returns
             the standard 80 COCO class names.
         """
+        if self._exported_context is not None:
+            return self._exported_context.class_names
         if hasattr(self.model, "class_names") and self.model.class_names is not None:
             return list(self.model.class_names)
 
@@ -2563,7 +2632,7 @@ class RFDETR:
         When ``_is_optimized_for_inference`` is ``True``, the method returns immediately — the compiled
         ``inference_model`` snapshot is already in eval mode and ``self.model.model`` is not used for inference.
         """
-        if self._is_optimized_for_inference:
+        if getattr(self, "_exported_context", None) is not None or self._is_optimized_for_inference:
             return
         if not self._has_warned_about_not_being_optimized_for_inference:
             logger.warning(
@@ -2684,8 +2753,23 @@ class RFDETR:
         """
         from supervision import Detections, KeyPoints
 
-        patch_size = _resolve_patch_size(patch_size, self.model_config, "predict")
-        num_windows = getattr(self.model_config, "num_windows", 1)
+        exported = self._exported_context
+        prediction_config = exported.metadata if exported is not None else self.model_config
+        prediction_device = exported.device if exported is not None else self.model.device
+        postprocess = exported.postprocess if exported is not None else self.model.postprocess
+        if exported is not None:
+            if shape is None:
+                shape = exported.metadata.shape
+            batch_size = len(images) if isinstance(images, (list, tuple)) else 1
+            expected_batch = exported.metadata.input_shape[0]
+            if batch_size <= 0 or (expected_batch != -1 and batch_size != expected_batch):
+                raise ValueError(f"Batch size mismatch. Export requires {expected_batch}, but got {batch_size}.")
+            maximum = exported.metadata.max_batch_size
+            if maximum is not None and batch_size > maximum:
+                raise ValueError(f"Batch size {batch_size} exceeds export maximum {maximum}.")
+
+        patch_size = _resolve_patch_size(patch_size, prediction_config, "predict")
+        num_windows = getattr(prediction_config, "num_windows", 1)
         if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
             raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
         block_size = patch_size * num_windows
@@ -2700,6 +2784,8 @@ class RFDETR:
                 )
         else:
             shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
+            if exported is not None and shape != exported.metadata.shape:
+                raise ValueError(f"Export requires shape {exported.metadata.shape}, but got {shape}.")
 
         self._ensure_eval_mode_for_unoptimized_inference()
 
@@ -2793,7 +2879,7 @@ class RFDETR:
             # would trade the clear "Invalid tensor image shape" error for a confusing internal
             # `ValueError: not enough values to unpack` (or, for a 0-d/1-d tensor, an IndexError out of
             # `img.shape[0]` itself) the moment a malformed tensor reached this point.
-            invalid_shape = img.dim() != 3 or img.shape[0] != self.model_config.num_channels
+            invalid_shape = img.dim() != 3 or img.shape[0] != prediction_config.num_channels
             pending_checks.append(
                 (
                     False if range_known_valid else (img > 1).any(),
@@ -2822,14 +2908,14 @@ class RFDETR:
             # CPU tensor headed to an accelerator; pin_memory() raises on a tensor the caller already placed on the
             # accelerator (a legitimate tensor-input use to skip a host round-trip), and pinning buys nothing when
             # the target device is the CPU itself.
-            if img_tensor.device.type == "cpu" and self.model.device.type == "cuda":
+            if img_tensor.device.type == "cpu" and prediction_device.type == "cuda":
                 img_tensor = img_tensor.pin_memory()
             # non_blocking only pays off (and is only safe without an explicit sync) when the destination is CUDA,
             # matching the transfer_batch_to_device() convention in training/module_data.py: a CUDA-tensor-input ->
             # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
             # reads of the tensor's data can observe an in-flight (partially written) copy.
-            non_blocking = self.model.device.type == "cuda"
-            img_tensor = img_tensor.to(self.model.device, non_blocking=non_blocking)
+            non_blocking = prediction_device.type == "cuda"
+            img_tensor = img_tensor.to(prediction_device, non_blocking=non_blocking)
             if deferred_widen:
                 if uint8_scale is None:
                     uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
@@ -2853,7 +2939,7 @@ class RFDETR:
             if invalid_shape:
                 raise ValueError(
                     "Invalid tensor image shape. Tensor inputs to `predict()` must be in (C, H, W) format "
-                    f"with C matching the model configuration ({self.model_config.num_channels} channels). "
+                    f"with C matching the model configuration ({prediction_config.num_channels} channels). "
                     f"Received tensor with shape {img_shape}. "
                     "For automatic RGB conversion, pass a PIL Image or a file path instead of a tensor."
                 )
@@ -2898,7 +2984,9 @@ class RFDETR:
                         f"but got {batch_tensor.shape[0]}." + _restore_hint,
                     )
 
-        if self._is_optimized_for_inference:
+        if exported is not None:
+            predictions = exported.runtime.run(batch_tensor)
+        elif self._is_optimized_for_inference:
             inference_model = self.model.inference_model
             assert inference_model is not None, "inference_model is set whenever _is_optimized_for_inference is True."
             predictions = inference_model(batch_tensor.to(dtype=self._optimized_dtype))
@@ -2918,8 +3006,8 @@ class RFDETR:
                 else:
                     return_predictions["pred_masks"] = predictions[2]
             predictions = return_predictions
-        target_sizes = torch.tensor(orig_sizes, device=self.model.device)
-        results = self.model.postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
+        target_sizes = torch.tensor(orig_sizes, device=prediction_device)
+        results = postprocess(predictions, target_sizes=target_sizes, score_threshold=threshold)
 
         model_class_names = self.class_names
         n = len(model_class_names)
@@ -2928,7 +3016,7 @@ class RFDETR:
         # args.num_classes > len(class_names) AND class_names == COCO_CLASS_NAMES.
         # Fine-tuned models remap category IDs to 0-based contiguous indices, so
         # class_id i maps directly to class_names[i].
-        _model_args = getattr(self.model, "args", None)
+        _model_args = exported.metadata if exported is not None else getattr(self.model, "args", None)
         if _model_args is None and model_class_names == list(COCO_CLASS_NAMES):
             logger.warning_once(
                 "predict(): model has no 'args' attribute — COCO sparse-ID mapping cannot activate; "
@@ -2956,6 +3044,8 @@ class RFDETR:
             _class_id_to_name = {slot: model_class_names[i] for i, slot in enumerate(_kp_foreground_slots) if i < n}
         else:
             _class_id_to_name = dict(enumerate(model_class_names))
+        if exported is not None:
+            _class_id_to_name = dict(exported.metadata.class_id_to_name)
         predictions_list: list[Detections | KeyPoints] = []
         for i, result in enumerate(results):
             scores = result["scores"]
@@ -3148,6 +3238,7 @@ class RFDETR:
             Bundle creation is delegated to :meth:`export_for_roboflow`, which can be called independently
             to write ``weights.pt`` and ``class_names.txt`` without a network round-trip.
         """
+        RFDETR._require_native_model(self, "deploy_to_roboflow")
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
                 "Cannot deploy after inference(inplace=True) — "
@@ -3210,6 +3301,7 @@ class RFDETR:
                 file write, or ``torch.save``.
             RuntimeError: If the model was cleared by ``inference(inplace=True)``.
         """
+        RFDETR._require_native_model(self, "export_for_roboflow")
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
                 "Cannot export after inference(inplace=True) — "

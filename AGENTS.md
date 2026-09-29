@@ -241,6 +241,13 @@ uv run twine check --strict dist/*
 - Refuse a bad request before the forward pass: config values in `_check_capabilities` (config only), keywords that are derived, not stored, or hidden by a config default in `_format_settings`, missing packages in a `check_dependencies` override (called by `RFDETR.export` and `Exporter.__call__`, never by the constructor or the format itself). Only refusals that need the prepared graph go in `_convert`, first.
 - Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/exports/blueprint.md](docs/exports/blueprint.md).
 
+**Exported Inference:**
+
+- `RFDETR.from_export(path, *, device="auto", metadata=None)` and the top-level `from_export` return an `RFDETR` wrapper without constructing a native network. Keep `predict()` input handling, one-call/one-batch behavior, postprocessing, and Supervision results shared with native inference. Reject an incompatible batch or shape before runtime execution; do not split or pad it.
+- Runtime adapters own input layout, dtype, output mapping, device policy, and buffer lifetime. They return raw tensors for the shared `PostProcess` path. Load optional runtime packages lazily, and reject an unavailable explicit device. `runtime_info` reports the selected runtime and policy; a vendor policy does not always identify a physical device.
+- Inference metadata records the artifact interface and task semantics. ONNX embeds versioned metadata. Other formats use `<artifact-name>.rfdetr.json` beside the final artifact. Validate it against the actual interface; `metadata=` supplies a JSON path or mapping for older artifacts. Do not treat user `notes` as inference metadata or infer task and background placement from tensor rank.
+- `.trt` and `.engine` identify TensorRT engines. Both TFLite routes use `.tflite`, but onnx2tf uses NHWC and LiteRT uses NCHW; use metadata to select the layout. LiteRT cannot export full keypoint models. Reject backbone-only artifacts and native-only operations such as training, re-export, native optimization, and evaluation.
+
 **Model Selection (examples, docs, CI, tests, defaults):**
 
 - **Default to `RFDETRSmall` / `"rfdetr-small"` in docs and examples.** Use it wherever an example needs a concrete detection model.

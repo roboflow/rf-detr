@@ -3,16 +3,14 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Public inference wrappers for exported RF-DETR artifacts.
+"""Public access to exported RF-DETR inference.
 
-This module is session-tier only: a wrapper here loads an exported artifact and runs it, taking already-preprocessed
-tensors in and returning the model's raw output tensors. Turning those raw outputs into detections is deliberately
-**not** part of this surface — see the reference decoders in ``rfdetr.export._onnx.inference`` and
-``rfdetr.export._tflite.inference``, which are private and exist to pin numerical parity with
-:meth:`rfdetr.detr.RFDETR.predict`, not to be imported.
+Use :meth:`rfdetr.detr.RFDETR.from_export` to load an artifact and keep the native :meth:`rfdetr.detr.RFDETR.predict`
+input and result contract. The ``OpenVINOInference`` wrapper remains available for callers that supply preprocessed
+tensors and need raw outputs.
 
-For multi-backend inference (PyTorch / ONNX / TensorRT) with automatic backend selection, prefer `inference-models
-<https://github.com/roboflow/inference/tree/main/inference_models>`_.
+The reference decoders in ``rfdetr.export._onnx.inference`` and ``rfdetr.export._tflite.inference`` remain private
+parity helpers.
 """
 
 from __future__ import annotations

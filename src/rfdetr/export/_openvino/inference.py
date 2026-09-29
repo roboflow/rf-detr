@@ -48,7 +48,13 @@ class OpenVINOInference:
             boxes, labels = outputs
     """
 
-    def __init__(self, model_path: str | Path, device: str = "AUTO", cache_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        model_path: str | Path,
+        device: str = "AUTO",
+        cache_dir: str | None = None,
+        inference_precision: str | None = None,
+    ) -> None:
         """Initialize OpenVINO inference session.
 
         Args:
@@ -56,6 +62,7 @@ class OpenVINOInference:
             device: Device the model is compiled for, e.g. ``"AUTO"``, ``"CPU"``, ``"GPU"`` or ``"NPU"``.
             cache_dir: Directory holding the compiled-model cache. When set, OpenVINO reuses the
                 compiled kernels across process starts instead of recompiling the model every time.
+            inference_precision: Optional execution precision hint. Only ``"f32"`` is supported.
 
         Raises:
             ImportError: If OpenVINO is not installed.
@@ -74,7 +81,12 @@ class OpenVINOInference:
             # Must be set before compilation so compiled kernels are reused across process starts.
             core.set_property({"CACHE_DIR": cache_dir})
         model = core.read_model(model_path)
-        self.compiled_model = core.compile_model(model, device)
+        if inference_precision is None:
+            self.compiled_model = core.compile_model(model, device)
+        elif inference_precision == "f32":
+            self.compiled_model = core.compile_model(model, device, {"INFERENCE_PRECISION_HINT": ov.Type.f32})
+        else:
+            raise ValueError(f"Unsupported OpenVINO inference precision: {inference_precision!r}.")
         self.infer_request = self.compiled_model.create_infer_request()
         # Guards infer_request.infer() + get_output_tensor(): both touch the same shared
         # buffers, which are not safe for concurrent access from multiple threads.

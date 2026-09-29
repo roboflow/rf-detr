@@ -24,7 +24,9 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
-def _create_onnx_session(model_path: str | Path, providers: list[str] | None = None) -> Any:
+def _create_onnx_session(
+    model_path: str | Path, providers: list[str | tuple[str, dict[str, Any]]] | None = None
+) -> Any:
     """Load an ONNX model and create an ONNX Runtime inference session.
 
     Imports ``onnxruntime`` at call time so that the rest of the package remains usable without it installed.  Input and
