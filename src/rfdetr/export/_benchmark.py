@@ -19,6 +19,8 @@ Private module: no compatibility guarantee across versions. Formerly duplicated 
 from __future__ import annotations
 
 import gc
+import platform
+import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -374,6 +376,38 @@ def _artifact_size_mb(*paths: Path) -> float:
         else:
             total_bytes += path.stat().st_size
     return total_bytes / 1e6
+
+
+#: Reported by :func:`cpu_brand` when the host is not macOS, or when the ``sysctl`` probe cannot run.
+_UNKNOWN_CPU_BRAND = "unknown CPU brand"
+
+
+def cpu_brand() -> str:
+    """CPU brand string as reported by macOS ``sysctl``, or a fixed placeholder when it cannot be read.
+
+    The per-hardware cookbooks print this in their Host cell, before any measurement runs, so a raised exception here
+    aborts the notebook on the first cell that matters. Two guards are needed rather than one: ``sysctl`` ships only on
+    Darwin, and ``subprocess.run(..., check=False)`` suppresses a non-zero *exit status* but not the
+    ``FileNotFoundError`` raised when the binary is missing from ``PATH`` entirely — so ``check=False`` alone still
+    crashes on the Linux and Windows hosts the CPU and mobile cookbooks claim to support.
+
+    Returns:
+        The trimmed brand string on macOS, or :data:`_UNKNOWN_CPU_BRAND` off Darwin, when the probe cannot be spawned,
+        or when it reports nothing.
+
+    Examples:
+        >>> isinstance(cpu_brand(), str)
+        True
+    """
+    if platform.system() != "Darwin":
+        return _UNKNOWN_CPU_BRAND
+    try:
+        probe = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return _UNKNOWN_CPU_BRAND
+    return probe.stdout.strip() or _UNKNOWN_CPU_BRAND
 
 
 def _enable_notebook_inline_matplotlib() -> None:

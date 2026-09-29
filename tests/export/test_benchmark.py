@@ -31,6 +31,7 @@ from rfdetr.export._benchmark import (
     _result_row,
     _sampled_delta_mb,
     _tile_batch,
+    cpu_brand,
     measure_latency,
     measure_memory,
     visualize_detections,
@@ -354,6 +355,65 @@ class TestArtifactSizeMb:
         bin_path.write_bytes(b"0" * 900_000)
 
         assert _artifact_size_mb(xml_path, bin_path) == pytest.approx(1.0)
+
+
+class TestCpuBrand:
+    """Check the macOS ``sysctl`` probe, its platform guard, and every fallback path.
+
+    The cookbooks print this string in their Host cell before any measurement runs, so a raised exception here aborts
+    the whole notebook on the first cell that matters. ``sysctl`` exists only on Darwin, and ``check=False`` does not
+    suppress the ``FileNotFoundError`` raised when the binary is absent from ``PATH`` — the guard and the ``OSError``
+    handler are what keep the x86/ARM Linux and Windows hosts these notebooks claim to support from crashing.
+    """
+
+    def test_returns_stripped_brand_string_on_macos(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """On Darwin the probe runs and its trailing newline is stripped from the reported brand.
+
+        This is the only path that yields a real answer; ``sysctl -n`` always terminates its output with a newline,
+        which would otherwise land mid-line in the Host cell's printed summary.
+        """
+        run = Mock(return_value=SimpleNamespace(stdout="Apple M4 Max\n"))
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Darwin"))
+        monkeypatch.setattr("rfdetr.export._benchmark.subprocess.run", run)
+
+        assert cpu_brand() == "Apple M4 Max"
+
+    def test_skips_the_probe_entirely_on_non_darwin_hosts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A Linux or Windows host returns the fallback without ever invoking ``sysctl``.
+
+        Guarding before the call — rather than relying on the ``OSError`` handler — keeps the common non-macOS case free
+        of a doomed subprocess spawn, and is what makes the behaviour deterministic on a Linux box that happens to ship
+        an unrelated ``sysctl``.
+        """
+        run = Mock()
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Linux"))
+        monkeypatch.setattr("rfdetr.export._benchmark.subprocess.run", run)
+
+        assert cpu_brand() == "unknown CPU brand"
+        run.assert_not_called()
+
+    def test_falls_back_when_the_sysctl_binary_is_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A missing ``sysctl`` raises ``FileNotFoundError`` through ``check=False`` and is absorbed.
+
+        Regression guard for the original notebook cells: ``check=False`` only suppresses a non-zero
+        exit status, never the failure to spawn at all, so a Darwin host with a trimmed ``PATH``
+        crashed the Host cell outright.
+        """
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Darwin"))
+        monkeypatch.setattr("rfdetr.export._benchmark.subprocess.run", Mock(side_effect=FileNotFoundError("sysctl")))
+
+        assert cpu_brand() == "unknown CPU brand"
+
+    def test_falls_back_when_the_probe_returns_no_output(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty ``stdout`` reports the fallback rather than a blank brand string.
+
+        ``sysctl -n`` on an unknown key exits non-zero with nothing on stdout; ``check=False`` lets that through as an
+        empty string, which would print as an empty pair of parentheses.
+        """
+        monkeypatch.setattr("rfdetr.export._benchmark.platform.system", Mock(return_value="Darwin"))
+        monkeypatch.setattr("rfdetr.export._benchmark.subprocess.run", Mock(return_value=SimpleNamespace(stdout="")))
+
+        assert cpu_brand() == "unknown CPU brand"
 
 
 class TestEnableNotebookInlineMatplotlib:
