@@ -2727,6 +2727,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>A YOLO dataset stored below a directory named <code>images</code> (for example <code>/data/images/coco8</code>) now loads the splits its <code>data.yaml</code> declares. The labels directory was derived by swapping the first <code>images</code> segment of the absolute split path for <code>labels</code>, so <code>images/val</code> resolved its labels to <code>/data/labels/coco8/images/val</code>. That directory does not exist, so resolution fell back to the Roboflow <code>valid/images</code> convention and training failed on a missing directory. The resolver now scans <code>images</code> segments right to left and swaps the rightmost one with an existing <code>labels</code> sibling, as Ultralytics does, rejecting any candidate that would resolve outside the dataset root. (<a href="https://github.com/roboflow/rf-detr/pull/1557">#1557</a>)</p>
+</li>
+<li>
 <p>Training on COCO-format datasets of PNG, BMP or other non-JPEG images (and of JPEG files when <code>simplejpeg</code> is not installed) loads data as fast as 1.10 again. Since 1.11.0, <code>CocoDetection</code> copied every image Pillow decoded into a NumPy array and straight back into a PIL image. On Windows 11 (Ryzen 7 7800X3D), the train DataLoader with the default 2 workers and a batch size of 8 (<code>RFDETRLarge</code>, <code>resolution=1120</code>) took up to 27% longer per batch than 1.10.1 on 4096-px BMP files and 11% longer on 4096-px PNG files; JPEG files, which <code>simplejpeg</code> decodes, were not affected. <code>CocoDetection</code> and the WebDataset shard reader now use the image Pillow decoded as is. (<a href="https://github.com/roboflow/rf-detr/issues/1544">#1544</a>)</p>
 </li>
 <li>
