@@ -66,9 +66,25 @@ class TestNormalizeFormat:
         """A name that is already canonical is returned unchanged."""
         assert normalize_format("onnx") == "onnx"
 
-    def test_unknown_name_passes_through_for_the_resolver_to_reject(self) -> None:
-        """An unknown spelling is not rewritten, so the resolver can name it back to the user verbatim."""
-        assert normalize_format("nonesuch") == "nonesuch"
+    @pytest.mark.parametrize("spelling, canonical", [("ONNX", "onnx"), ("Onnx", "onnx"), ("TRT", "tensorrt")])
+    def test_format_spelling_is_case_insensitive(self, spelling: str, canonical: str) -> None:
+        """Format names and aliases match in any case, as ``backend`` already does."""
+        assert normalize_format(spelling) == canonical
+
+    @pytest.mark.parametrize(
+        "spelling",
+        [
+            "nonesuch",
+            "NoneSuch",
+            None,
+            123,
+            pytest.param(["onnx"], id="list"),
+            pytest.param(b"onnx", id="bytes"),
+        ],
+    )
+    def test_unknown_name_passes_through_for_the_resolver_to_reject(self, spelling: object) -> None:
+        """An unknown spelling or a non-string value is not rewritten, so the resolver names it back verbatim."""
+        assert normalize_format(spelling) == spelling
 
 
 class TestResolveExporter:
@@ -134,6 +150,17 @@ class TestRejectUnsupportedDynamicBatch:
         assert REGISTRY[format].label in str(refusal.value)
         assert REGISTRY[format].dynamic_batch_reason in str(refusal.value)
         assert REGISTRY[format].dynamic_batch_reason, "a fixed-batch format must explain what to do instead"
+
+    @pytest.mark.parametrize("format", sorted(f for f, e in REGISTRY.items() if not e.supports_dynamic_batch))
+    def test_constructed_exporter_refuses_too(self, tmp_path: Path, format: str) -> None:
+        """A caller that builds the exporter directly, skipping this guard, is refused by the exporter itself.
+
+        Pins that a format's own ``_check_capabilities`` override still runs the base class's check.
+        """
+        exporter_class = resolve_exporter(format)
+
+        with pytest.raises(NotImplementedError, match="dynamic_batch"):
+            exporter_class(exporter_class.config_class(output_dir=tmp_path, dynamic_batch=True))
 
     @pytest.mark.parametrize("format", sorted(f for f, e in REGISTRY.items() if e.supports_dynamic_batch))
     def test_dynamic_capable_formats_are_allowed(self, format: str) -> None:

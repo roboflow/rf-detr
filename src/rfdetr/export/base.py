@@ -9,10 +9,11 @@ An exporter is constructed from its format's configuration and then called with 
 :class:`~rfdetr.export.prepare.ExportGraph`, so the two halves of an export — *what the user asked for* and *what the
 model looks like* — stay separate and independently testable.
 
-The base class owns everything that is the same for all seven formats: rejecting a capability the format does not have,
-switching the model into its export-friendly forward exactly once, normalizing the returned path, and logging the
-result. A format subclass implements :meth:`Exporter._convert` and declares its capabilities as class attributes; it
-never repeats a guard.
+The base class owns everything that is the same for every format: rejecting a capability the format does not have and
+``notes`` that JSON cannot encode, warning about settings it ignores, running the format's dependency check before the
+conversion, switching the model into its export-friendly forward exactly once, normalizing the returned path, and
+logging the result. A format subclass implements :meth:`Exporter._convert` and declares its capabilities as class
+attributes; it adds its own checks through the hooks below rather than repeating the base class's.
 
 Configuration is per format rather than one flat object, so a knob that does not apply cannot be passed: there is no
 ``opset_version`` on ``CoreMLConfig`` to silently ignore. Each format's configuration class lives beside the exporter
@@ -22,6 +23,7 @@ than the abstraction they share.
 
 from __future__ import annotations
 
+import json
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
@@ -140,20 +142,68 @@ def shared_settings(config: ExportConfig) -> dict[str, Any]:
     return {name: getattr(config, name) for name in SHARED_FIELDS}
 
 
+def serialize_notes(notes: object) -> str:
+    """Render *notes* as the string an artifact's metadata slot stores.
+
+    A string is stored as-is, so readers can use it without decoding. Anything else is JSON-encoded, and strictly:
+    ``NaN`` and ``Infinity`` are not valid JSON, and a strict parser on the reading side would reject them.
+
+    Args:
+        notes: The user's notes.
+
+    Returns:
+        The value to store under the artifact's ``rfdetr_notes`` key.
+
+    Raises:
+        ValueError: If *notes* holds a non-finite float or a circular reference.
+        TypeError: If *notes* holds a value JSON cannot encode.
+
+    Examples:
+        >>> serialize_notes("trained on pallets")
+        'trained on pallets'
+        >>> serialize_notes({"run": 3, "classes": ["box"]})
+        '{"run": 3, "classes": ["box"]}'
+        >>> serialize_notes(float("nan"))  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ValueError: notes must be a string or a JSON-serializable value: ...
+    """
+    if isinstance(notes, str):
+        return notes
+    try:
+        return json.dumps(notes, allow_nan=False)
+    except ValueError as error:
+        raise ValueError(f"notes must be a string or a JSON-serializable value: {error}") from error
+    except TypeError as error:
+        raise TypeError(f"notes must be a string or a JSON-serializable value: {error}") from error
+
+
 _ConfigT = TypeVar("_ConfigT", bound=ExportConfig)
 
 
 class Exporter(ABC, Generic[_ConfigT]):
     """Write one export format's artifact from a prepared graph.
 
-    Subclasses declare what their format can do as class attributes and implement :meth:`_convert`. Constructing
-    an exporter validates the configuration against those capabilities, so an unsupported combination is rejected
-    before the caller pays for a full forward pass through the model. A subclass may also override
-    :meth:`_check_capabilities` (calling ``super()`` first) to validate settings the class attributes cannot
-    express on their own — cross-field consistency within the format's own configuration, for example — raising
-    ``ValueError`` for that kind of rejection, distinct from the base class's own ``NotImplementedError``. Where
-    :meth:`_check_capabilities` judges the request, :meth:`check_dependencies` judges the host: a subclass overrides
-    it to refuse a missing optional dependency before that same forward pass, rather than deep inside the conversion.
+    Subclasses declare what their format can do as class attributes and implement :meth:`_convert`. A check that needs
+    only the request or the installed packages belongs before the caller pays for a full forward pass through the
+    model, in one of these steps, which :meth:`rfdetr.detr.RFDETR.export` runs before it prepares the graph:
+
+    1. :meth:`build_config` reads the keyword arguments. A subclass overrides :meth:`_format_settings` only for a
+       keyword that must be derived, one the configuration does not store, or one whose absence the configuration's
+       default would hide.
+    2. Constructing the exporter validates the configuration: :meth:`_check_capabilities` rejects a capability the
+       class attributes deny and ``notes`` that JSON cannot encode, for a format that embeds them. A subclass
+       overrides it (calling ``super()`` first) to validate its own settings — an unknown precision name, or
+       cross-field consistency within the format's configuration — raising ``ValueError`` (the base class raises
+       ``NotImplementedError`` for a capability the class attributes deny). It reads the configuration only, never
+       the environment. Only a configuration that passes is warned about (dropped ``notes``, an experimental format).
+    3. Where :meth:`_check_capabilities` judges the request, :meth:`check_dependencies` judges the host: it refuses a
+       package the format cannot run without. A subclass overrides it and never calls it: ``RFDETR.export`` calls it
+       before the forward pass, and :meth:`__call__` calls it again before :meth:`_convert`, so an exporter handed a
+       graph directly checks the same packages first.
+
+    A refusal that depends on the prepared graph (an output the converter cannot lower, say) comes first in
+    :meth:`_convert`, before the conversion runs.
 
     A subclass also owns its configuration: :attr:`config_class` names the dataclass it is constructed from, and
     :attr:`setting_names` maps that dataclass's format-specific fields onto the keyword arguments
@@ -212,8 +262,9 @@ class Exporter(ABC, Generic[_ConfigT]):
     def _format_settings(cls, settings: Mapping[str, Any]) -> dict[str, Any]:
         """Pick this format's own settings out of ``RFDETR.export``'s flat keyword arguments.
 
-        The default reads :attr:`setting_names`. Override it only when a format needs to validate or derive a
-        setting rather than copy it across.
+        The default reads :attr:`setting_names`. Override it only for a keyword that must be derived rather than
+        copied, one the configuration does not store, or one whose absence the configuration's default would hide. A
+        value the configuration holds is validated in :meth:`_check_capabilities` instead.
 
         Args:
             settings: The keyword arguments ``RFDETR.export`` was called with.
@@ -224,66 +275,85 @@ class Exporter(ABC, Generic[_ConfigT]):
         return {field: settings[keyword] for field, keyword in cls.setting_names.items() if keyword in settings}
 
     def __init__(self, config: _ConfigT) -> None:
-        """Validate *config* against this format's capabilities and keep it for the conversion.
+        """Validate *config* against this format's capabilities, warn about what it ignores, and keep it.
 
         Args:
             config: The format's configuration.
 
         Raises:
             NotImplementedError: If the configuration asks for a capability the format does not have.
-            ValueError: If a subclass's :meth:`_check_capabilities` override rejects the configuration for a
-                format-specific reason the class attributes alone cannot express (e.g. TensorRT's dynamic-batch
+            ValueError: If *notes* the format embeds is not JSON-serializable (e.g. ``NaN``), or a subclass's
+                :meth:`_check_capabilities` override rejects the configuration for a format-specific reason the class
+                attributes alone cannot express (e.g. an unknown precision, or TensorRT's dynamic-batch
                 optimization-profile bounds).
+            TypeError: If *notes* the format embeds holds a value JSON cannot encode.
         """
         self.config = config
         self._check_capabilities()
-
-    def _check_capabilities(self) -> None:
-        """Reject or warn about settings this format cannot honour.
-
-        A subclass override should call ``super()._check_capabilities()`` first, then add its own format-specific
-        checks — see :class:`~rfdetr.export._tensorrt.exporter.TensorRTExporter` for the one existing example.
-
-        Raises:
-            NotImplementedError: If ``dynamic_batch`` was requested and the format bakes a fixed shape.
-            ValueError: A subclass override may raise this for its own format-specific validation failures; the
-                base implementation never raises it itself.
-        """
-        if self.config.dynamic_batch and not self.supports_dynamic_batch:
-            raise NotImplementedError(
-                _dynamic_batch_message(self.display_name or self.format, self.dynamic_batch_reason)
-            )
-        # stacklevel=4, not 3: the warning is raised two frames below the public entry point
-        # (_check_capabilities -> __init__ -> RFDETR.export -> the user's call), and pointing at RFDETR.export
-        # would break `warnings.filterwarnings(..., module=...)` filters and collapse all seven formats onto one
-        # reported location.
+        # Warned only once the checks above pass, so a configuration this constructor refuses does not warn first.
+        # stacklevel=3 points past __init__ and RFDETR.export at the user's call: pointing at RFDETR.export would break
+        # `warnings.filterwarnings(..., module=...)` filters and collapse all the formats onto one reported location.
         if self.config.notes is not None and not self.supports_notes:
             warnings.warn(
                 f"`notes` is not forwarded to format={self.format!r} ({self.notes_reason}). This argument is ignored.",
                 UserWarning,
-                stacklevel=4,
+                stacklevel=3,
             )
         if self.experimental:
             name = self.display_name or self.format
             warnings.warn(
                 f"{name} export is experimental and work-in-progress. {self.experimental_note}".strip(),
                 UserWarning,
-                stacklevel=4,
+                stacklevel=3,
             )
+
+    def _check_capabilities(self) -> None:
+        """Reject settings this format cannot honour.
+
+        A subclass override should call ``super()._check_capabilities()`` first, then add its own format-specific
+        checks — see :class:`~rfdetr.export._tensorrt.exporter.TensorRTExporter` for an example.
+
+        Raises:
+            NotImplementedError: If ``dynamic_batch`` was requested and the format bakes a fixed shape.
+            ValueError: If the format embeds *notes* and they hold a non-finite float or a circular reference. A
+                subclass override may also raise it for its own format-specific validation failures.
+            TypeError: If the format embeds *notes* and they hold a value JSON cannot encode.
+        """
+        if self.config.dynamic_batch and not self.supports_dynamic_batch:
+            raise NotImplementedError(
+                _dynamic_batch_message(self.display_name or self.format, self.dynamic_batch_reason)
+            )
+        # Serialized here and again when the artifact is written: a value no metadata slot can hold must fail before
+        # the forward pass, not after the trace has already written a file without it.
+        if self.config.notes is not None and self.supports_notes:
+            serialize_notes(self.config.notes)
 
     @classmethod
     def check_dependencies(cls) -> None:
         """Refuse a host missing this format's optional dependencies, before any work on the model starts.
 
-        The default is a no-op, which is right for a format that imports its converter inside :meth:`_convert`: that
-        import failing is already its refusal, and nothing cheaper is available to ask. A format whose dependency can
-        be probed without importing it overrides this instead, so the refusal lands before
-        :func:`~rfdetr.export.prepare.prepare_export_graph` has paid for a full forward pass through the model. An
-        override is an addition, not a move: the format keeps its own check inside :meth:`_convert` for callers that
-        reach the conversion by another route.
+        The default is a no-op, for a format that needs no optional package. A format that needs one overrides this
+        with the availability check its conversion relies on, kept cheap — a metadata probe such as
+        :func:`~rfdetr.utilities.package.is_installed`, or an import the conversion performs anyway — so the refusal
+        lands before :func:`~rfdetr.export.prepare.prepare_export_graph` has paid for a full forward pass through the
+        model.
+
+        :meth:`rfdetr.detr.RFDETR.export` calls it on the resolved exporter class right after constructing the
+        exporter, and :meth:`__call__` calls it again before :meth:`_convert`, so an exporter called on a graph
+        directly is checked too. A subclass overrides it and never calls it itself; it runs twice on the export path, so
+        an override stays idempotent. An override is an addition, not a move, for a public entry point that bypasses
+        :meth:`__call__`: TFLite's ``convert_onnx`` and TensorRT's ``build_engine`` keep their own checks. Construction
+        does not call it: a caller that only builds the exporter (a TensorRT ``dry_run``, a test that stubs the
+        conversion) needs none of the format's packages.
 
         Raises:
-            ImportError: If an override finds a package its format needs is not installed.
+            ImportError: If an override finds a package its format needs is not installed, naming the extra that
+                installs it.
+
+        Note:
+            Not thread-safe across concurrent exports in the same process: an override may probe or mutate
+            process-global state (``sys.modules``, import order, warning filters) that a concurrent call to this
+            method, on any format, could race with. Callers are assumed to invoke exports one at a time.
 
         Examples:
             >>> Exporter.check_dependencies() is None
@@ -299,7 +369,12 @@ class Exporter(ABC, Generic[_ConfigT]):
 
         Returns:
             Path to the exported artifact.
+
+        Raises:
+            ImportError: If :meth:`check_dependencies` finds a package the format needs missing; checked before the
+                conversion starts, so a caller that hands the exporter a graph directly gets the same message.
         """
+        self.check_dependencies()
         # Once for every format — the model arrives from prepare_export_graph in its training forward, and the
         # switch is idempotent so a two-stage format composing another exporter stays safe.
         _switch_to_export_mode(graph.model)

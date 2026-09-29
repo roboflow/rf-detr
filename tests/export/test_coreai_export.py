@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
 import os
 import platform
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -444,11 +446,10 @@ class TestCoreAIExporter:
         (traced_input,) = stack.export.call_args.args[1]
         assert traced_input.dtype == torch.float32
 
-    def test_invalid_precision_is_rejected_before_tracing(self, tmp_path: Path) -> None:
-        """An unknown precision is a ``ValueError`` raised before the converter runs."""
-        with _mocked_coreai_stack() as stack, pytest.raises(ValueError, match="precision"):
-            CoreAIExporter(CoreAIConfig(output_dir=tmp_path, precision="int8", verbose=False))(_make_export_graph())
-        stack.export.assert_not_called()
+    def test_invalid_precision_is_refused_at_construction(self, tmp_path: Path) -> None:
+        """An unknown precision is a ``ValueError`` when the exporter is built, before any graph is prepared."""
+        with pytest.raises(ValueError, match="precision must be"):
+            CoreAIExporter(CoreAIConfig(output_dir=tmp_path, precision="int8", verbose=False))
 
     @pytest.mark.parametrize(
         "notes, stored",
@@ -494,6 +495,7 @@ class TestExportFormatParameter:
         with (
             mock.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)),
             mock.patch("rfdetr.export._coreai.exporter.CoreAIExporter._convert", return_value=aimodel) as convert,
+            mock.patch("rfdetr.export._coreai.exporter.CoreAIExporter.check_dependencies"),
             mock.patch("rfdetr.export._onnx.exporter.OnnxExporter._convert") as onnx_convert,
         ):
             self._mock_convert = convert
@@ -535,6 +537,44 @@ class TestExportFormatParameter:
         with pytest.raises(NotImplementedError, match="dynamic_batch"):
             self._make_rfdetr().export(format="coreai", output_dir=str(self._tmp_path / "out"), dynamic_batch=True)
         self._mock_convert.assert_not_called()
+
+
+class TestFloat16KeypointWarning:
+    """A float16 keypoint ``.aimodel`` aborts the process on the Neural Engine, so exporting one warns.
+
+    It warns rather than refuses: the same asset is correct on the CPU and the GPU (``docs/exports/coreai.md``).
+    """
+
+    @pytest.mark.parametrize(
+        "precision, output_names, warns",
+        [
+            pytest.param("float16", ("dets", "labels", "keypoints"), True, id="float16-keypoints"),
+            pytest.param("float32", ("dets", "labels", "keypoints"), False, id="float32-keypoints"),
+            pytest.param("float16", ("dets", "labels"), False, id="float16-detection"),
+        ],
+    )
+    def test_warns_only_for_float16_keypoints(
+        self, tmp_path: Path, precision: str, output_names: tuple[str, ...], warns: bool
+    ) -> None:
+        """Only the combination that aborts on the Neural Engine warns."""
+        graph = dataclasses.replace(_make_export_graph(), output_names=output_names)
+        exporter = CoreAIExporter(CoreAIConfig(output_dir=tmp_path, precision=precision, verbose=False))
+        with _mocked_coreai_stack(), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            exporter(graph)
+        assert any("Neural Engine" in str(warning.message) for warning in caught) is warns
+
+    def test_warning_points_at_the_caller_of_export(self, tmp_path: Path) -> None:
+        """The warning skips the exporter's frames, so ``filterwarnings(module=...)`` matches the caller's module."""
+        detector = TestExportFormatParameter._make_rfdetr()
+        detector.model_config.use_grouppose_keypoints = True
+        with (
+            _mocked_coreai_stack(),
+            mock.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)),
+            pytest.warns(UserWarning, match="Neural Engine") as caught,
+        ):
+            detector.export(format="coreai", coreai_precision="float16", output_dir=str(tmp_path / "out"))
+        assert [warning.filename for warning in caught if "Neural Engine" in str(warning.message)] == [__file__]
 
 
 # ---------------------------------------------------------------------------
