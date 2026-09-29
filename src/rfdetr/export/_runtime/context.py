@@ -17,6 +17,7 @@ import torch
 
 from rfdetr.export._runtime.adapters import ExportRuntime, load_runtime
 from rfdetr.export._runtime.metadata import ExportMetadata, read_metadata
+from rfdetr.export.inference import RFDETRInference
 from rfdetr.models.postprocess import PostProcess
 
 if TYPE_CHECKING:
@@ -44,8 +45,8 @@ def load_exported_model(
     *,
     device: str,
     metadata: dict[str, Any] | str | os.PathLike[str] | None,
-) -> RFDETR:
-    """Construct a prediction-only RFDETR from a validated artifact."""
+) -> RFDETRInference:
+    """Construct an inference-only wrapper from a validated artifact."""
     contract = read_metadata(path, Path(metadata) if isinstance(metadata, os.PathLike) else metadata)
     if cls.size is not None and cls.size != contract.variant:
         raise ValueError(f"{cls.__name__} requires variant {cls.size!r}, but artifact declares {contract.variant!r}.")
@@ -66,4 +67,4 @@ def load_exported_model(
     model.stds = list(contract.stds)
     model.callbacks = defaultdict(list)
     model._initialize_inference_state()
-    return model
+    return RFDETRInference(model)

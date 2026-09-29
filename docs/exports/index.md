@@ -33,15 +33,15 @@ This page covers the shared export API, parameters, output-file naming, and the 
 
 ## Load an Export for Prediction
 
-`RFDETR.from_export()` loads a full export into the native `predict()` API. It returns an `RFDETR` instance. Detection and segmentation return `supervision.Detections`. Keypoint models return `supervision.KeyPoints`.
+`RFDETR.from_export()` loads a full export into the native `predict()` API. It returns an `RFDETRInference` instance. Detection and segmentation return `supervision.Detections`. Keypoint models return `supervision.KeyPoints`.
 
 ```python
-from rfdetr import RFDETR, RFDETRSmall
+from rfdetr import RFDETR, RFDETRInference, RFDETRSmall
 
 native_model = RFDETRSmall()
 artifact = native_model.export(format="onnx", output_dir="output")
 
-model = RFDETR.from_export(artifact, device="auto")
+model: RFDETRInference = RFDETR.from_export(artifact, device="auto")
 detections = model.predict("image.jpg", threshold=0.5)
 print(model.runtime_info)
 ```
@@ -52,7 +52,7 @@ The top-level `from_export(artifact, device="auto")` function provides the same 
 
 Exports include versioned inference metadata. ONNX stores it in the model. Other formats use an adjacent `<artifact-name>.rfdetr.json` file. For example, `model.trt` uses `model.trt.rfdetr.json`. Keep this file with the artifact. For an older export, pass a JSON path or a mapping through `metadata=`. The loader rejects missing or conflicting task, class, output, and preprocessing details. User-defined `notes` are separate from inference metadata.
 
-The loader accepts the TensorRT `.trt` extension and the `.engine` alias. Both TFLite export routes use `.tflite`. Their metadata selects the NHWC or NCHW input layout. LiteRT currently cannot export a full keypoint model. Backbone-only exports contain features rather than predictions, so `from_export()` rejects them. The factory rejects native operations that require model weights: training, re-export, native optimization, and evaluation.
+The loader accepts the TensorRT `.trt` extension and the `.engine` alias. Both TFLite export routes use `.tflite`. Their metadata selects the NHWC or NCHW input layout. LiteRT currently cannot export a full keypoint model. Backbone-only exports contain features rather than predictions, so `from_export()` rejects them. `RFDETRInference` exposes `predict()`, `class_names`, and `runtime_info`. It has no training, evaluation, export, or native optimization methods.
 
 Use `device="auto"` to let the runtime select an available policy. An explicit device request must match the runtime and available hardware. For example, TensorRT requires CUDA. Core AI accepts `auto` or `cpu`; its GPU and Neural Engine options express a preference and cannot pin execution to that device. An incompatible request raises an error instead of switching devices. Install the runtime package for the chosen format on the target system. The format guides describe package and hardware limits.
 

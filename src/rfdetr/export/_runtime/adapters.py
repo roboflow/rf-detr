@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from rfdetr.export._runtime.metadata import ExportMetadata
 
 
-def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray:
+def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[Any, Any]:
     """Convert a normalized NCHW batch to the artifact's input interface."""
     if batch.ndim != 4 or batch.shape[1] != metadata.input_shape[1]:
         raise ValueError(f"Expected an NCHW batch with {metadata.input_shape[1]} channels, got {tuple(batch.shape)}.")
@@ -152,7 +152,7 @@ async def _await_result(value: Any) -> Any:
 
 
 async def _run_coreai(
-    session: Any, input_name: str | int, array: np.ndarray, metadata: ExportMetadata
+    session: Any, input_name: str | int, array: np.ndarray[Any, Any], metadata: ExportMetadata
 ) -> dict[str, Any]:
     """Execute Core AI on its owning loop and copy its name-indexed result into a mapping."""
     from coreai.runtime import NDArray

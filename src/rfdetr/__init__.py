@@ -42,6 +42,7 @@ if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
 
 
 from rfdetr.detr import RFDETR
+from rfdetr.export.inference import RFDETRInference
 from rfdetr.inference import ModelContext
 from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
@@ -62,6 +63,7 @@ from rfdetr.variants import (
 
 __all__ = [
     "ModelContext",
+    "RFDETRInference",
     "from_checkpoint",
     "from_export",
     "RFDETRKeypointPreview",
@@ -83,7 +85,7 @@ def from_checkpoint(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
     return RFDETR.from_checkpoint(path, **kwargs)
 
 
-def from_export(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
+def from_export(path: str | os.PathLike[str], **kwargs: Any) -> RFDETRInference:
     """Load an exported model through :meth:`RFDETR.from_export`."""
     return RFDETR.from_export(path, **kwargs)
 

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from supervision import Detections, KeyPoints
 
     from rfdetr.export._runtime.context import ExportedModelContext
+    from rfdetr.export.inference import RFDETRInference
 
 try:
     torch.set_float32_matmul_precision("high")
@@ -621,7 +622,7 @@ class RFDETR:
         *,
         device: str = "auto",
         metadata: dict[str, Any] | str | os.PathLike[str] | None = None,
-    ) -> RFDETR:
+    ) -> RFDETRInference:
         """Load an exported artifact without constructing a native network.
 
         Args:
@@ -630,7 +631,7 @@ class RFDETR:
             metadata: Missing legacy metadata as a mapping or JSON path.
 
         Returns:
-            An RFDETR instance supporting the normal prediction interface.
+            An RFDETRInference instance exposing prediction, class names, and runtime information.
 
         Raises:
             FileNotFoundError: If the artifact does not exist.

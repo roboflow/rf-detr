@@ -71,6 +71,21 @@ def exported_detection(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     }
 
 
+class TestInferenceCapabilities:
+    """Export factories return an inference-only public type."""
+
+    @pytest.mark.parametrize("top_level", [False, True])
+    def test_distinct_type(self, exported_detection: tuple[Path, dict[str, object]], top_level: bool) -> None:
+        """Both factories expose the same inference-only class."""
+        from rfdetr import RFDETRInference, from_export
+        from rfdetr.export.inference import RFDETRInference as ExportInference
+
+        path, metadata = exported_detection
+        model = (from_export if top_level else RFDETR.from_export)(path, metadata=metadata, device="cpu")
+        assert type(model) is RFDETRInference is ExportInference
+        assert not isinstance(model, RFDETR)
+
+
 class TestExportedPrediction:
     """A real runtime returns the existing Supervision prediction contract."""
 
@@ -83,7 +98,6 @@ class TestExportedPrediction:
         model = RFDETR.from_export(path, metadata=metadata, device="cpu")
         image = np.zeros((64, 96, 3), dtype=np.uint8)
         result = model.predict(image)
-        assert isinstance(model, RFDETR)
         assert isinstance(result, sv.Detections)
         np.testing.assert_allclose(result.xyxy, [[24, 16, 72, 48]])
         assert list(result.data["class_name"]) == ["object"]
@@ -203,15 +217,23 @@ class TestExportedPrediction:
         with pytest.raises(ValueError, match="shape must be a sequence"):
             model.predict(np.zeros((32, 48, 3), dtype=np.uint8), shape=42)  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("operation", ["train", "evaluate", "inference", "remove_optimized_model", "export"])
-    def test_native_operations_rejected(
-        self, exported_detection: tuple[Path, dict[str, object]], operation: str
-    ) -> None:
-        """Native-only operations fail before accessing weights or training state."""
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            "train",
+            "evaluate",
+            "inference",
+            "remove_optimized_model",
+            "export",
+            "deploy_to_roboflow",
+            "export_for_roboflow",
+        ],
+    )
+    def test_native_operations_absent(self, exported_detection: tuple[Path, dict[str, object]], operation: str) -> None:
+        """The inference type does not advertise native-model capabilities."""
         path, metadata = exported_detection
         model = RFDETR.from_export(path, metadata=metadata, device="cpu")
-        with pytest.raises(RuntimeError, match="requires native weights"):
-            getattr(model, operation)()
+        assert not hasattr(model, operation)
 
     def test_embedded_metadata(self, exported_detection: tuple[Path, dict[str, object]]) -> None:
         """A self-describing ONNX artifact needs no caller configuration."""
