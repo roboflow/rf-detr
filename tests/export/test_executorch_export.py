@@ -188,10 +188,9 @@ class TestExecuTorchExporterValidation:
     """Configuration validation and dependency-error behaviour of ``ExecuTorchExporter``."""
 
     def test_unsupported_backend_raises_value_error(self, tmp_path: Path) -> None:
-        """An unknown delegation backend is rejected when the graph is converted."""
-        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="vulkan"))
+        """An unknown delegation backend is rejected when the exporter is built, before its dependency check."""
         with pytest.raises(ValueError, match="Unsupported ExecuTorch backend"):
-            exporter(_export_graph())
+            ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="vulkan"))
 
     def test_supported_backend_set_is_exact(self) -> None:
         """``_VALID_BACKENDS`` is exactly ``{"xnnpack", "coreml", "qnn"}`` -- no more, no fewer."""
@@ -294,6 +293,16 @@ class TestExecuTorchExporterValidation:
             with mock.patch("importlib.metadata.version", return_value="1.3.1"):
                 _check_executorch_available(require_runtime=True)  # must not raise
 
+    def test_executorch_without_its_lowering_entry_point_is_refused(self, tmp_path: Path) -> None:
+        """An ``executorch`` that imports without ``executorch.exir`` fails the dependency check, before lowering."""
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="xnnpack"))
+        with (
+            mock.patch.dict(sys.modules, {"executorch": types.ModuleType("executorch"), "executorch.exir": None}),
+            mock.patch("importlib.metadata.version", return_value="1.3.1"),
+            pytest.raises(ImportError, match="executorch.exir"),
+        ):
+            exporter.check_dependencies()
+
     def test_missing_dependency_raises_import_error(self, tmp_path: Path) -> None:
         """The exporter raises ImportError with an install hint when executorch is absent."""
         exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="xnnpack"))
@@ -341,6 +350,10 @@ class TestExportFormatParameter:
                 "rfdetr.export.prepare.make_infer_image",
                 return_value=torch.zeros(1, 3, 560, 560),
             )
+        )
+        # The CPU job has no executorch, which RFDETR.export() checks for before the forward pass.
+        self._mock_stack.enter_context(
+            mock.patch("rfdetr.export._executorch.exporter.ExecuTorchExporter.check_dependencies")
         )
         # Mock the conversion so no torch.export / executorch work happens. autospec keeps the exporter instance
         # as the first positional argument, which is how the tests below read back the resolved configuration.
