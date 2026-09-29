@@ -24,7 +24,7 @@ import pytest
 import torch
 
 from rfdetr import RFDETR, RFDETRNano
-from rfdetr.config import RFDETRNanoConfig, TrainConfig
+from rfdetr.config import RFDETRLargeDeprecatedConfig, RFDETRNanoConfig, TrainConfig
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.reproducibility import seed_all
 from tests.conftest import build_synthetic_dataset
@@ -35,6 +35,9 @@ _RESOLUTION = 224
 _TRAIN_SEED = 1552
 #: Enough for a train and a valid split; the checkpoint contents do not depend on how long training ran.
 _NUM_IMAGES = 16
+#: A note a weights-only ``torch.load`` cannot read, so the run covers the ``repr`` fallback every writer applies.
+#: ``PurePosixPath`` rather than ``Path`` so its ``repr`` is the same string on every OS.
+_NOTES = PurePosixPath("runs/exp7")
 
 
 @pytest.fixture(scope="module")
@@ -54,6 +57,10 @@ def dataset_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def training_output_dir(dataset_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Train ``RFDETRNano`` on the CPU for one epoch and return its output directory.
 
+    Trains with a ``Path``-valued ``notes`` so the run covers a config value no weights-only ``torch.load`` can read.
+    Every checkpoint writer must then agree on the ``repr`` fallback; when only one of them applied it, ``last.ckpt``
+    and ``last_ema.pth`` described the same epoch differently.
+
     Examples:
         >>> training_output_dir(dataset_dir, tmp_path_factory)  # doctest: +SKIP
         # A pytest fixture that trains a model; it cannot run standalone.
@@ -71,6 +78,7 @@ def training_output_dir(dataset_dir: Path, tmp_path_factory: pytest.TempPathFact
         tensorboard=False,
         run_test=False,
         device="cpu",
+        notes=_NOTES,
     )
     return output_dir
 
@@ -122,7 +130,7 @@ def constructed(training_output_dir: Path) -> RFDETRNano:
 class TestLastCkptDescribesModel:
     """``last.ckpt`` carries the same model description as the best ``.pth`` files of its run."""
 
-    @pytest.mark.parametrize("key", ["args", "model_name", "model_config"])
+    @pytest.mark.parametrize("key", ["args", "model_name", "model_config", "rfdetr_version"])
     def test_matches_best_pth(self, last_ckpt: dict[str, Any], last_ema_pth: dict[str, Any], key: str) -> None:
         """Each description key equals the one ``BestModelCallback`` wrote for the same epoch."""
         assert last_ckpt[key] == last_ema_pth[key]
@@ -131,6 +139,17 @@ class TestLastCkptDescribesModel:
         """Lightning resumes ``ckpt_path`` with ``torch.load(weights_only=True)``; the description must load there."""
         checkpoint = torch.load(training_output_dir / "last.ckpt", map_location="cpu", weights_only=True)
         assert checkpoint["model_config"]["resolution"] == _RESOLUTION
+
+    @pytest.mark.parametrize("filename", ["last.ckpt", "last_ema.pth"])
+    def test_unreadable_note_is_stored_as_repr(self, training_output_dir: Path, filename: str) -> None:
+        """A ``Path`` note reaches every file of the run as its ``repr``, so a weights-only load reads them all.
+
+        ``.ckpt`` and ``.pth`` are written by different callers of the same description helper. While only the ``.ckpt``
+        caller replaced what a weights-only load rejects, ``last_ema.pth`` kept the raw ``Path`` and could only be
+        reloaded by falling back to full pickling.
+        """
+        checkpoint = torch.load(training_output_dir / filename, map_location="cpu", weights_only=True)
+        assert checkpoint["args"]["notes"] == repr(_NOTES)
 
 
 class TestFromCheckpointOnLastCkpt:
@@ -164,6 +183,17 @@ class TestLastCkptKeepsDatasetClassNames:
         categories = json.loads((dataset_dir / "train" / "_annotations.coco.json").read_text())["categories"]
         expected = [category["name"] for category in sorted(categories, key=lambda category: category["id"])]
         assert request.getfixturevalue(model_fixture).class_names == expected
+
+
+class _RaisingRepr:
+    """A note whose ``__repr__`` raises, standing in for a user object whose own debugging code is broken.
+
+    Module-level so ``torch.save`` can look the class up by name; the checkpoint writers must survive it either way.
+    """
+
+    def __repr__(self) -> str:
+        """Raise, the way a half-initialised object's ``__repr__`` does."""
+        raise RuntimeError("this object cannot describe itself")
 
 
 class TestOnSaveCheckpoint:
@@ -204,3 +234,39 @@ class TestOnSaveCheckpoint:
         buffer.seek(0)
 
         assert torch.load(buffer, weights_only=True)["args"]["notes"] == repr(notes)
+
+    def test_value_whose_repr_raises_is_named_by_type(self) -> None:
+        """A note that cannot even describe itself is replaced, not re-raised, so the epoch's write still finishes.
+
+        The ``repr`` fallback is the last resort for a value no checkpoint can hold; calling it unguarded made a broken
+        ``__repr__`` abort every checkpoint write of the run instead of costing one field of provenance.
+        """
+        module = SimpleNamespace(
+            trainer=SimpleNamespace(datamodule=None),
+            model_config=RFDETRNanoConfig(pretrain_weights=None, device="cpu"),
+            train_config=TrainConfig(dataset_dir="dataset", notes=_RaisingRepr()),
+        )
+        checkpoint: dict[str, Any] = {"state_dict": {}}
+
+        with pytest.warns(UserWarning, match="'notes'"):
+            RFDETRModelModule.on_save_checkpoint(module, checkpoint)
+
+        assert checkpoint["args"]["notes"] == "<unrepresentable _RaisingRepr>"
+
+    def test_names_a_deprecated_config_instead_of_refusing_to_save(self) -> None:
+        """A ``Trainer`` without ``BestModelCallback`` still writes a checkpoint for a deprecated config.
+
+        ``RFDETRLargeDeprecated`` is supported until 2.0 and ``from_checkpoint`` resolves that name, so this hook — the
+        only thing between a plain ``Trainer`` and its ``.ckpt`` — records it. The callback's own ``.pth`` files keep
+        refusing it; refusing here made such a run unable to save at all.
+        """
+        module = SimpleNamespace(
+            trainer=SimpleNamespace(datamodule=None),
+            model_config=RFDETRLargeDeprecatedConfig(model_name=None, pretrain_weights=None, device="cpu"),
+            train_config=TrainConfig(dataset_dir="dataset"),
+        )
+        checkpoint: dict[str, Any] = {"state_dict": {}}
+
+        RFDETRModelModule.on_save_checkpoint(module, checkpoint)
+
+        assert checkpoint["model_name"] == "RFDETRLargeDeprecated"

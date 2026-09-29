@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import io
 import math
 import random
 import sys
@@ -379,64 +378,6 @@ def _wrap_with_warmup(
         schedulers=[warmup, scheduler],
         milestones=[warmup_steps],
     )
-
-
-def _loads_weights_only(value: object) -> bool:
-    """Return whether ``value`` survives ``torch.save`` followed by ``torch.load(weights_only=True)``.
-
-    Examples:
-        >>> from pathlib import PurePosixPath
-        >>> _loads_weights_only({"epochs": 3}), _loads_weights_only(PurePosixPath("exp"))
-        (True, False)
-    """
-    buffer = io.BytesIO()
-    try:
-        torch.save(value, buffer)
-        buffer.seek(0)
-        torch.load(buffer, weights_only=True)
-    # Pickling and weights-only unpickling fail with unrelated types (PicklingError, AttributeError, TypeError,
-    # UnpicklingError) depending on the object, and each of them only means "not loadable".
-    except Exception:
-        return False
-    return True
-
-
-def _weights_only_loadable(fields: dict[str, Any], name: str) -> dict[str, Any]:
-    """Return ``fields`` with each value a weights-only ``torch.load`` cannot read replaced by its ``repr``.
-
-    ``Trainer.fit(ckpt_path=...)`` loads with ``weights_only=None``, which means ``True`` on torch 2.6 and newer. One
-    such value in a ``.ckpt``, for example a ``Path`` in ``TrainConfig.notes`` or an optimizer callable that
-    ``TrainConfig`` could not turn into a dotted path, would make the checkpoint impossible to resume from.
-
-    Args:
-        fields: Serialized config, keyed by field name.
-        name: Checkpoint key the config is stored under, used in the warning.
-
-    Returns:
-        ``fields`` itself when it all loads weights-only, otherwise a copy with each offending value as its ``repr``.
-
-    Examples:
-        >>> import warnings
-        >>> from pathlib import PurePosixPath
-        >>> with warnings.catch_warnings():
-        ...     warnings.simplefilter("ignore")
-        ...     _weights_only_loadable({"epochs": 3, "notes": PurePosixPath("exp")}, "args")
-        {'epochs': 3, 'notes': "PurePosixPath('exp')"}
-    """
-    if _loads_weights_only(fields):
-        return fields
-    loadable: dict[str, Any] = {}
-    for key, value in fields.items():
-        if not _loads_weights_only(value):
-            warnings.warn(
-                f"checkpoint[{name!r}][{key!r}] holds a {type(value).__name__}, which a weights-only torch.load "
-                "cannot read, so Lightning checkpoints store its repr() to stay resumable.",
-                UserWarning,
-                stacklevel=2,
-            )
-            value = repr(value)
-        loadable[key] = value
-    return loadable
 
 
 class RFDETRModelModule(LightningModule):
@@ -1898,9 +1839,16 @@ class RFDETRModelModule(LightningModule):
         Lightning calls this hook for each ``.ckpt`` a ``Trainer`` writes for this module, such as ``last.ckpt`` and
         ``checkpoint_<epoch>.ckpt`` during training. Without it they hold weights and optimizer state but no ``args``,
         ``model_name`` or ``model_config``, and :meth:`rfdetr.detr.RFDETR.from_checkpoint` cannot rebuild the model they
-        hold (#1552). The keys and values are the ones :class:`~rfdetr.training.callbacks.best_model.BestModelCallback`
-        writes into its ``.pth`` files, except that a config value a weights-only ``torch.load`` cannot read is stored
-        as its ``repr`` so that ``Trainer.fit(ckpt_path=...)`` can still resume from the file.
+        hold (#1552). The keys and values are exactly the ones
+        :class:`~rfdetr.training.callbacks.best_model.BestModelCallback` writes into its ``.pth`` files: both go
+        through :meth:`~rfdetr.training.callbacks.best_model.BestModelCallback._model_description`, which also stores
+        a config value a weights-only ``torch.load`` cannot read as its ``repr`` so that
+        ``Trainer.fit(ckpt_path=...)`` can still resume from the file.
+
+        A ``*DeprecatedConfig`` is named rather than refused here, unlike in the callback's own ``.pth`` files:
+        ``RFDETRLargeDeprecated`` is supported until 2.0 and :meth:`rfdetr.detr.RFDETR.from_checkpoint` resolves that
+        name, so refusing it would leave a plain ``Trainer`` unable to write any checkpoint for a still-supported
+        model rather than one unable to describe it.
 
         Args:
             checkpoint: Checkpoint dict Lightning is about to save (mutated in-place).
@@ -1912,15 +1860,9 @@ class RFDETRModelModule(LightningModule):
             if key.startswith("model.")
         }
         args_dict, model_name, model_config_dict = BestModelCallback._resolve_model_description(
-            self.trainer, self, model_state_dict
+            self.trainer, self, model_state_dict, allow_deprecated=True
         )
-        description = BestModelCallback._model_description(args_dict, model_name, model_config_dict)
-        checkpoint.update(
-            {
-                key: _weights_only_loadable(value, key) if isinstance(value, dict) else value
-                for key, value in description.items()
-            }
-        )
+        checkpoint.update(BestModelCallback._model_description(args_dict, model_name, model_config_dict))
 
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.

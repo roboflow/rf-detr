@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatc
     _MultiProcessingLauncher = None  # type: ignore[assignment,misc]
 
 from rfdetr.training.callbacks.ema import RFDETREMACallback
+from rfdetr.training.checkpoint import _weights_only_loadable
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_version
 from rfdetr.utilities.state_dict import _make_fit_loop_state, strip_checkpoint
@@ -259,6 +260,11 @@ class BestModelCallback(ModelCheckpoint):
         :meth:`~rfdetr.training.module_model.RFDETRModelModule.on_save_checkpoint`, so the Lightning ``.ckpt`` files
         describe their model with the same keys (#1552).
 
+        A dict payload is passed through :func:`~rfdetr.training.checkpoint._weights_only_loadable` first, so every
+        writer records the same value for a config field a weights-only ``torch.load`` cannot read (a ``Path`` in
+        ``TrainConfig.notes``, say). Doing it here rather than in one writer is what keeps ``last.ckpt`` and
+        ``last_ema.pth`` of the same run describing their model identically.
+
         Args:
             args_dict: Serialized training args/config payload.
             model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
@@ -272,6 +278,10 @@ class BestModelCallback(ModelCheckpoint):
             >>> description["args"], description["model_name"], "model_config" in description
             ({'num_classes': 3}, 'RFDETRNano', False)
         """
+        if isinstance(args_dict, dict):
+            args_dict = _weights_only_loadable(args_dict, "args")
+        if isinstance(model_config_dict, dict):
+            model_config_dict = _weights_only_loadable(model_config_dict, "model_config")
         description: dict[str, object] = {"args": args_dict}
         # Only write model_name when resolved — omit the key entirely when None
         # so old-format and unresolved checkpoints are indistinguishable.
@@ -292,6 +302,7 @@ class BestModelCallback(ModelCheckpoint):
         trainer: Trainer,
         pl_module: LightningModule,
         model_state_dict: dict[str, Tensor],
+        allow_deprecated: bool = False,
     ) -> tuple[object, str | None, dict[str, object] | None]:
         """Resolve the training args, model name and model config that describe a checkpoint of ``pl_module``.
 
@@ -303,6 +314,7 @@ class BestModelCallback(ModelCheckpoint):
             pl_module: The ``RFDETRModelModule`` being trained.
             model_state_dict: Weights the checkpoint stores, with raw (non-prefixed) keys. Schema-critical
                 ``model_config`` fields are synced from them.
+            allow_deprecated: Passed to :meth:`_resolve_model_name`; see there for which caller sets it.
 
         Returns:
             ``(args_dict, model_name, model_config_dict)``, the arguments of :meth:`_model_description`.
@@ -315,10 +327,14 @@ class BestModelCallback(ModelCheckpoint):
             and getattr(train_config, "class_names", None) is None
         ):
             train_config = train_config.model_copy(update={"class_names": dataset_class_names})
+        # `RFDETRModelModule.__init__` types `train_config` as `TrainConfig`, so in production this always takes the
+        # `model_dump` branch. The fallback is reached only by tests, which assign a plain dict; keeping it means
+        # `args_dict` is still a dict either way, which is what `_model_description` needs to probe it for values a
+        # weights-only `torch.load` cannot read. An object that is neither is stored as it is.
         args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
         return (
             args_dict,
-            BestModelCallback._resolve_model_name(pl_module),
+            BestModelCallback._resolve_model_name(pl_module, allow_deprecated),
             BestModelCallback._serialize_model_config(pl_module, model_state_dict),
         )
 
@@ -447,11 +463,19 @@ class BestModelCallback(ModelCheckpoint):
         return dumped
 
     @staticmethod
-    def _resolve_model_name(pl_module: LightningModule) -> str | None:
+    def _resolve_model_name(pl_module: LightningModule, allow_deprecated: bool = False) -> str | None:
         """Resolve checkpoint model_name from model_config or config type.
 
         The CLI/PTL path does not call ``RFDETR.train()``, so ``model_config.model_name`` may be unset. In that case,
         infer the model class from concrete config names like ``RFDETRSmallConfig``.
+
+        Args:
+            pl_module: The Lightning module whose ``model_config`` names the model.
+            allow_deprecated: When ``True``, a ``*DeprecatedConfig`` resolves to its class name (e.g.
+                ``"RFDETRLargeDeprecated"``, which :meth:`rfdetr.detr.RFDETR.from_checkpoint` maps back to a class)
+                instead of raising. Only :meth:`~rfdetr.training.module_model.RFDETRModelModule.on_save_checkpoint`
+                passes it: refusing to *name* a deprecated model there would stop a plain ``Trainer`` from writing
+                any checkpoint at all, while this callback's own best-``.pth`` files keep refusing.
 
         Note:
             The ``DeprecatedConfig`` ``RuntimeError`` guard is only reachable from the CLI/PTL path. ``RFDETR.train()``
@@ -467,7 +491,7 @@ class BestModelCallback(ModelCheckpoint):
 
         config_type_name = type(model_config).__name__ if model_config is not None else ""
 
-        if config_type_name.endswith("DeprecatedConfig"):
+        if config_type_name.endswith("DeprecatedConfig") and not allow_deprecated:
             raise RuntimeError(
                 f"Deprecated model config '{config_type_name}' is no longer supported. "
                 "Re-train your model using a current model variant."
