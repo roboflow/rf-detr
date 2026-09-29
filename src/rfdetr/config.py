@@ -1444,8 +1444,8 @@ class TrainConfig(BaseConfig):
     notes: Optional[Any] = Field(
         default=None,
         description=(
-            "User-defined provenance metadata embedded in best-model .pth checkpoints "
-            "under checkpoint['args']['notes'] and in exported ONNX files under the "
+            "User-defined provenance metadata embedded in best-model .pth and Lightning .ckpt "
+            "checkpoints under checkpoint['args']['notes'] and in exported ONNX files under the "
             "'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
             "(string, dict, list, int, float, bool). String values are stored verbatim; "
             "all other types are JSON-encoded."

@@ -246,6 +246,13 @@ class TestFromCheckpointEdgeCases:
             with pytest.raises(KeyError):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
+    def test_lightning_ckpt_without_args_points_at_training_config(self, tmp_path: Path) -> None:
+        """A ``.ckpt`` from 1.11.0 or earlier records no model; the error names where its settings are (#1552)."""
+        ckpt = {"state_dict": {"model.class_embed.weight": torch.zeros(4, 8)}, "pytorch-lightning_version": "2.6.6"}
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ValueError, match="training_config.json"):
+                RFDETR.from_checkpoint(tmp_path / "last.ckpt")
+
     def test_characterization_callable_on_subclass(self, tmp_path: Path) -> None:
         """from_checkpoint can be called on a concrete subclass (RFDETRSmall)."""
         mock_instance = MagicMock()

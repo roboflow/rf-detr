@@ -628,7 +628,8 @@ class RFDETR:
         by the PTL training stack) are supported.
 
         Args:
-            path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``).
+            path: Path to a checkpoint file (e.g. ``checkpoint_best_total.pth``, or ``last.ckpt`` for the latest
+                non-EMA weights of a run).
             trust_checkpoint: When ``True``, fall back to ``weights_only=False``
                 (full pickle) if safe deserialization fails.  Only set this for
                 checkpoints from fully trusted sources; the default ``False``
@@ -681,9 +682,12 @@ class RFDETR:
         Raises:
             FileNotFoundError: If *path* does not exist.
             OSError: If *path* exists but cannot be read.
-            KeyError: If the checkpoint does not contain an ``"args"`` key.
+            KeyError: If a checkpoint without Lightning's ``"pytorch-lightning_version"`` key (e.g. a bare
+                ``.pth``) does not contain an ``"args"`` key.
             ValueError: If the model class cannot be inferred from ``model_name``,
-                ``pretrain_weights``, or the checkpoint filename.
+                ``pretrain_weights``, or the checkpoint filename, or if *path* is a Lightning checkpoint
+                without ``"args"``, as ``last.ckpt`` and ``checkpoint_<epoch>.ckpt`` from rfdetr 1.11.0
+                and earlier are.
             ImportError: If the checkpoint was saved by a ``backbone_lora=True`` run and ``peft``
                 is not installed (``pip install "rfdetr[lora]"``).
 
@@ -720,6 +724,17 @@ class RFDETR:
         from rfdetr.utilities.io import _safe_torch_load
 
         ckpt: dict[str, Any] = _safe_torch_load(str(path), trust=trust_checkpoint)
+        if "args" not in ckpt and "pytorch-lightning_version" in ckpt:
+            raise ValueError(
+                f"Checkpoint {os.fspath(path)!r} is a Lightning checkpoint without 'args' or 'model_config', as "
+                "last.ckpt and checkpoint_<epoch>.ckpt from rfdetr 1.11.0 and earlier are, so neither the model class "
+                "nor its settings can be read from it. Load checkpoint_best_ema.pth from the same run instead "
+                "(checkpoint_best_regular.pth if it trained without EMA), which records them since rfdetr 1.8.0. Or "
+                "pass this file to the class it was trained with, with the architecture settings it was trained with, "
+                f"e.g. RFDETRSmall(pretrain_weights={os.fspath(path)!r}, resolution=...); training_config.json lists "
+                "them when the run wrote one. That route restores the weights but not the class names, which this "
+                "file does not store."
+            )
         args = ckpt["args"]
 
         _variant_name_to_class: dict[str, type[RFDETR]] = {

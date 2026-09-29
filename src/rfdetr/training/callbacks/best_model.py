@@ -221,7 +221,6 @@ class BestModelCallback(ModelCheckpoint):
                             average_state[key] = model_state_dict[model_key]
         payload: dict[str, object] = {
             "model": model_state_dict,
-            "args": args_dict,
             "epoch": trainer.current_epoch,
             # PTL-compatible keys so trainer.fit(ckpt_path=...) works directly.
             "state_dict": {f"model.{k}": v for k, v in model_state_dict.items()},
@@ -245,19 +244,83 @@ class BestModelCallback(ModelCheckpoint):
             "optimizer_states": [],
             "lr_schedulers": [],
         }
+        payload.update(BestModelCallback._model_description(args_dict, model_name, model_config_dict))
+        return payload
+
+    @staticmethod
+    def _model_description(
+        args_dict: object,
+        model_name: str | None = None,
+        model_config_dict: object | None = None,
+    ) -> dict[str, object]:
+        """Return the checkpoint keys that let :meth:`rfdetr.detr.RFDETR.from_checkpoint` rebuild the model.
+
+        Shared by the best ``.pth`` payloads and by
+        :meth:`~rfdetr.training.module_model.RFDETRModelModule.on_save_checkpoint`, so the Lightning ``.ckpt`` files
+        describe their model with the same keys (#1552).
+
+        Args:
+            args_dict: Serialized training args/config payload.
+            model_name: Name of the model class (e.g. ``"RFDETRLarge"``).
+            model_config_dict: Serialized architecture config needed to reconstruct schema-dependent models.
+
+        Returns:
+            ``args``, plus ``model_name``, ``model_config`` and ``rfdetr_version`` for each one that is resolved.
+
+        Examples:
+            >>> description = BestModelCallback._model_description({"num_classes": 3}, model_name="RFDETRNano")
+            >>> description["args"], description["model_name"], "model_config" in description
+            ({'num_classes': 3}, 'RFDETRNano', False)
+        """
+        description: dict[str, object] = {"args": args_dict}
         # Only write model_name when resolved — omit the key entirely when None
         # so old-format and unresolved checkpoints are indistinguishable.
         if model_name is not None:
-            payload["model_name"] = model_name
+            description["model_name"] = model_name
         if model_config_dict is not None:
-            payload["model_config"] = model_config_dict
+            description["model_config"] = model_config_dict
         # Record the rfdetr package version for provenance / compatibility hints.
         # Omit the key when the version cannot be resolved (e.g. editable install
         # without package metadata) so old-format checkpoints are indistinguishable.
         version = get_version()
         if version is not None:
-            payload["rfdetr_version"] = version
-        return payload
+            description["rfdetr_version"] = version
+        return description
+
+    @staticmethod
+    def _resolve_model_description(
+        trainer: Trainer,
+        pl_module: LightningModule,
+        model_state_dict: dict[str, Tensor],
+    ) -> tuple[object, str | None, dict[str, object] | None]:
+        """Resolve the training args, model name and model config that describe a checkpoint of ``pl_module``.
+
+        The training config is enriched with the dataset class names so reloaded checkpoints return the correct labels
+        rather than COCO defaults (#509).
+
+        Args:
+            trainer: Active Lightning trainer; its datamodule supplies the dataset class names.
+            pl_module: The ``RFDETRModelModule`` being trained.
+            model_state_dict: Weights the checkpoint stores, with raw (non-prefixed) keys. Schema-critical
+                ``model_config`` fields are synced from them.
+
+        Returns:
+            ``(args_dict, model_name, model_config_dict)``, the arguments of :meth:`_model_description`.
+        """
+        train_config = cast("RFDETRModelModule", pl_module).train_config
+        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
+        if (
+            dataset_class_names is not None
+            and hasattr(train_config, "model_copy")
+            and getattr(train_config, "class_names", None) is None
+        ):
+            train_config = train_config.model_copy(update={"class_names": dataset_class_names})
+        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
+        return (
+            args_dict,
+            BestModelCallback._resolve_model_name(pl_module),
+            BestModelCallback._serialize_model_config(pl_module, model_state_dict),
+        )
 
     @staticmethod
     def _unwrap_model(pl_module: LightningModule) -> torch.nn.Module:
@@ -326,22 +389,16 @@ class BestModelCallback(ModelCheckpoint):
             Internal helper called by ``on_validation_end`` (best EMA) and ``on_fit_end``
             (guaranteed ``checkpoint_best_ema.pth`` and ``last_ema.pth``).
         """
-        ema_train_config = cast("RFDETRModelModule", pl_module).train_config
-        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
-        if (
-            dataset_class_names is not None
-            and hasattr(ema_train_config, "model_copy")
-            and getattr(ema_train_config, "class_names", None) is None
-        ):
-            ema_train_config = ema_train_config.model_copy(update={"class_names": dataset_class_names})
-        ema_args_dict = ema_train_config.model_dump() if hasattr(ema_train_config, "model_dump") else ema_train_config
+        ema_args_dict, model_name, model_config_dict = self._resolve_model_description(
+            trainer, pl_module, ema_state_dict
+        )
         torch.save(
             self._build_checkpoint_payload(
                 ema_state_dict,
                 ema_args_dict,
                 trainer,
-                model_name=self._resolve_model_name(pl_module),
-                model_config_dict=self._serialize_model_config(pl_module, ema_state_dict),
+                model_name=model_name,
+                model_config_dict=model_config_dict,
                 share_ema_model_state=True,
             ),
             dest,
@@ -484,19 +541,7 @@ class BestModelCallback(ModelCheckpoint):
         # checkpoint tied to live weights even when an EMA checkpoint is tracked in
         # parallel; checkpoint_best_ema.pth is the only file that should save EMA weights.
         model_state_dict = self._get_live_model_state_dict(pl_module)
-        # Enrich train_config with dataset class names so reloaded checkpoints
-        # return the correct labels, not COCO defaults (#509).
-        train_config = cast("RFDETRModelModule", pl_module).train_config
-        dataset_class_names = getattr(trainer.datamodule, "class_names", None)  # type: ignore[attr-defined]
-        if (
-            dataset_class_names is not None
-            and hasattr(train_config, "model_copy")
-            and getattr(train_config, "class_names", None) is None
-        ):
-            train_config = train_config.model_copy(update={"class_names": dataset_class_names})
-        args_dict = train_config.model_dump() if hasattr(train_config, "model_dump") else train_config
-        model_name = self._resolve_model_name(pl_module)
-        model_config_dict = self._serialize_model_config(pl_module, model_state_dict)
+        args_dict, model_name, model_config_dict = self._resolve_model_description(trainer, pl_module, model_state_dict)
         torch.save(
             self._build_checkpoint_payload(
                 model_state_dict,
