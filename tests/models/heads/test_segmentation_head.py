@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for DepthwiseConvBlock, _DepthwiseConvWithoutCuDNN, and SegmentationHead."""
 
+import threading
+import time
 from contextlib import contextmanager
 from unittest import mock
 
@@ -243,6 +245,43 @@ def test_depthwise_conv_no_cudnn_bias_none() -> None:
     assert weight.grad is not None
     assert weight.grad.shape == weight.shape
     assert torch.isfinite(weight.grad).all()
+
+
+def test_depthwise_conv_no_cudnn_restores_flag_under_concurrent_calls() -> None:
+    """Overlapping forward calls from several threads must leave ``torch.backends.cudnn.enabled`` unchanged.
+
+    ``torch.backends.cudnn.flags`` saves the current value on entry and restores it on exit, and it is process-global
+    and not reentrant. When two threads overlap, the second one saves the ``False`` the first one set and restores it
+    last, so cuDNN stays disabled for the rest of the process without any error or warning. A slow stand-in for
+    ``F.conv2d`` holds each call open long enough for the overlap to happen on a CPU-only runner.
+    """
+    from rfdetr.models.heads.segmentation import _DepthwiseConvWithoutCuDNN
+
+    dim = 4
+    weight = torch.randn(dim, 1, 3, 3)
+    x = torch.randn(1, dim, 4, 4)
+    real_conv2d = F.conv2d
+
+    def slow_conv2d(*args: object, **kwargs: object) -> torch.Tensor:
+        time.sleep(0.2)
+        return real_conv2d(*args, **kwargs)
+
+    def worker(delay: float) -> None:
+        time.sleep(delay)
+        _DepthwiseConvWithoutCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
+
+    original = torch.backends.cudnn.enabled
+    torch.backends.cudnn.enabled = True
+    try:
+        with mock.patch.object(F, "conv2d", slow_conv2d):
+            threads = [threading.Thread(target=worker, args=(0.05 * i,)) for i in range(3)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        assert torch.backends.cudnn.enabled is True
+    finally:
+        torch.backends.cudnn.enabled = original
 
 
 @pytest.mark.parametrize(

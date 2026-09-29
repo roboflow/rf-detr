@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any, cast
 
 import torch
@@ -15,6 +17,22 @@ from torch import Tensor, nn
 from torch.nn.grad import conv2d_input, conv2d_weight
 
 from rfdetr.utilities.tensors import _bilinear_grid_sample, _nearest_grid_sample
+
+# ``torch.backends.cudnn.flags`` saves the current value on entry and restores it on exit. It is process-global and
+# not reentrant: when two threads overlap, the second saves the ``False`` the first one set and restores it last, so
+# cuDNN stays disabled for the rest of the process without any error or warning. Serialising the scope prevents that.
+_CUDNN_FLAGS_LOCK = threading.Lock()
+
+
+@contextmanager
+def _cudnn_disabled() -> Iterator[None]:
+    """Disable cuDNN for the enclosed block, safely across threads.
+
+    Yields:
+        ``None``; cuDNN is disabled inside the block and restored to its previous value on exit.
+    """
+    with _CUDNN_FLAGS_LOCK, torch.backends.cudnn.flags(enabled=False):
+        yield
 
 
 class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
@@ -64,11 +82,9 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         ctx.padding = padding  # type: ignore[attr-defined]
         ctx.dilation = dilation  # type: ignore[attr-defined]
         ctx.groups = groups  # type: ignore[attr-defined]
-        # Note: torch.backends.cudnn.flags() is process-global state, not op-local.
-        # Safe under DDP (separate processes per rank), but concurrent backward passes
-        # in the same process (DataParallel, user threads) could briefly observe the
-        # wrong cuDNN setting.  For DDP-only training this is not a concern.
-        with torch.backends.cudnn.flags(enabled=False):
+        # torch.backends.cudnn.flags() is process-global state, not op-local: ``_cudnn_disabled`` serialises it so
+        # concurrent calls in one process cannot leave cuDNN disabled.
+        with _cudnn_disabled():
             return F.conv2d(x, weight, bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
 
     @staticmethod
@@ -111,8 +127,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             # so upcast to weight.dtype (fp32).  grad_input is kept in weight.dtype —
             # casting back to x.dtype would inject a bf16 gradient into fp32 params.
             grad_output_cast = grad_output.to(dtype=weight.dtype)
-            # Same process-global caveat as forward: safe under DDP, not under DataParallel.
-            with torch.backends.cudnn.flags(enabled=False):
+            with _cudnn_disabled():
                 if needs_x_grad:
                     grad_input = conv2d_input(  # type: ignore[no-untyped-call]
                         x.shape,
