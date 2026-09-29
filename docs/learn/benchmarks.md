@@ -33,6 +33,9 @@ Accuracy and latency are always measured using the same model artifact and the s
 
 | Architecture | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |
 | :----------: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: |
+|  RF-DETR-A   |         49.4         |          30.5           |          78.2           |            48.3            |     1.0      |    7.4     |  380x380   |
+|  RF-DETR-F   |         55.9         |          37.8           |          82.5           |            53.8            |     1.4      |    7.9     |  384x384   |
+|  RF-DETR-P   |         60.2         |          41.6           |          84.1           |            56.0            |     1.7      |    8.4     |  560x560   |
 |  RF-DETR-N   |         67.6         |          48.4           |          85.0           |            57.7            |     2.3      |    30.5    |  384x384   |
 |  RF-DETR-S   |         72.1         |          53.0           |          86.7           |            60.2            |     3.5      |    32.1    |  512x512   |
 |  RF-DETR-M   |         73.6         |          54.7           |          87.4           |            61.2            |     4.4      |    33.7    |  576x576   |
@@ -62,6 +65,16 @@ Accuracy and latency are always measured using the same model artifact and the s
 |   SAM 3 †    |          —           |            —            |            —            |            61.6            |      —       |    ~850    | 1008x1008  |
 
 > † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set — the same fully-supervised setting as the RF100VL columns above, and distinct from the 15.2 zero-shot / 36.5 10-shot numbers in the paper's main table. SAM 3's paper independently reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, which confirms the protocols align. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
+
+## Atto, Femto and Pico
+
+<img alt="RF100-VL accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="../assets/atto_femto_pico/rf100vl_accuracy_vs_t4_latency.png" />
+
+<img alt="COCO accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="../assets/atto_femto_pico/coco_accuracy_vs_t4_latency.png" />
+
+RF-DETR Atto, Femto and Pico extend the lineup below Nano, at 1.0 to 1.7 ms on a T4. At each latency tier they are as fast as or faster than DEIMv2 and 3 to 9 AP<sub>50:95</sub> points more accurate on RF100-VL.
+
+> DEIMv2 was fine-tuned on RF100-VL from its official COCO weights with its official code and model configs, following its README for custom datasets, batch size and epoch count, under the same protocol as RF-DETR: batch 16, 100 epochs, test split, COCO evaluation with 500 detections per image. Only settings that break training on RF100-VL were changed: fp32 instead of fp16 AMP (NaN losses), a 4-epoch warmup (the configured warmup, scaled for batch size as the DEIMv2 README prescribes, outlasts the whole run on 97 of 100 datasets), top-300 selection capped on single-class datasets (crash) and 4 evaluation workers (hang). Its per-model minimum training-box size (12, 10 and 8 px) is kept. Latency for both: T4, TensorRT 10.4 FP16, batch 1, median over COCO val2017, model forward pass only.
 
 ## Segmentation
 

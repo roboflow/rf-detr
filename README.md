@@ -60,6 +60,9 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 | Architecture  | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :-----------: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: | :--------: |
+|  RF-DETR-A △  |         49.4         |          30.5           |          78.2           |            48.3            |     1.0      |    7.4     |  380x380   |  PML 1.0   |
+|  RF-DETR-F △  |         55.9         |          37.8           |          82.5           |            53.8            |     1.4      |    7.9     |  384x384   |  PML 1.0   |
+|  RF-DETR-P △  |         60.2         |          41.6           |          84.1           |            56.0            |     1.7      |    8.4     |  560x560   |  PML 1.0   |
 |   RF-DETR-N   |         67.6         |          48.4           |          85.0           |            57.7            |     2.3      |    30.5    |  384x384   | Apache 2.0 |
 |   RF-DETR-S   |         72.1         |          53.0           |          86.7           |            60.2            |     3.5      |    32.1    |  512x512   | Apache 2.0 |
 |   RF-DETR-M   |         73.6         |          54.7           |          87.4           |            61.2            |     4.4      |    33.7    |  576x576   | Apache 2.0 |
@@ -91,6 +94,16 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 > † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set, which is the same setting as the RF100VL columns above — SAM 3's paper reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, so the numbers line up. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
 
 </details>
+
+### Atto, Femto and Pico
+
+<img alt="RF100-VL accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/atto_femto_pico/rf100vl_accuracy_vs_t4_latency.png" />
+
+<img alt="COCO accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/atto_femto_pico/coco_accuracy_vs_t4_latency.png" />
+
+RF-DETR Atto, Femto and Pico extend the lineup below Nano, at 1.0 to 1.7 ms on a T4. At each latency tier they are as fast as or faster than DEIMv2 and 3 to 9 AP<sub>50:95</sub> points more accurate on RF100-VL.
+
+> DEIMv2 was fine-tuned on RF100-VL from its official COCO weights with its official code and model configs, following its README for custom datasets, batch size and epoch count, under the same protocol as RF-DETR: batch 16, 100 epochs, test split, COCO evaluation with 500 detections per image. Only settings that break training on RF100-VL were changed: fp32 instead of fp16 AMP (NaN losses), a 4-epoch warmup (the configured warmup, scaled for batch size as the DEIMv2 README prescribes, outlasts the whole run on 97 of 100 datasets), top-300 selection capped on single-class datasets (crash) and 4 evaluation workers (hang). Its per-model minimum training-box size (12, 10 and 8 px) is kept. Latency for both: T4, TensorRT 10.4 FP16, batch 1, median over COCO val2017, model forward pass only.
 
 ### Segmentation
 
@@ -210,9 +223,9 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
 
 | Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-|  A   |    `RFDETRAtto` △     | —                       |         TBD          |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
-|  F   |    `RFDETRFemto` △    | —                       |         TBD          |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
-|  P   |    `RFDETRPico` △     | —                       |         TBD          |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
+|  A   |    `RFDETRAtto` △     | —                       |         49.4         |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
+|  F   |    `RFDETRFemto` △    | —                       |         55.9         |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
+|  P   |    `RFDETRPico` △     | —                       |         60.2         |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
 |  N   |     `RFDETRNano`      | `rfdetr-nano`           |         67.6         |          48.4           |     2.3      |    30.5    |  384x384   | Apache 2.0 |
 |  S   |     `RFDETRSmall`     | `rfdetr-small`          |         72.1         |          53.0           |     3.5      |    32.1    |  512x512   | Apache 2.0 |
 |  M   |    `RFDETRMedium`     | `rfdetr-medium`         |         73.6         |          54.7           |     4.4      |    33.7    |  576x576   | Apache 2.0 |
