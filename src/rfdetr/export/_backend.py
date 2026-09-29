@@ -115,7 +115,7 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
         >>> _resolve_export_backend("onnx", None, None)
         (None, None)
     """
-    if format not in _EXPORT_FORMATS:
+    if not isinstance(format, str) or format not in _EXPORT_FORMATS:
         raise ValueError(f"Unsupported export format {format!r}. Choose from: {sorted(_EXPORT_FORMATS)}.")
 
     if format not in _BACKEND_FORMATS:

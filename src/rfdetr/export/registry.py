@@ -129,11 +129,8 @@ def normalize_format(format: str) -> str:
         format: Format name or alias as the caller spelled it.
 
     Returns:
-        The canonical format name. An unknown name comes back unchanged, so the error that rejects it names it as the
-        caller typed it.
-
-    Raises:
-        ValueError: If *format* is not a string.
+        The canonical format name. An unknown name, or a non-string value, comes back unchanged, so the error that
+        rejects it names it as the caller passed it.
 
     Examples:
         >>> normalize_format("trt")
@@ -144,7 +141,7 @@ def normalize_format(format: str) -> str:
         'NoneSuch'
     """
     if not isinstance(format, str):
-        raise ValueError(f"Unsupported export format {format!r}. Choose from: {sorted(REGISTRY)}.")
+        return format
     name = format.lower()
     canonical = ALIASES.get(name, name)
     return canonical if canonical in REGISTRY else format
@@ -206,7 +203,7 @@ def require_entry(format: str) -> ExporterEntry:
         >>> require_entry("tensorrt").label
         'TensorRT'
     """
-    entry = REGISTRY.get(format)
+    entry = REGISTRY.get(format) if isinstance(format, str) else None
     if entry is None:
         raise ValueError(f"Unsupported export format {format!r}. Choose from: {sorted(REGISTRY)}.")
     return entry
