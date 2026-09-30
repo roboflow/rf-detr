@@ -101,9 +101,7 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 <img alt="COCO accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/atto_femto_pico/coco_accuracy_vs_t4_latency.png" />
 
-RF-DETR Atto, Femto and Pico extend the lineup below Nano, at 1.0 to 1.7 ms on a T4. At each latency tier they are as fast as or faster than DEIMv2 and 3 to 9 AP<sub>50:95</sub> points more accurate on RF100-VL.
-
-> DEIMv2 was fine-tuned on RF100-VL from its official COCO weights with its official code and model configs, following its README for custom datasets, batch size and epoch count, under the same protocol as RF-DETR: batch 16, 100 epochs, test split, COCO evaluation with 500 detections per image. Only settings that break training on RF100-VL were changed: fp32 instead of fp16 AMP (NaN losses), a 4-epoch warmup (the configured warmup, scaled for batch size as the DEIMv2 README prescribes, outlasts the whole run on 97 of 100 datasets), top-300 selection capped on single-class datasets (crash) and 4 evaluation workers (hang). Its per-model minimum training-box size (12, 10 and 8 px) is kept. Latency for both: T4, TensorRT 10.4 FP16, batch 1, median over COCO val2017, model forward pass only.
+RF-DETR Atto, Femto and Pico extend the lineup below Nano, at 1.0 to 1.7 ms on a T4. At each latency tier they are as fast as or faster than DEIMv2 and 3 to 9 AP<sub>50:95</sub> points more accurate on RF100-VL. See the [training and timing protocol](https://github.com/roboflow/rf-detr/blob/develop/docs/learn/benchmarks.md#atto-femto-and-pico).
 
 ### Segmentation
 
