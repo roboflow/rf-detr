@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -598,46 +597,27 @@ def _build_coco_api_from_samples(
 
 
 def is_valid_yolo_dataset(dataset_dir: str) -> bool:
-    """Checks if the specified dataset directory is in yolo format.
+    """Check for a YOLO YAML file and resolvable training and validation directories.
 
-    We accept a dataset to be in yolo format if the following conditions are met:
-    - The dataset_dir contains a data.yaml or data.yml file
-    - The dataset_dir contains "train" and either "valid" or "val" subdirectories,
-      each containing "images" and "labels" subdirectories
-    - The "test" subdirectory is optional
+    Image and label directories follow :func:`_resolve_yolo_split_dirs`, including
+    YAML split paths and the Roboflow filesystem fallback. The test split is optional.
 
-    .. note::
-        This is a coarse filesystem pre-check and intentionally does **not**
-        consult ``data.yaml`` split path keys.  Actual split directories are
-        resolved by :func:`_resolve_yolo_split_dirs`, which reads the YAML
-        first and falls back to the filesystem convention.  When both ``valid/``
-        and ``val/`` exist but YAML declares the non-priority one, the two
-        functions may pick different directories — this is by design; the
-        validity gate is a cheap early filter only.  When ``valid/`` exists,
-        it takes precedence over ``val/``.
+    Args:
+        dataset_dir: Path to the dataset root containing ``data.yaml`` or ``data.yml``.
 
     Returns:
         ``True`` if the directory satisfies all YOLO format requirements,
         ``False`` otherwise.
     """
-    contains_required_yolo_yaml = any(
-        os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
+    root = Path(dataset_dir)
+    data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), None)
+    if data_file is None:
+        return False
+    return all(
+        directory.exists()
+        for split in ("train", "val")
+        for directory in _resolve_yolo_split_dirs(root, data_file, split)
     )
-    has_train = os.path.exists(os.path.join(dataset_dir, "train"))
-    has_val = any(os.path.exists(os.path.join(dataset_dir, d)) for d in _VALID_VAL_DIR_NAMES)
-    contains_required_split_dirs = has_train and has_val
-
-    val_dir_name = next(
-        (d for d in _VALID_VAL_DIR_NAMES if os.path.exists(os.path.join(dataset_dir, d))),
-        "valid",
-    )
-    active_splits = ["train", val_dir_name]
-    contains_required_data_subdirs = all(
-        os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
-        for split_dir in active_splits
-        for data_subdir in REQUIRED_DATA_SUBDIRS
-    )
-    return contains_required_yolo_yaml and contains_required_split_dirs and contains_required_data_subdirs
 
 
 def _parse_yaml_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:

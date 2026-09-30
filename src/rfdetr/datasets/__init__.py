@@ -29,7 +29,12 @@ from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.webdataset.load import build_webdataset
-from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
+from rfdetr.datasets.yolo import (
+    REQUIRED_YOLO_YAML_FILES,
+    YoloDetection,
+    _resolve_yolo_split_dirs,
+    build_roboflow_from_yolo,
+)
 
 
 def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Any | None:
@@ -60,17 +65,16 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     if coco_annotation.exists():
         return "coco"
 
-    # Check for YOLO format: look for data.yaml or data.yml and train/images folder
-    yolo_data_file_yaml = dataset_dir / "data.yaml"
-    yolo_data_file_yml = dataset_dir / "data.yml"
-    yolo_images_dir = dataset_dir / "train" / "images"
-    if (yolo_data_file_yaml.exists() or yolo_data_file_yml.exists()) and yolo_images_dir.exists():
-        return "yolo"
+    yolo_data_file = next((dataset_dir / f for f in REQUIRED_YOLO_YAML_FILES if (dataset_dir / f).exists()), None)
+    if yolo_data_file is not None:
+        yolo_images_dir, _ = _resolve_yolo_split_dirs(dataset_dir, yolo_data_file, "train")
+        if yolo_images_dir.exists():
+            return "yolo"
 
     raise ValueError(
         f"Could not detect dataset format in {dataset_dir}. "
         f"Expected either COCO format (train/_annotations.coco.json) "
-        f"or YOLO format (data.yaml or data.yml + train/images/)"
+        f"or YOLO format (data.yaml or data.yml + training images resolved from YAML or train/images/)"
     )
 
 
