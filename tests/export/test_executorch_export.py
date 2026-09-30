@@ -35,6 +35,7 @@ from rfdetr.export._executorch.exporter import (
     ExecuTorchExporter,
     _check_executorch_available,
 )
+from rfdetr.export._executorch.inference import load_executorch_method
 from rfdetr.export.prepare import ExportGraph
 from tests._online import is_online
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
@@ -292,6 +293,40 @@ class TestExecuTorchExporterValidation:
         with mock.patch.dict(sys.modules, {"executorch": fake_executorch, "executorch.runtime": fake_runtime_module}):
             with mock.patch("importlib.metadata.version", return_value="1.3.1"):
                 _check_executorch_available(require_runtime=True)  # must not raise
+
+    def test_load_executorch_method_runs_guard_before_touching_runtime(self) -> None:
+        """``load_executorch_method`` runs the ABI guard first; a guard failure never reaches ``Runtime``.
+
+        Regression guard for the loader's defining behavior: the guard and ``Runtime.load_program`` were previously only
+        exercised separately (reimplemented inline), never through this function itself, so a change that reordered or
+        dropped the guard call would have gone undetected.
+        """
+        import rfdetr.export._executorch.exporter as conv
+
+        fake_runtime_module = types.ModuleType("executorch.runtime")
+        fake_runtime_module.Runtime = mock.MagicMock()
+        with mock.patch.dict(sys.modules, {"executorch.runtime": fake_runtime_module}):
+            with mock.patch.object(
+                conv, "_check_executorch_available", side_effect=ImportError("ABI-compatibility gap")
+            ):
+                with pytest.raises(ImportError, match="ABI-compatibility gap"):
+                    load_executorch_method("unused.pte")
+        fake_runtime_module.Runtime.get.assert_not_called()
+
+    def test_load_executorch_method_forwards_path_and_method_name(self) -> None:
+        """``load_executorch_method`` forwards the ``.pte`` path and method name to the runtime unchanged."""
+        import rfdetr.export._executorch.exporter as conv
+
+        fake_runtime_module = types.ModuleType("executorch.runtime")
+        fake_runtime_module.Runtime = mock.MagicMock()
+        runtime_instance = fake_runtime_module.Runtime.get.return_value
+        with mock.patch.dict(sys.modules, {"executorch.runtime": fake_runtime_module}):
+            with mock.patch.object(conv, "_check_executorch_available"):
+                result = load_executorch_method(Path("model.pte"), method_name="encode")
+
+        runtime_instance.load_program.assert_called_once_with("model.pte")
+        runtime_instance.load_program.return_value.load_method.assert_called_once_with("encode")
+        assert result is runtime_instance.load_program.return_value.load_method.return_value
 
     def test_executorch_without_its_lowering_entry_point_is_refused(self, tmp_path: Path) -> None:
         """An ``executorch`` that imports without ``executorch.exir`` fails the dependency check, before lowering."""
@@ -1022,10 +1057,7 @@ class TestExecutorchEndToEnd:
     def test_forward_method_loads(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """The exported ``.pte`` must expose a loadable ``forward`` method (runtime metadata smoke check)."""
         _, _, pte_path, _ = exported
-        _check_executorch_available(require_runtime=True)
-        from executorch.runtime import Runtime
-
-        method = Runtime.get().load_program(str(pte_path)).load_method("forward")
+        method = load_executorch_method(pte_path)
         assert method is not None
 
     def test_output_shapes_and_dtypes_match(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:

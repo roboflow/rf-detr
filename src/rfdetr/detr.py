@@ -12,6 +12,7 @@ import json
 import operator
 import os
 import tempfile
+import threading
 import warnings
 from collections import defaultdict
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
+from weakref import WeakKeyDictionary
 
 import numpy as np
 import requests
@@ -56,6 +58,7 @@ except Exception:
 logger = get_logger()
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
+_ModuleT = TypeVar("_ModuleT", bound="torch.nn.Module")
 
 
 def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
@@ -278,6 +281,80 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
+#: Guards :data:`_MODULE_MOVE_LOCKS` itself, never a move. Held only long enough to hand out one module's lock, so
+#: that two threads reaching a never-moved module together cannot create two different locks over its storage.
+_LOCK_REGISTRY_LOCK = threading.Lock()
+
+#: One move lock per module, keyed by the module object. Overlapping in-place ``nn.Module.to()`` calls on one module
+#: race on its parameter storage and can leave corrupted weights behind without raising — and that storage is what
+#: the lock protects, so the lock belongs to the module rather than to the :class:`~rfdetr.inference.ModelContext`
+#: around it: ``ModelContext.model`` is a plain reassignable attribute, so two contexts can wrap one module, and a
+#: per-context lock would let each take a different lock over the same tensors. Keying on the module also keeps
+#: unrelated models independent, where a single process-wide lock made a cold move of one stall another model's
+#: already-warm guard for the whole transfer. Weak keys: a module's lock goes when the module does.
+#: Notebook DDP avoids inheriting a held lock because ``build_trainer()`` in ``training/trainer.py`` replaces
+#: ``ddp_notebook`` with ``start_method="spawn"``. Forking while a module's lock is held leaves it locked in the
+#: child; before supporting fork-based model use, reset it with ``os.register_at_fork(after_in_child=...)``.
+_MODULE_MOVE_LOCKS: WeakKeyDictionary[Any, threading.Lock] = WeakKeyDictionary()
+
+
+def _device_move_lock(module: Any) -> threading.Lock:
+    """Return the device-move lock for *module*, creating it on first use.
+
+    Args:
+        module: The module whose parameter storage the lock protects. Keyed by identity, so every holder of that
+            module — however many wrappers it has — gets the one lock.
+
+    Returns:
+        The lock for *module*.
+
+    Examples:
+        >>> module = torch.nn.Linear(2, 2)
+        >>> _device_move_lock(module) is _device_move_lock(module)
+        True
+        >>> _device_move_lock(module) is _device_move_lock(torch.nn.Linear(2, 2))
+        False
+    """
+    with _LOCK_REGISTRY_LOCK:
+        lock = _MODULE_MOVE_LOCKS.get(module)
+        if lock is None:
+            lock = threading.Lock()
+            _MODULE_MOVE_LOCKS[module] = lock
+        return lock
+
+
+def _locked_move(module: _ModuleT, device: torch.device | str) -> _ModuleT:
+    """Move a live, shared module to *device* while holding that module's device-move lock.
+
+    :meth:`RFDETR.export` and :meth:`RFDETR.evaluate` move the *live* module — the very one ``predict()`` runs on —
+    to CPU and back around their own work.  ``nn.Module.to()`` rewrites parameter storage in place, so such a move
+    overlapping the deferred first-use move in :func:`_move_model_context_to_device` races on the same tensors.
+    Both take that module's own lock (see :func:`_device_move_lock`), so the two wait for each other while a move of
+    any other model runs undisturbed.
+
+    Only the move itself is serialised.  A caller that moves the module away and restores it later (export's CPU
+    staging and its ``finally`` restore, for instance) holds no lock in between, so a concurrent ``predict()`` can
+    re-place the module inside that window — that costs the staging its freed accelerator memory, it does not
+    corrupt weights.
+
+    Args:
+        module: The live module to move.
+        device: Target device, as a :class:`torch.device` or any string ``torch.device()`` accepts.
+
+    Returns:
+        Whatever ``module.to(device)`` returns — for ``nn.Module`` that is *module* itself, moved in place.
+
+    Examples:
+        >>> module = torch.nn.Linear(2, 2)
+        >>> _locked_move(module, "cpu") is module
+        True
+    """
+    # ``torch.inference_mode(False)`` for the same reason as in ``_move_model_context_to_device`` below: parameters
+    # materialised by ``.to()`` under an active inference mode are inference tensors and can never require gradients.
+    with _device_move_lock(module), torch.inference_mode(False):
+        return module.to(device)
+
+
 def _move_model_context_to_device(model_ctx: Any) -> None:
     """Move model weights to the target device recorded in *model_ctx*.
 
@@ -285,23 +362,47 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
     initialise CUDA (which would prevent DDP strategies from forking in notebook environments).  This helper performs
     the deferred ``.to(device)`` on first use.
 
+    An index-less CUDA target is resolved to a concrete device (``cuda`` -> ``cuda:0``) on the first call that needs it,
+    and that device is recorded back on *model_ctx* so every later caller agrees on one GPU.
+
     It is safe to call on duck-typed stand-ins (e.g. ``SimpleNamespace``); the function silently returns when the
     expected attributes are missing.
     """
-    target = getattr(model_ctx, "device", None)
-    inner = getattr(model_ctx, "model", None)
-    if target is None or inner is None or not hasattr(inner, "parameters"):
+    if getattr(model_ctx, "device", None) is None:
         return
-    if isinstance(target, str):
-        target = torch.device(target)
-    if target.type == "cuda" and target.index is None:
-        # An index-less ``torch.device("cuda")`` never compares equal to the indexed device (e.g. ``cuda:0``) a
-        # real parameter reports once placed, even when they name the same physical GPU — resolve it to the index
-        # ``.to("cuda")`` would actually place on, so the guard below can detect "already on the right device" and
-        # skip re-moving every parameter on every call.
-        target = torch.device(target.type, torch.cuda.current_device())
-    first_param = next(inner.parameters(), None)
-    if first_param is not None and first_param.device != target:
+    inner = getattr(model_ctx, "model", None)
+    if inner is None or not hasattr(inner, "parameters"):
+        return
+    # Several threads sharing one model (e.g. one channel per thread) can reach their first ``predict()`` together.
+    # The device check runs under this module's lock: ``nn.Module.to()`` rewrites parameters one by one, so a lock-free
+    # check can see the first parameter already on ``target`` while later ones are still moving and let inference start
+    # on a half-moved model. Callers that arrive mid-move wait here until it has finished, then find nothing left to do.
+    # The lock is keyed on ``inner`` rather than on ``model_ctx``, because ``inner`` owns the raced storage.
+    with _device_move_lock(inner):
+        # Read the target under the lock: the first caller to resolve a CUDA index records it below, and a thread
+        # that waited here must adopt that agreed device rather than the one it read on the way in.
+        target = model_ctx.device
+        if isinstance(target, str):
+            target = torch.device(target)
+        if target.type == "cuda" and target.index is None:
+            # An index-less ``torch.device("cuda")`` never compares equal to the indexed device (e.g. ``cuda:0``) a
+            # real parameter reports once placed, even when they name the same physical GPU — resolve it to the index
+            # ``.to("cuda")`` would actually place on, so the check below can detect "already on the right device" and
+            # skip re-moving every parameter on every call. The resolved device is recorded on the context because
+            # ``torch.cuda.current_device()`` is per-thread: two threads with different ``torch.cuda.set_device()``
+            # selections would otherwise each compute their own target, each find the weights on the other's GPU, and
+            # move the whole model back and forth on every call. Resolving here rather than in
+            # ``_build_model_context`` keeps CUDA uninitialised during ``RFDETR.__init__`` (see above).
+            target = torch.device(target.type, torch.cuda.current_device())
+            model_ctx.device = target
+        # Every parameter is checked, not just the first: ``nn.Module.to()`` has no rollback, so a move that raises
+        # part-way (a CUDA OOM on a large variant, say) leaves the parameters it already rewrote on ``target`` and the
+        # rest behind. Reading only the first one would report that module as moved and run inference across two
+        # devices. Re-running the move instead is safe — a per-parameter ``.to()`` onto the device it already sits on
+        # is a no-op — and the reads are cheap next to the millisecond-scale call they guard. Also how a module moved
+        # back to CPU by ``export()`` / ``evaluate()`` is detected: the real devices are re-read on every call.
+        if all(param.device == target for param in inner.parameters()):
+            return
         # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
         # move can run while inference mode is active.  Tensors materialised by ``.to()`` under inference mode become
         # *inference tensors*: they can never require gradients, so a later ``train()`` or auto-batch probe would
@@ -1440,9 +1541,10 @@ class RFDETR:
         if source_model is None:
             raise RuntimeError("Cannot evaluate: the base model has been cleared by a previous inplace optimization.")
         if _moved_to_cpu:
-            with torch.inference_mode(False):
-                source_model = source_model.to("cpu")
-                self.model.model = source_model
+            # Through ``_locked_move``: this is the live module, so the move must not overlap the deferred
+            # first-use move a concurrent ``predict()`` may be running on the same parameters.
+            source_model = _locked_move(source_model, "cpu")
+            self.model.model = source_model
         try:
             source_state = source_model.state_dict()
             # Reconcile DINOv2 positional embeddings when a `resolution` override changed the PE grid
@@ -2079,7 +2181,10 @@ class RFDETR:
         # Move the live model to CPU before deepcopying and keep it there during export. ``nn.Module.to(...)`` mutates
         # in place, so this frees GPU memory for the local export copy, ONNX tracing, TFLite conversion, and any
         # calibration tensors. The ``finally`` block restores the live model even if export or conversion raises.
-        self.model.model = self.model.model.to("cpu")
+        # Both moves go through ``_locked_move``: they rewrite the parameters a concurrent first ``predict()`` may be
+        # moving to the accelerator at the same time. The span between them is not locked — a ``predict()`` arriving
+        # mid-export can move the weights back onto the accelerator, costing this staging its freed memory.
+        self.model.model = _locked_move(self.model.model, "cpu")
         model = deepcopy(self.model.model)
         model.to(device)
         try:
@@ -2096,7 +2201,7 @@ class RFDETR:
             )
             return exporter(graph)
         finally:
-            self.model.model = self.model.model.to(device)
+            self.model.model = _locked_move(self.model.model, device)
 
     @staticmethod
     def _filtered_coco_categories(dataset_dir: str) -> list[dict[str, Any]]:

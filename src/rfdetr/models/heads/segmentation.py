@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
 from typing import Any, cast
 
 import torch
@@ -16,9 +18,31 @@ from torch.nn.grad import conv2d_input, conv2d_weight
 
 from rfdetr.utilities.tensors import _bilinear_grid_sample, _nearest_grid_sample
 
+# ``torch.backends.cudnn.flags`` saves the current values on entry and restores them on exit. It is process-global
+# and not thread-safe: when two threads overlap, the second saves the ``False`` the first one set and restores it
+# last, so cuDNN stays disabled for the rest of the process without any error or warning. Serialising the scope
+# prevents that leak between callers of ``_cudnn_disabled`` and no further — every other thread still observes cuDNN
+# disabled, along with the ``benchmark=False``, ``deterministic=False`` and ``allow_tf32=True`` that ``flags``
+# installs beside it, for as long as the lock is held. A writer that assigns the flags directly, outside the lock, is
+# overwritten rather than merely observed: ``rfdetr.utilities.reproducibility.seed_all`` sets ``deterministic`` and
+# ``benchmark`` that way, and an assignment landing inside the window is undone by the restore on exit, which puts
+# back the values saved on entry. An ``os.fork`` while another thread holds the lock leaves the child with a locked
+# lock and cuDNN disabled, so the child deadlocks on its first CUDA depthwise conv; fork before the first
+# segmentation-head forward, never during one. The scope is deliberately non-reentrant: nothing re-enters it today,
+# and a plain ``Lock`` makes a future re-entry deadlock here, at a documented site, instead of nesting unnoticed
+# under an ``RLock``.
+_CUDNN_FLAGS_LOCK = threading.Lock()
+
+
+@contextmanager
+def _cudnn_disabled() -> Iterator[None]:
+    """Disable cuDNN for the enclosed block, serialised against the other callers of this helper."""
+    with _CUDNN_FLAGS_LOCK, torch.backends.cudnn.flags(enabled=False):
+        yield
+
 
 class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
-    """Depthwise conv2d with cuDNN disabled in both forward and backward.
+    """Depthwise conv2d with cuDNN disabled in both forward and backward for a CUDA input.
 
     ``torch.backends.cudnn.flags(enabled=False)`` as a context manager only covers operations executed within its scope.
     ``nn.Conv2d`` records the forward op in the autograd graph; the corresponding backward kernels run later,
@@ -28,6 +52,10 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         RuntimeError: GET was unable to find an engine to execute this computation
 
     This ``Function`` disables cuDNN in ``backward`` as well, fixing the crash.
+
+    Both scopes are entered only for a CUDA input, keyed off the same tensor in ``forward`` and in ``backward``: ATen
+    reads ``cudnn_enabled`` only when the input is on CUDA, so a CPU call gains nothing from the scope and would pay
+    ``_cudnn_disabled``'s lock, which serialises otherwise independent depthwise convolutions across threads.
 
     See: https://github.com/roboflow/rf-detr/issues/731
     """
@@ -43,7 +71,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         dilation: tuple[int, ...],
         groups: int,
     ) -> Tensor:
-        """Run depthwise conv2d forward with cuDNN disabled.
+        """Run depthwise conv2d forward, with cuDNN disabled when ``x`` is on CUDA.
 
         Args:
             ctx: Autograd context.
@@ -64,11 +92,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         ctx.padding = padding  # type: ignore[attr-defined]
         ctx.dilation = dilation  # type: ignore[attr-defined]
         ctx.groups = groups  # type: ignore[attr-defined]
-        # Note: torch.backends.cudnn.flags() is process-global state, not op-local.
-        # Safe under DDP (separate processes per rank), but concurrent backward passes
-        # in the same process (DataParallel, user threads) could briefly observe the
-        # wrong cuDNN setting.  For DDP-only training this is not a concern.
-        with torch.backends.cudnn.flags(enabled=False):
+        with _cudnn_disabled() if x.is_cuda else nullcontext():
             return F.conv2d(x, weight, bias, stride=stride, padding=padding, dilation=dilation, groups=groups)
 
     @staticmethod
@@ -76,7 +100,7 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
         ctx: torch.autograd.function.FunctionCtx,
         grad_output: Tensor,
     ) -> tuple[Tensor | None, Tensor | None, Tensor | None, None, None, None, None]:
-        """Compute gradients with cuDNN disabled.
+        """Compute gradients, with cuDNN disabled when the saved input is on CUDA.
 
         Args:
             ctx: Autograd context with saved tensors and conv parameters.
@@ -111,8 +135,9 @@ class _DepthwiseConvWithoutCuDNN(torch.autograd.Function):
             # so upcast to weight.dtype (fp32).  grad_input is kept in weight.dtype —
             # casting back to x.dtype would inject a bf16 gradient into fp32 params.
             grad_output_cast = grad_output.to(dtype=weight.dtype)
-            # Same process-global caveat as forward: safe under DDP, not under DataParallel.
-            with torch.backends.cudnn.flags(enabled=False):
+            # Keyed off the saved ``x``, not ``grad_output``: ``conv2d_input`` / ``conv2d_weight`` run on the saved
+            # tensors' device, so forward and backward enter the scope for the same call.
+            with _cudnn_disabled() if x.is_cuda else nullcontext():
                 if needs_x_grad:
                     grad_input = conv2d_input(  # type: ignore[no-untyped-call]
                         x.shape,
@@ -254,6 +279,7 @@ class SegmentationHead(nn.Module):
         spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         mask_logits = []
+        # Both branches below contract with einsum; forward_export writes the same math as a MatMul for CoreML.
         if not skip_blocks:
             for block, qf in zip(self.blocks, query_features):
                 spatial_features = block(spatial_features)
@@ -333,7 +359,12 @@ class SegmentationHead(nn.Module):
         spatial_features_proj = self.spatial_features_proj(spatial_features)
 
         qf = self.query_features_proj(self.query_features_block(query_features[0]))
-        return [torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias]
+        # Same contraction as einsum("bchw,bnc->bnhw") in forward, written as a MatMul: ONNX Runtime's CoreML
+        # provider has no Einsum support, so an exported Einsum runs on the CPU between two CoreML partitions.
+        batch_size, num_queries = qf.shape[:2]
+        height, width = spatial_features_proj.shape[-2:]
+        mask_logits = torch.matmul(qf, spatial_features_proj.flatten(2)).view(batch_size, num_queries, height, width)
+        return [mask_logits + self.bias]
 
 
 def point_sample(input: Tensor, point_coords: Tensor, **kwargs: Any) -> Tensor:
