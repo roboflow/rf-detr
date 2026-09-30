@@ -2718,6 +2718,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>ONNX exports no longer contain a single-input <code>Concat</code> or a <code>Concat</code> of an empty tensor where the two-stage selection assembles the decoder queries, and the segmentation head's export path emits <code>MatMul</code> instead of <code>Einsum</code>. ONNX Runtime's CoreML execution provider rejects all three, so each split the exported graph into another CoreML partition with a CPU round-trip in between. On an Apple M4 Max with onnxruntime 1.30 (<code>ModelFormat=MLProgram</code>, <code>MLComputeUnits=CPUAndGPU</code>), each graph now has two CoreML partitions, leaving only the CPU-resident top-k selection between them: RF-DETR Nano runs in 8.3 ms instead of 9.3 ms (4 partitions before), Large in 19.4 ms instead of 19.9 ms (4 before), and Seg Nano in 16.5 ms instead of 18.9 ms (5 before). All figures were measured with a static batch; <code>dynamic_batch=True</code> was not measured and is not expected to match, because <code>forward_export</code>'s reshape then takes a runtime-computed shape instead of a constant. Exported outputs are bit-identical on ONNX Runtime's CPU provider, and eager training and <code>predict()</code> are unchanged; <code>RFDETR.inference()</code> switches the model into export mode, so it also takes the segmentation head's <code>MatMul</code> path — output identical on CPU (fp32/fp64/bf16 verified; CUDA/fp16 unverified). (<a href="https://github.com/roboflow/rf-detr/pull/1566">#1566</a>)</p>
+</li>
+<li>
 <p><code>format</code> in <code>RFDETR.export()</code> is case-insensitive, as <code>backend</code> already was: <code>format="ONNX"</code> exports ONNX instead of raising <code>Unsupported export format 'ONNX'</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1556">#1556</a>)</p>
 </li>
 <li>
