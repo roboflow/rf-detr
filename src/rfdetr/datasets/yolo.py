@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 import numpy as np
 import torch
@@ -41,7 +42,11 @@ logger = get_logger()
 
 REQUIRED_YOLO_YAML_FILES = ["data.yaml", "data.yml"]
 _VALID_VAL_DIR_NAMES = ("valid", "val")
-REQUIRED_DATA_SUBDIRS = ["images", "labels"]
+#: Deferred log records from split resolution: ``(level, message)`` pairs that the caller emits.
+#: Resolution is consulted by several gates per training run, so a resolver that logged directly
+#: repeated the same fallback message once per gate; returning the records lets the builder — the
+#: one caller that acts on the resolved directories — report each fallback exactly once.
+_ResolutionNotes = tuple[tuple[int, str], ...]
 YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
 
@@ -596,6 +601,87 @@ def _build_coco_api_from_samples(
     return coco
 
 
+@overload
+def find_yolo_data_file(dataset_dir: str | Path, default: None = None) -> Path | None: ...
+
+
+@overload
+def find_yolo_data_file(dataset_dir: str | Path, default: Path) -> Path: ...
+
+
+def find_yolo_data_file(dataset_dir: str | Path, default: Path | None = None) -> Path | None:
+    """Return the YOLO data file of a dataset root.
+
+    The names in :data:`REQUIRED_YOLO_YAML_FILES` are probed in order, so ``data.yaml``
+    wins over ``data.yml`` when a root holds both.
+
+    Args:
+        dataset_dir: Dataset root that may contain ``data.yaml`` or ``data.yml``.
+        default: Returned when the root holds neither name. Callers that only need to know
+            whether a YOLO config exists leave it ``None``; a caller that must name a path
+            in an error message passes a concrete one.
+
+    Returns:
+        The first existing data file, or *default* when the root holds none.
+
+    Examples:
+        >>> find_yolo_data_file("/missing") is None
+        True
+    """
+    root = Path(dataset_dir)
+    for filename in REQUIRED_YOLO_YAML_FILES:
+        data_file = root / filename
+        if data_file.exists():
+            return data_file
+    return default
+
+
+def find_yolo_train_images(dataset_dir: str | Path) -> Path | None:
+    """Return the training image directory of a YOLO dataset root.
+
+    Format detection asks only whether a root ships YOLO training images. This is the supported
+    entry point for that question: it keeps the split-resolution rules — a YAML ``train:`` path,
+    the ``path:`` base, and the Roboflow directory convention — inside this module, so a caller
+    does not import the resolver to ask.
+
+    Labels are not required. A declared training directory with no derivable ``labels`` sibling
+    still identifies the dataset as YOLO, matching the legacy ``train/images`` rule and keeping
+    background-only and not-yet-labelled datasets — which the loader reads — detectable.
+    Building a split still needs labels; see :func:`_resolve_yolo_split_dirs`.
+
+    Args:
+        dataset_dir: Dataset root that may contain ``data.yaml`` or ``data.yml``.
+
+    Returns:
+        The training image directory, or ``None`` when the root holds no YOLO data file or no
+        training image directory resolves from it.
+
+    Examples:
+        >>> find_yolo_train_images("/missing") is None
+        True
+    """
+    root = Path(dataset_dir)
+    data_file = find_yolo_data_file(root)
+    if data_file is None:
+        return None
+    resolved, notes = _resolve_split_from_yaml(root, data_file, "train")
+    # Detection runs before anything is built, so every rejection is reported at debug level
+    # only: the builder emits the same records at their own level once it commits to a split.
+    for _, note_message in notes:
+        logger.debug(note_message)
+    if resolved is not None:
+        return resolved[0]
+    try:
+        declared, _ = _declared_split_images(root, data_file, "train")
+    except (OSError, ValueError, TypeError, yaml.YAMLError):
+        declared = None  # an unreadable data file cannot declare images; try the convention
+    if declared is not None:
+        nested_images = declared / "images"
+        return nested_images if nested_images.is_dir() else declared
+    images_dir, _ = _resolve_yolo_split_dirs(root, data_file, "train")
+    return images_dir if _usable_split_dir(images_dir, root) else None
+
+
 def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     """Check for a YOLO YAML file and resolvable training and validation directories.
 
@@ -610,22 +696,70 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
         ``False`` otherwise.
     """
     root = Path(dataset_dir)
-    data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), None)
+    data_file = find_yolo_data_file(root)
     if data_file is None:
         return False
     return all(
-        directory.exists()
+        _usable_split_dir(directory, root)
         for split in ("train", "val")
         for directory in _resolve_yolo_split_dirs(root, data_file, split)
     )
 
 
-def _parse_yaml_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:
-    """Parse ``data_file`` and resolve image/label dirs for ``split``.
+def _within_root(candidate: Path, root: Path) -> bool:
+    """Report whether *candidate* stays inside *root* once symlinks are followed.
 
-    Returns ``None`` when the YAML declares no usable path for the requested
-    split, the resolved path does not exist on disk, or a path traversal is
-    detected.
+    The check is total: an unresolvable candidate counts as outside *root* rather than
+    propagating out of the caller, because every caller uses it to choose between a
+    declared path and the filesystem fallback.
+
+    Args:
+        candidate: Path to test. It need not exist.
+        root: Dataset root that must contain *candidate*.
+
+    Returns:
+        ``True`` when the resolved candidate is *root* itself or lives under it.
+
+    Examples:
+        >>> _within_root(Path("/data/ds/train/images"), Path("/data/ds"))
+        True
+        >>> _within_root(Path("/data/other/images"), Path("/data/ds"))
+        False
+    """
+    try:
+        candidate.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False  # resolved candidate lies outside root
+    except (OSError, RuntimeError):
+        # A symlink loop raises RuntimeError from resolve() up to Python 3.12 and OSError
+        # on some platforms; either way the candidate is unusable, not a reason to crash.
+        return False
+    return True
+
+
+def _usable_split_dir(candidate: Path, root: Path) -> bool:
+    """Report whether *candidate* is a directory this dataset may read.
+
+    Applies containment to whatever resolution returned, so a conventional ``train/images``
+    symlinked out of the dataset root is refused exactly like a YAML declaration pointing
+    there. Resolving both sides leaves a dataset whose whole root is a symlink untouched.
+
+    Args:
+        candidate: Resolved split directory.
+        root: Dataset root that must contain it.
+
+    Returns:
+        ``True`` when *candidate* is an existing directory inside *root*.
+    """
+    return candidate.is_dir() and _within_root(candidate, root)
+
+
+def _declared_split_images(root: Path, data_file: Path, split: str) -> tuple[Path | None, _ResolutionNotes]:
+    """Resolve the image directory a YAML declares for ``split``, ignoring labels.
+
+    Holds the ``path:`` base and containment rules that apply to any declared split. Format
+    detection needs the declared images on their own, so deriving the matching labels
+    directory is left to :func:`_parse_yaml_split_dirs`.
 
     Raises:
         OSError: File I/O failure reading ``data_file``.
@@ -639,63 +773,79 @@ def _parse_yaml_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Pat
         split: One of ``"train"``, ``"val"``, or ``"test"``.
 
     Returns:
-        ``(images_dir, labels_dir)`` on success, or ``None`` to signal fallback.
+        ``(images_dir, notes)`` when the YAML declares a directory that exists inside *root*,
+        otherwise ``(None, notes)``.
     """
     data = _load_yaml_mapping(data_file)
-    yaml_base = Path(data.get("path", "")) if data.get("path") else root
-    if not yaml_base.is_absolute():
-        yaml_base = root / yaml_base
+    declared_base = data.get("path")
+    base_notes: _ResolutionNotes = ()
+    if declared_base:
+        yaml_base = Path(declared_base)
+        if not yaml_base.is_absolute():
+            # A relative ``path:`` is declared against the dataset root. Only a declared base is
+            # joined onto the root — joining the root onto itself doubled a relative root.
+            joined_base = root / yaml_base
+            if joined_base.is_dir():
+                yaml_base = joined_base
+            else:
+                # Ultralytics resolves a relative ``path:`` against its datasets directory, whose
+                # default is the YAML file's own directory. A stock ``coco8.yaml`` therefore pairs
+                # ``path: coco8`` with a root already named ``coco8``, and joining the two would
+                # look for a ``coco8`` child that does not exist.
+                yaml_base = root
+                base_notes = (
+                    (
+                        logging.INFO,
+                        f"YOLO data file {data_file} declares path {declared_base!r}, which is not a directory "
+                        f"under {root} — resolving splits against the dataset root instead.",
+                    ),
+                )
+    else:
+        yaml_base = root
 
     raw_path: str | None = data.get(split)
     if raw_path is None and split == "val":
         raw_path = data.get("valid")
 
     if raw_path is None:
-        return None
+        return None, ()  # nothing declared for this split, so the base was never used
 
     split_images = yaml_base / raw_path
     # Path traversal guard: reject yaml-declared paths that escape
     # the dataset root (e.g. "../../other_project/val/images").
-    try:
-        split_images.resolve().relative_to(root.resolve())
-    except ValueError:
-        return None  # traversal detected; signal fallback
-
-    parts = split_images.parts
-    is_dir = split_images.is_dir()
-    if is_dir and "images" in parts:
-        # Scan ``images`` segments right to left, as Ultralytics does: an earlier one can
-        # belong to a parent of the root, and the rightmost segment with an existing
-        # ``labels`` sibling is the correct swap target, not merely the last one in the path.
-        for idx in (i for i in range(len(parts) - 1, -1, -1) if parts[i] == "images"):
-            split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
-            # Path traversal guard mirroring the split_images check above: a crafted parts
-            # sequence could otherwise swap a component that lands outside root.
-            try:
-                split_labels.resolve().relative_to(root.resolve())
-            except ValueError:
-                continue  # traversal detected; skip this candidate
-            if split_labels.is_dir():
-                return split_images, split_labels
-    if is_dir:
-        sub_images = split_images / "images"
-        sub_labels = split_images / "labels"
-        if sub_images.is_dir() and sub_labels.is_dir():
-            return sub_images, sub_labels
-        logger.warning(
-            "YOLO split %r declared at %s exists but its labels directory could not be "
-            "derived — falling back to the Roboflow directory convention.",
-            split,
-            split_images,
+    if not _within_root(split_images, root):
+        # Rejecting a declaration silently used to leave the caller reporting a missing data
+        # file, so each refusal names the key and the path it resolved to.
+        return None, base_notes + (
+            (
+                logging.DEBUG,
+                f"YOLO split {split!r} declared at {split_images} resolves outside the dataset root "
+                f"{root} — ignoring the declaration.",
+            ),
         )
-    return None
+    if not split_images.is_dir():
+        return None, base_notes + (
+            (
+                logging.DEBUG,
+                f"YOLO split {split!r} declared at {split_images} is not a directory — ignoring the declaration.",
+            ),
+        )
+    return split_images, base_notes
 
 
-def _resolve_split_from_yaml(root: Path, data_file: Path, split: str) -> tuple[Path, Path] | None:
-    """Try to resolve image and label dirs for ``split`` from ``data_file``.
+def _parse_yaml_split_dirs(
+    root: Path, data_file: Path, split: str
+) -> tuple[tuple[Path, Path] | None, _ResolutionNotes]:
+    """Parse ``data_file`` and resolve image *and* label dirs for ``split``.
 
-    Returns ``None`` when the YAML file is absent, declares no usable path for
-    the requested split, or the resolved path does not exist on disk.
+    Resolves without logging: a rejected declaration is reported through the returned
+    notes so the caller decides whether it is worth a message.
+
+    Raises:
+        OSError: File I/O failure reading ``data_file``.
+        ValueError: Unexpected value type inside the YAML mapping.
+        TypeError: Unexpected type inside the YAML mapping.
+        yaml.YAMLError: Malformed YAML content.
 
     Args:
         root: Dataset root directory.
@@ -703,28 +853,78 @@ def _resolve_split_from_yaml(root: Path, data_file: Path, split: str) -> tuple[P
         split: One of ``"train"``, ``"val"``, or ``"test"``.
 
     Returns:
-        ``(images_dir, labels_dir)`` on success, or ``None`` to signal fallback.
+        ``((images_dir, labels_dir), notes)`` on success, or ``(None, notes)`` when the YAML
+        declares no usable path for the split, the declared path is missing on disk, a path
+        traversal is detected, or no labels directory can be derived.
+    """
+    split_images, base_notes = _declared_split_images(root, data_file, split)
+    if split_images is None:
+        return None, base_notes
+
+    parts = split_images.parts
+    if "images" in parts:
+        # Scan ``images`` segments right to left, as Ultralytics does: an earlier one can
+        # belong to a parent of the root, and the rightmost segment with an existing
+        # ``labels`` sibling is the correct swap target, not merely the last one in the path.
+        for idx in (i for i in range(len(parts) - 1, -1, -1) if parts[i] == "images"):
+            split_labels = Path(*parts[:idx], "labels", *parts[idx + 1 :])
+            # Path traversal guard mirroring the split_images check above: a crafted parts
+            # sequence could otherwise swap a component that lands outside root.
+            if not _within_root(split_labels, root):
+                continue  # traversal detected or unresolvable; skip this candidate
+            if split_labels.is_dir():
+                return (split_images, split_labels), base_notes
+    sub_images = split_images / "images"
+    sub_labels = split_images / "labels"
+    if sub_images.is_dir() and sub_labels.is_dir():
+        return (sub_images, sub_labels), base_notes
+    return None, base_notes + (
+        (
+            logging.WARNING,
+            f"YOLO split {split!r} declared at {split_images} exists but its labels directory "
+            f"could not be derived — falling back to the Roboflow directory convention.",
+        ),
+    )
+
+
+def _resolve_split_from_yaml(
+    root: Path, data_file: Path, split: str
+) -> tuple[tuple[Path, Path] | None, _ResolutionNotes]:
+    """Try to resolve image and label dirs for ``split`` from ``data_file``.
+
+    Turns every failure mode of :func:`_parse_yaml_split_dirs` into a fallback plus notes,
+    so no caller has to handle a YAML problem and none of them logs twice.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``((images_dir, labels_dir), notes)`` on success, or ``(None, notes)`` when the YAML
+        file is absent, declares no usable path for the split, is unreadable, or is malformed.
     """
     if not data_file.exists():
-        return None
+        return None, ()
     try:
         return _parse_yaml_split_dirs(root, data_file, split)
     except OSError:
-        pass
+        return None, ()
     except (ValueError, TypeError) as exc:
-        logger.warning(
-            "Could not resolve YAML split path for %r in %s: %s — falling back to Roboflow directory convention.",
-            split,
-            data_file,
-            exc,
+        return None, (
+            (
+                logging.WARNING,
+                f"Could not resolve YAML split path for {split!r} in {data_file}: {exc} — "
+                f"falling back to Roboflow directory convention.",
+            ),
         )
     except yaml.YAMLError as exc:
-        logger.warning(
-            "Failed to parse YAML file %s: %s — falling back to Roboflow directory convention.",
-            data_file,
-            exc,
+        return None, (
+            (
+                logging.WARNING,
+                f"Failed to parse YAML file {data_file}: {exc} — falling back to Roboflow directory convention.",
+            ),
         )
-    return None
 
 
 def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[Path, Path]:
@@ -755,20 +955,41 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
     Returns:
         ``(images_dir, labels_dir)`` as resolved :class:`~pathlib.Path` objects.
     """
+    return _resolve_yolo_split_dirs_with_notes(root, data_file, split)[0]
+
+
+def _resolve_yolo_split_dirs_with_notes(
+    root: Path, data_file: Path, split: str
+) -> tuple[tuple[Path, Path], _ResolutionNotes]:
+    """Resolve a split as :func:`_resolve_yolo_split_dirs` does, keeping the fallback notes.
+
+    Args:
+        root: Dataset root directory.
+        data_file: Path to ``data.yaml`` or ``data.yml``.
+        split: One of ``"train"``, ``"val"``, or ``"test"``.
+
+    Returns:
+        ``((images_dir, labels_dir), notes)``, where *notes* explains any fallback the caller
+        may want to report. A caller that only needs the directories uses
+        :func:`_resolve_yolo_split_dirs` instead.
+
+    Raises:
+        ValueError: If the YAML declares a ``test`` split that cannot be resolved.
+    """
     if split == "test" and data_file.exists():
         try:
             declared_test_path = _load_yaml_mapping(data_file).get("test")
         except (OSError, ValueError, TypeError, yaml.YAMLError):
             declared_test_path = None
         if declared_test_path is not None:
-            result = _resolve_split_from_yaml(root, data_file, split)
+            result, notes = _resolve_split_from_yaml(root, data_file, split)
             if result is None:
                 raise ValueError(f"YOLO test split declared in {data_file} could not be resolved")
-            return result
+            return result, notes
 
-    result = _resolve_split_from_yaml(root, data_file, split)
+    result, notes = _resolve_split_from_yaml(root, data_file, split)
     if result is not None:
-        return result
+        return result, notes
 
     roboflow_map = {"train": "train", "val": "valid", "test": "test"}
     mapped = roboflow_map.get(split, split)
@@ -780,9 +1001,9 @@ def _resolve_yolo_split_dirs(root: Path, data_file: Path, split: str) -> tuple[P
             candidate = root / alt / "images"
             candidate_labels = root / alt / "labels"
             if candidate.is_dir() and candidate_labels.is_dir():
-                return candidate, candidate_labels
+                return (candidate, candidate_labels), notes
 
-    return img_dir, lb_dir
+    return (img_dir, lb_dir), notes
 
 
 def _validate_yolo_test_split(images_dir: Path, labels_dir: Path) -> None:
@@ -1048,9 +1269,19 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         raise FileNotFoundError(f"YOLO dataset root not found: {root}")
 
     # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
-    data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
+    data_file = find_yolo_data_file(root, default=root / "data.yaml")
     split_key = image_set.split("_")[0]
-    img_folder, lb_folder = _resolve_yolo_split_dirs(root, data_file, split_key)
+    (img_folder, lb_folder), resolution_notes = _resolve_yolo_split_dirs_with_notes(root, data_file, split_key)
+    # The builder is the only caller that acts on the resolved directories, so it reports the
+    # fallbacks; the detection and validity gates resolve the same split without repeating them.
+    for note_level, note_message in resolution_notes:
+        logger.log(note_level, note_message)
+    for split_dir in (img_folder, lb_folder):
+        # Containment applies wherever the directory came from, including the Roboflow
+        # convention: reaching outside the root through a symlinked split is refused here
+        # rather than silently read, matching what the gates already report.
+        if split_dir.is_dir() and not _within_root(split_dir, root):
+            raise ValueError(f"YOLO split directory resolves outside the dataset root {root}: {split_dir}")
     if split_key == "test":
         _validate_yolo_test_split(img_folder, lb_folder)
     # Model-dependent pipeline options are mandatory for direct builder calls.

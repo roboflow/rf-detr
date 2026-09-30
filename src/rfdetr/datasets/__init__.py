@@ -30,10 +30,10 @@ from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.webdataset.load import build_webdataset
 from rfdetr.datasets.yolo import (
-    REQUIRED_YOLO_YAML_FILES,
     YoloDetection,
-    _resolve_yolo_split_dirs,
     build_roboflow_from_yolo,
+    find_yolo_data_file,
+    find_yolo_train_images,
 )
 
 
@@ -65,11 +65,19 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     if coco_annotation.exists():
         return "coco"
 
-    yolo_data_file = next((dataset_dir / f for f in REQUIRED_YOLO_YAML_FILES if (dataset_dir / f).exists()), None)
+    if find_yolo_train_images(dataset_dir) is not None:
+        return "yolo"
+
+    yolo_data_file = find_yolo_data_file(dataset_dir)
     if yolo_data_file is not None:
-        yolo_images_dir, _ = _resolve_yolo_split_dirs(dataset_dir, yolo_data_file, "train")
-        if yolo_images_dir.exists():
-            return "yolo"
+        # Naming the config that was found keeps the message from reading as "no data.yaml
+        # here" when one is present but declares nothing usable.
+        raise ValueError(
+            f"Could not detect dataset format in {dataset_dir}. Found the YOLO data file {yolo_data_file}, "
+            f"but no training image directory resolved from it: neither its 'train' path nor "
+            f"{dataset_dir / 'train' / 'images'} is a directory inside the dataset. "
+            f"Enable debug logging to see each declaration that was rejected."
+        )
 
     raise ValueError(
         f"Could not detect dataset format in {dataset_dir}. "

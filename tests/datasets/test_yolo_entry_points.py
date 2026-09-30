@@ -13,11 +13,16 @@ import yaml
 from PIL import Image
 
 from rfdetr.datasets import build_dataset, detect_roboflow_format
-from rfdetr.datasets.yolo import YoloDetection, _resolve_yolo_split_dirs, is_valid_yolo_dataset
+from rfdetr.datasets.yolo import (
+    YoloDetection,
+    _resolve_yolo_split_dirs,
+    _resolve_yolo_split_dirs_with_notes,
+    is_valid_yolo_dataset,
+)
 from rfdetr.detr import RFDETR
 
 
-@pytest.fixture(params=["roboflow", "val", "images-first", "relative-path", "absolute-path"])
+@pytest.fixture(params=["roboflow", "val", "images-first", "relative-path", "absolute-path", "ultralytics-path"])
 def yolo_entry_point_dataset(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     """Create two tiny splits in a layout already supported by the YOLO resolver.
 
@@ -32,6 +37,10 @@ def yolo_entry_point_dataset(tmp_path: Path, request: pytest.FixtureRequest) -> 
         config += "path: content\n"
     elif layout == "absolute-path":
         config += f"path: {base.as_posix()}\n"
+    elif layout == "ultralytics-path":
+        # Stock Ultralytics YAML shape: ``path:`` repeats the root's own name, so joining it to
+        # the root would point at a child that does not exist.
+        config += "path: coco8\n"
     for split, image_count in (("train", 1), ("val", 2)):
         if layout == "roboflow":
             split_dir = "valid" if split == "val" else split
@@ -122,6 +131,140 @@ class TestYoloEntryPointFallbacks:
         """Format recognition does not require validation or labels in a legacy layout."""
         (tmp_path / "data.yaml").write_text("names: [person]\n", encoding="utf-8")
         (tmp_path / "train" / "images").mkdir(parents=True)
+        assert detect_roboflow_format(tmp_path) == "yolo"
+        assert not is_valid_yolo_dataset(str(tmp_path))
+
+    def test_split_fallback_is_not_reported_by_the_gates(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Resolving a split for a gate records the fallback without logging it.
+
+        Format detection, the validity gate, class discovery and both builder calls all resolve the same splits. The
+        resolver logged its own fallback, so one dataset with an unusable declaration warned once per gate per split
+        instead of once per split. The first assertion confirms this layout still produces a note at all, so the second
+        is not vacuous.
+        """
+        (tmp_path / "declared").mkdir()
+        for split in ("train", "valid"):
+            for subdir in ("images", "labels"):
+                (tmp_path / split / subdir).mkdir(parents=True)
+        (tmp_path / "data.yaml").write_text("names: [person]\ntrain: declared\n", encoding="utf-8")
+        recorded: list[object] = []
+        monkeypatch.setattr("rfdetr.datasets.yolo.logger.warning", lambda *args: recorded.append(args))
+        monkeypatch.setattr("rfdetr.datasets.yolo.logger.log", lambda *args: recorded.append(args))
+
+        assert _resolve_yolo_split_dirs_with_notes(tmp_path, tmp_path / "data.yaml", "train")[1] != ()
+        detect_roboflow_format(tmp_path)
+        is_valid_yolo_dataset(str(tmp_path))
+        RFDETR._load_classes(str(tmp_path))
+        assert recorded == []
+
+    def test_symlink_loop_in_declared_split_is_reported_as_undetectable(self, tmp_path: Path) -> None:
+        """A symlink loop under a declared split leaves both gates answering, not raising.
+
+        The containment guard caught only ``ValueError`` from ``Path.resolve()``, which also raises ``RuntimeError`` for
+        a loop up to Python 3.12, so a looped ``train:`` target propagated out of ``train()`` instead of reporting a
+        dataset it cannot read. The outcome is asserted rather than the exception type, because newer interpreters
+        resolve a loop without raising and reach the same answer by a different route.
+        """
+        loop_head = tmp_path / "loopA"
+        try:
+            loop_head.symlink_to(tmp_path / "loopB", target_is_directory=True)
+            (tmp_path / "loopB").symlink_to(loop_head, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"cannot create symlinks in this environment: {exc}")
+        (tmp_path / "data.yaml").write_text("names: [person]\ntrain: loopA/images\n", encoding="utf-8")
+        assert not is_valid_yolo_dataset(str(tmp_path))
+        with pytest.raises(ValueError, match="Could not detect dataset format"):
+            detect_roboflow_format(tmp_path)
+
+    def test_relative_dataset_dir_without_path_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A relative dataset root is joined onto a declared split path exactly once.
+
+        With no ``path:`` key the resolver used the root as its own base and then joined it onto the root again whenever
+        it was relative, so ``ds`` became ``ds/ds``. Every declared split then looked missing and an images-first layout
+        fell back to the Roboflow convention, which this dataset does not have.
+        """
+        for split in ("train", "val"):
+            (tmp_path / "ds" / "images" / split).mkdir(parents=True)
+            (tmp_path / "ds" / "labels" / split).mkdir(parents=True)
+        (tmp_path / "ds" / "data.yaml").write_text(
+            "names: [person]\ntrain: images/train\nval: images/val\n", encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+        assert detect_roboflow_format(Path("ds")) == "yolo"
+        assert is_valid_yolo_dataset("ds")
+
+    def test_file_where_split_directory_belongs_is_rejected(self, tmp_path: Path) -> None:
+        """A plain file standing in for a split directory does not satisfy the validity gate.
+
+        The gate resolved each split and then only asked whether the path existed, so a stray ``train/labels`` file — a
+        truncated download, or an archive that unpacked a file over the directory — counted as a usable split and the
+        real failure surfaced later inside the loader.
+        """
+        (tmp_path / "data.yaml").write_text("names: [person]\n", encoding="utf-8")
+        (tmp_path / "train" / "images").mkdir(parents=True)
+        (tmp_path / "train" / "labels").write_text("", encoding="utf-8")
+        for subdir in ("images", "labels"):
+            (tmp_path / "valid" / subdir).mkdir(parents=True)
+        assert not is_valid_yolo_dataset(str(tmp_path))
+
+    def test_present_but_unresolved_data_file_is_named_in_the_errors(self, tmp_path: Path) -> None:
+        """Both gates name the YOLO data file they found instead of implying none exists.
+
+        A root holding a ``data.yaml`` whose declared splits do not resolve reported "Could not detect dataset format
+        ... Expected ... data.yaml or data.yml" and a class-discovery error listing the same filenames it had just read,
+        so the message pointed at a missing file as the cause rather than at the unresolved split.
+        """
+        (tmp_path / "data.yaml").write_text("names: [person]\ntrain: images/train\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="Found the YOLO data file"):
+            detect_roboflow_format(tmp_path)
+        with pytest.raises(FileNotFoundError, match="could not both be resolved"):
+            RFDETR._load_classes(str(tmp_path))
+
+    def test_conventional_split_symlinked_outside_root_is_rejected(self, tmp_path: Path) -> None:
+        """A conventional split directory symlinked out of the dataset root is refused.
+
+        Containment governed only YAML-declared paths, so identical storage was refused when named by ``data.yaml`` and
+        accepted when reached through a symlinked ``train/images``. The guard decided by layout instead of by
+        destination; both routes now share one rule.
+        """
+        root = tmp_path / "dataset"
+        outside = tmp_path / "elsewhere" / "images"
+        outside.mkdir(parents=True)
+        (root / "train").mkdir(parents=True)
+        try:
+            (root / "train" / "images").symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"cannot create symlinks in this environment: {exc}")
+        (root / "data.yaml").write_text("names: [person]\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="Could not detect dataset format"):
+            detect_roboflow_format(root)
+
+    def test_dataset_root_reached_through_a_symlink_is_accepted(self, tmp_path: Path) -> None:
+        """A dataset whose entire root is a symlink stays detectable.
+
+        Containment resolves the split and the root, so mounting a whole dataset on other storage and linking to it —
+        the usual cluster arrangement — keeps working. Only an individual split escaping its own root is refused.
+        """
+        real_root = tmp_path / "storage" / "dataset"
+        (real_root / "train" / "images").mkdir(parents=True)
+        (real_root / "data.yaml").write_text("names: [person]\n", encoding="utf-8")
+        link = tmp_path / "linked-dataset"
+        try:
+            link.symlink_to(real_root, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"cannot create symlinks in this environment: {exc}")
+        assert detect_roboflow_format(link) == "yolo"
+
+    def test_declared_training_images_are_detected_without_labels(self, tmp_path: Path) -> None:
+        """A declared training image directory identifies YOLO whether or not labels exist.
+
+        Detection resolved the declared split through the labels-aware resolver, so a YAML layout whose ``train:``
+        images had no ``labels`` sibling fell back to ``train/images`` and went undetected — while the very same
+        unlabelled dataset in the legacy layout was detected. The validity gate still requires labels, so it keeps
+        saying no.
+        """
+        (tmp_path / "data.yaml").write_text("names: [person]\ntrain: images/train\n", encoding="utf-8")
+        (tmp_path / "images" / "train").mkdir(parents=True)
         assert detect_roboflow_format(tmp_path) == "yolo"
         assert not is_valid_yolo_dataset(str(tmp_path))
 

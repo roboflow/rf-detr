@@ -235,7 +235,7 @@ dataset/
         └── ...
 ```
 
-The YAML split paths also support layouts such as `images/train` with `labels/train`, and `images/val` with `labels/val`. An optional `path` sets the base for these paths; relative bases are resolved from the dataset root. YAML paths must resolve within the dataset root. Without usable YAML split paths, RF-DETR falls back to `train/images` and `valid/images` (or `val/images`), with matching `labels` directories. Class discovery requires both training and validation directories; the test split is optional.
+The YAML split paths also support layouts such as `images/train` with `labels/train`, and `images/val` with `labels/val`. An optional `path` sets the base for these paths; relative bases are resolved from the dataset root, and a relative base that is not a directory under the root is ignored in favour of the root itself, so a stock Ultralytics file whose `path` repeats the dataset directory name works unchanged. YAML paths must resolve within the dataset root. Without usable YAML split paths, RF-DETR falls back to `train/images` and `valid/images` (or `val/images`), with matching `labels` directories. Class discovery requires both training and validation directories; the test split is optional.
 
 ### data.yaml Configuration
 
