@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `RFDETR.export(format="tensorrt", trt_timing_cache="<path>")` saves TensorRT's kernel timings to a file and reuses them on the next build. Every build used to time all kernels from scratch: rfdetr never gave Polygraphy a timing cache. Rebuilding the same model at the same precision and batch profile (after fine-tuning, say) now skips most of that work. On an RTX 5070 with TensorRT 11.3, `build_engine` for a static-batch `RFDETRNano` went from 37.9 s to 8.4 s in fp16 and from 12.9 s to 7.9 s in fp32 (median of three runs, each in a fresh process). A cache from the pretrained model did as well for a model fine-tuned to 3 classes (37.4 s to 9.0 s in fp16). The engine is the same: its outputs match the build that filled the cache bit for bit, and its latency is within 2% of a build without the cache. A cache from another TensorRT major version, or an empty or corrupt file, doesn't stop the build; TensorRT logs an error and the file is replaced. Off by default; other formats warn and ignore it. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
 ### Changed
 
 - `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))

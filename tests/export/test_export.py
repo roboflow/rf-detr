@@ -504,6 +504,55 @@ def test_rfdetr_export_warns_when_max_batch_size_used_without_dynamic_batch(
         )
 
 
+def test_rfdetr_export_warns_when_trt_timing_cache_used_for_another_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`trt_timing_cache` outside `format="tensorrt"` is ignored and must warn rather than silently no-op.
+
+    Only TensorRT times kernels, so on `format="onnx"` there is no cache to load or save and the file is never touched.
+    """
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+    cache = tmp_path / "engine.cache"
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    with pytest.warns(UserWarning, match=r"`trt_timing_cache`.*ignored"):
+        _detr_module.RFDETR.export(
+            model, output_dir=str(tmp_path), format="onnx", trt_timing_cache=str(cache), shape=(14, 14)
+        )
+
+    assert not cache.exists()
+
+
+def test_rfdetr_export_tensorrt_forwards_trt_timing_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`RFDETR.export(format="tensorrt", trt_timing_cache=...)` puts the path on the exporter's config, unwarned."""
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+    cache = tmp_path / "engine.cache"
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
+
+    with (
+        patch.object(
+            TensorRTExporter, "build_engine", autospec=True, return_value=str(tmp_path / "inference_model.trt")
+        ) as build_engine,
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("error", UserWarning)
+        _detr_module.RFDETR.export(
+            model, output_dir=str(tmp_path), format="tensorrt", trt_timing_cache=cache, shape=(14, 14)
+        )
+
+    assert build_engine.call_args.args[0].config.timing_cache == cache
+
+
 def test_rfdetr_export_tensorrt_without_tensorrt_fails_before_any_model_work(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
