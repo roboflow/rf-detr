@@ -6,6 +6,8 @@
 """Tests for DepthwiseConvBlock, _DepthwiseConvWithoutCuDNN, and SegmentationHead."""
 
 import inspect
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
@@ -50,8 +52,41 @@ def test_depthwise_conv_block_forward(device: str) -> None:
     assert y.shape == x.shape
 
 
-def test_depthwise_conv_forward_disables_cudnn(monkeypatch) -> None:
-    """Depthwise conv should execute with cuDNN disabled during forward."""
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_depthwise_conv_forward_disables_cudnn_on_cuda(monkeypatch) -> None:
+    """On CUDA, forward must run with cuDNN disabled.
+
+    ``_cudnn_disabled()`` gates entry on ``x.is_cuda`` (see the module comment): only a CUDA tensor
+    reaches ``torch.backends.cudnn.flags(enabled=False)`` at all, since ATen's ``ConvParams::use_cudnn``
+    never reads the flag for a CPU tensor in the first place.
+    """
+    block = DepthwiseConvBlock(dim=8).to("cuda")
+    enabled_calls: list[bool] = []
+    original_flags = torch.backends.cudnn.flags
+
+    @contextmanager
+    def _tracking_flags(*, enabled: bool):
+        enabled_calls.append(enabled)
+        with original_flags(enabled=enabled):
+            yield
+
+    monkeypatch.setattr(torch.backends.cudnn, "flags", _tracking_flags)
+
+    x = torch.randn(1, 8, 4, 4, device="cuda")
+    y = block(x)
+    assert y.shape == x.shape
+    assert enabled_calls, "torch.backends.cudnn.flags was never called"
+    assert all(not e for e in enabled_calls)
+
+
+def test_depthwise_conv_forward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
+    """On CPU, forward must NOT touch ``torch.backends.cudnn.flags`` at all.
+
+    ATen's ``ConvParams::use_cudnn`` short-circuits on ``!input.is_cuda()`` before ever reading the
+    flag, so mutating a process-global for a CPU-only conv buys nothing and only serializes concurrent
+    callers (see F1). ``_cudnn_disabled()`` gates on ``x.is_cuda`` precisely to keep this path untouched.
+    """
     block = DepthwiseConvBlock(dim=8)
     enabled_calls: list[bool] = []
     original_flags = torch.backends.cudnn.flags
@@ -67,15 +102,46 @@ def test_depthwise_conv_forward_disables_cudnn(monkeypatch) -> None:
     x = torch.randn(1, 8, 4, 4)
     y = block(x)
     assert y.shape == x.shape
-    assert enabled_calls, "torch.backends.cudnn.flags was never called"
+    assert not enabled_calls, "torch.backends.cudnn.flags must not be called for a CPU tensor"
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+def test_depthwise_conv_backward_disables_cudnn_on_cuda(monkeypatch) -> None:
+    """Backward pass must also run with cuDNN disabled on CUDA (issue #731).
+
+    The previous fix (PR #728) only wrapped the forward pass in a context manager.  The backward kernels ran with cuDNN
+    re-enabled, causing RuntimeError on T4/P100 GPUs. The gate keys backward off the saved tensor's device, so this must
+    still hold on CUDA even though the CPU path (below) now skips the scope entirely.
+    """
+    block = DepthwiseConvBlock(dim=8).to("cuda")
+    enabled_calls: list[bool] = []
+    original_flags = torch.backends.cudnn.flags
+
+    @contextmanager
+    def _tracking_flags(*, enabled: bool):
+        enabled_calls.append(enabled)
+        with original_flags(enabled=enabled):
+            yield
+
+    monkeypatch.setattr(torch.backends.cudnn, "flags", _tracking_flags)
+
+    x = torch.randn(1, 8, 4, 4, device="cuda", requires_grad=True)
+    y = block(x)
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == x.shape
+    # cuDNN must be disabled for both forward and backward
+    assert len(enabled_calls) >= 2
     assert all(not e for e in enabled_calls)
 
 
-def test_depthwise_conv_backward_disables_cudnn(monkeypatch) -> None:
-    """Backward pass must also run with cuDNN disabled (issue #731).
+def test_depthwise_conv_backward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
+    """On CPU, backward must NOT touch ``torch.backends.cudnn.flags`` either.
 
-    The previous fix (PR #728) only wrapped the forward pass in a context manager.  The backward kernels ran with cuDNN
-    re-enabled, causing RuntimeError on T4/P100 GPUs.
+    Backward gates on the saved (forward-input) tensor's device, mirroring the forward gate, so a CPU-only training step
+    never mutates the process-global cuDNN flags.
     """
     block = DepthwiseConvBlock(dim=8)
     enabled_calls: list[bool] = []
@@ -95,9 +161,7 @@ def test_depthwise_conv_backward_disables_cudnn(monkeypatch) -> None:
 
     assert x.grad is not None
     assert x.grad.shape == x.shape
-    # cuDNN must be disabled for both forward and backward
-    assert len(enabled_calls) >= 2
-    assert all(not e for e in enabled_calls)
+    assert not enabled_calls, "torch.backends.cudnn.flags must not be called for a CPU tensor"
 
 
 @pytest.mark.parametrize(
@@ -246,6 +310,193 @@ def test_depthwise_conv_no_cudnn_bias_none() -> None:
     assert weight.grad is not None
     assert weight.grad.shape == weight.shape
     assert torch.isfinite(weight.grad).all()
+
+
+class TestCudnnDisabledConcurrency:
+    """``_cudnn_disabled()`` must serialise ``torch.backends.cudnn.flags`` across threads.
+
+    ``torch.backends.cudnn.flags`` saves the current value on entry and restores it on exit, and it is
+    process-global and not reentrant: when two threads overlap, the second one saves the ``False`` the
+    first one set and restores it last, so cuDNN stays disabled for the rest of the process without any
+    error or warning. ``_cudnn_disabled()`` wraps the flag context manager in a lock to prevent that.
+
+    Every test below drives ``_cudnn_disabled()`` directly rather than through
+    ``_DepthwiseConvWithoutCuDNN.apply()``/``.backward()``. Once the context manager gates entry on
+    ``x.is_cuda`` (forward) / saved-tensor ``is_cuda`` (backward), a CPU call through ``.apply()`` never
+    reaches the lock, and a guard that only enters through ``.apply()`` would silently stop testing
+    anything on a CPU-only runner.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _cudnn_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Start every test in this class with ``cudnn.enabled=True``, the pre-lock steady state."""
+        monkeypatch.setattr(torch.backends.cudnn, "enabled", True)
+
+    def test_restores_flag_under_concurrent_overlapping_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Overlapping ``_cudnn_disabled()`` calls from several threads must leave every flag restored.
+
+        A ``threading.Barrier`` forces every worker to reach the lock back-to-back instead of relying on a timing
+        stagger, so the overlap this guards against is deterministic rather than CI-load-dependent. Each worker also
+        records ``cudnn.enabled`` observed *inside* the lock, proving the flag was actually flipped, not merely
+        restored. A bounded ``join(timeout=...)`` turns a lock regression into a fast test failure instead of a silent
+        CI hang. ``cudnn.benchmark`` is set alongside ``enabled`` and checked too:
+        ``torch.backends.cudnn.flags(enabled=False)`` defaults every flag it does not receive explicitly — including
+        ``benchmark`` — to the function's own default rather than the caller's current value
+        (``inspect.getsource(torch.backends.cudnn.flags)`` shows concrete defaults, never a preserving sentinel), so the
+        pre-fix race that dropped ``enabled`` drops ``benchmark`` the same way.
+        """
+        from rfdetr.models.heads.segmentation import _cudnn_disabled
+
+        monkeypatch.setattr(torch.backends.cudnn, "benchmark", True)
+        num_workers = 3
+        barrier = threading.Barrier(num_workers)
+        errors: list[BaseException] = []
+        observed_enabled: list[bool] = []
+
+        def worker() -> None:
+            try:
+                barrier.wait()
+                with _cudnn_disabled():
+                    observed_enabled.append(torch.backends.cudnn.enabled)
+                    time.sleep(0.05)
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(num_workers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        for thread in threads:
+            assert not thread.is_alive(), "worker thread did not finish within 5s — possible deadlock"
+
+        assert not errors
+        assert len(observed_enabled) == num_workers
+        assert all(not enabled for enabled in observed_enabled)
+        assert torch.backends.cudnn.enabled is True
+        assert torch.backends.cudnn.benchmark is True
+
+    def test_restores_flag_and_releases_lock_when_conv_raises(self) -> None:
+        """An exception inside ``_cudnn_disabled()`` must still restore the flag and release the lock.
+
+        ``mock.patch.object(F, "conv2d", side_effect=RuntimeError)`` drives the raise through a direct
+        ``_cudnn_disabled()`` block (never ``.apply()`` — see class docstring). A follow-up
+        ``_cudnn_disabled()`` call on a separate thread, joined with a bounded timeout, confirms the lock
+        was released: a leaked lock would otherwise only surface as a 240s pytest-timeout.
+        """
+        from rfdetr.models.heads.segmentation import _cudnn_disabled
+
+        with mock.patch.object(F, "conv2d", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"), _cudnn_disabled():
+                F.conv2d(torch.randn(1, 1, 4, 4), torch.randn(1, 1, 3, 3), padding=1)
+
+        assert torch.backends.cudnn.enabled is True
+
+        follow_up_ran = threading.Event()
+
+        def follow_up() -> None:
+            with _cudnn_disabled():
+                follow_up_ran.set()
+
+        thread = threading.Thread(target=follow_up)
+        thread.start()
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "follow-up call did not finish within 5s — lock not released"
+        assert follow_up_ran.is_set()
+
+    def test_forward_and_backward_call_sites_share_the_lock(self) -> None:
+        """A forward-shaped call and a backward-shaped call must serialise through the same lock.
+
+        One thread drives ``F.conv2d`` inside ``_cudnn_disabled()`` — the forward call site. The other
+        drives ``conv2d_input`` — the real call ``_DepthwiseConvWithoutCuDNN.backward`` makes inside its
+        own ``_cudnn_disabled()`` block — with a short sleep first to widen the overlap window
+        deterministically instead of depending on real op latency. Both threads call ``_cudnn_disabled()``
+        directly rather than through ``.apply()``/``.backward()`` (see class docstring): the true
+        CPU-triggering autograd cross-scope path is exercised on GPU by
+        ``test_restores_flag_under_concurrent_overlapping_calls_gpu``.
+        """
+        from rfdetr.models.heads.segmentation import _cudnn_disabled, conv2d_input
+
+        dim = 4
+        weight = torch.randn(dim, 1, 3, 3)
+        grad_output = torch.randn(1, dim, 4, 4)
+        barrier = threading.Barrier(2)
+        errors: list[BaseException] = []
+
+        def forward_worker() -> None:
+            try:
+                barrier.wait()
+                with _cudnn_disabled():
+                    time.sleep(0.05)
+                    F.conv2d(torch.randn(1, dim, 4, 4), weight, padding=1, groups=dim)
+            except BaseException as exc:
+                errors.append(exc)
+
+        def backward_worker() -> None:
+            try:
+                barrier.wait()
+                with _cudnn_disabled():
+                    time.sleep(0.05)
+                    conv2d_input(
+                        (1, dim, 4, 4), weight, grad_output, stride=(1, 1), padding=(1, 1), dilation=(1, 1), groups=dim
+                    )
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=forward_worker), threading.Thread(target=backward_worker)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        for thread in threads:
+            assert not thread.is_alive(), "worker thread did not finish within 5s — possible deadlock"
+
+        assert not errors
+        assert torch.backends.cudnn.enabled is True
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
+    def test_restores_flag_under_concurrent_overlapping_calls_gpu(self) -> None:
+        """GPU mirror: overlapping ``_DepthwiseConvWithoutCuDNN.apply()`` calls on real CUDA tensors.
+
+        Real CUDA tensors satisfy ``x.is_cuda``, so once ``_cudnn_disabled()`` gates entry on it, ``.apply()`` still
+        reaches the lock here the same way it did before the gate landed — unlike the CPU tests in this class, which
+        must call ``_cudnn_disabled()`` directly to keep exercising the lock after that gate lands. A slow stand-in for
+        ``F.conv2d`` widens the overlap window.
+        """
+        from rfdetr.models.heads.segmentation import _DepthwiseConvWithoutCuDNN
+
+        dim = 4
+        weight = torch.randn(dim, 1, 3, 3, device="cuda")
+        x = torch.randn(1, dim, 4, 4, device="cuda")
+        real_conv2d = F.conv2d
+
+        def slow_conv2d(*args: object, **kwargs: object) -> torch.Tensor:
+            time.sleep(0.05)
+            return real_conv2d(*args, **kwargs)
+
+        num_workers = 3
+        barrier = threading.Barrier(num_workers)
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                barrier.wait()
+                _DepthwiseConvWithoutCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
+            except BaseException as exc:
+                errors.append(exc)
+
+        with mock.patch.object(F, "conv2d", slow_conv2d):
+            threads = [threading.Thread(target=worker) for _ in range(num_workers)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        for thread in threads:
+            assert not thread.is_alive(), "worker thread did not finish within 5s — possible deadlock"
+        assert not errors
+        assert torch.backends.cudnn.enabled is True
 
 
 @pytest.mark.parametrize(
