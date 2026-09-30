@@ -49,7 +49,9 @@ model = RFDETRSmall()
 detections = model.predict("https://media.roboflow.com/dog.jpeg", threshold=0.5)
 ```
 
-`predict()` accepts RGB PIL images and NumPy arrays. It accepts normalized CHW tensors and normalized BCHW tensor batches. It also accepts image paths, HTTP image URLs, `pathlib.Path` objects, and `os.PathLike` objects.
+`predict()` accepts RGB PIL images and NumPy arrays. It accepts normalized CHW tensors and normalized BCHW tensor batches. It also accepts image paths, HTTP image URLs, `pathlib.Path` objects, and `os.PathLike` objects. An extensionless HTTP URL is treated as an image URL.
+
+Use `PredictionInput` in type annotations. Import it from `rfdetr` or `rfdetr.prediction`.
 
 One image returns one `sv.Detections` or `sv.KeyPoints` object. A list or tuple of images uses one batched forward pass and returns a list of results.
 
@@ -70,7 +72,7 @@ Directories, globs, manifests, and video files return a flat list by default (`s
 
 Use `batch` to set the number of finite images or frames per forward pass. The default is `1`. RF-DETR predicts the final partial batch when the source length is not divisible by `batch`. An inference-compiled model may require the batch size used during compilation.
 
-Text and CSV manifests list sources, one per line or cell. Relative paths are resolved from the manifest directory. A `.streams` file lists live sources that RF-DETR reads concurrently. Each result batch follows the source order in that file. The stream stops when a source with a known frame count ends.
+Text and CSV manifests list sources, one per line or cell. They can contain images, videos, and live sources. Relative paths are resolved from the manifest directory. A `.streams` file lists cameras, network streams, and local video files for concurrent reading. Each result batch follows the source order in that file. The stream stops when a source with a known frame count ends. Screen capture is not supported inside a `.streams` file.
 
 ## Run on a video file and save the results
 
@@ -105,7 +107,7 @@ sv.process_video(
 
 Set `SOURCE_VIDEO_PATH` to the input video path and `TARGET_VIDEO_PATH` to the output video path.
 
-## Stream a video, webcam, or RTSP source
+## Stream a video, camera, network, or screen source
 
 Set `stream=True` to get a lazy generator. Each item is a `sv.Detections` or `sv.KeyPoints` result for one image or video frame. The default `batch=1` predicts one frame at a time for a single source.
 
@@ -122,13 +124,13 @@ finally:
     stream.close()
 ```
 
-Pass an integer webcam index, a numeric camera index as text, or a live stream URL as the source. RF-DETR supports RTSP, RTMP, TCP, and HTTP URLs without supported image or video file extensions.
+Pass an integer webcam index, a numeric camera index as text, or an explicit live stream URL as the source. RF-DETR treats RTSP, RTSPS, RTMP, and TCP URLs as live streams. For HTTP URLs, use `.m3u8`, `.mjpg`, or `.mjpeg` to identify a live stream. An extensionless HTTP URL is treated as an image by default. Put an extensionless live HTTP URL in a `.streams` file.
 
-Live sources also run with `stream=False`. This call stores every result in memory. Direct live sources produce a memory warning; live entries inside text or CSV manifests may not. Use `stream=True` to keep memory use bounded. Capture keeps the first frame. By default, it replaces pending frames with the latest frame. This policy can skip frames when prediction is slower than capture. Set `stream_buffer=True` to queue up to 30 pending frames per source. If a stream read fails, RF-DETR tries to reconnect three times, then raises an error.
+Live sources also run with `stream=False`. This call stores every result in memory and warns after source resolution identifies a live input. This includes live sources inside text and CSV manifests. Recorded YouTube videos are finite and do not trigger this warning. Use `stream=True` to keep memory use bounded. Capture keeps the first frame. By default, it replaces pending frames with the latest frame. This policy can skip frames when prediction is slower than capture. Set `stream_buffer=True` to queue up to 30 pending frames per source. If a stream read fails, RF-DETR tries to reconnect three times, then raises an error.
 
 Set `vid_stride` to capture every Nth frame for prediction. It defaults to `1`. The latest-frame policy can still skip frames when prediction is slower than capture.
 
-Use `screen` to capture the desktop. Add an optional monitor index, or a monitor index and crop rectangle. For example, use `screen 1 100 100 640 480`. Screen capture requires `uv pip install "rfdetr[stream]"`. YouTube page URLs also require this optional extra for `yt-dlp` URL resolution. Recorded YouTube videos end at the final frame. Live YouTube URLs continue as live sources.
+Video, camera, network stream, and screen capture require `uv pip install "rfdetr[stream]"`. Use `screen` to capture the desktop. Add an optional monitor index, or a monitor index and crop rectangle. For example, use `screen 1 100 100 640 480`. YouTube page URLs also require this optional extra for `yt-dlp` URL resolution. Recorded YouTube videos end at the final frame. Live YouTube URLs continue as live sources.
 
 The generator closes its capture at the end, on error, or when you call `close()`. If an OpenCV backend blocks while it reads, capture cleanup waits for that read to return. Network read timeouts depend on backend support.
 
@@ -140,7 +142,7 @@ RF-DETR supports many sources and controls that Ultralytics supports. Its `predi
 
 `include_source_image=True` by default. For `sv.Detections`, the source image is stored in metadata. For `sv.KeyPoints`, it is stored in each object's data.
 
-Writable `uint8` NumPy arrays stay attached by reference. Changes to those arrays also change the stored image. RF-DETR copies read-only `uint8` arrays and converts arrays with other data types. Set `include_source_image=False` to omit source images.
+RF-DETR copies source images for result storage. It converts them to `uint8` RGB arrays. Set `include_source_image=False` to omit source images.
 
 ```python
 detections = model.predict("image.jpg", include_source_image=False)
