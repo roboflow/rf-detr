@@ -23,7 +23,7 @@ logger = get_logger()
 class _LiveCapture:
     """Own one capture and its bounded frame queue."""
 
-    def __init__(self, source: str | int, vid_stride: int, stream_buffer: bool) -> None:
+    def __init__(self, source: str | int, vid_stride: int, stream_buffer: bool, *, finite: bool = False) -> None:
         """Read an initial frame before starting background capture."""
         try:
             import cv2
@@ -64,7 +64,9 @@ class _LiveCapture:
             if not success:
                 raise ValueError("Could not read the first frame from the live video source.")
             frame_count = self.capture.get(cv2.CAP_PROP_FRAME_COUNT)
-            self.finite = isinstance(frame_count, (int, float)) and isfinite(frame_count) and frame_count > 0
+            self.finite = finite or (
+                isinstance(frame_count, (int, float)) and isfinite(frame_count) and frame_count > 0
+            )
             self.first: np.ndarray[Any, Any] | None = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         except BaseException:
             self.capture.release()
@@ -153,7 +155,11 @@ class _LiveCapture:
 
 
 def iter_live_frames(
-    sources: list[str | int], *, vid_stride: int = 1, stream_buffer: bool = False
+    sources: list[str | int],
+    *,
+    vid_stride: int = 1,
+    stream_buffer: bool = False,
+    finite_sources: frozenset[str | int] = frozenset(),
 ) -> Generator[list[np.ndarray[Any, Any]], None, None]:
     """Yield RGB batches in source order with bounded background capture.
 
@@ -161,7 +167,7 @@ def iter_live_frames(
     pending frames per source; the default keeps only the latest pending frame.
     Closing the iterator stops every worker. A backend blocked in a native read
     releases its capture when that read returns. Network backends must support
-    OpenCV open/read timeouts. Sources with a known frame count stop at EOF;
+    OpenCV open/read timeouts. Known finite sources or sources with a known frame count stop at EOF;
     the group stops when its shortest source ends. Unknown-length sources
     treat failed reads as disconnects and retry up to three times.
 
@@ -169,6 +175,7 @@ def iter_live_frames(
         sources: Camera indexes or live stream URLs.
         vid_stride: Number of captured frames between predictions.
         stream_buffer: Retain pending frames instead of replacing them.
+        finite_sources: Sources known to be finite even without frame-count metadata.
 
     Yields:
         One RGB image per source.
@@ -178,7 +185,7 @@ def iter_live_frames(
     captures: list[_LiveCapture] = []
     try:
         for source in sources:
-            captures.append(_LiveCapture(source, vid_stride, stream_buffer))
+            captures.append(_LiveCapture(source, vid_stride, stream_buffer, finite=source in finite_sources))
         while True:
             batch = []
             for capture in captures:

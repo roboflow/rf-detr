@@ -21,6 +21,7 @@ import torch
 from rfdetr._prediction_streams import iter_live_frames
 from rfdetr.prediction import ImageInput, PredictionInput
 
+#: Image extensions included when expanding directories and globs.
 _IMAGE_SUFFIXES = {
     ".avif",
     ".bmp",
@@ -37,7 +38,9 @@ _IMAGE_SUFFIXES = {
     ".tiff",
     ".webp",
 }
+#: Extensions that identify finite video sources.
 _VIDEO_SUFFIXES = {".asf", ".avi", ".gif", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
+#: Supported source manifest formats.
 _MANIFEST_SUFFIXES = {".txt", ".csv", ".streams"}
 
 
@@ -151,6 +154,7 @@ def _iter_source_groups(
                     raise ValueError("The stream manifest contains no sources.")
                 yield from _live_groups(
                     sources,
+                    finite_sources=frozenset(item for item, live in resolved_sources if not live),
                     vid_stride=vid_stride,
                     stream_buffer=stream_buffer,
                     warn_on_live=warn_on_live and any(live for _, live in resolved_sources),
@@ -223,12 +227,19 @@ def _iter_source_groups(
 
 
 def _live_groups(
-    sources: list[str | int], *, vid_stride: int, stream_buffer: bool, warn_on_live: bool
+    sources: list[str | int],
+    *,
+    vid_stride: int,
+    stream_buffer: bool,
+    warn_on_live: bool,
+    finite_sources: frozenset[str | int] = frozenset(),
 ) -> Generator[tuple[list[ImageInput], bool], None, None]:
     """Close background readers when prediction stops."""
     if warn_on_live:
         _warn_live_accumulation()
-    batches = iter_live_frames(sources, vid_stride=vid_stride, stream_buffer=stream_buffer)
+    batches = iter_live_frames(
+        sources, vid_stride=vid_stride, stream_buffer=stream_buffer, finite_sources=finite_sources
+    )
     try:
         for frames in batches:
             yield list(frames), True
