@@ -20,6 +20,18 @@ from .helpers import _DummyRFDETR
 class TestLivePredictions:
     """Exercise live sources through the public prediction API."""
 
+    def test_finite_network_read_failure_is_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """A remote file ending on a failed read must not silently hide a timeout."""
+        source = tmp_path / "video.streams"
+        source.write_text("https://example.com/video.mp4")
+        capture = MagicMock()
+        capture.get.return_value = 100
+        capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8)), (False, None)]
+        with patch("cv2.VideoCapture", return_value=capture):
+            assert len(list(_DummyRFDETR().predict(source, stream=True, stream_buffer=True))) == 1
+        assert "end of file or a read failure" in caplog.text
+        capture.open.assert_not_called()
+
     def test_lazy_rgb_batches_and_close(self, tmp_path: Path) -> None:
         """Open lazily, keep source order, convert colors, and release all captures."""
         source = tmp_path / "cameras.streams"
