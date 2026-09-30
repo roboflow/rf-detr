@@ -22,7 +22,12 @@ from rfdetr.utilities.tensors import NestedTensor
 
 
 class _ToyEncoder(nn.Module):
-    """Stand-in encoder: one conv whose output is repeated once per requested feature level."""
+    """Stand-in encoder: one conv whose output is repeated once per requested feature level.
+
+    Examples:
+        >>> [tuple(feature.shape) for feature in _ToyEncoder(num_levels=2)(torch.zeros(1, 3, 8, 8))]
+        [(1, 8, 2, 2), (1, 8, 2, 2)]
+    """
 
     def __init__(self, num_levels: int, channels: int = 8, patch_size: int = 4) -> None:
         super().__init__()
@@ -31,21 +36,38 @@ class _ToyEncoder(nn.Module):
         self._out_feature_channels = [channels] * num_levels
 
     def forward(self, x: Tensor) -> list[Tensor]:
+        """Return the patch projection once per feature level."""
         feat = self.proj(x)
         return [feat] * self.num_levels
 
 
 class _ToyBackbone(Backbone):
-    """Backbone subclass that swaps in ``_ToyEncoder`` and records the kwargs it was built with."""
+    """Backbone subclass that swaps in ``_ToyEncoder`` and records the kwargs it was built with.
+
+    Examples:
+        >>> backbone = _ToyBackbone.__new__(_ToyBackbone)  # skips Backbone.__init__, which builds the encoder
+        >>> backbone._build_encoder("toy_encoder", out_feature_indexes=[2, 5], patch_size=4).num_levels
+        2
+        >>> _ToyBackbone.received["name"]
+        'toy_encoder'
+    """
 
     received: dict[str, Any] = {}
 
     def _build_encoder(self, name: str, **kwargs: Any) -> nn.Module:
+        """Record the build arguments and return a ``_ToyEncoder`` with one level per output feature index."""
         type(self).received = {"name": name, **kwargs}
         return _ToyEncoder(num_levels=len(kwargs["out_feature_indexes"]), patch_size=kwargs["patch_size"])
 
 
 def _build(encoder: str, **overrides: Any) -> Joiner:
+    """Call ``build_backbone`` for *encoder* with small test arguments, updated by *overrides*.
+
+    Examples:
+        >>> kwargs = {"out_feature_indexes": [12], "projector_scale": ["P3"], "patch_size": 16, "num_windows": 1}
+        >>> type(_build("dinov2_windowed_small", **kwargs)[0]).__name__
+        'Backbone'
+    """
     kwargs: dict[str, Any] = dict(
         encoder=encoder,
         vit_encoder_num_layers=12,
@@ -76,7 +98,12 @@ def _build(encoder: str, **overrides: Any) -> Joiner:
 
 @pytest.fixture(autouse=True)
 def _isolated_registry() -> Iterator[None]:
-    """Restore the module-level registry after every test so registrations never leak."""
+    """Restore the module-level registry after every test so registrations never leak.
+
+    Examples:
+        Fixture execution is managed by pytest, so this example cannot run standalone.
+        >>> _isolated_registry()  # doctest: +SKIP
+    """
     saved = dict(backbone_pkg._BACKBONE_REGISTRY)
     try:
         yield
@@ -179,7 +206,7 @@ class TestUnregisteredEncoders:
     def test_unknown_non_dinov2_name_names_the_registered_encoders(self) -> None:
         register_backbone("toy_encoder", _ToyBackbone)
 
-        with pytest.raises(ValueError, match=r"Unknown encoder 'not_a_registered_encoder'.*registered: toy_encoder"):
+        with pytest.raises(ValueError, match=r"Unknown encoder 'not_a_registered_encoder'.*registered: .*toy_encoder"):
             _build("not_a_registered_encoder")
 
     def test_dinov2_encoder_receives_the_backbone_arguments(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,3 +260,18 @@ class TestForceNoPretrain:
         _build("toy_encoder", load_dinov2_weights=True, force_no_pretrain=force)
 
         assert _ToyBackbone.received["load_pretrained_weights"] is expected
+
+
+class TestChannelAdaptation:
+    """``num_channels != 3`` adapts DINOv2's patch embedding, which a registered encoder does not have."""
+
+    def test_registered_encoder_with_extra_channels_raises(self) -> None:
+        from rfdetr.config import RFDETRNanoConfig
+        from rfdetr.inference import _build_model_context
+
+        register_backbone("toy_encoder", _ToyBackbone)
+        config = RFDETRNanoConfig(num_channels=4, pretrain_weights=None, device="cpu")
+        config = config.model_copy(update={"encoder": "toy_encoder"})  # past the DINOv2-only EncoderName literal
+
+        with pytest.raises(ValueError, match="num_channels=4 is supported for DINOv2 encoders only, not _ToyEncoder"):
+            _build_model_context(config)

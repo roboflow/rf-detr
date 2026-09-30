@@ -901,9 +901,7 @@ class RFDETR:
             for name, class_symbol in _CHECKPOINT_MODEL_MAP_ENTRIES
             if not name.startswith("seg-") and "keypoint" not in name
         ]
-        _model_map: list[tuple[str, type[RFDETR]]] = (
-            _plus_stem_entries + _seg_map + _keypoint_map + _plus_entries + _base_map
-        )
+        _model_map: list[tuple[str, type[RFDETR]]] = _seg_map + _keypoint_map + _plus_entries + _base_map
 
         # New checkpoints store model_name directly — use it when available.
         _name_map: dict[str, type[RFDETR]] = dict(_variant_symbols)
@@ -950,6 +948,8 @@ class RFDETR:
         if weights_name in {"", "none", "null"}:
             weights_name = os.path.basename(os.fspath(path)).lower()
             _filename_fallback = True
+        # Plus release stems are matched in the file name only: a directory such as "rf-detr-pico/" names no model.
+        weights_file = os.path.basename(weights_name)
 
         if model_cls is None:
             # Guard: plus-only checkpoints should raise an actionable install error
@@ -958,7 +958,7 @@ class RFDETR:
             plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
             plus_by_weights_name = (
                 "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
-            ) or any(name in weights_name for name, _ in _CHECKPOINT_PLUS_STEM_ENTRIES)
+            ) or any(name in weights_file for name, _ in _CHECKPOINT_PLUS_STEM_ENTRIES)
             if not _plus_available and (plus_by_model_name or plus_by_weights_name):
                 if _plus_import_error is not None:
                     raise ImportError(
@@ -985,7 +985,7 @@ class RFDETR:
                 (
                     symbol
                     for name, symbol in _CHECKPOINT_PLUS_STEM_ENTRIES
-                    if name in weights_name and symbol not in _plus_symbols
+                    if name in weights_file and symbol not in _plus_symbols
                 ),
                 None,
             )
@@ -996,10 +996,12 @@ class RFDETR:
                     f"Checkpoint pretrain_weights={weights_name!r}: " + _UPGRADE_MSG.format(name=missing_stem_symbol)
                 )
 
-            for name, klass in _model_map:
-                if name in weights_name:
-                    model_cls = klass
-                    break
+            model_cls = next((klass for name, klass in _plus_stem_entries if name in weights_file), None)
+            if model_cls is None:
+                for name, klass in _model_map:
+                    if name in weights_name:
+                        model_cls = klass
+                        break
 
             if model_cls is None and plus_by_weights_name:
                 from rfdetr.platform.models import _UPGRADE_MSG

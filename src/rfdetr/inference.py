@@ -168,8 +168,13 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
         import copy
 
         backbone = cast(Backbone, nn_model.backbone[0])
-        # Channel adaptation rewrites DINOv2's patch embedding; registered encoders reject num_channels != 3 themselves.
-        encoder = cast(DinoV2, backbone.encoder)
+        encoder = backbone.encoder
+        # Channel adaptation rewrites DINOv2's patch embedding.
+        if not isinstance(encoder, DinoV2):
+            raise ValueError(
+                f"num_channels={model_config.num_channels} is supported for DINOv2 encoders only, "
+                f"not {type(encoder).__name__} (encoder={model_config.encoder!r})."
+            )
         proj = encoder.encoder.embeddings.patch_embeddings.projection
         new_proj = copy.deepcopy(proj)
         new_proj.in_channels = model_config.num_channels

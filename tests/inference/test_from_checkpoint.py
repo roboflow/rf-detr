@@ -17,7 +17,9 @@ from __future__ import annotations
 import argparse
 import logging
 import warnings
+from collections.abc import Iterable, Sequence
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -1260,8 +1262,13 @@ class TestFromCheckpointPEPlusModels:
     _PE_SYMBOLS = ("RFDETRAtto", "RFDETRFemto", "RFDETRPico")
 
     @pytest.fixture
-    def platform_models(self, monkeypatch: pytest.MonkeyPatch):
-        """Patch ``rfdetr.platform.models`` so every plus symbol is controlled by the test."""
+    def platform_models(self, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+        """Patch ``rfdetr.platform.models`` so every plus symbol is controlled by the test.
+
+        Examples:
+            Fixture execution is managed by pytest, so this example cannot run standalone.
+            >>> platform_models(monkeypatch)  # doctest: +SKIP
+        """
         import rfdetr.platform
         import rfdetr.platform.models as platform_models
 
@@ -1271,7 +1278,19 @@ class TestFromCheckpointPEPlusModels:
             monkeypatch.delitem(platform_models.__dict__, symbol, raising=False)
         return platform_models
 
-    def _install(self, monkeypatch: pytest.MonkeyPatch, platform_models, symbols) -> dict[str, MagicMock]:
+    def _install(
+        self, monkeypatch: pytest.MonkeyPatch, platform_models: ModuleType, symbols: Iterable[str]
+    ) -> dict[str, MagicMock]:
+        """Expose a fake class for each of *symbols* on *platform_models*, as an installed rfdetr_plus would.
+
+        Examples:
+            >>> import rfdetr.platform.models as platform_models
+            >>> monkeypatch = pytest.MonkeyPatch()
+            >>> fakes = TestFromCheckpointPEPlusModels()._install(monkeypatch, platform_models, ["RFDETRAtto"])
+            >>> platform_models.RFDETRAtto is fakes["RFDETRAtto"]
+            True
+            >>> monkeypatch.undo()
+        """
         fakes = {}
         for symbol in symbols:
             fakes[symbol] = MagicMock(name=symbol)
@@ -1323,6 +1342,25 @@ class TestFromCheckpointPEPlusModels:
 
         result, mock_cls = _call_from_checkpoint(
             _ns(pretrain_weights), tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano"
+        )
+
+        assert result is mock_cls.return_value
+
+    @pytest.mark.parametrize("plus", ["current", "older", "missing"])
+    def test_release_stem_in_a_directory_name_does_not_match(
+        self, monkeypatch, platform_models, tmp_path: Path, plus: str
+    ) -> None:
+        """``/models/rf-detr-pico/rf-detr-nano.pth`` is a Nano checkpoint, whichever rfdetr_plus is installed."""
+        if plus == "missing":
+            import rfdetr.platform
+
+            monkeypatch.setattr(rfdetr.platform, "_IS_RFDETR_PLUS_AVAILABLE", False)
+        else:
+            pe_symbols = self._PE_SYMBOLS if plus == "current" else ()
+            self._install(monkeypatch, platform_models, (*pe_symbols, "RFDETRXLarge", "RFDETR2XLarge"))
+
+        result, mock_cls = _call_from_checkpoint(
+            _ns("/models/rf-detr-pico/rf-detr-nano.pth"), tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano"
         )
 
         assert result is mock_cls.return_value
@@ -1386,14 +1424,20 @@ class TestFromCheckpointPEPlusModels:
 
     @pytest.fixture
     def broken_plus_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """rfdetr_plus is installed, but importing it fails on one of its own dependencies."""
+        """rfdetr_plus is installed, but importing it fails on one of its own dependencies.
+
+        Examples:
+            Fixture execution is managed by pytest, so this example cannot run standalone.
+            >>> broken_plus_import(monkeypatch)  # doctest: +SKIP
+        """
         import importlib.abc
         import sys
 
         import rfdetr.platform
 
         class _FailingFinder(importlib.abc.MetaPathFinder):
-            def find_spec(self, fullname, path, target=None):
+            def find_spec(self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None) -> None:
+                """Fail the ``rfdetr.platform.models`` import as a missing ``timm`` would; defer the rest."""
                 if fullname == "rfdetr.platform.models":
                     raise ModuleNotFoundError("No module named 'timm'", name="timm")
                 return None

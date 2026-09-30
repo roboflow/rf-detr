@@ -12,6 +12,7 @@ format at once — which is exactly why the work was pulled out of ``RFDETR.expo
 from __future__ import annotations
 
 import types
+from typing import Any
 
 import pytest
 import torch
@@ -150,7 +151,14 @@ class TestPrepareExportGraph:
 
 
 class _ShapeAwareEncoderStub(torch.nn.Module):
-    """Stand-in for a registered non-DINOv2 encoder that bakes its position embeddings per export shape."""
+    """Stand-in for a registered non-DINOv2 encoder that bakes its position embeddings per export shape.
+
+    Examples:
+        >>> encoder = _ShapeAwareEncoderStub()
+        >>> encoder.set_export_shape((32, 48))
+        >>> encoder.export_shapes
+        [(32, 48)]
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -162,7 +170,12 @@ class _ShapeAwareEncoderStub(torch.nn.Module):
 
 
 class _DetectorWithEncoderStub(_DetectorStub):
-    """Detector stub holding a shape-aware encoder somewhere in its module tree."""
+    """Detector stub holding a shape-aware encoder somewhere in its module tree.
+
+    Examples:
+        >>> type(_DetectorWithEncoderStub().backbone[0].encoder).__name__
+        '_ShapeAwareEncoderStub'
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -182,13 +195,19 @@ class TestExportShapeFreeze:
 
 
 class _ForwardingWrapperStub(torch.nn.Module):
-    """Wrapper that forwards unknown attributes to the module it wraps, as PEFT's ``PeftModel`` does."""
+    """Wrapper that forwards unknown attributes to the module it wraps, as PEFT's ``PeftModel`` does.
+
+    Examples:
+        >>> _ForwardingWrapperStub(_ShapeAwareEncoderStub()).export_shapes
+        []
+    """
 
     def __init__(self, inner: torch.nn.Module) -> None:
         super().__init__()
         self.inner = inner
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
+        """Return this module's attribute, or else the wrapped module's."""
         try:
             return super().__getattr__(name)
         except AttributeError:
