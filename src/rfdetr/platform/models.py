@@ -13,7 +13,15 @@ __all__: list[str] = []
 _PLUS_EXPORTS = {
     "RFDETR2XLarge",
     "RFDETRXLarge",
+    "RFDETRAtto",
+    "RFDETRFemto",
+    "RFDETRPico",
 }
+
+_UPGRADE_MSG = (
+    "{name} is not available in the installed rfdetr_plus package, which predates it."
+    " Upgrade it with `pip install -U rfdetr_plus`."
+)
 
 if _IS_RFDETR_PLUS_AVAILABLE:
     from rfdetr_plus.models import (
@@ -26,15 +34,34 @@ if _IS_RFDETR_PLUS_AVAILABLE:
         "RFDETRXLarge",
     ]
 
+    try:
+        from rfdetr_plus.models import (
+            RFDETRAtto,
+            RFDETRFemto,
+            RFDETRPico,
+        )
+    except ImportError:
+        # rfdetr_plus releases before the PE-Core-T models; __getattr__ raises an upgrade hint on access.
+        pass
+    else:
+        __all__ += [
+            "RFDETRAtto",
+            "RFDETRFemto",
+            "RFDETRPico",
+        ]
+
 
 def __getattr__(name: str) -> Any:
     """Lazy failure for missing plus exports: warn on import, raise on access."""
-    # Only intercept plus-only symbols when the extra package is missing.
-    if name in _PLUS_EXPORTS and not _IS_RFDETR_PLUS_AVAILABLE:
-        from rfdetr.platform import _INSTALL_MSG
+    # Only intercept plus-only symbols; an installed rfdetr_plus that resolves them never reaches this hook.
+    if name in _PLUS_EXPORTS:
+        if not _IS_RFDETR_PLUS_AVAILABLE:
+            from rfdetr.platform import _INSTALL_MSG
 
-        # Surface a clear install hint when someone explicitly requests a plus symbol.
-        raise ImportError(_INSTALL_MSG.format(name="platform model downloads"))
+            # Surface a clear install hint when someone explicitly requests a plus symbol.
+            raise ImportError(_INSTALL_MSG.format(name="platform model downloads"))
+        # The installed rfdetr_plus is older than this symbol.
+        raise ImportError(_UPGRADE_MSG.format(name=name))
 
     # Fall back to the normal attribute lookup error for everything else.
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -17,6 +17,7 @@ import torch
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
@@ -167,14 +168,21 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
         import copy
 
         backbone = cast(Backbone, nn_model.backbone[0])
-        proj = backbone.encoder.encoder.embeddings.patch_embeddings.projection
+        encoder = backbone.encoder
+        # Channel adaptation rewrites DINOv2's patch embedding.
+        if not isinstance(encoder, DinoV2):
+            raise ValueError(
+                f"num_channels={model_config.num_channels} is supported for DINOv2 encoders only, "
+                f"not {type(encoder).__name__} (encoder={model_config.encoder!r})."
+            )
+        proj = encoder.encoder.embeddings.patch_embeddings.projection
         new_proj = copy.deepcopy(proj)
         new_proj.in_channels = model_config.num_channels
         new_weight = _adapt_input_conv(model_config.num_channels, proj.weight)
         new_proj.weight = torch.nn.Parameter(new_weight)
         new_proj.weight.requires_grad = proj.weight.requires_grad
-        backbone.encoder.encoder.embeddings.patch_embeddings.projection = new_proj
-        backbone.encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
+        encoder.encoder.embeddings.patch_embeddings.projection = new_proj
+        encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
 
     device = torch.device(args.device)
     # Keep the model on CPU here; predict() / export() / inference()

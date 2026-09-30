@@ -60,6 +60,9 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 | Architecture  | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | RF100VL AP<sub>50</sub> | RF100VL AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :-----------: | :------------------: | :---------------------: | :---------------------: | :------------------------: | :----------: | :--------: | :--------: | :--------: |
+|  RF-DETR-A △  |         49.4         |          30.5           |          78.2           |            48.3            |     1.0      |    7.4     |  380x380   |  PML 1.0   |
+|  RF-DETR-F △  |         55.9         |          37.8           |          82.5           |            53.8            |     1.4      |    7.9     |  384x384   |  PML 1.0   |
+|  RF-DETR-P △  |         60.2         |          41.6           |          84.1           |            56.0            |     1.7      |    8.4     |  560x560   |  PML 1.0   |
 |   RF-DETR-N   |         67.6         |          48.4           |          85.0           |            57.7            |     2.3      |    30.5    |  384x384   | Apache 2.0 |
 |   RF-DETR-S   |         72.1         |          53.0           |          86.7           |            60.2            |     3.5      |    32.1    |  512x512   | Apache 2.0 |
 |   RF-DETR-M   |         73.6         |          54.7           |          87.4           |            61.2            |     4.4      |    33.7    |  576x576   | Apache 2.0 |
@@ -154,6 +157,16 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
 
+### Atto, Femto and Pico (Detection)
+
+<img alt="RF100-VL accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/atto_femto_pico/rf100vl_accuracy_vs_t4_latency.png" />
+
+<img alt="COCO accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/atto_femto_pico/coco_accuracy_vs_t4_latency.png" />
+
+RF-DETR Atto, Femto and Pico extend the detection lineup below Nano, at 1.0 to 1.7 ms on a T4, and are Pareto-optimal in accuracy and latency against DEIMv2 and YOLO26-N on RF100-VL and COCO.
+
+DEIMv2 training and timing protocol: [benchmarks page](https://github.com/roboflow/rf-detr/blob/develop/docs/learn/benchmarks.md#atto-femto-and-pico-detection)
+
 ### NAS on the Roboflow Platform
 
 <img alt="RF100-VL accuracy-latency Pareto chart showing RF-DETR NAS trained on the Roboflow platform outperforming the paper NAS and named configs" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/nas_two_source_comparison_100_test_only.svg" />
@@ -210,6 +223,9 @@ annotated_image = sv.LabelAnnotator().annotate(annotated_image, detections)
 
 | Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+|  A   |    `RFDETRAtto` △     | —                       |         49.4         |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
+|  F   |    `RFDETRFemto` △    | —                       |         55.9         |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
+|  P   |    `RFDETRPico` △     | —                       |         60.2         |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
 |  N   |     `RFDETRNano`      | `rfdetr-nano`           |         67.6         |          48.4           |     2.3      |    30.5    |  384x384   | Apache 2.0 |
 |  S   |     `RFDETRSmall`     | `rfdetr-small`          |         72.1         |          53.0           |     3.5      |    32.1    |  512x512   | Apache 2.0 |
 |  M   |    `RFDETRMedium`     | `rfdetr-medium`         |         73.6         |          54.7           |     4.4      |    33.7    |  576x576   | Apache 2.0 |

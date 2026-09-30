@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `rfdetr.RFDETRAtto`, `rfdetr.RFDETRFemto` and `rfdetr.RFDETRPico`: real-time detection models with a PE-Core-T backbone, provided by `rfdetr_plus` like the XLarge models (`pip install "rfdetr[plus]"`, Platform Model License 1.0). `RFDETR.from_checkpoint()` resolves their checkpoints; an outdated `rfdetr_plus` raises an upgrade hint, and a broken `rfdetr_plus` install no longer blocks loading core checkpoints.
+- `rfdetr.models.backbone.register_backbone(encoder, backbone_cls)`: an extension package can provide a non-DINOv2 encoder for a `ModelConfig.encoder` name by subclassing `Backbone` and overriding `_build_encoder`. A registered encoder that defines `set_export_shape(shape)` gets its position embeddings frozen for export, like DINOv2.
+- `ModelConfig.dim_feedforward` (default `2048`) sets the decoder feed-forward width.
+
 ### Changed
 
 - ONNX exports no longer contain a single-input `Concat` or a `Concat` of an empty tensor where the two-stage selection assembles the decoder queries, and the segmentation head's export path emits `MatMul` instead of `Einsum`. ONNX Runtime's CoreML execution provider rejects all three, so each split the exported graph into another CoreML partition with a CPU round-trip in between. On an Apple M4 Max with onnxruntime 1.30 (`ModelFormat=MLProgram`, `MLComputeUnits=CPUAndGPU`), each graph now has two CoreML partitions, leaving only the CPU-resident top-k selection between them: RF-DETR Nano runs in 8.3 ms instead of 9.3 ms (4 partitions before), Large in 19.4 ms instead of 19.9 ms (4 before), and Seg Nano in 16.5 ms instead of 18.9 ms (5 before). All figures were measured with a static batch; `dynamic_batch=True` was not measured and is not expected to match, because `forward_export`'s reshape then takes a runtime-computed shape instead of a constant. Exported outputs are bit-identical on ONNX Runtime's CPU provider, and eager training and `predict()` are unchanged; `RFDETR.inference()` switches the model into export mode, so it also takes the segmentation head's `MatMul` path — output identical on CPU (fp32/fp64/bf16 verified; CUDA/fp16 unverified). ([#1566](https://github.com/roboflow/rf-detr/pull/1566))
@@ -28,6 +34,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
 ### Fixed
+
+- `RFDETR.evaluate()` no longer downloads the encoder's upstream pretrained weights for the model it rebuilds, so offline evaluation works.
 
 - The segmentation head's depthwise convolution no longer leaves cuDNN disabled for the whole process when several threads run it at once. It wraps `F.conv2d` in `torch.backends.cudnn.flags(enabled=False)`, which saves the current value on entry and restores it on exit but is process-global and not thread-safe, so a second thread entering while the first was inside saved `False` and restored it last. After that every convolution in the process took the non-cuDNN path with no error or warning, and detections near the score threshold changed (24 instead of 25 on one real frame, with the flag as the only difference). The forward and backward scopes now share a lock, and a CPU input skips them entirely — ATen reads the flag only for a CUDA input, so the lock there only serialised independent convolutions. ([#1565](https://github.com/roboflow/rf-detr/pull/1565))
 

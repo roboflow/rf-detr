@@ -104,7 +104,7 @@ RF-DETR provides several optional extras for additional functionality:
 | `lora`       | `pip install "rfdetr[lora]"`                            | LoRA fine-tuning with PEFT, and loading a checkpoint trained with `backbone_lora=True`                                                                                     |
 | `visual`     | `pip install "rfdetr[visual]"`                          | Visualization utilities (matplotlib, pandas, seaborn)                                                                                                                      |
 | `cli`        | `pip install "rfdetr[cli]"`                             | CLI with typed argument parsing (jsonargparse)                                                                                                                             |
-| `plus`       | `pip install "rfdetr[plus]"`                            | XLarge and 2XLarge detection models (PML 1.0 license)                                                                                                                      |
+| `plus`       | `pip install "rfdetr[plus]"`                            | XLarge, 2XLarge, Atto, Femto and Pico detection models (PML 1.0 license)                                                                                                   |
 
 ## Additional Notes
 
