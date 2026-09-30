@@ -66,16 +66,6 @@ Accuracy and latency are always measured using the same model artifact and the s
 
 > † Reported by the SAM 3 authors ([arXiv:2511.16719](https://arxiv.org/abs/2511.16719), Table 36), **not** measured by us in SAB. The value is SAM 3 fine-tuned on the full RF100-VL training set — the same fully-supervised setting as the RF100VL columns above, and distinct from the 15.2 zero-shot / 36.5 10-shot numbers in the paper's main table. SAM 3's paper independently reports LW-DETR-m at 59.8 on this benchmark, matching our own measurement, which confirms the protocols align. Dashes mark results SAM 3 does not report under this protocol. Parameter count is the paper's stated ~850 M (~450 M vision + ~300 M text encoders + ~100 M detector/tracker).
 
-## Atto, Femto and Pico
-
-<img alt="RF100-VL accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="../assets/atto_femto_pico/rf100vl_accuracy_vs_t4_latency.png" />
-
-<img alt="COCO accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="../assets/atto_femto_pico/coco_accuracy_vs_t4_latency.png" />
-
-RF-DETR Atto, Femto and Pico extend the lineup below Nano, at 1.0 to 1.7 ms on a T4, and are Pareto-optimal in accuracy and latency against DEIMv2 and YOLO26-N on RF100-VL and COCO.
-
-> DEIMv2 was fine-tuned on each RF100-VL dataset from its official COCO weights, with its official code and model configs, following its README for custom datasets and for changing batch size and epoch count. Both models use the same protocol: batch 16, 100 epochs, test split, COCO evaluation with 500 detections per image. Only settings that break training on RF100-VL were changed: fp32 instead of fp16 AMP (which diverged to NaN) and a 4-epoch warmup (DEIMv2's 4,000-iteration warmup, about 4 epochs on COCO, outlasts the whole run on 46 of 100 datasets, and on 97 when scaled for batch 16). Two results-neutral fixes avoid a crash on single-class datasets (top-300 selection capped) and an evaluation hang (4 workers). DEIMv2's per-model minimum training-box size (12, 10 and 8 px) is kept. Latency for both: T4, TensorRT 10.4 FP16, batch 1, median over COCO val2017, model forward pass only.
-
 ## Segmentation
 
 <img alt="rf_detr_1-4_latency_accuracy_instance_segmentation" src="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_instance_segmentation.png" />
@@ -123,3 +113,13 @@ RF-DETR Atto, Femto and Pico extend the lineup below Nano, at 1.0 to 1.7 ms on a
 |       YOLO26-pose X        |          71.0           |     9.8      |    57.6    |
 
 > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
+
+## Atto, Femto and Pico
+
+<img alt="RF100-VL accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="../assets/atto_femto_pico/rf100vl_accuracy_vs_t4_latency.png" />
+
+<img alt="COCO accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="../assets/atto_femto_pico/coco_accuracy_vs_t4_latency.png" />
+
+RF-DETR Atto, Femto and Pico extend the lineup below Nano, at 1.0 to 1.7 ms on a T4, and are Pareto-optimal in accuracy and latency against DEIMv2 and YOLO26-N on RF100-VL and COCO.
+
+> DEIMv2 was fine-tuned on each RF100-VL dataset from its official COCO weights, with its official code and model configs, following its README for custom datasets and for changing batch size and epoch count. Both models use the same protocol: batch 16, 100 epochs, test split, COCO evaluation with 500 detections per image. Only settings that break training on RF100-VL were changed: fp32 instead of fp16 AMP (which diverged to NaN) and a 4-epoch warmup (DEIMv2's 4,000-iteration warmup, about 4 epochs on COCO, outlasts the whole run on 46 of 100 datasets, and on 97 when scaled for batch 16). Two results-neutral fixes avoid a crash on single-class datasets (top-300 selection capped) and an evaluation hang (4 workers). DEIMv2's per-model minimum training-box size (12, 10 and 8 px) is kept. Latency for both: T4, TensorRT 10.4 FP16, batch 1, median over COCO val2017, model forward pass only.
