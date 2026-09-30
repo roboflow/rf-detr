@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+import yaml
 from PIL import Image
 from pycocotools.coco import COCO
 
@@ -24,6 +25,7 @@ from rfdetr.datasets.yolo import (
     build_roboflow_from_yolo,
     is_valid_yolo_dataset,
 )
+from rfdetr.detr import RFDETR
 
 
 def _write_minimal_roboflow_yolo_dataset(tmp_path: Path) -> None:
@@ -1400,3 +1402,78 @@ class TestExtractYoloClassNames:
         data_file.write_text(yaml_content, encoding="utf-8")
         with pytest.raises(ValueError, match="0..N-1"):
             _extract_yolo_class_names(str(data_file))
+
+
+class TestYoloClassNamesEntryPoints:
+    """Keep detection, pose, and facade class names aligned with numeric label IDs."""
+
+    @pytest.mark.parametrize("entry_point", ["detection", "pose", "facade"])
+    @pytest.mark.parametrize(
+        "names",
+        [
+            pytest.param([f"class_{idx}" for idx in range(12)], id="list"),
+            pytest.param({idx: f"class_{idx}" for idx in reversed(range(12))}, id="integer"),
+            pytest.param({str(idx): f"class_{idx}" for idx in reversed(range(12))}, id="quoted"),
+            pytest.param({idx if idx % 2 else str(idx): f"class_{idx}" for idx in reversed(range(12))}, id="mixed"),
+            pytest.param({f"{idx:02}": f"class_{idx}" for idx in reversed(range(12))}, id="zero-padded"),
+        ],
+    )
+    def test_class_names_follow_numeric_ids(
+        self, tmp_path: Path, entry_point: str, names: list[str] | dict[int | str, str]
+    ) -> None:
+        """Numeric YAML keys retain label identity, including IDs with two digits."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text(yaml.safe_dump({"names": names, "kpt_shape": [1, 3]}, sort_keys=False), encoding="utf-8")
+        expected_names = [f"class_{idx}" for idx in range(12)]
+
+        if entry_point == "facade":
+            assert RFDETR._load_classes(str(tmp_path)) == expected_names
+            return
+
+        include_keypoints = entry_point == "pose"
+        label = "10 0.5 0.5 0.5 0.5" + (" 0.25 0.25 2" if include_keypoints else "")
+        (tmp_path / "train" / "labels" / "sample.txt").write_text(label + "\n", encoding="utf-8")
+        dataset = YoloDetection(
+            str(tmp_path / "train" / "images"),
+            str(tmp_path / "train" / "labels"),
+            str(data_file),
+            include_keypoints=include_keypoints,
+        )
+
+        assert dataset.classes == expected_names
+        _, target = dataset[0]
+        assert target is not None
+        assert target["labels"].tolist() == [10]
+        assert dataset.coco.cats[10]["name"] == "class_10"
+
+    @pytest.mark.parametrize("entry_point", ["detection", "pose", "facade"])
+    @pytest.mark.parametrize(
+        "names",
+        [
+            pytest.param({0: "cat", "0": "dog"}, id="duplicate-mixed"),
+            pytest.param({"0": "cat", "00": "dog"}, id="duplicate-quoted"),
+            pytest.param({0: "cat", 2: "dog"}, id="sparse-integer"),
+            pytest.param({"0": "cat", "2": "dog"}, id="sparse-quoted"),
+            pytest.param({1: "cat", 2: "dog"}, id="nonzero-start"),
+        ],
+    )
+    def test_invalid_class_ids_raise(self, tmp_path: Path, entry_point: str, names: dict[int | str, str]) -> None:
+        """Ambiguous or non-contiguous IDs must not produce a different facade label space."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        data_file = tmp_path / "data.yaml"
+        data_file.write_text(yaml.safe_dump({"names": names, "kpt_shape": [1, 3]}, sort_keys=False), encoding="utf-8")
+
+        with pytest.raises(ValueError) as exc_info:
+            if entry_point == "facade":
+                RFDETR._load_classes(str(tmp_path))
+            else:
+                YoloDetection(
+                    str(tmp_path / "train" / "images"),
+                    str(tmp_path / "train" / "labels"),
+                    str(data_file),
+                    include_keypoints=entry_point == "pose",
+                )
+
+        error = exc_info.value.__cause__ if entry_point == "pose" else exc_info.value
+        assert "0..N-1" in str(error)

@@ -269,7 +269,7 @@ test: test/images
       2: bird
     ```
 
-    Both formats are supported.
+    Both formats are supported. Dictionary keys may be integers or quoted numeric strings (for example, `"0"`). Class IDs must be unique after numeric conversion and form a contiguous range starting at `0`; names are ordered by numeric ID.
 
 ### Label File Format
 

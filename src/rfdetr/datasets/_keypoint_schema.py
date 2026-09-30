@@ -123,22 +123,19 @@ def _extract_yolo_class_names_from_data(data: dict[str, Any], data_file: Path) -
     """Extract contiguous YOLO class names from parsed YAML data."""
     names = data.get("names")
     if isinstance(names, dict):
-        numeric_keys: list[int] = []
-        non_numeric_keys: list[Any] = []
-        for key in names.keys():
+        names_by_id: dict[int, Any] = {}
+        for key, name in names.items():
             key_str = str(key)
             if key_str.isdigit():
-                numeric_keys.append(int(key_str))
-            else:
-                non_numeric_keys.append(key)
+                names_by_id[int(key_str)] = name
 
-        unique_sorted_keys = sorted(set(numeric_keys))
-        if not unique_sorted_keys or unique_sorted_keys != list(range(len(unique_sorted_keys))) or non_numeric_keys:
+        sorted_ids = sorted(names_by_id)
+        if not sorted_ids or sorted_ids != list(range(len(sorted_ids))) or len(names_by_id) != len(names):
             raise ValueError(
                 "Unsupported 'names' mapping in data file "
-                f"{str(data_file)!r}: expected integer keys 0..N-1 with no gaps."
+                f"{str(data_file)!r}: expected integer keys 0..N-1 with no gaps or duplicate IDs."
             )
-        return [str(names[idx]) for idx in unique_sorted_keys]
+        return [str(names_by_id[idx]) for idx in sorted_ids]
     if isinstance(names, list):
         return [str(name) for name in names]
     raise ValueError(f"Expected 'names' to be a list or dict in {str(data_file)!r}, got {type(names).__name__}.")
