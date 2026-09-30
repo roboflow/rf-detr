@@ -1262,6 +1262,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
 
     # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
     data_file = find_yolo_data_file(root, default=root / "data.yaml")
+    assert data_file is not None
     split_key = image_set.split("_")[0]
     (img_folder, lb_folder), resolution_notes = _resolve_yolo_split_dirs_with_notes(root, data_file, split_key)
     # The builder is the only caller that acts on the resolved directories, so it reports the
