@@ -1461,6 +1461,67 @@ class TestClassNames:
         assert dm.class_names is None
 
 
+class TestClassNamesMatchDataset:
+    """Setup("fit") checks explicit ``class_names`` against the class names read from the dataset."""
+
+    @staticmethod
+    def _fit_setup(dm: RFDETRDataModule) -> None:
+        """Run ``setup("fit")`` on datasets whose COCO categories are ``cat`` and ``dog``.
+
+        Args:
+            dm: Data module to set up.
+        """
+        datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
+            dm.setup("fit")
+
+    def test_roboflow_root_category_in_front_raises(self, tmp_path: Path) -> None:
+        """Names read from every entry of a Roboflow export's categories shift each class by one, so fit stops."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["animals", "cat", "dog"]))
+
+        with pytest.raises(ValueError, match=r"'animals'.*shifted by one.*class_names=\['cat', 'dog'\]"):
+            self._fit_setup(dm)
+
+    def test_other_length_mismatch_warns(self, tmp_path: Path) -> None:
+        """A list of another length can't line up with the labels either, but may be deliberate, so it only warns."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["cat", "dog", "bird"]))
+
+        with pytest.warns(UserWarning, match="class_names has 3 entries but the dataset has 2 classes"):
+            self._fit_setup(dm)
+
+    @pytest.mark.parametrize(
+        "class_names",
+        [
+            pytest.param(None, id="unset"),
+            pytest.param(["cat", "dog"], id="same"),
+            pytest.param(["Katze", "Hund"], id="renamed"),
+        ],
+    )
+    def test_matching_length_passes(self, tmp_path: Path, class_names: list[str] | None) -> None:
+        """Unset, identical or renamed names of the right length set up without a warning."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=class_names))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            self._fit_setup(dm)
+
+        assert dm.class_names == ["cat", "dog"]
+
+    def test_dataset_names_with_empty_slot_are_not_compared(self, tmp_path: Path) -> None:
+        """Keypoint datasets keep label 0 as an unnamed background slot, so their class names never warn."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["dog"]))
+        datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
+        for dataset in datasets.values():
+            dataset.label2cat = {1: 2}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
+                dm.setup("fit")
+
+        assert dm.class_names == ["", "dog"]
+
+
 class TestSegmentationSupport:
     """DataModule accepts SegmentationTrainConfig without errors."""
 

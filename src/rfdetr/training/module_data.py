@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -27,6 +29,57 @@ from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import PackedTargets, make_collate_fn
 
 logger = get_logger()
+
+
+def _check_class_names_match_dataset(
+    class_names: Sequence[str] | None, dataset_class_names: Sequence[str] | None
+) -> None:
+    """Fail fast when ``TrainConfig.class_names`` cannot line up with the dataset's labels.
+
+    Explicit ``class_names`` name the model's classes by position, in checkpoints and in ``predict()`` output. A list
+    that is the dataset's names with one extra name in front is what a Roboflow COCO export gives when every entry of
+    its ``categories`` list is read: the export's top-level category (``"animals"`` over ``"cat"``, ``"dog"``) comes
+    first, but it has no annotations and is not part of the label space (#609), so every name would be off by one.
+    That case raises. Any other difference in length warns, and a list of the same length is a rename and passes.
+    When the dataset's names have empty slots, its labels follow raw category ids or keep a background slot (keypoint
+    models), where ``class_names`` follow their own conventions, so there is nothing reliable to compare.
+
+    Args:
+        class_names: ``TrainConfig.class_names``, or ``None`` when not set.
+        dataset_class_names: Label-indexed names read from the dataset, or ``None`` when unknown.
+
+    Raises:
+        ValueError: If ``class_names`` is the dataset's names with one extra name in front.
+
+    Examples:
+        >>> _check_class_names_match_dataset(["cat", "dog"], ["cat", "dog"])
+        >>> _check_class_names_match_dataset(["Katze", "Hund"], ["cat", "dog"])
+        >>> _check_class_names_match_dataset(["person"], ["", "person"])
+        >>> _check_class_names_match_dataset(["animals", "cat", "dog"], ["cat", "dog"])  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: class_names has 3 entries but the dataset has 2 classes ['cat', 'dog']. ...
+    """
+    if class_names is None or not dataset_class_names:
+        return
+    names, dataset_names = list(class_names), list(dataset_class_names)
+    if len(names) == len(dataset_names) or "" in dataset_names:
+        return
+    if names[1:] == dataset_names:
+        raise ValueError(
+            f"class_names has {len(names)} entries but the dataset has {len(dataset_names)} classes {dataset_names}. "
+            f"The extra first name, {names[0]!r}, looks like the top-level category of a Roboflow COCO export, which "
+            "has no annotations and is not one of the model's classes, so every class name would be shifted by one. "
+            f"Pass class_names={dataset_names!r}, or leave class_names unset to use the dataset's names."
+        )
+    message = (
+        f"class_names has {len(names)} entries but the dataset has {len(dataset_names)} classes {dataset_names}. "
+        "Predictions and checkpoints name classes by their position in class_names, so the names may not match the "
+        "dataset's labels."
+    )
+    logger.warning(message)
+    warnings.warn(message, UserWarning, stacklevel=3)
+
 
 _MIN_TRAIN_BATCHES = 5
 
@@ -289,6 +342,7 @@ class RFDETRDataModule(LightningDataModule):
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
+            _check_class_names_match_dataset(self.train_config.class_names, self.class_names)
             # Build Kornia pipeline (once); use _kornia_setup_done so fallback paths
             # (pipeline stays None) do not re-run on repeated setup("fit") calls.
             if not self._kornia_setup_done:
