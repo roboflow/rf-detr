@@ -292,6 +292,9 @@ _LOCK_REGISTRY_LOCK = threading.Lock()
 #: per-context lock would let each take a different lock over the same tensors. Keying on the module also keeps
 #: unrelated models independent, where a single process-wide lock made a cold move of one stall another model's
 #: already-warm guard for the whole transfer. Weak keys: a module's lock goes when the module does.
+#: Notebook DDP avoids inheriting a held lock because ``build_trainer()`` in ``training/trainer.py`` replaces
+#: ``ddp_notebook`` with ``start_method="spawn"``. Forking while a module's lock is held leaves it locked in the
+#: child; before supporting fork-based model use, reset it with ``os.register_at_fork(after_in_child=...)``.
 _MODULE_MOVE_LOCKS: WeakKeyDictionary[Any, threading.Lock] = WeakKeyDictionary()
 
 
