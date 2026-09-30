@@ -90,7 +90,9 @@ def iter_source_batches(
     warn_on_live: bool = False,
 ) -> Generator[list[ImageInput], None, None]:
     """Batch finite images and preserve simultaneous live-stream batches."""
-    groups = _iter_source_groups(source, vid_stride, stream_buffer, (), warn_on_live)
+    groups = _iter_source_groups(
+        source, vid_stride=vid_stride, stream_buffer=stream_buffer, manifests=(), warn_on_live=warn_on_live
+    )
     pending: list[ImageInput] = []
     try:
         for images, simultaneous in groups:
@@ -112,12 +114,14 @@ def iter_source_batches(
 
 
 def _iter_source_groups(
-    source: PredictionInput, vid_stride: int, stream_buffer: bool, manifests: tuple[Path, ...], warn_on_live: bool
+    source: PredictionInput, *, vid_stride: int, stream_buffer: bool, manifests: tuple[Path, ...], warn_on_live: bool
 ) -> Generator[tuple[list[ImageInput], bool], None, None]:
     """Expand nested sources while retaining live-stream batch boundaries."""
     if isinstance(source, (list, tuple)):
         for item in source:
-            yield from _iter_source_groups(item, vid_stride, stream_buffer, manifests, warn_on_live)
+            yield from _iter_source_groups(
+                item, vid_stride=vid_stride, stream_buffer=stream_buffer, manifests=manifests, warn_on_live=warn_on_live
+            )
         return
     if isinstance(source, torch.Tensor) and source.ndim == 4:
         for image in source:
@@ -126,7 +130,7 @@ def _iter_source_groups(
     if isinstance(source, int):
         if isinstance(source, bool) or source < 0:
             raise ValueError("The webcam index must be a non-negative integer.")
-        yield from _live_groups([source], vid_stride, stream_buffer, warn_on_live)
+        yield from _live_groups([source], vid_stride=vid_stride, stream_buffer=stream_buffer, warn_on_live=warn_on_live)
         return
     if not isinstance(source, (str, os.PathLike)):
         yield [source], False
@@ -146,12 +150,19 @@ def _iter_source_groups(
                 if not sources:
                     raise ValueError("The stream manifest contains no sources.")
                 yield from _live_groups(
-                    sources, vid_stride, stream_buffer, warn_on_live and any(live for _, live in resolved_sources)
+                    sources,
+                    vid_stride=vid_stride,
+                    stream_buffer=stream_buffer,
+                    warn_on_live=warn_on_live and any(live for _, live in resolved_sources),
                 )
             else:
                 for entry in entries:
                     yield from _iter_source_groups(
-                        entry, vid_stride, stream_buffer, (*manifests, manifest), warn_on_live
+                        entry,
+                        vid_stride=vid_stride,
+                        stream_buffer=stream_buffer,
+                        manifests=(*manifests, manifest),
+                        warn_on_live=warn_on_live,
                     )
         finally:
             entries.close()
@@ -170,7 +181,10 @@ def _iter_source_groups(
         resolved, live = _resolve_youtube(path)
         if live:
             yield from _live_groups(
-                [int(path) if path.isdecimal() else resolved], vid_stride, stream_buffer, warn_on_live
+                [int(path) if path.isdecimal() else resolved],
+                vid_stride=vid_stride,
+                stream_buffer=stream_buffer,
+                warn_on_live=warn_on_live,
             )
         else:
             frames = _iter_video_frames(resolved, vid_stride)
@@ -191,7 +205,9 @@ def _iter_source_groups(
         if not media:
             raise FileNotFoundError(f"No supported images or videos found for {path!r}.")
         for item in media:
-            yield from _iter_source_groups(item, vid_stride, stream_buffer, manifests, warn_on_live)
+            yield from _iter_source_groups(
+                item, vid_stride=vid_stride, stream_buffer=stream_buffer, manifests=manifests, warn_on_live=warn_on_live
+            )
         return
     if Path(url.path if remote else path).suffix.lower() in _VIDEO_SUFFIXES:
         if not remote and not Path(path).is_file():
@@ -207,7 +223,7 @@ def _iter_source_groups(
 
 
 def _live_groups(
-    sources: list[str | int], vid_stride: int, stream_buffer: bool, warn_on_live: bool
+    sources: list[str | int], *, vid_stride: int, stream_buffer: bool, warn_on_live: bool
 ) -> Generator[tuple[list[ImageInput], bool], None, None]:
     """Close background readers when prediction stops."""
     if warn_on_live:
@@ -341,8 +357,9 @@ def _stream_entry(source: str) -> tuple[str | int, bool]:
 
 def _warn_live_accumulation() -> None:
     """Warn before an eager prediction starts an unbounded source."""
+    # Attribute this to the source-opening site; manifest nesting makes caller depth variable.
     warnings.warn(
         "Live results accumulate in memory with stream=False. Use stream=True to limit memory use.",
         UserWarning,
-        stacklevel=5,
+        stacklevel=2,
     )
