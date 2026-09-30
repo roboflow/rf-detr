@@ -539,6 +539,89 @@ def test_exporter_check_dependencies_defaults_to_a_no_op() -> None:
     assert Exporter.check_dependencies() is None
 
 
+@pytest.mark.parametrize(
+    ("keyword", "value"),
+    [("trt_hardware_compatibility", "ampere_plus"), ("trt_version_compatible", True)],
+)
+def test_rfdetr_export_warns_when_a_tensorrt_portability_option_is_used_without_tensorrt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keyword: str, value: object
+) -> None:
+    """A TensorRT portability option outside `format="tensorrt"` is ignored and must warn rather than silently no-op."""
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    with pytest.warns(UserWarning, match=rf"`{keyword}`.*ignored"):
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="onnx", shape=(14, 14), **{keyword: value})
+
+
+def test_rfdetr_export_does_not_warn_for_the_default_portability_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Passing the defaults explicitly (`None` and `False`) is not a request, so it never warns on another format."""
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        _detr_module.RFDETR.export(
+            model,
+            output_dir=str(tmp_path),
+            format="onnx",
+            shape=(14, 14),
+            trt_hardware_compatibility=None,
+            trt_version_compatible=False,
+        )
+
+
+def test_rfdetr_export_tensorrt_forwards_the_portability_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`RFDETR.export(format="tensorrt", trt_...=...)` puts both settings on the exporter's configuration, unwarned."""
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter.ctypes.CDLL", lambda name: None)
+    # With CDLL faked, the real lean package would import without its libraries and stay broken in sys.modules.
+    monkeypatch.setitem(sys.modules, "tensorrt_lean_libs", types.ModuleType("tensorrt_lean_libs"))
+    # The lean-runtime check reads the version of the installed TensorRT, which CPU CI does not have.
+    fake_tensorrt = types.ModuleType("tensorrt")
+    fake_tensorrt.__version__ = "11.3.0.99"
+    fake_tensorrt.HardwareCompatibilityLevel = types.SimpleNamespace(SAME_COMPUTE_CAPABILITY=object())
+    monkeypatch.setitem(sys.modules, "tensorrt", fake_tensorrt)
+
+    with (
+        patch.object(
+            TensorRTExporter, "build_engine", autospec=True, return_value=str(tmp_path / "inference_model.trt")
+        ) as build_engine,
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("error", UserWarning)
+        _detr_module.RFDETR.export(
+            model,
+            output_dir=str(tmp_path),
+            format="tensorrt",
+            shape=(14, 14),
+            trt_hardware_compatibility="same_compute_capability",
+            trt_version_compatible=True,
+        )
+
+    config = build_engine.call_args.args[0].config
+    assert (config.hardware_compatibility, config.version_compatible) == ("same_compute_capability", True)
+
+
 @pytest.mark.parametrize("fp16", [pytest.param(True, id="fp16"), pytest.param(False, id="fp32")])
 def test_rfdetr_export_tensorrt_forwards_fp16(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fp16: bool) -> None:
     """`RFDETR.export(format="tensorrt", fp16=...)` must reach the exporter that builds the engine.

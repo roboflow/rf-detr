@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `RFDETR.export(format="tensorrt")` takes `trt_hardware_compatibility` (`"ampere_plus"` or `"same_compute_capability"`) and `trt_version_compatible=True`. They ask TensorRT for an engine that other GPUs, or other releases of the same TensorRT major version, may load; every engine used to be tied to the GPU and TensorRT version that built it. We had one GPU, so running on a second one is untested. Version compatibility worked between TensorRT 11.2 and 11.3 in both directions, and didn't work across major versions or between 10.13 and 10.16. It needs TensorRT's lean runtime package, which the pip wheels don't include; without it the export stops early with an `ImportError` that names it. On an RTX 5070 with TensorRT 11.3 (static-batch `RFDETRNano` fp16, median of fresh-process `build_engine` calls, latency from CUDA events): `"ampere_plus"` took 130 s to build instead of 38 s, made a 99 MB engine instead of 62 MB and ran 10.9% slower (`RFDETRSmall`: 9.6%); `"same_compute_capability"` cost nothing measurable; `trt_version_compatible` added 105 MB and ran as fast (within 1%). COCO AP stayed within build-to-build noise for every option. A portable engine gets its own file name suffix, so it doesn't overwrite a default engine (unless `output_name` is set). `TRTInference` and `rfdetr.export.benchmark` take `engine_host_code_allowed` (off by default), which a TensorRT 11 version-compatible engine needs because it carries host code. Both options are off by default; other formats warn and ignore them. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
 ### Changed
 
 - `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))

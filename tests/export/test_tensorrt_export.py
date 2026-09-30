@@ -20,11 +20,13 @@ import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
+from typing import get_args, get_type_hints
 
 import numpy as np
 import pytest
 import torch
 
+from rfdetr.detr import RFDETR
 from rfdetr.export._tensorrt import exporter as tensorrt_export
 from rfdetr.export._tensorrt import inference as tensorrt_inference
 from rfdetr.export._tensorrt.exporter import (
@@ -1145,6 +1147,51 @@ class TestBuildEngineDynamicBatch:
         assert captured["source"] == str(cast_path)
 
 
+def _patch_polygraphy_chain_recording(monkeypatch: pytest.MonkeyPatch, network: _FakeNetwork | None = None) -> dict:
+    """Stub the polygraphy chain and record every keyword the build hands to ``CreateConfig`` and the engine build.
+
+    The other stubs bind their signature to the exact keywords ``_compile`` passes today, so a renamed keyword fails
+    loudly. The keywords a feature adds are optional, so this one accepts any keyword and lets the test assert on
+    exactly which were passed, and which were not.
+
+    Args:
+        monkeypatch: Fixture used to replace the polygraphy entry points on the module under test.
+        network: The parsed-network stand-in the loader hands back, or ``None`` for one fixed-batch input.
+
+    Returns:
+        Dict with the ``CreateConfig`` keywords under ``"config"`` and the keywords ``engine_from_network`` received
+        besides the parsed network and the configuration under ``"build"``.
+
+    Examples:
+        >>> with pytest.MonkeyPatch.context() as monkeypatch:
+        ...     captured = _patch_polygraphy_chain_recording(monkeypatch)
+        ...     _ = tensorrt_export.CreateConfig(fp16=True, option=1)
+        ...     _ = tensorrt_export.engine_from_network("network", config="config", build_option=2)
+        >>> captured
+        {'config': {'fp16': True, 'option': 1}, 'build': {'build_option': 2}}
+    """
+    captured: dict = {"config": {}, "build": {}}
+    parsed = network if network is not None else _FakeNetwork(_STATIC_INPUT)
+
+    def _create_config(**kwargs: object) -> str:
+        captured["config"].update(kwargs)
+        return "config"
+
+    def _engine_from_network(_parsed: object, config: object, **kwargs: object) -> str:
+        captured["build"].update(kwargs)
+        return "engine"
+
+    monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
+    monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
+    monkeypatch.setattr(tensorrt_export, "_IS_POLYGRAPHY_AVAILABLE", True)
+    monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("builder", parsed, "parser"))
+    monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
+    monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
+    monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
+    monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+    return captured
+
+
 @pytest.fixture
 def fp16_cast_graph(tmp_path: Path) -> "onnx.GraphProto":
     """Graph of a tiny float32 model after a real round-trip through ``_cast_onnx_to_fp16``."""
@@ -1262,6 +1309,379 @@ class TestBuildEngineLeanWheelFallback:
         monkeypatch.setattr(tensorrt_export, "_cast_onnx_to_fp16", _unexpected_cast)
 
         assert TensorRTExporter(TensorRTConfig(fp16=True)).build_engine("/tmp/model.onnx") == "/tmp/model_fp32.trt"
+
+
+def _tensorrt_with_hardware_levels(version: str, **levels: str) -> types.ModuleType:
+    """Build a stand-in ``tensorrt`` module whose ``HardwareCompatibilityLevel`` has exactly the given members.
+
+    Each member is a distinct string, so a wrong mapping from the ``export`` keyword to the enum member fails an
+    equality check instead of passing by coincidence.
+
+    Args:
+        version: Value to expose as ``tensorrt.__version__``.
+        **levels: Enum member name to the sentinel value it carries.
+
+    Returns:
+        A module object suitable for ``monkeypatch.setitem(sys.modules, "tensorrt", ...)``.
+
+    Examples:
+        >>> module = _tensorrt_with_hardware_levels("10.16.1.11", AMPERE_PLUS="ampere-plus-level")
+        >>> module.HardwareCompatibilityLevel.AMPERE_PLUS
+        'ampere-plus-level'
+        >>> hasattr(module.HardwareCompatibilityLevel, "SAME_COMPUTE_CAPABILITY")
+        False
+    """
+    module = _fake_tensorrt(version, has_fp16_flag=True)
+    module.HardwareCompatibilityLevel = types.SimpleNamespace(**levels)
+    return module
+
+
+def _literal_spellings(annotation: object) -> set[str]:
+    """Return the string values of a ``Literal[...] | None`` annotation, ignoring the ``None``.
+
+    Args:
+        annotation: A resolved annotation such as ``Literal["a", "b"] | None``.
+
+    Returns:
+        The values of the ``Literal`` member.
+
+    Examples:
+        >>> from typing import Literal
+        >>> sorted(_literal_spellings(Literal["a", "b"] | None))
+        ['a', 'b']
+    """
+    return {value for member in get_args(annotation) if member is not type(None) for value in get_args(member)}
+
+
+def _cannot_load(name: str) -> None:
+    """Stand in for the dynamic loader failing to find the library *name*.
+
+    Args:
+        name: The library file name the loader was asked for.
+
+    Raises:
+        OSError: Always, naming the library.
+
+    Examples:
+        >>> _cannot_load("libnvinfer_lean.so.11")
+        Traceback (most recent call last):
+        ...
+        OSError: libnvinfer_lean.so.11: cannot open shared object file
+    """
+    raise OSError(f"{name}: cannot open shared object file")
+
+
+class TestPortableEngines:
+    """The compatibility settings reach Polygraphy's config, and nothing is passed unless one is set."""
+
+    @pytest.fixture(autouse=True)
+    def lean_runtime(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Pretend the lean runtime library loads, and record the library names TensorRT was asked for.
+
+        The pip package is replaced too: importing the real one while ``CDLL`` is faked would leave it in
+        ``sys.modules`` without its libraries, and a real version-compatible build later in the same session would then
+        be refused.
+        """
+        loaded: list[str] = []
+        monkeypatch.setattr(tensorrt_export.ctypes, "CDLL", loaded.append)
+        monkeypatch.setitem(sys.modules, "tensorrt_lean_libs", types.ModuleType("tensorrt_lean_libs"))
+        return loaded
+
+    def test_no_compatibility_keyword_is_passed_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without either setting the build calls Polygraphy exactly as it always did."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+
+        TensorRTExporter(TensorRTConfig(fp16=False)).build_engine("model.onnx")
+
+        assert captured["config"] == {"fp16": False}
+
+    @pytest.mark.parametrize(
+        ("level", "expected"), [("ampere_plus", "ampere-plus-level"), ("same_compute_capability", "same-cc-level")]
+    )
+    def test_hardware_compatibility_selects_the_matching_enum_member(
+        self, monkeypatch: pytest.MonkeyPatch, level: str, expected: str
+    ) -> None:
+        """Each keyword value maps to its own ``HardwareCompatibilityLevel`` member."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setitem(
+            sys.modules,
+            "tensorrt",
+            _tensorrt_with_hardware_levels(
+                "11.3.0.99", AMPERE_PLUS="ampere-plus-level", SAME_COMPUTE_CAPABILITY="same-cc-level"
+            ),
+        )
+
+        TensorRTExporter(TensorRTConfig(fp16=False, hardware_compatibility=level)).build_engine("model.onnx")
+
+        assert captured["config"]["hardware_compatibility_level"] == expected
+
+    def test_version_compatible_reaches_the_builder(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``version_compatible=True`` is passed to ``CreateConfig``; the default passes no such keyword."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+
+        TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).build_engine("model.onnx")
+
+        assert captured["config"] == {"fp16": False, "version_compatible": True}
+
+    @pytest.mark.parametrize("dynamic_batch", [False, True])
+    def test_both_settings_reach_the_builder_next_to_the_profile(
+        self, monkeypatch: pytest.MonkeyPatch, dynamic_batch: bool
+    ) -> None:
+        """The compatibility keywords travel with the batch profile, for a static and a dynamic build alike."""
+        shape = (-1, 3, 384, 384) if dynamic_batch else (1, 3, 384, 384)
+        captured = _patch_polygraphy_chain_recording(monkeypatch, _FakeNetwork(_FakeNetworkInput("input", shape)))
+        monkeypatch.setitem(
+            sys.modules, "tensorrt", _tensorrt_with_hardware_levels("11.3.0.99", AMPERE_PLUS="ampere-plus-level")
+        )
+        config = TensorRTConfig(
+            fp16=False,
+            dynamic_batch=dynamic_batch,
+            max_batch_size=4,
+            hardware_compatibility="ampere_plus",
+            version_compatible=True,
+        )
+
+        TensorRTExporter(config).build_engine("model.onnx")
+
+        assert captured["config"]["hardware_compatibility_level"] == "ampere-plus-level"
+        assert captured["config"]["version_compatible"] is True
+        assert ("profiles" in captured["config"]) is dynamic_batch
+
+    def test_a_tensorrt_without_the_level_refuses_before_building(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A TensorRT that lacks the requested level names it and its own version, and builds nothing."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setitem(
+            sys.modules, "tensorrt", _tensorrt_with_hardware_levels("10.16.1.11", AMPERE_PLUS="ampere-plus-level")
+        )
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, hardware_compatibility="same_compute_capability"))
+
+        with pytest.raises(ValueError, match=r"same_compute_capability.*TensorRT 10\.16\.1\.11"):
+            exporter.build_engine("model.onnx")
+
+        assert captured == {"config": {}, "build": {}}
+
+    @pytest.mark.parametrize("level", [pytest.param("", id="empty"), "AMPERE_PLUS", "ampere", "none", 3, True])
+    def test_an_unknown_hardware_level_is_refused(self, level: object) -> None:
+        """Only the documented spellings are accepted, and the refusal lists them, before any work on the model."""
+        with pytest.raises(ValueError, match=r"hardware_compatibility.*ampere_plus.*same_compute_capability"):
+            TensorRTExporter(TensorRTConfig(hardware_compatibility=level))
+
+    @pytest.mark.parametrize("value", ["yes", 1, None])
+    def test_version_compatible_must_be_a_bool(self, value: object) -> None:
+        """A truthy non-``bool`` would enable the mode by accident, so it is refused."""
+        with pytest.raises(ValueError, match="version_compatible"):
+            TensorRTExporter(TensorRTConfig(version_compatible=value))
+
+    @pytest.mark.parametrize(
+        ("major", "platform", "expected"),
+        [
+            (10, "linux", "libnvinfer_lean.so.10"),
+            (10, "win32", "nvinfer_lean_10.dll"),
+            (8, "win32", "nvinfer_lean.dll"),
+        ],
+    )
+    def test_the_lean_library_name_follows_the_platform_and_major_version(
+        self, major: int, platform: str, expected: str
+    ) -> None:
+        """The runtime library is named by TensorRT's major version, and differently on Windows (without it on 8.6)."""
+        assert tensorrt_export._lean_library_name(major, platform) == expected
+
+    def test_on_windows_the_lean_library_is_looked_up_on_path(
+        self, monkeypatch: pytest.MonkeyPatch, lean_runtime: list[str]
+    ) -> None:
+        """A bare DLL name is not searched on PATH, where a TensorRT zip install puts the library; the full path is."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setattr(tensorrt_export.sys, "platform", "win32")
+        found = "C:/TensorRT/lib/nvinfer_lean_10.dll"
+        monkeypatch.setattr(tensorrt_export.ctypes.util, "find_library", lambda name: found)
+
+        TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).build_engine("model.onnx")
+
+        assert lean_runtime == [found]
+
+    @pytest.mark.parametrize("level", [None, "ampere_plus"])
+    def test_the_lean_runtime_is_not_probed_unless_version_compatible_is_asked_for(
+        self, monkeypatch: pytest.MonkeyPatch, lean_runtime: list[str], level: str | None
+    ) -> None:
+        """Only a version-compatible build embeds the lean runtime; a hardware-compatible one must not need it."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setitem(
+            sys.modules, "tensorrt", _tensorrt_with_hardware_levels("11.3.0.99", AMPERE_PLUS="ampere-plus-level")
+        )
+
+        TensorRTExporter(TensorRTConfig(fp16=False, hardware_compatibility=level)).build_engine("model.onnx")
+
+        assert lean_runtime == []
+
+    def test_an_unparseable_tensorrt_version_skips_the_lean_probe(
+        self, monkeypatch: pytest.MonkeyPatch, lean_runtime: list[str]
+    ) -> None:
+        """The library is named by the major version; without one there is no name to look for, and the build goes
+        on."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("unknown", has_fp16_flag=True))
+
+        TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).build_engine("model.onnx")
+
+        assert lean_runtime == []
+
+    @pytest.mark.parametrize(("version", "warned"), [("10.16.1.11", True), ("11.3.0.99", False)])
+    def test_version_compatibility_warns_where_it_was_not_seen_to_work(
+        self, monkeypatch: pytest.MonkeyPatch, version: str, warned: bool
+    ) -> None:
+        """It was verified between TensorRT 11 releases only, and a TensorRT 10 build says so instead of implying it."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt(version, has_fp16_flag=True))
+        warnings: list[str] = []
+        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: warnings.append(message % args))
+
+        TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).build_engine("model.onnx")
+
+        assert len([message for message in warnings if "verified between TensorRT 11" in message]) == int(warned)
+
+    def test_the_lean_runtime_package_is_imported_before_the_library_is_probed(
+        self, monkeypatch: pytest.MonkeyPatch, lean_runtime: list[str]
+    ) -> None:
+        """The pip package loads its libraries when imported, so it has to come first or the probe would miss it."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        events: list[str] = []
+        real_import = tensorrt_export.importlib.import_module
+
+        def _import(name: str, *args: object, **kwargs: object) -> object:
+            events.append(f"import {name}")
+            return real_import(name, *args, **kwargs) if name != "tensorrt_lean_libs" else types.ModuleType(name)
+
+        monkeypatch.setattr(tensorrt_export.importlib, "import_module", _import)
+        monkeypatch.setattr(tensorrt_export.ctypes, "CDLL", lambda name: events.append(f"load {name}"))
+
+        TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).build_engine("model.onnx")
+
+        expected = tensorrt_export._lean_library_name(10, sys.platform)
+        assert events == ["import tensorrt_lean_libs", f"load {expected}"]
+
+    def test_a_missing_lean_runtime_is_refused_with_the_install_hint_and_builds_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without the library TensorRT fails with a bare "Invalid Engine"; the refusal names the package instead."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+
+        monkeypatch.setattr(tensorrt_export.ctypes, "CDLL", _cannot_load)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True))
+
+        with pytest.raises(ImportError, match=r"lean runtime.*tensorrt-lean-cu\*-libs") as refusal:
+            exporter.build_engine("model.onnx")
+
+        assert captured == {"config": {}, "build": {}}
+        assert isinstance(refusal.value.__cause__, OSError), "the loader's own error stays attached"
+
+    def test_a_missing_lean_runtime_is_refused_before_the_onnx_export(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``_convert`` checks first, so the user does not wait for the ONNX stage only to be refused after it."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        onnx_calls: list[str] = []
+        monkeypatch.setattr(
+            "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+            lambda self, graph: onnx_calls.append("called") or str(tmp_path / "model.onnx"),
+        )
+
+        monkeypatch.setattr(tensorrt_export.ctypes, "CDLL", _cannot_load)
+
+        with pytest.raises(ImportError, match="lean runtime"):
+            TensorRTExporter(TensorRTConfig(version_compatible=True))._convert(_minimal_export_graph())
+
+        assert onnx_calls == []
+
+    def test_a_missing_hardware_level_is_refused_before_the_onnx_export(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A TensorRT without the requested level is found out first, not after the ONNX stage has run."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setitem(
+            sys.modules, "tensorrt", _tensorrt_with_hardware_levels("10.16.1.11", AMPERE_PLUS="ampere-plus-level")
+        )
+        onnx_calls: list[str] = []
+        monkeypatch.setattr(
+            "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+            lambda self, graph: onnx_calls.append("called") or str(tmp_path / "model.onnx"),
+        )
+        config = TensorRTConfig(hardware_compatibility="same_compute_capability")
+
+        with pytest.raises(ValueError, match="same_compute_capability"):
+            TensorRTExporter(config)._convert(_minimal_export_graph())
+
+        assert onnx_calls == []
+
+    @pytest.mark.parametrize(
+        ("options", "suffix"),
+        [
+            pytest.param({}, "", id="default"),
+            pytest.param({"hardware_compatibility": "ampere_plus"}, "_ampere_plus", id="ampere-plus"),
+            pytest.param(
+                {"hardware_compatibility": "same_compute_capability"}, "_same_compute_capability", id="same-cc"
+            ),
+            pytest.param({"version_compatible": True}, "_version_compatible", id="version-compatible"),
+            pytest.param(
+                {"hardware_compatibility": "ampere_plus", "version_compatible": True},
+                "_ampere_plus_version_compatible",
+                id="both",
+            ),
+        ],
+    )
+    def test_a_portable_engine_gets_its_own_file_name(self, options: dict, suffix: str) -> None:
+        """A portable engine must not overwrite (or be overwritten by) a default one built in the same directory.
+
+        The default name stays exactly what it was; each option that is on adds a detail to it.
+        """
+        path = TensorRTExporter(TensorRTConfig(fp16=True, **options)).build_engine("out/model.onnx", dry_run=True)
+
+        assert path == f"out/model_fp16{suffix}.trt"
+
+    def test_an_fp32_portable_engine_keeps_its_detail_too(self) -> None:
+        """The detail follows the precision, whichever it is."""
+        config = TensorRTConfig(fp16=False, hardware_compatibility="ampere_plus")
+
+        assert TensorRTExporter(config).build_engine("out/model.onnx", dry_run=True) == "out/model_fp32_ampere_plus.trt"
+
+    def test_a_missing_level_is_refused_before_the_fp16_graph_is_cast(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``build_engine`` checks the level first, so a doomed FP16 build on a strongly typed TensorRT casts
+        nothing."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        strongly_typed = _fake_tensorrt("11.3.0.99", has_fp16_flag=False)
+        strongly_typed.HardwareCompatibilityLevel = types.SimpleNamespace(AMPERE_PLUS="ampere-plus-level")
+        monkeypatch.setitem(sys.modules, "tensorrt", strongly_typed)
+        casts: list[str] = []
+        monkeypatch.setattr(tensorrt_export, "_cast_onnx_to_fp16", lambda path, **_: casts.append(path) or path)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=True, hardware_compatibility="same_compute_capability"))
+
+        with pytest.raises(ValueError, match="same_compute_capability"):
+            exporter.build_engine("model.onnx")
+
+        assert casts == []
+
+    def test_a_custom_output_name_is_used_verbatim_for_a_portable_engine(self) -> None:
+        """``output_name`` already says what the file is, so no detail is appended to it."""
+        config = TensorRTConfig(fp16=True, version_compatible=True, output_name="mine")
+
+        assert TensorRTExporter(config).build_engine("out/model.onnx", dry_run=True) == "out/mine.trt"
+
+    def test_the_export_keyword_lists_the_levels_the_validator_accepts(self) -> None:
+        """``RFDETR.export`` types the levels by hand; they must not drift from the spellings the exporter accepts."""
+        spellings = set(tensorrt_export._HARDWARE_COMPATIBILITY_LEVELS)
+
+        assert _literal_spellings(get_type_hints(RFDETR.export)["trt_hardware_compatibility"]) == spellings
+
+    def test_the_settings_are_read_from_the_export_keywords(self) -> None:
+        """``RFDETR.export``'s ``trt_``-prefixed keywords reach the configuration."""
+        config = TensorRTExporter.build_config(trt_hardware_compatibility="ampere_plus", trt_version_compatible=True)
+
+        assert (config.hardware_compatibility, config.version_compatible) == ("ampere_plus", True)
+
+    def test_the_settings_are_off_by_default(self) -> None:
+        """Without the keywords the configuration asks for no portability."""
+        config = TensorRTExporter.build_config()
+
+        assert (config.hardware_compatibility, config.version_compatible) == (None, False)
 
 
 class TestBuildEngineStrongTyping:
@@ -2150,6 +2570,116 @@ class TestTensorRTEndToEnd:
         load_engine = EngineFromBytes(BytesFromPath(str(engine_path)))
         with TrtRunner(load_engine) as runner, pytest.raises(PolygraphyException, match="failed to set shape"):
             runner.infer(feed_dict=feed)
+
+    @staticmethod
+    def _polygraphy_outputs(engine_path: str | Path, example: torch.Tensor) -> dict:
+        """Run one engine through Polygraphy on *example* and return its outputs as NumPy arrays.
+
+        Polygraphy's loader always allows host code, so this also opens a version-compatible engine.
+
+        Args:
+            engine_path: The serialized engine.
+            example: The input batch, on any device.
+
+        Returns:
+            Each output's name mapped to its values.
+
+        Examples:
+            Needs a real engine on a GPU, so this is documentation only (not a doctest):
+
+            >>> TestTensorRTEndToEnd._polygraphy_outputs("model.trt", example)  # doctest: +SKIP
+            {'dets': array(...), 'labels': array(...)}
+        """
+        import numpy as np
+        from polygraphy.backend.common import BytesFromPath
+        from polygraphy.backend.trt import EngineFromBytes, TrtRunner
+
+        feed = {"input": np.ascontiguousarray(example.detach().cpu().numpy())}
+        with TrtRunner(EngineFromBytes(BytesFromPath(str(engine_path)))) as runner:
+            return {name: np.array(value) for name, value in runner.infer(feed_dict=feed).items()}
+
+    @pytest.mark.parametrize("level", ["ampere_plus", "same_compute_capability"])
+    def test_hardware_compatible_engine_records_its_level_and_matches_the_default_engine(
+        self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path], level: str
+    ) -> None:
+        """A hardware-compatible engine is tagged with the requested level and computes what the default one does.
+
+        ``AMPERE_PLUS`` needs compute capability 8.0 or newer, so it always skips on a T4 (7.5).
+        """
+        import numpy as np
+        import tensorrt as trt
+
+        if not hasattr(trt.HardwareCompatibilityLevel, level.upper()):
+            pytest.skip(f"this TensorRT has no HardwareCompatibilityLevel.{level.upper()}")
+        if level == "ampere_plus" and torch.cuda.get_device_capability() < (8, 0):
+            pytest.skip("AMPERE_PLUS engines need compute capability 8.0 or newer")
+        _, example, engine_path = trt_engine
+        onnx_path = engine_path.with_name(engine_path.stem.removesuffix("_fp32") + ".onnx")
+        config = TensorRTConfig(fp16=False, verbose=False, hardware_compatibility=level)
+
+        portable_path = TensorRTExporter(config).build_engine(str(onnx_path), output_name=f"hardware-{level}")
+
+        with open(portable_path, "rb") as engine_file:
+            engine = trt.Runtime(trt.Logger(trt.Logger.ERROR)).deserialize_cuda_engine(engine_file.read())
+        assert engine.hardware_compatibility_level == getattr(trt.HardwareCompatibilityLevel, level.upper())
+        default, portable = (self._polygraphy_outputs(path, example) for path in (engine_path, portable_path))
+        diffs = {name: float(np.abs(default[name] - portable[name]).max()) for name in ("dets", "labels")}
+        assert max(diffs.values()) < _TENSORRT_MAX_ABS_DIFF, (
+            f"{level} engine differs from the default engine's: {diffs}"
+        )
+
+    @pytest.fixture(scope="class")
+    def trt_version_compatible_engine(self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path]) -> Path:
+        """Build a version-compatible engine from the FP32 engine's ONNX, or skip when TensorRT has no lean runtime.
+
+        The lean runtime is a separate package (``tensorrt-lean-cu*-libs``) that the ``rfdetr[tensorrt]`` extra does not
+        install, so this is skipped wherever it is missing, CI's TensorRT job included.
+        """
+        _, _, engine_path = trt_engine
+        onnx_path = engine_path.with_name(engine_path.stem.removesuffix("_fp32") + ".onnx")
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, verbose=False, version_compatible=True))
+        try:
+            exporter._require_lean_runtime()
+        except ImportError as error:
+            pytest.skip(str(error))
+        return Path(exporter.build_engine(str(onnx_path), output_name="version-compatible"))
+
+    def test_a_version_compatible_engine_is_refused_by_trt_inference_without_host_code_on_tensorrt_11(
+        self, trt_version_compatible_engine: Path
+    ) -> None:
+        """TensorRT 11 will not deserialize the host code such an engine carries unless the caller says it is trusted.
+
+        TensorRT 10.16 loads its own version-compatible engine without the opt-in, so the refusal is asserted only where
+        it exists.
+        """
+        import tensorrt as trt
+
+        if int(trt.__version__.split(".")[0]) < 11:
+            pytest.skip("TensorRT 10 loads a version-compatible engine without the host-code opt-in")
+
+        with pytest.raises(RuntimeError, match="engine_host_code_allowed=True"):
+            tensorrt_inference.TRTInference(str(trt_version_compatible_engine), device="cuda:0", sync_mode=True)
+
+    def test_a_version_compatible_engine_computes_what_the_default_engine_does_once_host_code_is_allowed(
+        self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path], trt_version_compatible_engine: Path
+    ) -> None:
+        """With the opt-in ``TRTInference`` runs it, and its outputs agree with the default engine's."""
+        import numpy as np
+
+        _, example, engine_path = trt_engine
+        runtime = tensorrt_inference.TRTInference(
+            str(trt_version_compatible_engine), device="cuda:0", sync_mode=True, engine_host_code_allowed=True
+        )
+        outputs = runtime({"input": example.to("cuda:0")})
+
+        default = self._polygraphy_outputs(engine_path, example)
+        diffs = {
+            name: float(np.abs(outputs[name].detach().float().cpu().numpy() - default[name]).max())
+            for name in ("dets", "labels")
+        }
+        assert max(diffs.values()) < _TENSORRT_MAX_ABS_DIFF, (
+            f"version-compatible engine differs from the default's: {diffs}"
+        )
 
     @pytest.mark.parametrize("device", ["cuda:0", "cuda"])
     def test_trt_inference_helper_serves_the_dynamic_engine(

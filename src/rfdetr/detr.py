@@ -1891,6 +1891,8 @@ class RFDETR:
         soc: str | None = None,
         fp16: bool = True,
         max_batch_size: int | None = None,
+        trt_hardware_compatibility: Literal["ampere_plus", "same_compute_capability"] | None = None,
+        trt_version_compatible: bool = False,
         notes: object = None,
         coreml_precision: str | None = None,
         coreai_precision: str | None = None,
@@ -1941,8 +1943,10 @@ class RFDETR:
                 TensorRT Python API (requires ``pip install rfdetr[tensorrt]``).
                 Unlike ``"onnx"``/``"tflite"`` portable serialization,
                 ``"tensorrt"`` performs target-specific compilation at
-                export time and produces a non-portable ``.trt`` engine
-                tied to the build machine's GPU and TensorRT version.
+                export time and by default produces a ``.trt`` engine tied
+                to the build machine's GPU and TensorRT version;
+                ``trt_hardware_compatibility`` and ``trt_version_compatible``
+                widen that.
                 When ``"executorch"`` is selected the model is exported
                 directly via ``torch.export`` to an ExecuTorch
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
@@ -2023,6 +2027,20 @@ class RFDETR:
                 one optimization profile spanning batch ``1 .. max_batch_size`` and tuned for *batch_size*
                 (``batch_size <= max_batch_size``).  Ignored for every other format or combination; passing a
                 non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
+            trt_hardware_compatibility: Ask TensorRT for a ``format="tensorrt"`` engine that other GPUs may run too.
+                ``"ampere_plus"`` targets NVIDIA Ampere GPUs (compute capability 8.x) and newer, and needs an Ampere or
+                newer GPU to build; ``"same_compute_capability"`` targets GPUs that share the building GPU's compute
+                capability.  Not supported on Jetson (JetPack) or DriveOS.  The engine can run slower than one built
+                for a single GPU.  ``None`` (default) builds for the building GPU only.  Ignored for every other
+                format; passing a non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
+            trt_version_compatible: Ask TensorRT for a ``format="tensorrt"`` engine that other releases of the same
+                TensorRT major version may load.  It worked between TensorRT 11.2 and 11.3, in both directions; an
+                engine did not load across major versions (10 and 11), nor between 10.13 and 10.16.  It needs
+                TensorRT's lean runtime library, a separate package from ``tensorrt`` (``tensorrt-lean-cu*-libs``).
+                The engine built by TensorRT 11 carries host code: load it with
+                ``TRTInference(..., engine_host_code_allowed=True)``, and only from a file you trust.  ``False``
+                (default) builds an engine that loads on the building TensorRT version only.  Ignored for every other
+                format; ``True`` there emits a ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -2079,6 +2097,9 @@ class RFDETR:
                 ``format="tflite"``, is not one of their accepted values; if ``notes`` holds a non-finite float or a
                 circular reference, for a format that embeds it; or if ``format="tensorrt"`` with
                 ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+                Also raised for ``format="tensorrt"`` when ``trt_hardware_compatibility`` is neither ``None``,
+                ``"ampere_plus"`` nor ``"same_compute_capability"``, when ``trt_version_compatible`` is not a
+                ``bool``, or when the installed TensorRT has no hardware compatibility level of the requested name.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, or ``format="litert"`` — those paths require a fixed
@@ -2096,8 +2117,9 @@ class RFDETR:
                 strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
                 ``fp16=False``. Each format's availability check runs before the model does; what it does not
-                cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package) is found
-                missing only during the conversion.
+                cover (a backend's extension, the TensorRT cast's packages, TensorRT's lean runtime library for
+                ``trt_version_compatible=True``, the Core AI runtime package) is found missing only during the
+                conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
@@ -2122,6 +2144,17 @@ class RFDETR:
                 UserWarning,
                 stacklevel=2,
             )
+        for keyword, requested in (
+            ("trt_hardware_compatibility", trt_hardware_compatibility is not None),
+            ("trt_version_compatible", trt_version_compatible),
+        ):
+            if requested and format != "tensorrt":
+                warnings.warn(
+                    f"`{keyword}` is only used for format='tensorrt' (got format={format!r}). "
+                    "This argument is ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         backend, soc = _resolve_export_backend(format, backend, soc)
         # Refuse a statically impossible request from the registry's own capability data, before resolving the
         # exporter imports the format's heavy optional dependency (coremltools, executorch, openvino, ...) and long
@@ -2165,6 +2198,8 @@ class RFDETR:
             max_images=max_images,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
+            trt_hardware_compatibility=trt_hardware_compatibility,
+            trt_version_compatible=trt_version_compatible,
         )
         # Constructing the exporter validates the format's own settings (precision, quantization, notes, ...), then
         # warns about the ones it ignores.

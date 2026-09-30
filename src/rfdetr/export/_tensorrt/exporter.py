@@ -25,13 +25,17 @@ See https://github.com/roboflow/inference/tree/main/inference_models for details
 from __future__ import annotations
 
 import contextlib
+import ctypes
+import ctypes.util
+import importlib
 import os
+import sys
 import tempfile
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, Literal, get_args
 
 from rfdetr.export._naming import resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
@@ -40,6 +44,12 @@ from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import is_installed
 
 logger = get_logger()
+
+#: The ``trt_hardware_compatibility`` spellings, each the lower-case name of a ``tensorrt.HardwareCompatibilityLevel``
+#: member. ``NONE`` is left out: it is what leaving the setting unset already means.
+HardwareCompatibility = Literal["ampere_plus", "same_compute_capability"]
+#: The same spellings as a tuple, so validation reads the annotation instead of keeping a second list.
+_HARDWARE_COMPATIBILITY_LEVELS: Final[tuple[str, ...]] = get_args(HardwareCompatibility)
 
 
 #: Whether ``tensorrt`` itself is installed, probed without loading its CUDA libraries (see
@@ -135,6 +145,31 @@ def _tensorrt_major(version: str) -> int | None:
         return int(major)
     except ValueError:
         return None
+
+
+def _lean_library_name(major: int, platform: str) -> str:
+    """Name the TensorRT lean runtime library a version-compatible build needs, for one major version and platform.
+
+    Windows DLLs carry the major version from TensorRT 10 on; TensorRT 8.6 names it ``nvinfer_lean.dll``.
+
+    Args:
+        major: TensorRT major version.
+        platform: ``sys.platform``.
+
+    Returns:
+        The library's file name, which is what the dynamic loader is asked for.
+
+    Examples:
+        >>> _lean_library_name(11, "linux")
+        'libnvinfer_lean.so.11'
+        >>> _lean_library_name(11, "win32")
+        'nvinfer_lean_11.dll'
+        >>> _lean_library_name(8, "win32")
+        'nvinfer_lean.dll'
+    """
+    if platform == "win32":
+        return f"nvinfer_lean_{major}.dll" if major >= 10 else "nvinfer_lean.dll"
+    return f"libnvinfer_lean.so.{major}"
 
 
 def resolve_fp16_strategy(trt_module: Any | None) -> tuple[Fp16Strategy, str]:
@@ -743,12 +778,26 @@ class TensorRTConfig(ExportConfig):
             from :meth:`rfdetr.detr.RFDETR.export`'s ``batch_size``, the same value the ONNX graph is traced at.
         max_batch_size: With ``dynamic_batch``, the largest batch the engine accepts; the profile spans
             ``1 .. max_batch_size``. Required when ``dynamic_batch`` is set, ignored otherwise.
+        hardware_compatibility: Ask TensorRT for an engine that other GPUs may run too. ``"ampere_plus"`` targets
+            NVIDIA Ampere GPUs (compute capability 8.x) and newer, and needs an Ampere or newer GPU to build;
+            ``"same_compute_capability"`` targets GPUs that share the building GPU's compute capability. Not supported
+            on Jetson (JetPack) or DriveOS. The engine may run slower than one built for a single GPU. ``None`` (the
+            default) builds for the building GPU only.
+        version_compatible: Ask TensorRT for an engine that other releases of the same TensorRT major version may
+            load. It worked between TensorRT 11.2 and 11.3 in both directions; it did not load across major versions,
+            nor between 10.13 and 10.16. The build needs TensorRT's lean runtime library, which is a separate package
+            from ``tensorrt`` (``tensorrt-lean-cu*-libs``); without it the build is refused. An
+            engine built by TensorRT 11 carries host code, so loading it needs ``engine_host_code_allowed=True`` on
+            :class:`~rfdetr.export._tensorrt.inference.TRTInference`. ``False`` (the default) builds an engine that
+            loads on the building TensorRT version only.
     """
 
     opset_version: int = 17
     fp16: bool = True
     opt_batch_size: int = 1
     max_batch_size: int | None = None
+    hardware_compatibility: HardwareCompatibility | None = None
+    version_compatible: bool = False
 
     def onnx_stage(self) -> Any:
         """Return the configuration for the ONNX export this format builds from.
@@ -768,8 +817,10 @@ class TensorRTConfig(ExportConfig):
 class TensorRTExporter(Exporter[TensorRTConfig]):
     """Export to TensorRT by running an ONNX export first and compiling its output into an engine.
 
-    Unlike the portable formats, the engine is compiled for the machine that builds it: it is tied to that GPU and
-    TensorRT version and does not move to another host.
+    Unlike the portable formats, the engine is compiled for the machine that builds it: by default it is tied to that
+    kind of GPU and that TensorRT version and does not move to another host. ``hardware_compatibility`` and
+    ``version_compatible`` ask TensorRT for an engine that other GPUs, or other releases of the same TensorRT major
+    version, may load.
 
     With ``dynamic_batch`` the intermediate ONNX graph carries a dynamic batch axis and the engine is built with one
     optimization profile spanning batch ``1 .. max_batch_size`` (tuned for ``opt_batch_size``); without it the engine
@@ -791,6 +842,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         "fp16": "fp16",
         "opt_batch_size": "batch_size",
         "max_batch_size": "max_batch_size",
+        "hardware_compatibility": "trt_hardware_compatibility",
+        "version_compatible": "trt_version_compatible",
     }
     format = "tensorrt"
     display_name = "TensorRT"
@@ -799,14 +852,17 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     pip_extra = "tensorrt"
 
     def _check_capabilities(self) -> None:
-        """Reject a dynamic-batch request whose optimization profile bounds are missing, non-integer, or inconsistent.
+        """Reject settings that cannot work, before any work on the model.
 
         Raises:
             ValueError: If ``dynamic_batch`` is set without ``max_batch_size``; with a ``batch_size`` or
                 ``max_batch_size`` that is not a plain ``int`` (``bool`` included, since ``bool`` is a
-                subclass of ``int``); or with ``max_batch_size < opt_batch_size`` or ``opt_batch_size < 1``.
+                subclass of ``int``); with ``max_batch_size < opt_batch_size`` or ``opt_batch_size < 1``; with a
+                ``hardware_compatibility`` other than ``None``, ``"ampere_plus"`` or ``"same_compute_capability"``; or
+                with a ``version_compatible`` that is not a ``bool``.
         """
         super()._check_capabilities()
+        self._check_portability()
         if not self.config.dynamic_batch:
             return
         if self.config.max_batch_size is None:
@@ -826,6 +882,23 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 f"TensorRT dynamic_batch profile must satisfy 1 <= batch_size <= max_batch_size, got "
                 f"batch_size={self.config.opt_batch_size} and max_batch_size={self.config.max_batch_size}."
             )
+
+    def _check_portability(self) -> None:
+        """Reject a portability setting with a spelling or type that would otherwise be read the wrong way.
+
+        A truthy non-``bool`` for ``version_compatible`` (``"no"``, ``1``) would switch the mode on by accident, and an
+        unknown hardware level would only fail deep inside the build, after the forward pass and the ONNX export.
+
+        Raises:
+            ValueError: If ``hardware_compatibility`` is not ``None`` or one of :data:`_HARDWARE_COMPATIBILITY_LEVELS`,
+                or ``version_compatible`` is not a ``bool``.
+        """
+        level = self.config.hardware_compatibility
+        if level is not None and not (isinstance(level, str) and level in _HARDWARE_COMPATIBILITY_LEVELS):
+            allowed = ", ".join(map(repr, _HARDWARE_COMPATIBILITY_LEVELS))
+            raise ValueError(f"trt_hardware_compatibility must be None or one of {allowed}, got {level!r}.")
+        if not isinstance(self.config.version_compatible, bool):
+            raise ValueError(f"trt_version_compatible must be a bool, got {self.config.version_compatible!r}.")
 
     @classmethod
     def check_dependencies(cls) -> None:
@@ -851,13 +924,17 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         """Export to ONNX, build the engine from it, and return the engine's path.
 
         Raises:
-            ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, before the ONNX export runs.
+            ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, or ``version_compatible`` is set and the
+                lean runtime library cannot be loaded, before the ONNX export runs.
+            ValueError: If ``hardware_compatibility`` names a level the installed TensorRT does not have, likewise.
         """
         from rfdetr.export._onnx.exporter import OnnxExporter
 
         # Exporter.__call__ has already run check_dependencies; this repeats its TensorRT half for a caller of _convert
         # itself, which would otherwise learn of a missing TensorRT only from build_engine, after the ONNX export.
         self._require_tensorrt()
+        # A portability request this TensorRT cannot build is refused now, not after the ONNX stage has run.
+        self._require_portability_environment()
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
         # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
@@ -889,13 +966,14 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             Path to the generated ``.trt`` engine file.
 
         Raises:
-            ImportError: If ``polygraphy``/``tensorrt`` are not installed, or if ``fp16`` is requested on a
-                strongly typed TensorRT without ``onnx``/``onnxconverter-common`` available to cast the graph.
+            ImportError: If ``polygraphy``/``tensorrt`` are not installed, if ``fp16`` is requested on a
+                strongly typed TensorRT without ``onnx``/``onnxconverter-common`` available to cast the graph, or if
+                ``version_compatible`` is set and TensorRT's lean runtime library cannot be loaded.
             Fp16CastUnsupportedError: If ``fp16`` is requested on a strongly typed TensorRT for a graph that
                 cannot be cast to fp16 (already fp16, or explicitly quantized).
             ValueError: If the graph's batch axis disagrees with ``dynamic_batch``: a dynamic batch axis without
                 ``dynamic_batch`` (the engine would accept batch 1 only), or ``dynamic_batch`` on a graph that has
-                none.
+                none; or if ``hardware_compatibility`` names a level the installed TensorRT does not have.
 
         Examples:
             The build logs its progress, so this is documentation rather than a doctest:
@@ -914,6 +992,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             return engine_path
 
         self._require_tensorrt()
+        self._require_portability_environment()
 
         strategy, trt_version = self._fp16_strategy() if fp16 else (Fp16Strategy.BUILDER_FLAG, "unknown")
         if strategy is Fp16Strategy.UNAVAILABLE:
@@ -937,7 +1016,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             onnx_path: Path to the source ``.onnx`` file, whose directory prefix and stem the engine inherits.
             fp16_used: The precision actually being built, which the filename encodes.
             output_name: Full filename override (without extension), or ``None`` to derive the name from the ONNX
-                stem plus a precision suffix.
+                stem plus a precision suffix, and a suffix for each portability option that is on.
 
         Returns:
             Path to the ``.trt`` file the engine is written to.
@@ -960,7 +1039,20 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         # the input path; a string-level split (not pathlib) preserves separators verbatim (pathlib
         # rewrites "/" to "\\" on Windows).
         onnx_stem = os.path.splitext(onnx_path)[0]
-        return f"{onnx_stem}_{'fp16' if fp16_used else 'fp32'}.trt"
+        return f"{onnx_stem}_{'fp16' if fp16_used else 'fp32'}{self._portability_suffix()}.trt"
+
+    def _portability_suffix(self) -> str:
+        """Return the detail that names a portable engine, or ``""`` for a default one.
+
+        A portable engine differs from a default one built in the same directory in size and, at FP16, in speed, so it
+        must not share its file name. The default name is unchanged: each option that is on adds one detail.
+        """
+        details: list[str] = []
+        if self.config.hardware_compatibility is not None:
+            details.append(self.config.hardware_compatibility)
+        if self.config.version_compatible:
+            details.append("version_compatible")
+        return "".join(f"_{detail}" for detail in details)
 
     @classmethod
     def _require_tensorrt(cls) -> None:
@@ -983,6 +1075,54 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 f"TensorRT export requires {named}, which this environment does not have. "
                 "Install with: pip install rfdetr[tensorrt]"
             )
+
+    def _require_portability_environment(self) -> None:
+        """Refuse a portability request that the installed TensorRT cannot build, before the ONNX export and the build.
+
+        Raises:
+            ImportError: If ``version_compatible`` is set and TensorRT's lean runtime library cannot be loaded.
+            ValueError: If ``hardware_compatibility`` names a level this TensorRT does not have.
+        """
+        self._require_lean_runtime()
+        if self.config.hardware_compatibility is not None:
+            self._hardware_compatibility_level(self.config.hardware_compatibility)
+
+    def _require_lean_runtime(self) -> None:
+        """Refuse ``version_compatible`` when this TensorRT cannot load its lean runtime library.
+
+        The builder loads the lean runtime for a version-compatible engine, and it is a separate package from
+        ``tensorrt`` (``tensorrt-lean-cu*-libs`` on PyPI). Without it TensorRT 10.16 and 11.3 log "Unable to load
+        library" and Polygraphy reports only ``Invalid Engine``, so the missing library is named here instead. Nothing
+        happens without ``version_compatible``.
+
+        Raises:
+            ImportError: If the lean runtime library cannot be loaded.
+        """
+        if not self.config.version_compatible:
+            return
+        import tensorrt
+
+        major = _tensorrt_major(tensorrt.__version__)
+        if major is None:
+            return
+        # The pip package loads its libraries when it is imported; an install from a TensorRT archive or system package
+        # has none to import and relies on the library path, so a missing package alone proves nothing.
+        with contextlib.suppress(ImportError):
+            importlib.import_module("tensorrt_lean_libs")
+        name = _lean_library_name(major, sys.platform)
+        # Windows looks a bare DLL name up in the default directories only, not on PATH, where a TensorRT zip install
+        # puts it; resolve it there. A DLL the pip package already loaded is found by its name.
+        location = (ctypes.util.find_library(name) or name) if sys.platform == "win32" else name
+        try:
+            # Loaded into the process so the builder finds it by name when it asks for the lean runtime.
+            ctypes.CDLL(location)
+        except OSError as error:
+            raise ImportError(
+                "trt_version_compatible=True needs TensorRT's lean runtime library, and "
+                f"TensorRT {tensorrt.__version__} could not load {name}. Install the lean runtime that matches it: the "
+                "`tensorrt-lean-cu*-libs` wheel with the same CUDA suffix and version as your `tensorrt-cu*-libs` "
+                "wheel, or the lean library from the TensorRT archive or system package."
+            ) from error
 
     def _fp16_strategy(self) -> tuple[Fp16Strategy, str]:
         """Resolve how the installed TensorRT can produce the requested FP16 engine.
@@ -1077,12 +1217,72 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         # names them. This frame is one of those, and one scan of the input shapes is all it -- or the profile --
         # needs, so the parameter goes now rather than pinning TensorRT resources until the caller drops the error.
         del network
+        options = self._portability_options()
         if self.config.dynamic_batch:
-            return CreateConfig(fp16=fp16, profiles=[self._batch_profile(onnx_path, dynamic_inputs)])
+            return CreateConfig(fp16=fp16, profiles=[self._batch_profile(onnx_path, dynamic_inputs)], **options)
         # The fp16 cast path refuses this from the ONNX file, before it writes anything; this is the last-resort
         # guard for the builds that never cast -- a weakly typed TensorRT, or an FP32 request.
         _reject_dynamic_graph_under_static_request(onnx_path, dynamic_inputs)
-        return CreateConfig(fp16=fp16)
+        return CreateConfig(fp16=fp16, **options)
+
+    def _portability_options(self) -> dict[str, Any]:
+        """Return the ``CreateConfig`` keywords for the portability settings that are switched on.
+
+        Returns:
+            Only the keywords the configuration asks for, so the default build passes none of them.
+
+        Raises:
+            ValueError: If the installed TensorRT has no hardware compatibility level of the requested name.
+        """
+        options: dict[str, Any] = {}
+        level = self.config.hardware_compatibility
+        if level is not None:
+            options["hardware_compatibility_level"] = self._hardware_compatibility_level(level)
+        if self.config.version_compatible:
+            options["version_compatible"] = True
+            self._warn_if_version_compatibility_is_unverified()
+        return options
+
+    @staticmethod
+    def _warn_if_version_compatibility_is_unverified() -> None:
+        """Warn when the installed TensorRT is one on which version compatibility was not seen to work.
+
+        It was checked between TensorRT 11 releases. On TensorRT 10 the engine had the size of a default one and did not
+        load on another 10.x release, so the request is honoured but its effect is not something to rely on.
+        """
+        import tensorrt as trt
+
+        major = _tensorrt_major(trt.__version__)
+        if major is not None and major < 11:
+            logger.warning(
+                f"trt_version_compatible has only been verified between TensorRT 11 releases. An engine built by "
+                f"TensorRT {trt.__version__} may not load on another release; test your pair of releases before you "
+                "rely on it."
+            )
+
+    @staticmethod
+    def _hardware_compatibility_level(level: str) -> Any:
+        """Look up the ``tensorrt.HardwareCompatibilityLevel`` member named by *level* in the installed TensorRT.
+
+        Args:
+            level: One of :data:`_HARDWARE_COMPATIBILITY_LEVELS`.
+
+        Returns:
+            The enum member.
+
+        Raises:
+            ValueError: If this TensorRT has no such level. ``AMPERE_PLUS`` arrived with TensorRT 8.6, and
+                ``SAME_COMPUTE_CAPABILITY`` later than that, so each is detected on its own.
+        """
+        import tensorrt as trt
+
+        member = getattr(getattr(trt, "HardwareCompatibilityLevel", None), level.upper(), None)
+        if member is None:
+            raise ValueError(
+                f"trt_hardware_compatibility={level!r} is not available in TensorRT {trt.__version__}; "
+                "upgrade TensorRT or pick another level."
+            )
+        return member
 
     def _batch_profile(self, onnx_path: str, dynamic_inputs: Mapping[str, tuple[int, ...]]) -> Any:
         """Build the batch optimization profile for every dynamic input.
