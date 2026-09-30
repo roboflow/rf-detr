@@ -39,7 +39,6 @@ def _validate_batch(batch: torch.Tensor, metadata: ExportMetadata) -> None:
 
 def _input_array(batch: torch.Tensor, metadata: ExportMetadata) -> np.ndarray[Any, Any]:
     """Convert a normalized NCHW batch to the artifact's NumPy input interface."""
-    _validate_batch(batch, metadata)
     if metadata.input_layout == "NHWC":
         batch = batch.permute(0, 2, 3, 1)
     try:
@@ -75,7 +74,7 @@ def _select_outputs(
         else:
             if hasattr(value, "numpy"):
                 value = value.numpy()
-            array = np.array(value, copy=borrowed)
+            array = np.array(value, copy=True) if borrowed else np.asarray(value)
             output = torch.from_numpy(array)
         if not output.is_floating_point():
             raise ValueError(

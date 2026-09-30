@@ -18,6 +18,9 @@ import numpy as np
 import torch
 
 from rfdetr.export._runtime.metadata import ExportMetadata
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
 
 
 async def _await_result(value: Any) -> Any:
@@ -94,6 +97,8 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
     if device not in {"auto", "cpu"}:
         raise ValueError("Core AI device must be auto or cpu.")
     if metadata.task == "keypoints" and metadata.input_dtype == "float16" and device == "auto":
+        # The Neural Engine aborts float16 keypoint inference; CPU execution preserves a usable artifact.
+        logger.warning("Core AI float16 keypoint inference can abort on the Neural Engine; using CPU for auto.")
         device = "cpu"
     options = SpecializationOptions.cpu_only() if device == "cpu" else SpecializationOptions.default()
 

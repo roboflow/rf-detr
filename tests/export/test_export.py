@@ -37,6 +37,7 @@ from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 from rfdetr import detr as _detr_module
 from rfdetr.export._backend import _switch_to_export_mode
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
+from rfdetr.export._runtime.metadata import ExportMetadata, read_metadata, write_metadata
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export.base import Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -2310,3 +2311,144 @@ class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
 
         with pytest.raises(ValueError, match="unknown keypoint axis"):
             _keypoint_axis_broadcasts(model)
+
+
+class TestExporterMetadataPublication:
+    """Metadata errors do not hide converted artifacts or stop later variants."""
+
+    @staticmethod
+    def _metadata() -> ExportMetadata:
+        """Build a small TFLite prediction contract for exporter tests.
+
+        Examples:
+            >>> TestExporterMetadataPublication._metadata().class_names
+            ['object']
+        """
+        return ExportMetadata(
+            format="tflite",
+            task="detect",
+            input_shape=(1, 3, 16, 16),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            class_names=["object"],
+            num_classes=1,
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=16,
+            num_windows=1,
+        )
+
+    @staticmethod
+    def _graph(metadata: ExportMetadata) -> ExportGraph:
+        """Build a tiny graph that carries prediction metadata.
+
+        Examples:
+            >>> graph = TestExporterMetadataPublication._graph(TestExporterMetadataPublication._metadata())
+            >>> graph.metadata.task
+            'detect'
+        """
+        return ExportGraph(
+            model=torch.nn.Identity(),
+            input_tensors=torch.zeros(1, 3, 16, 16),
+            input_names=("input",),
+            output_names=("dets", "labels"),
+            dynamic_axes=None,
+            shape=(16, 16),
+            backbone_only=False,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _exporter(output_dir: Path) -> Exporter:
+        """Create a TFLite exporter without its optional converter dependency.
+
+        Examples:
+            >>> from tempfile import TemporaryDirectory
+            >>> with TemporaryDirectory() as directory:
+            ...     TestExporterMetadataPublication._exporter(Path(directory)).format
+            'tflite'
+        """
+        from rfdetr.export._tflite.exporter import TFLiteConfig, TFLiteExporter
+
+        exporter = TFLiteExporter(TFLiteConfig(output_dir=output_dir))
+        exporter.check_dependencies = lambda: None
+        return exporter
+
+    def test_metadata_failure_keeps_artifact_and_continues_variants(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A failed metadata hook warns, returns the artifact, and publishes later variants."""
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        exporter = self._exporter(tmp_path)
+        artifacts = tuple(tmp_path / f"model_{precision}.tflite" for precision in ("fp32", "fp16", "int8"))
+
+        def convert(_graph: ExportGraph) -> Path:
+            """Write the enclosing test's temporary precision variants.
+
+            Examples:
+                Requires the temporary artifacts from the enclosing test.
+                >>> convert(graph)  # doctest: +SKIP
+            """
+            for artifact in artifacts:
+                artifact.write_bytes(b"converted")
+            return artifacts[0]
+
+        exporter._convert = convert
+        exporter._metadata_artifacts = lambda _path: artifacts
+        exporter._metadata_for_artifact = MagicMock(
+            side_effect=[ValueError("signature has ambiguous outputs"), metadata, metadata]
+        )
+        monkeypatch.setattr(export_base, "write_metadata", write_metadata)
+        warning = MagicMock()
+        monkeypatch.setattr(export_base.logger, "warning", warning)
+
+        result = exporter(self._graph(metadata))
+
+        assert result == artifacts[0]
+        assert artifacts[0].is_file()
+        assert not Path(f"{artifacts[0]}.rfdetr.json").exists()
+        assert read_metadata(artifacts[1]) == metadata
+        assert read_metadata(artifacts[2]) == metadata
+        assert warning.call_count == 1
+        assert artifacts[0] in warning.call_args.args
+        assert "metadata=" in warning.call_args.args[0]
+
+    def test_real_writer_runs_through_exporter_hook(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The exporter publishes sidecar metadata through the real writer hook."""
+        import rfdetr.export.base as export_base
+
+        metadata = self._metadata()
+        exporter = self._exporter(tmp_path)
+        artifact = tmp_path / "model.tflite"
+
+        def convert(_graph: ExportGraph) -> Path:
+            """Write the enclosing test's temporary converted artifact.
+
+            Examples:
+                Requires the temporary artifact from the enclosing test.
+                >>> convert(graph)  # doctest: +SKIP
+            """
+            artifact.write_bytes(b"converted")
+            return artifact
+
+        exporter._convert = convert
+        exporter._metadata_for_artifact = lambda contract, _path: contract
+        monkeypatch.setattr(export_base, "write_metadata", write_metadata)
+
+        result = exporter(self._graph(metadata))
+
+        assert result == artifact
+        assert read_metadata(artifact) == metadata
+
+    def test_conversion_error_still_propagates(self, tmp_path: Path) -> None:
+        """Metadata recovery does not swallow converter errors."""
+        exporter = self._exporter(tmp_path)
+        exporter._convert = MagicMock(side_effect=RuntimeError("conversion failed"))
+
+        with pytest.raises(RuntimeError, match="conversion failed"):
+            exporter(self._graph(self._metadata()))

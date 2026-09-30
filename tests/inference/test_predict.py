@@ -18,8 +18,7 @@ import supervision as sv
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-import rfdetr._prediction as detr_module
-from rfdetr import RFDETRNano, RFDETRSegNano
+from rfdetr import RFDETRNano, RFDETRSegNano, _prediction
 from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from tests._online import is_online
@@ -753,8 +752,8 @@ class TestPredictUint8Conversion:
         try:
             torch.set_default_dtype(dtype)
             expected = F.to_tensor(image)
-            actual = detr_module._uint8_chw_to_float(
-                detr_module._uint8_image_to_chw_view(image), torch.tensor(255, dtype=dtype)
+            actual = _prediction._uint8_chw_to_float(
+                _prediction._uint8_image_to_chw_view(image), torch.tensor(255, dtype=dtype)
             )
         finally:
             torch.set_default_dtype(previous_dtype)
@@ -799,7 +798,7 @@ class TestPredictUint8Conversion:
 
         with (
             patch(
-                "rfdetr._prediction._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view
+                "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
             ) as converter_spy,
             patch("rfdetr._prediction.F.to_tensor", to_tensor_spy),
         ):
@@ -820,7 +819,7 @@ class TestPredictUint8Conversion:
         image = rng.integers(0, 256, size=(17, 29, 1), dtype=np.uint8)
 
         expected = F.to_tensor(image)
-        actual = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(image), torch.tensor(255.0))
+        actual = _prediction._uint8_chw_to_float(_prediction._uint8_image_to_chw_view(image), torch.tensor(255.0))
 
         assert actual.dtype == expected.dtype
         assert actual.shape == expected.shape
@@ -834,7 +833,7 @@ class TestPredictUint8Conversion:
         image = PIL.Image.new("RGB", (29, 17), color=(1, 127, 255))
 
         with patch(
-            "rfdetr._prediction._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view
+            "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
         ) as converter_spy:
             detections = model.predict(image)
 
@@ -850,7 +849,7 @@ class TestPredictUint8Conversion:
 
         with (
             patch(
-                "rfdetr._prediction._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view
+                "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
             ) as converter_spy,
             pytest.warns(UserWarning, match="not writable"),
         ):
@@ -870,9 +869,9 @@ class TestPredictUint8Conversion:
         torchvision's host-side conversion.
         """
         image = np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=2)
-        chw = detr_module._uint8_image_to_chw_view(image)
+        chw = _prediction._uint8_image_to_chw_view(image)
 
-        assert detr_module._uint8_chw_to_float(chw, torch.tensor(255.0)).equal(F.to_tensor(image))
+        assert _prediction._uint8_chw_to_float(chw, torch.tensor(255.0)).equal(F.to_tensor(image))
 
     @pytest.mark.gpu
     def test_deferred_widening_is_bit_exact_on_real_cuda(self) -> None:
@@ -886,9 +885,9 @@ class TestPredictUint8Conversion:
         image = np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=2)
         expected = F.to_tensor(image)
 
-        chw = detr_module._uint8_image_to_chw_view(image).pin_memory().to("cuda", non_blocking=True)
+        chw = _prediction._uint8_image_to_chw_view(image).pin_memory().to("cuda", non_blocking=True)
         scale = torch.tensor(255, device=chw.device, dtype=torch.get_default_dtype())
-        actual = detr_module._uint8_chw_to_float(chw, scale).cpu()
+        actual = _prediction._uint8_chw_to_float(chw, scale).cpu()
 
         assert actual.equal(expected)
 
@@ -902,8 +901,8 @@ class TestPredictUint8Conversion:
         dark = np.full((4, 5, 3), 51, dtype=np.uint8)
         bright = np.full((4, 5, 3), 255, dtype=np.uint8)
 
-        first = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(dark), scale)
-        second = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(bright), scale)
+        first = _prediction._uint8_chw_to_float(_prediction._uint8_image_to_chw_view(dark), scale)
+        second = _prediction._uint8_chw_to_float(_prediction._uint8_image_to_chw_view(bright), scale)
 
         assert first.equal(F.to_tensor(dark))
         assert second.equal(F.to_tensor(bright))
@@ -915,7 +914,7 @@ class TestPredictUint8Conversion:
         model.model.device = torch.device("cuda", 0)
         real_to = torch.Tensor.to
         real_tensor = torch.tensor
-        real_converter = detr_module._uint8_image_to_chw_view
+        real_converter = _prediction._uint8_image_to_chw_view
         chw_views: list[torch.Tensor] = []
         pinned_sources: list[torch.Tensor] = []
         pinned_tensors: list[torch.Tensor] = []

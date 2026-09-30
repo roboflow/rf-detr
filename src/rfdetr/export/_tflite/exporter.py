@@ -941,6 +941,8 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
     experimental_note = "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results."
     pip_extra = "tflite"
 
+    _last_artifacts: tuple[Path, ...] = ()
+
     def _check_capabilities(self) -> None:
         """Refuse an unrecognized quantization mode before the ONNX stage runs, not after it.
 
@@ -1087,8 +1089,8 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         return primary
 
     def _metadata_artifacts(self, path: Path) -> tuple[Path, ...]:
-        """Include every precision variant written by the conversion."""
-        return tuple(dict.fromkeys(getattr(self, "_last_artifacts", (path,))))
+        """Include the precision variants recorded by ``_convert``."""
+        return tuple(dict.fromkeys(self._last_artifacts or (path,)))
 
     def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
         """Read the final TFLite signature before assigning semantic outputs."""

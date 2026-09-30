@@ -19,7 +19,7 @@ This returns `supervision.Detections` for detection and segmentation models, or 
 
 ## Advanced: Run ONNX Runtime directly
 
-The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). The code below decodes those outputs. It keeps a NumPy reference path for callers who need direct runtime access.
+The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). The code below shows direct ONNX Runtime execution and NumPy decoding for low-level inspection. The private `_run_inference` helper remains a dependency-light numerical reference and shares raw execution with the `RFDETRInference` adapter; use `RFDETRInference` for normal image prediction.
 
 !!! warning "Match outputs by name, not by shape"
 

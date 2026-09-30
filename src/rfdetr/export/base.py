@@ -381,8 +381,26 @@ class Exporter(ABC, Generic[_ConfigT]):
         _switch_to_export_mode(graph.model)
         path = Path(self._convert(graph))
         if graph.metadata is not None and graph.metadata.format == self.format:
-            for artifact in self._metadata_artifacts(path):
-                write_metadata(artifact, self._metadata_for_artifact(graph.metadata, artifact))
+            try:
+                artifacts = self._metadata_artifacts(path)
+            except Exception as error:
+                logger.warning(
+                    "Could not select inference metadata artifacts for %s: %s. "
+                    "Load the artifact with metadata= set to its inference metadata.",
+                    path,
+                    error,
+                )
+            else:
+                for artifact in artifacts:
+                    try:
+                        write_metadata(artifact, self._metadata_for_artifact(graph.metadata, artifact))
+                    except Exception as error:
+                        logger.warning(
+                            "Could not write inference metadata for %s: %s. "
+                            "Load this artifact with metadata= set to its inference metadata.",
+                            artifact,
+                            error,
+                        )
         logger.info(f"Successfully exported {self.display_name or self.format} model to: {path}")
         return path
 

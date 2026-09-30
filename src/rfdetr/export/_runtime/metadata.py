@@ -11,6 +11,9 @@ import hashlib
 import importlib
 import json
 import math
+import os
+import shutil
+import tempfile
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -130,7 +133,8 @@ def _artifact_digest(path: Path) -> str:
         if weights.exists():
             files.append(weights)
     for file in files:
-        digest.update(file.relative_to(path).as_posix().encode() if path.is_dir() else file.name.encode())
+        if path.is_dir():
+            digest.update(file.relative_to(path).as_posix().encode())
         with file.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
@@ -142,6 +146,16 @@ def _sidecar_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.rfdetr.json")
 
 
+def _temporary_sibling(path: Path) -> Path:
+    """Create a temporary sibling so replacement stays on the same filesystem."""
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=path.suffix, dir=path.parent)
+    os.close(descriptor)
+    temporary = Path(name)
+    if path.exists():
+        shutil.copymode(path, temporary)
+    return temporary
+
+
 def write_metadata(path: str | Path, metadata: ExportMetadata) -> Path | None:
     """Store metadata in ONNX or in a digest-bound adjacent JSON file."""
     artifact = Path(path)
@@ -149,17 +163,27 @@ def write_metadata(path: str | Path, metadata: ExportMetadata) -> Path | None:
         raise FileNotFoundError(artifact)
     if metadata.format == "onnx" and artifact.suffix == ".onnx":
         onnx = importlib.import_module("onnx")
-        model = onnx.load(str(artifact))
+        model = onnx.load(str(artifact), load_external_data=False)
         serialized = metadata.model_dump_json()
         existing = next((item for item in model.metadata_props if item.key == METADATA_KEY), None)
         item = existing if existing is not None else model.metadata_props.add()
         item.key = METADATA_KEY
         item.value = serialized
-        onnx.save(model, str(artifact))
+        temporary = _temporary_sibling(artifact)
+        try:
+            onnx.save(model, str(temporary))
+            temporary.replace(artifact)
+        finally:
+            temporary.unlink(missing_ok=True)
         return None
     sidecar = _sidecar_path(artifact)
     payload = {"artifact_sha256": _artifact_digest(artifact), "metadata": metadata.model_dump(mode="json")}
-    sidecar.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    temporary = _temporary_sibling(sidecar)
+    try:
+        temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(sidecar)
+    finally:
+        temporary.unlink(missing_ok=True)
     return sidecar
 
 
@@ -174,7 +198,7 @@ def read_metadata(path: str | Path, override: Mapping[str, Any] | str | Path | N
             onnx = importlib.import_module("onnx")
         except ImportError as error:
             raise ImportError("Reading ONNX inference metadata requires onnx. Install rfdetr[onnx].") from error
-        model = onnx.load(str(artifact))
+        model = onnx.load(str(artifact), load_external_data=False)
         raw = next((item.value for item in model.metadata_props if item.key == METADATA_KEY), None)
         if raw is not None:
             stored = json.loads(raw)

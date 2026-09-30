@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 import torch
 
-from rfdetr.export._runtime.adapters import load_runtime
+from rfdetr.export._runtime.adapters import ExportRuntime, load_runtime
 from rfdetr.export._runtime.metadata import ExportMetadata
 
 
@@ -42,6 +42,32 @@ def _metadata(**fields: Any) -> ExportMetadata:
         trace_alpha=0.2,
         **fields,
     )
+
+
+class TestExportRuntimeOutputs:
+    """Check output conversion through the runtime contract."""
+
+    def test_owned_sequence_outputs_convert_on_numpy_two(self) -> None:
+        """Owned Python sequences may require a NumPy allocation."""
+        metadata = _metadata(
+            format="onnx",
+            task="detect",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": "dets", "pred_logits": "labels"},
+        )
+        runtime = ExportRuntime(
+            "onnx",
+            metadata,
+            object(),
+            "CPUExecutionProvider",
+            "input",
+            lambda batch: {"dets": [[[0.0, 0.0, 1.0, 1.0]]], "labels": [[[1.0, 2.0, 3.0]]]},
+            borrowed_outputs=False,
+        )
+
+        result = runtime.run(torch.zeros(1, 3, 8, 8))
+
+        assert result["pred_boxes"].shape == (1, 1, 4)
 
 
 class TestONNXRuntimeAdapter:
@@ -72,11 +98,11 @@ class TestONNXRuntimeAdapter:
 
         runtime = load_runtime(path, metadata, device="cpu")
         result = runtime.run(torch.zeros(1, 3, 8, 8))
-        output.fill(9)
 
         assert runtime.info == {"backend": "onnx", "device": "CPUExecutionProvider"}
         assert runtime.device == torch.device("cpu")
         assert result["pred_boxes"][0, 0, 0] == 1
+        assert np.shares_memory(result["pred_boxes"].numpy(), output)
         session.run.assert_called_once()
 
     def test_explicit_cuda_refuses_missing_provider(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -112,7 +138,8 @@ class TestTFLiteRuntimeAdapter:
             {"name": "opaque_0", "index": 9},
             {"name": "opaque_1", "index": 10},
         ]
-        interpreter.get_tensor.side_effect = [np.zeros((1, 2, 4), np.float32), np.zeros((1, 2, 3), np.float32)]
+        boxes = np.zeros((1, 2, 4), np.float32)
+        interpreter.get_tensor.side_effect = [boxes, np.zeros((1, 2, 3), np.float32)]
         monkeypatch.setattr("rfdetr.export._tflite.inference._create_interpreter", lambda path: interpreter)
         metadata = _metadata(
             format="litert",
@@ -128,6 +155,7 @@ class TestTFLiteRuntimeAdapter:
         assert interpreter.set_tensor.call_args.args[0] == 7
         assert interpreter.set_tensor.call_args.args[1].shape == (1, 8, 8, 3)
         assert result["pred_boxes"].shape == (1, 2, 4)
+        assert np.shares_memory(result["pred_boxes"].numpy(), boxes)
         interpreter.invoke.assert_called_once()
 
     def test_rejects_wrong_fixed_batch_before_invoke(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -255,7 +283,9 @@ class TestTensorRTRuntimeAdapter:
 class TestCoreAIRuntimeAdapter:
     """Check the documented Core AI load and execution APIs."""
 
-    def test_float16_keypoints_auto_uses_cpu(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_float16_keypoints_auto_uses_cpu(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Automatic execution avoids the unsafe Neural Engine path."""
         path = tmp_path / "model.aimodel"
         path.write_bytes(b"asset")
@@ -290,6 +320,7 @@ class TestCoreAIRuntimeAdapter:
 
         ai_model.load.assert_called_once_with(path, "cpu-option")
         assert runtime.info["device"] == "cpu"
+        assert "float16 keypoint" in caplog.text and "Neural Engine" in caplog.text
         assert result["pred_keypoints"].shape == (1, 2, 17, 3)
         del runtime
 
@@ -404,9 +435,10 @@ class TestCoreMLRuntimeAdapter:
                 output=[SimpleNamespace(name="dets"), SimpleNamespace(name="labels")],
             )
         )
+        boxes = np.zeros((1, 2, 4), np.float32)
         session.predict.return_value = {
             "labels": np.zeros((1, 2, 3), np.float32),
-            "dets": np.zeros((1, 2, 4), np.float32),
+            "dets": boxes,
         }
         coreml = SimpleNamespace(
             ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu"),
@@ -425,6 +457,7 @@ class TestCoreMLRuntimeAdapter:
         result = runtime.run(torch.zeros(1, 3, 8, 8))
 
         assert result["pred_boxes"].shape == (1, 2, 4)
+        assert np.shares_memory(result["pred_boxes"].numpy(), boxes)
         assert result["pred_logits"].shape == (1, 2, 3)
         coreml.models.MLModel.assert_called_once_with(str(path), compute_units="cpu")
 

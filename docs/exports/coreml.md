@@ -75,6 +75,8 @@ This returns the shared Supervision result types. See [Predict with RFDETRInfere
 
 ## Advanced: Use Core ML directly
 
+The shared `RFDETRInference` loader also uses Core ML's `coremltools` API directly; this example shows that vendor API for callers who need raw outputs.
+
 ```python
 import coremltools as ct
 import numpy as np

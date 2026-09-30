@@ -38,10 +38,13 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
         raise ImportError("ONNX inference requires onnxruntime or onnxruntime-gpu.") from exc
 
     providers = ort.get_available_providers()
-    provider = "CPUExecutionProvider" if device == "cpu" else "CUDAExecutionProvider"
-    if device == "auto":
-        provider = "CUDAExecutionProvider" if provider in providers else "CPUExecutionProvider"
-    elif device not in {"cpu", "cuda"} and not (device.startswith("cuda:") and device[5:].isdigit()):
+    if device == "cpu":
+        provider = "CPUExecutionProvider"
+    elif device == "auto":
+        provider = "CUDAExecutionProvider" if "CUDAExecutionProvider" in providers else "CPUExecutionProvider"
+    elif device == "cuda" or (device.startswith("cuda:") and device[5:].isdigit()):
+        provider = "CUDAExecutionProvider"
+    else:
         raise ValueError(f"ONNX device {device!r} is unsupported. Use cpu, cuda:N, or auto.")
     if provider not in providers:
         raise RuntimeError(f"ONNX provider {provider} is unavailable. Installed providers: {providers}.")
@@ -80,7 +83,7 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
         """Map one raw ONNX result by graph output name."""
         return dict(zip(output_names, _run_onnx_raw(session, input_info.name, _input_array(batch, metadata))))
 
-    return ExportRuntime("onnx", metadata, session, provider, input_info.name, execute)
+    return ExportRuntime("onnx", metadata, session, provider, input_info.name, execute, borrowed_outputs=False)
 
 
 def _create_onnx_session(

@@ -57,8 +57,8 @@ class RFDETRInference:
         Raises:
             ValueError: If metadata or a device conflicts with a native source.
 
-        Native device selection uses exact ``torch.device`` matching. For example,
-        ``"cuda"`` and ``"cuda:0"`` are different explicit device values.
+        A live model owns its device policy. Omit ``device`` for that source;
+        configure the native model itself to select its device.
         """
         # Keep RFDETR imports local because detr imports ModelContext from this module.
         from rfdetr.detr import RFDETR
@@ -77,7 +77,7 @@ class RFDETRInference:
             if device != "auto":
                 checkpoint_options["device"] = device
             native_model = RFDETR.from_checkpoint(path, **checkpoint_options)
-            self._set_native_model(native_model, device, None)
+            self._set_native_model(native_model, "auto", None)
             return
 
         from rfdetr.export._runtime.context import load_exported_context
@@ -93,9 +93,8 @@ class RFDETRInference:
         """Store a native model after validating facade-only arguments."""
         if metadata is not None:
             raise ValueError("metadata is only valid for exported artifacts.")
-        model_device = native_model.model.device
-        if device != "auto" and torch.device(device) != model_device:
-            raise ValueError(f"The live model uses device {model_device}, but device={device!r} was requested.")
+        if device != "auto":
+            raise ValueError("A live model owns its device policy. Omit device or configure the native model itself.")
         self._native_model = native_model
 
     def _prediction_context(self) -> PredictionContext:

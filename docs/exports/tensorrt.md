@@ -30,6 +30,8 @@ model.export(format="tensorrt")
 
 This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](index.md#export-parameters) — unless `output_name` is set).
 
+The ONNX file is an intermediate conversion input and has no RF-DETR inference metadata. The final engine receives its own metadata sidecar. To load the intermediate ONNX directly with `RFDETRInference`, pass the missing task and interface semantics through `metadata=`; see the [metadata notes](index.md#predict-with-rfdetrinference).
+
 !!! note "Dynamic batch"
 
     Pass `dynamic_batch=True` together with `max_batch_size` to build one engine that accepts any batch from 1 to `max_batch_size`. The engine gets a single TensorRT optimization profile with `min=1`, `opt=batch_size` and `max=max_batch_size`, so `batch_size` should be the batch you serve most often; other sizes inside the range run, TensorRT just tunes its kernels for `opt`. Without `dynamic_batch` the engine accepts only the batch size baked into the intermediate ONNX graph.
@@ -56,6 +58,8 @@ detections = model.predict("image.jpg", threshold=0.5)
 ```
 
 The engine must be compatible with the target GPU and TensorRT version. See [Predict with RFDETRInference](index.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+The shared adapter uses `TRTInference` for raw engine execution. That raw class remains the low-level execution layer; it is not a second image-prediction API or deprecated path.
 
 ## Advanced: Convert an existing ONNX file with the Python API
 

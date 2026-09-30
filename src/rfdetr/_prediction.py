@@ -20,8 +20,8 @@ import torch
 import torchvision.transforms.functional as F  # noqa: N812
 from PIL import Image
 
-from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.models.postprocess import PostProcess
+from rfdetr.utilities.class_names import is_coco_pretrained
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -471,7 +471,7 @@ def predict(
 
     _class_id_to_name = context.class_id_to_name
     num_logit_slots = context.num_classes
-    _is_coco_pretrained = num_logit_slots > len(context.class_names) and context.class_names == list(COCO_CLASS_NAMES)
+    _is_coco_pretrained = is_coco_pretrained(context.class_names, num_logit_slots)
     _is_legacy_bgfirst_keypoint = _is_bg_first_schema(context.num_keypoints_per_class)
     predictions_list: list[Detections | KeyPoints] = []
     for i, result in enumerate(results):

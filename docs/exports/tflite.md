@@ -103,6 +103,8 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 
     Segmentation masks and keypoints are both rank-4, so neither the name nor the rank tells them apart. The TFLite `_run_inference` reference helper safely defaults `rank4_output` to `None`, decoding a mask only from an output that names itself. For a name-stripped segmentation export, pass `rank4_output="masks"`; pass `"keypoints"` to suppress anonymous-mask decoding for a keypoint export.
 
+This private NumPy helper is kept for dependency-light numerical reference checks and shares raw interpreter execution with the common runtime adapter. Use `RFDETRInference` for normal image prediction.
+
 ## Predict with RFDETRInference
 
 ```python

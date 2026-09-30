@@ -38,6 +38,7 @@ from rfdetr.export._tensorrt.exporter import (
 from rfdetr.export.prepare import ExportGraph
 from tests.export.conftest import (
     _structured_parity_input,
+    assert_prediction_roundtrip,
     eager_reference_tensors,
     max_abs_output_diffs,
 )
@@ -1935,6 +1936,11 @@ def _distinct_batch(batch: int, resolution: int) -> torch.Tensor:
 @pytest.mark.e2e_tensorrt
 class TestTensorRTEndToEnd:
     """Real ONNX -> TensorRT engine build + runtime parity on GPU (requires ``rfdetr[tensorrt]`` and CUDA)."""
+
+    @pytest.mark.parametrize("task", ["detect", "segment", "keypoints"])
+    def test_public_export_prediction_matches_native(self, task: str, tmp_path: Path) -> None:
+        """The public facade preserves predictions after a real TensorRT export."""
+        assert_prediction_roundtrip("tensorrt", task, tmp_path)
 
     @pytest.fixture(scope="class")
     def trt_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
