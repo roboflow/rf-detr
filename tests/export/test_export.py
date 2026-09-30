@@ -238,13 +238,28 @@ def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_pa
 class TestExportedGraphAvoidsCoreMLRejectedOps:
     """A real whole-model export must avoid the ops ONNX Runtime's CoreML provider rejects — the unit tests in
     ``test_transformer_onnx_two_stage.py`` and ``test_segmentation_head.py`` only check the ``Transformer`` and
-    ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as
-    ``RFDETR.export()`` actually produces it. ``pretrain_weights=None`` builds each model without downloading or
-    loading a checkpoint, keeping this CPU-runnable and fast.
+    ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as ``RFDETR.export()``
+    actually produces it.
+
+    ``pretrain_weights=None`` builds each model without downloading or loading a checkpoint, keeping this CPU-runnable
+    and fast.
     """
 
     @staticmethod
     def _exported_graph(tmp_path: Path, model: object) -> "onnx.GraphProto":
+        """Export ``model`` to ONNX under ``tmp_path`` and return its shape-inferred graph.
+
+        Args:
+            tmp_path: Directory to export into; must contain no other ``*.onnx`` file.
+            model: An ``RFDETR*`` model instance with an ``export`` method.
+
+        Returns:
+            The exported model's graph, after :func:`onnx.shape_inference.infer_shapes`.
+
+        Examples:
+            Requires a full model export to a temp dir; exercised by the tests below instead.
+            >>> TestExportedGraphAvoidsCoreMLRejectedOps._exported_graph(tmp_path, model)  # doctest: +SKIP
+        """
         import onnx
 
         with ignore_tracer_warnings():

@@ -653,14 +653,14 @@ class _SegmentationHeadExportWrapper(nn.Module):
 
 
 class TestSegmentationHeadForwardExport:
-    """``forward_export`` must match the eager evaluation path's last layer and avoid ops ONNX Runtime's CoreML
-    provider cannot run.
+    """``forward_export`` must match the eager evaluation path's last layer and avoid ops ONNX Runtime's CoreML provider
+    cannot run.
 
-    Training drives ``sparse_forward``, not ``forward`` — ``forward`` is the eager evaluation path that applies
-    each block in sequence, appending one mask per block. ``forward_export`` always applies every block in a
-    single pass and returns only the result of the final block, so the true contract is
-    ``forward_export(sf, [qf])[0] == forward(sf, [qf] * num_blocks)[-1]`` for any ``num_blocks`` — not just
-    ``num_blocks=1``, where ``[0] == [-1]`` trivially and a bug in how later blocks accumulate would stay hidden.
+    Training drives ``sparse_forward``, not ``forward`` — ``forward`` is the eager evaluation path that applies each
+    block in sequence, appending one mask per block. ``forward_export`` always applies every block in a single pass and
+    returns only the result of the final block, so the true contract is ``forward_export(sf, [qf])[0] == forward(sf,
+    [qf] * num_blocks)[-1]`` for any ``num_blocks`` — not just ``num_blocks=1``, where ``[0] == [-1]`` trivially and a
+    bug in how later blocks accumulate would stay hidden.
     """
 
     @pytest.mark.parametrize("num_blocks", [1, 3])
@@ -692,9 +692,9 @@ class TestSegmentationHeadForwardExport:
         torch.testing.assert_close(actual, expected)
 
     def test_matches_einsum_reference_with_non_square_spatial_features(self) -> None:
-        """A batch=2, channels=4, height=5, width=7 case: the existing tests above only use square 4x4 spatial
-        features, so an axis-swap bug in ``forward_export``'s ``.view(batch_size, num_queries, height, width)``
-        reshape would be invisible to them."""
+        """A batch=2, channels=4, height=5, width=7 case: the existing tests above only use square 4x4 spatial features,
+        so an axis-swap bug in ``forward_export``'s ``.view(batch_size, num_queries, height, width)`` reshape would be
+        invisible to them."""
         head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
         spatial_features = torch.randn(2, 4, 5, 7)
         query_features = [torch.randn(2, 3, 4)]
