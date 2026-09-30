@@ -2651,13 +2651,13 @@ class TestTensorRTEndToEnd:
         """Build a version-compatible engine from the FP32 engine's ONNX, or skip when TensorRT has no lean runtime.
 
         The lean runtime is a separate package (``tensorrt-lean-cu*-libs``) that the ``rfdetr[tensorrt]`` extra does not
-        install, so this is skipped wherever it is missing, CI's TensorRT job included.
+        install, so this is skipped wherever it is missing. CI's TensorRT job installs it and fails if it does not load.
         """
         _, _, engine_path = trt_engine
         onnx_path = engine_path.with_name(engine_path.stem.removesuffix("_fp32") + ".onnx")
         exporter = TensorRTExporter(TensorRTConfig(fp16=False, verbose=False, version_compatible=True))
         try:
-            exporter._require_lean_runtime()
+            exporter.check_environment()
         except ImportError as error:
             pytest.skip(str(error))
         return Path(exporter.build_engine(str(onnx_path), output_name="version-compatible"))
