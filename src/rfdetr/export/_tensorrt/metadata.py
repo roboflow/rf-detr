@@ -10,6 +10,10 @@ DeepStream) cannot learn its input size, normalization, outputs or batch profile
 :meth:`~rfdetr.export._tensorrt.exporter.TensorRTExporter._write_metadata` writes it, from ``_convert``, when
 ``trt_metadata=True``.
 
+The engine and its sidecar are two files, replaced one after the other, so a reader can find an engine beside the
+description of another build: during an export, or after two exports of the same name ran at once. The sidecar records
+the engine file's size and SHA-256 so that a consumer can tell.
+
 Schema version 1 does not record class names or the background class slot: how a logit slot maps to a class name
 depends on the checkpoint and is decided inside ``RFDETR.predict``, not by anything this package can read.
 """
@@ -17,6 +21,7 @@ depends on the checkpoint and is decided inside ``RFDETR.predict``, not by anyth
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -103,10 +108,28 @@ def gpu_facts() -> dict[str, str] | None:
     return {"name": properties.name, "compute_capability": f"{properties.major}.{properties.minor}"}
 
 
+def serialized_engine_facts(serialized: Any) -> dict[str, Any]:
+    """Identify a serialized engine by its size and the SHA-256 of its bytes: what its ``.trt`` file must hold.
+
+    Args:
+        serialized: The engine's bytes, as ``ICudaEngine.serialize()`` returns them or any other buffer.
+
+    Returns:
+        ``{"size", "sha256"}``: the size in bytes and the hex digest.
+
+    Examples:
+        >>> serialized_engine_facts(b"engine")
+        {'size': 6, 'sha256': 'ed9f6f25068608efd412958da4dfc19328ca3511251fa6d5f9c42baf230e32f8'}
+    """
+    buffer = memoryview(serialized)
+    return {"size": buffer.nbytes, "sha256": hashlib.sha256(buffer).hexdigest()}
+
+
 def build_engine_metadata(
     config: TensorRTConfig,
     graph: ExportGraph,
     *,
+    engine: dict[str, Any],
     precision: str,
     tensorrt_version: str,
     gpu: dict[str, str] | None,
@@ -116,6 +139,7 @@ def build_engine_metadata(
     Args:
         config: The exporter configuration the engine was built from.
         graph: The prepared graph the engine was built from.
+        engine: The engine's size and digest, from :func:`serialized_engine_facts`.
         precision: The precision the engine was actually built with (``"fp16"`` or ``"fp32"``), which can differ from
             the request on a lean TensorRT wheel.
         tensorrt_version: The version TensorRT reported for the build.
@@ -136,7 +160,8 @@ def build_engine_metadata(
         ...     output_names=("dets", "labels"), dynamic_axes=None, shape=(8, 8), backbone_only=False,
         ... )
         >>> document = build_engine_metadata(
-        ...     TensorRTConfig(), graph, precision="fp16", tensorrt_version="11.3.0.99", gpu=None
+        ...     TensorRTConfig(), graph, engine={"size": 6, "sha256": "0" * 64}, precision="fp16",
+        ...     tensorrt_version="11.3.0.99", gpu=None,
         ... )
         >>> document["batch"], document["input"]["height"], [o["name"] for o in document["outputs"]]
         ({'dynamic': False, 'size': 1}, 8, ['dets', 'labels'])
@@ -151,6 +176,7 @@ def build_engine_metadata(
         "rfdetr_version": get_version(),
         "variant": config.variant_name,
         "backbone_only": graph.backbone_only,
+        "engine": engine,
         "input": {
             "name": graph.input_names[0],
             "layout": "NCHW",

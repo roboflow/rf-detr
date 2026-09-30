@@ -13,12 +13,15 @@ polygraphy chain the same way ``test_tensorrt_export.py`` does. The end-to-end c
 
 from __future__ import annotations
 
+import hashlib
+import itertools
 import json
 import os
 import shutil
 import stat
 import sys
 import types
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +37,7 @@ from rfdetr.export._tensorrt.metadata import (
     METADATA_SCHEMA_VERSION,
     build_engine_metadata,
     gpu_facts,
+    serialized_engine_facts,
     sidecar_path,
     write_engine_metadata,
 )
@@ -48,6 +52,7 @@ _TOP_LEVEL_KEYS = {
     "rfdetr_version",
     "variant",
     "backbone_only",
+    "engine",
     "input",
     "outputs",
     "batch",
@@ -101,7 +106,7 @@ def _metadata(config: TensorRTConfig | None = None, graph: ExportGraph | None = 
     Args:
         config: The exporter configuration, or ``None`` for the defaults.
         graph: The prepared graph, or ``None`` for a small detection graph.
-        **facts: Overrides for ``precision``, ``tensorrt_version`` and ``gpu``.
+        **facts: Overrides for ``engine``, ``precision``, ``tensorrt_version`` and ``gpu``.
 
     Returns:
         The document.
@@ -110,7 +115,12 @@ def _metadata(config: TensorRTConfig | None = None, graph: ExportGraph | None = 
         >>> _metadata()["build"]["precision"], _metadata(precision="fp32")["build"]["precision"]
         ('fp16', 'fp32')
     """
-    build = {"precision": "fp16", "tensorrt_version": "11.3.0.99", "gpu": {"name": "GPU", "compute_capability": "12.0"}}
+    build = {
+        "engine": {"size": 6, "sha256": hashlib.sha256(b"engine").hexdigest()},
+        "precision": "fp16",
+        "tensorrt_version": "11.3.0.99",
+        "gpu": {"name": "GPU", "compute_capability": "12.0"},
+    }
     build.update(facts)
     return build_engine_metadata(config or TensorRTConfig(), graph or _graph(), **build)
 
@@ -174,6 +184,7 @@ class TestBuildEngineMetadata:
         ("path", "keys"),
         [
             pytest.param((), _TOP_LEVEL_KEYS, id="top-level"),
+            pytest.param(("engine",), {"size", "sha256"}, id="engine"),
             pytest.param(
                 ("input",),
                 {"name", "layout", "dtype", "height", "width", "channels", "channel_order", "normalization", "resize"},
@@ -193,6 +204,12 @@ class TestBuildEngineMetadata:
             section = section[step]
 
         assert set(section) == keys
+
+    def test_the_engine_file_is_recorded_as_given(self) -> None:
+        """The size and digest the build read back reach the document unchanged."""
+        engine = {"size": 12, "sha256": "0" * 64}
+
+        assert _metadata(engine=engine)["engine"] == engine
 
     def test_the_schema_version_is_one(self) -> None:
         """Version 1 is what the docs describe; a change to the layout that is not additive must bump it."""
@@ -341,6 +358,27 @@ class TestGpuFacts:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
         assert gpu_facts() is None
+
+
+class TestSerializedEngineFacts:
+    """The size and SHA-256 of a serialized engine, which a consumer compares with the ``.trt`` it loads."""
+
+    @pytest.mark.parametrize(
+        "serialized",
+        [
+            pytest.param(b"", id="empty"),
+            pytest.param(b"engine", id="bytes"),
+            pytest.param(memoryview(b"engine!!").cast("I"), id="buffer of 4-byte items"),
+        ],
+    )
+    def test_the_size_and_digest_are_those_of_the_bytes(self, serialized: bytes | memoryview) -> None:
+        """The size counts bytes, not buffer items, so it is the size of the file those bytes are saved to."""
+        content = bytes(serialized)
+
+        assert serialized_engine_facts(serialized) == {
+            "size": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
 
 
 class TestWriteEngineMetadata:
@@ -531,16 +569,20 @@ class TestWriteEngineMetadata:
         assert sorted(p.name for p in tmp_path.iterdir()) == ["model.json", "model.trt"]
 
 
-def _patch_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, has_fp16_flag: bool) -> list[str]:
+def _patch_build(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, has_fp16_flag: bool, builds: tuple[bytes, ...] = (b"engine",)
+) -> list[str]:
     """Stub the ONNX stage and the polygraphy chain so ``_convert`` runs without TensorRT, and record the engines.
 
-    ``save_engine`` really writes the file, so the sidecar has an engine to sit next to. The stand-in ``tensorrt``
+    Each build yields a stand-in engine whose ``serialize()`` returns the next of *builds* (the last one repeats), and
+    ``save_engine`` really writes those bytes, so the sidecar has an engine to sit next to. The stand-in ``tensorrt``
     module reports a weakly typed version, with or without the FP16 builder flag (a lean wheel lacks it).
 
     Args:
         monkeypatch: Fixture used to replace the entry points on the module under test.
         tmp_path: Directory the ONNX and engine files live in.
         has_fp16_flag: Whether the stand-in ``tensorrt.BuilderFlag`` carries ``FP16``.
+        builds: The serialized bytes of successive builds.
 
     Returns:
         The list the paths of written engines are appended to.
@@ -566,8 +608,10 @@ def _patch_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, has_fp16_fl
             """Return the one input tensor the fake network declares, whatever the index."""
             return types.SimpleNamespace(name="input", shape=(1, 3, 8, 12))
 
-    def _save_engine(engine: object, path: str) -> None:
-        Path(path).write_bytes(b"engine")
+    serialized = itertools.chain(builds, itertools.repeat(builds[-1]))
+
+    def _save_engine(engine: types.SimpleNamespace, path: str) -> None:
+        Path(path).write_bytes(engine.serialize())
         engines.append(path)
 
     onnx_path = str(tmp_path / "m.onnx")
@@ -577,7 +621,11 @@ def _patch_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, has_fp16_fl
     monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda self, graph: onnx_path)
     monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", lambda path: ("builder", _Network(), "parser"))
     monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
-    monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda parsed, config: "engine")
+    monkeypatch.setattr(
+        tensorrt_export,
+        "engine_from_network",
+        lambda parsed, config: types.SimpleNamespace(serialize=lambda content=next(serialized): content),
+    )
     monkeypatch.setattr(tensorrt_export, "save_engine", _save_engine)
     return engines
 
@@ -605,6 +653,104 @@ class TestExporterWritesMetadata:
         document = json.loads(engine.with_suffix(".json").read_text())
         assert document["build"]["precision"] == "fp32"
         assert document["build"]["tensorrt_version"] == "10.16.1.11"
+
+    def test_the_description_identifies_the_engine_the_build_wrote(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Its size and SHA-256 are those of the ``.trt`` beside it, so a consumer can check that the two belong
+        together."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+
+        engine = Path(TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph()))
+
+        assert json.loads(engine.with_suffix(".json").read_text())["engine"] == {
+            "size": 6,
+            "sha256": hashlib.sha256(b"engine").hexdigest(),
+        }
+
+    @pytest.mark.parametrize(
+        ("owner", "name"),
+        [
+            pytest.param(tensorrt_export, "save_engine", id="after the first engine is saved"),
+            pytest.param(TensorRTExporter, "build_engine", id="after the first build returns"),
+        ],
+    )
+    def test_a_description_written_after_another_export_replaced_the_engine_keeps_its_own_digest(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, owner: object, name: str
+    ) -> None:
+        """Two exports of one name, interleaved: the second builds and describes its engine in the middle of the first.
+
+        The engine and its description are two files, and the engine is written in place, so the pair left on disk can
+        come from different exports. The digest is taken from the bytes the build serialized, not from the
+        file:
+        read
+        from the file, even right after the save, it would vouch for the other export's engine and a consumer could not
+        detect the mismatch.
+        """
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True, builds=(b"first engine", b"second engine"))
+        second = TensorRTExporter(TensorRTConfig(fp16=False, metadata=True, output_name="shared"))
+        real = getattr(owner, name)
+        interleaved: list[bool] = []
+
+        def then_the_other_export(*args: object, **kwargs: object) -> object:
+            """Make the call, then, the first time only, run the second export to completion."""
+            result = real(*args, **kwargs)
+            if not interleaved:
+                interleaved.append(True)
+                second._convert(_graph())
+            return result
+
+        monkeypatch.setattr(owner, name, then_the_other_export)
+
+        engine = Path(
+            TensorRTExporter(TensorRTConfig(fp16=True, metadata=True, output_name="shared"))._convert(_graph())
+        )
+
+        recorded = json.loads(engine.with_suffix(".json").read_text())["engine"]["sha256"]
+        assert recorded == hashlib.sha256(b"first engine").hexdigest()
+
+    def test_the_default_export_does_not_hash_the_engine(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Hashing serializes the whole engine again; an export that writes no description does not pay for it."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        reads: list[object] = []
+        monkeypatch.setattr(tensorrt_export, "serialized_engine_facts", reads.append)
+
+        TensorRTExporter(TensorRTConfig(fp16=False))._convert(_graph())
+
+        assert reads == []
+
+    def test_build_engine_alone_does_not_hash_the_engine(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """``build_engine`` on an ``.onnx`` never writes a description, so ``metadata`` does not make it hash either."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        reads: list[object] = []
+        monkeypatch.setattr(tensorrt_export, "serialized_engine_facts", reads.append)
+
+        with pytest.warns(UserWarning, match="has no effect"):
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True)).build_engine(str(tmp_path / "m.onnx"))
+
+        assert reads == []
+
+    def test_build_engine_alone_says_that_metadata_has_no_effect(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A caller who asked for a description and gets none is told so, the way other ignored settings are, also with
+        no earlier description around."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+
+        with pytest.warns(UserWarning, match="metadata=True has no effect"):
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True)).build_engine(str(tmp_path / "m.onnx"))
+
+    def test_an_export_that_writes_the_description_does_not_call_metadata_ineffective(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The warning is for ``build_engine`` alone; the export that writes the description must not give it."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph())
+
+        assert [str(warning.message) for warning in caught if issubclass(warning.category, UserWarning)] == []
 
     def test_the_building_gpu_reaches_the_document(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """The exporter asks ``gpu_facts`` and records its answer under ``build.gpu``."""
@@ -713,18 +859,22 @@ class TestExporterWritesMetadata:
         assert "m_fp32.json" in warnings[0]
         assert stale.read_text() == _EARLIER_DESCRIPTION, "a file the export did not write is left alone"
 
+    @pytest.mark.parametrize("metadata", [False, True])
     def test_a_rebuild_through_build_engine_reports_an_earlier_description(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, metadata: bool
     ) -> None:
-        """``build_engine`` on an ``.onnx`` replaces the engine too, so it gives the same warning as ``export``."""
+        """``build_engine`` on an ``.onnx`` replaces the engine too, so it gives the same warning as ``export``.
+
+        It never writes a description, so ``metadata`` does not silence the warning.
+        """
         _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
         (tmp_path / "m_fp32.json").write_text(_EARLIER_DESCRIPTION)
         warnings: list[str] = []
         monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: warnings.append(message % args))
 
-        TensorRTExporter(TensorRTConfig(fp16=False)).build_engine(str(tmp_path / "m.onnx"))
+        TensorRTExporter(TensorRTConfig(fp16=False, metadata=metadata)).build_engine(str(tmp_path / "m.onnx"))
 
-        assert len(warnings) == 1
+        assert sum("m_fp32.json" in warning for warning in warnings) == 1
 
     @pytest.mark.parametrize("beside", [None, "unrelated json", "directory"])
     def test_only_a_description_is_reported(
@@ -750,6 +900,31 @@ class TestExporterWritesMetadata:
 
         with pytest.raises(RuntimeError, match="build_engine"):
             exporter._write_metadata(_graph(), "model.trt")
+
+    def test_a_failed_build_leaves_nothing_to_describe(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The precision and digest of an earlier build of this exporter must not describe a build that failed."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))
+        engine = exporter._convert(_graph())
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", _fail_the_build)
+        with pytest.raises(RuntimeError, match="build failed"):
+            exporter._convert(_graph())
+
+        with pytest.raises(RuntimeError, match="build_engine"):
+            exporter._write_metadata(_graph(), engine)
+
+    def test_a_description_after_build_engine_alone_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``build_engine`` alone does not read the engine back, so a description of it is refused rather than written
+        without the engine's digest, or with the digest of an engine an earlier export of this exporter wrote."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))
+        exporter._convert(_graph())
+        engine = exporter.build_engine(str(tmp_path / "m.onnx"))
+
+        with pytest.raises(RuntimeError, match="build_engine"):
+            exporter._write_metadata(_graph(), engine)
 
     @pytest.mark.parametrize("value", ["yes", 1, None])
     def test_metadata_must_be_a_bool(self, value: object) -> None:

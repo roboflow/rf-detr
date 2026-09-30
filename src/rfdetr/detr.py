@@ -2026,8 +2026,9 @@ class RFDETR:
                 non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
             trt_metadata: Also write ``<engine>.json`` beside a ``format="tensorrt"`` engine, so a consumer that does
                 not import the model (a C++ service, Triton, DeepStream) can learn the engine's input size and
-                normalization, output names, batch profile, the precision actually built, and the TensorRT version and
-                GPU it was built on.  A ``.trt`` file has no slot for this.  It does not record class names.
+                normalization, output names, batch profile, the precision actually built, the TensorRT version and GPU
+                it was built on, and the engine file's size and SHA-256.  A ``.trt`` file has no slot for this.  It does
+                not record class names.
                 ``False`` (default) writes no description.  Ignored for every other format; ``True`` there emits a
                 ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,

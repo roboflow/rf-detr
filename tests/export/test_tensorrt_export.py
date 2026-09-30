@@ -14,6 +14,7 @@ and checks runtime parity — mirroring the CoreML and ExecuTorch export suites.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -1997,8 +1998,9 @@ class TestTensorRTEndToEnd:
         """Export RFDETRNano to a TensorRT engine with ``trt_metadata=True`` and deserialize the engine it wrote.
 
         Returns:
-            A namespace with the parsed ``sidecar``, the deserialized ``engine`` (and the ``runtime`` that must outlive
-            it), the model's ``resolution``, and the ``dynamic_batch`` and ``fp16`` settings of this parameter.
+            A namespace with the parsed ``sidecar``, the ``engine_path``, the deserialized ``engine`` (and the
+            ``runtime`` that must outlive it), the model's ``resolution``, and the ``dynamic_batch`` and ``fp16``
+            settings of this parameter.
         """
         import tensorrt as trt
 
@@ -2022,6 +2024,7 @@ class TestTensorRTEndToEnd:
         engine = runtime.deserialize_cuda_engine(engine_path.read_bytes())
         return types.SimpleNamespace(
             sidecar=json.loads(engine_path.with_suffix(".json").read_text()),
+            engine_path=engine_path,
             engine=engine,
             runtime=runtime,
             resolution=int(detector.model.resolution),
@@ -2080,6 +2083,15 @@ class TestTensorRTEndToEnd:
         else:
             assert sidecar["batch"] == {"dynamic": False, "size": 2}
             assert engine.get_tensor_shape(engine_input)[0] == 2
+
+    def test_the_sidecar_identifies_the_engine_file(self, trt_sidecar_engine: Any) -> None:
+        """The recorded size and SHA-256 are those of the ``.trt`` the export returned, so a consumer's check passes."""
+        engine_bytes = trt_sidecar_engine.engine_path.read_bytes()
+
+        assert trt_sidecar_engine.sidecar["engine"] == {
+            "size": len(engine_bytes),
+            "sha256": hashlib.sha256(engine_bytes).hexdigest(),
+        }
 
     def test_the_sidecar_records_the_build_that_ran(self, trt_sidecar_engine: Any) -> None:
         """The precision requested, the TensorRT version and the GPU the test itself sees.
