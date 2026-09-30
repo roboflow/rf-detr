@@ -49,6 +49,7 @@ dependencies = [
 
 [project.optional-dependencies]
 stream = [
+    "opencv-python-headless>=4.8",     # Video and camera capture
     "mss>=9",                         # Desktop capture
     "yt-dlp>=2024.8.6",               # Resolve YouTube video streams
 ]

@@ -8,22 +8,18 @@
 import csv
 import glob
 import os
+import warnings
 from collections.abc import Generator
 from importlib import import_module
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import cv2
 import numpy as np
 import torch
-from PIL import Image
 
 from rfdetr._prediction_streams import iter_live_frames
-
-ImageInput = str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor
-PredictionSource = ImageInput | int
-PredictionInput = PredictionSource | list[PredictionSource] | tuple[PredictionSource, ...]
+from rfdetr.prediction import ImageInput, PredictionInput
 
 _IMAGE_SUFFIXES = {
     ".avif",
@@ -58,7 +54,7 @@ def is_expanded_source(source: PredictionInput) -> bool:
     path = os.fspath(source)
     url = urlparse(path)
     if url.scheme in ("http", "https"):
-        return Path(url.path).suffix.lower() in _VIDEO_SUFFIXES
+        return _is_youtube(path) or Path(url.path).suffix.lower() in _VIDEO_SUFFIXES
     return (
         Path(path).is_dir()
         or (glob.has_magic(path) and not Path(path).is_file())
@@ -81,18 +77,20 @@ def is_live_source(source: PredictionInput) -> bool:
         or path.split(" ", 1)[0] == "screen"
         or Path(path).suffix.lower() == ".streams"
         or url.scheme.lower() in ("rtsp", "rtsps", "rtmp", "tcp")
-        or (
-            url.scheme.lower() in ("http", "https")
-            and Path(url.path).suffix.lower() not in _IMAGE_SUFFIXES | _VIDEO_SUFFIXES
-        )
+        or (url.scheme.lower() in ("http", "https") and Path(url.path).suffix.lower() in {".m3u8", ".mjpg", ".mjpeg"})
     )
 
 
 def iter_source_batches(
-    source: PredictionInput, *, batch: int = 1, vid_stride: int = 1, stream_buffer: bool = False
+    source: PredictionInput,
+    *,
+    batch: int = 1,
+    vid_stride: int = 1,
+    stream_buffer: bool = False,
+    warn_on_live: bool = False,
 ) -> Generator[list[ImageInput], None, None]:
     """Batch finite images and preserve simultaneous live-stream batches."""
-    groups = _iter_source_groups(source, vid_stride, stream_buffer, ())
+    groups = _iter_source_groups(source, vid_stride, stream_buffer, (), warn_on_live)
     pending: list[ImageInput] = []
     try:
         for images, simultaneous in groups:
@@ -114,12 +112,12 @@ def iter_source_batches(
 
 
 def _iter_source_groups(
-    source: PredictionInput, vid_stride: int, stream_buffer: bool, manifests: tuple[Path, ...]
+    source: PredictionInput, vid_stride: int, stream_buffer: bool, manifests: tuple[Path, ...], warn_on_live: bool
 ) -> Generator[tuple[list[ImageInput], bool], None, None]:
     """Expand nested sources while retaining live-stream batch boundaries."""
     if isinstance(source, (list, tuple)):
         for item in source:
-            yield from _iter_source_groups(item, vid_stride, stream_buffer, manifests)
+            yield from _iter_source_groups(item, vid_stride, stream_buffer, manifests, warn_on_live)
         return
     if isinstance(source, torch.Tensor) and source.ndim == 4:
         for image in source:
@@ -128,7 +126,7 @@ def _iter_source_groups(
     if isinstance(source, int):
         if isinstance(source, bool) or source < 0:
             raise ValueError("The webcam index must be a non-negative integer.")
-        yield from _live_groups([source], vid_stride, stream_buffer)
+        yield from _live_groups([source], vid_stride, stream_buffer, warn_on_live)
         return
     if not isinstance(source, (str, os.PathLike)):
         yield [source], False
@@ -143,17 +141,24 @@ def _iter_source_groups(
         entries = _manifest_entries(manifest)
         try:
             if manifest.suffix.lower() == ".streams":
-                sources = [int(item) if item.isdecimal() else _resolve_youtube(item)[0] for item in entries]
+                resolved_sources = [_stream_entry(item) for item in entries]
+                sources = [item for item, _ in resolved_sources]
                 if not sources:
                     raise ValueError("The stream manifest contains no sources.")
-                yield from _live_groups(sources, vid_stride, stream_buffer)
+                yield from _live_groups(
+                    sources, vid_stride, stream_buffer, warn_on_live and any(live for _, live in resolved_sources)
+                )
             else:
                 for entry in entries:
-                    yield from _iter_source_groups(entry, vid_stride, stream_buffer, (*manifests, manifest))
+                    yield from _iter_source_groups(
+                        entry, vid_stride, stream_buffer, (*manifests, manifest), warn_on_live
+                    )
         finally:
             entries.close()
         return
     if path.split(" ", 1)[0] == "screen":
+        if warn_on_live:
+            _warn_live_accumulation()
         screenshots = _iter_screenshots(path)
         try:
             for image in screenshots:
@@ -161,10 +166,12 @@ def _iter_source_groups(
         finally:
             screenshots.close()
         return
-    if is_live_source(path):
+    if is_live_source(path) or _is_youtube(path):
         resolved, live = _resolve_youtube(path)
         if live:
-            yield from _live_groups([int(path) if path.isdecimal() else resolved], vid_stride, stream_buffer)
+            yield from _live_groups(
+                [int(path) if path.isdecimal() else resolved], vid_stride, stream_buffer, warn_on_live
+            )
         else:
             frames = _iter_video_frames(resolved, vid_stride)
             try:
@@ -184,7 +191,7 @@ def _iter_source_groups(
         if not media:
             raise FileNotFoundError(f"No supported images or videos found for {path!r}.")
         for item in media:
-            yield from _iter_source_groups(item, vid_stride, stream_buffer, manifests)
+            yield from _iter_source_groups(item, vid_stride, stream_buffer, manifests, warn_on_live)
         return
     if Path(url.path if remote else path).suffix.lower() in _VIDEO_SUFFIXES:
         if not remote and not Path(path).is_file():
@@ -200,9 +207,11 @@ def _iter_source_groups(
 
 
 def _live_groups(
-    sources: list[str | int], vid_stride: int, stream_buffer: bool
+    sources: list[str | int], vid_stride: int, stream_buffer: bool, warn_on_live: bool
 ) -> Generator[tuple[list[ImageInput], bool], None, None]:
     """Close background readers when prediction stops."""
+    if warn_on_live:
+        _warn_live_accumulation()
     batches = iter_live_frames(sources, vid_stride=vid_stride, stream_buffer=stream_buffer)
     try:
         for frames in batches:
@@ -234,8 +243,7 @@ def _manifest_entries(path: Path) -> Generator[str, None, None]:
 
 def _resolve_youtube(source: str) -> tuple[str, bool]:
     """Resolve a YouTube page to a decodable video URL."""
-    host = (urlparse(source).hostname or "").lower()
-    if host != "youtu.be" and host != "youtube.com" and not host.endswith(".youtube.com"):
+    if not _is_youtube(source):
         return source, True
     try:
         yt_dlp = import_module("yt_dlp")
@@ -261,7 +269,7 @@ def _iter_screenshots(source: str) -> Generator[np.ndarray[Any, Any], None, None
     if monitor < 0 or (region is not None and (region[2] <= 0 or region[3] <= 0)):
         raise ValueError("Screen monitor must be non-negative and dimensions must be positive.")
     try:
-        import mss
+        mss = import_module("mss")
     except ImportError as error:
         raise ImportError("Screenshot prediction requires mss. Install rfdetr[stream].") from error
     with mss.mss() as capture:
@@ -272,12 +280,24 @@ def _iter_screenshots(source: str) -> Generator[np.ndarray[Any, Any], None, None
             left, top, width, height = region
             bounds = {"left": bounds["left"] + left, "top": bounds["top"] + top, "width": width, "height": height}
         while True:
-            yield cv2.cvtColor(np.asarray(capture.grab(bounds)), cv2.COLOR_BGRA2RGB)
+            yield np.asarray(capture.grab(bounds))[:, :, 2::-1].copy()
 
 
 def _iter_video_frames(source: str | int, vid_stride: int = 1) -> Generator[np.ndarray[Any, Any], None, None]:
     """Release the capture on exhaustion, errors, or generator closure."""
-    capture = cv2.VideoCapture(source)
+    try:
+        import cv2
+    except ImportError as error:
+        raise ImportError("Video prediction requires OpenCV. Install rfdetr[stream].") from error
+
+    if isinstance(source, str) and urlparse(source).scheme in ("http", "https"):
+        capture = cv2.VideoCapture(
+            source,
+            cv2.CAP_ANY,
+            [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000, cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000],
+        )
+    else:
+        capture = cv2.VideoCapture(source)
     try:
         if not capture.isOpened():
             raise ValueError("Could not open the video source.")
@@ -289,3 +309,40 @@ def _iter_video_frames(source: str | int, vid_stride: int = 1) -> Generator[np.n
             yield cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     finally:
         capture.release()
+
+
+def _is_youtube(source: str) -> bool:
+    """Identify supported YouTube page hosts."""
+    host = (urlparse(source).hostname or "").lower()
+    return host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com")
+
+
+def _stream_entry(source: str) -> tuple[str | int, bool]:
+    """Validate one simultaneous capture source before any capture opens."""
+    if source.isdecimal():
+        return int(source), True
+    if _is_youtube(source):
+        return _resolve_youtube(source)
+    url = urlparse(source)
+    if url.scheme.lower() in ("rtsp", "rtsps", "rtmp", "tcp"):
+        return source, True
+    suffix = Path(url.path).suffix.lower()
+    if url.scheme.lower() in ("http", "https"):
+        if suffix in _VIDEO_SUFFIXES:
+            return source, False
+        if suffix not in _IMAGE_SUFFIXES:
+            return source, True
+    elif (not url.scheme or Path(source).drive) and Path(source).suffix.lower() in _VIDEO_SUFFIXES:
+        if not Path(source).is_file():
+            raise FileNotFoundError(f"Video file does not exist: {source!r}.")
+        return source, False
+    raise ValueError(f"Invalid stream manifest entry: {source!r}. Use a camera index, video file, or stream URL.")
+
+
+def _warn_live_accumulation() -> None:
+    """Warn before an eager prediction starts an unbounded source."""
+    warnings.warn(
+        "Live results accumulate in memory with stream=False. Use stream=True to limit memory use.",
+        UserWarning,
+        stacklevel=5,
+    )
