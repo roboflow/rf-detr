@@ -34,6 +34,7 @@ from torch import Tensor
 from torchvision.transforms import Normalize as _TVNormalize
 
 from rfdetr.datasets._aug_utils import (
+    CONTAINER_TRANSFORM_NAMES,
     D4_ALIAS_NAMES,
     HFLIP_TRANSFORM_NAMES,
     HORIZONTAL_FLIP_ALIAS_NAMES,
@@ -474,6 +475,10 @@ class AlbumentationsWrapper:
                     remove_invisible=False,
                 ),
             )
+            # Replay stores each transform once; the execution log preserves SomeOf(replace=True) repetitions.
+            self.transform.save_applied_params = (
+                needs_replay and hasattr(alb, "ReplayCompose") and self._records_each_applied_transform(transform)
+            )
         else:
             # Wrap non-geometric transform without bbox handling
             # Simpler composition since boxes don't need transformation
@@ -563,21 +568,43 @@ class AlbumentationsWrapper:
         }
 
     @staticmethod
+    def _records_each_applied_transform(transform: alb.BasicTransform) -> bool:
+        """Return whether every container records each applied child occurrence.
+
+        Programmatic containers such as ``OneOrOther`` omit execution records, so their pipelines must retain replay-
+        based flip handling.
+
+        Args:
+            transform: Albumentations transform or container to inspect.
+
+        Returns:
+            ``True`` when execution logging covers every nested transform.
+        """
+        if not hasattr(transform, "transforms"):
+            return True
+        if type(transform).__name__ not in CONTAINER_TRANSFORM_NAMES | {"Compose", "ReplayCompose", "RandomOrder"}:
+            return False
+        return all(AlbumentationsWrapper._records_each_applied_transform(child) for child in transform.transforms)
+
+    @staticmethod
     def _replay_contains_horizontal_flip(replay: Any) -> bool:
-        """Return whether Albumentations replay metadata applied a horizontal flip.
+        """Return whether Albumentations replay metadata applied an odd number of horizontal flips.
 
         Args:
             replay: ``ReplayCompose`` metadata from an Albumentations call.
 
         Returns:
-            ``True`` only when a horizontal mirror transform was actually applied.
+            ``True`` only when the applied horizontal mirrors require a keypoint-slot swap.
         """
         if not isinstance(replay, dict):
             return False
 
         transforms = replay.get("transforms")
         if isinstance(transforms, list):
-            return any(AlbumentationsWrapper._replay_contains_horizontal_flip(transform) for transform in transforms)
+            return (
+                sum(AlbumentationsWrapper._replay_contains_horizontal_flip(transform) for transform in transforms) % 2
+                == 1
+            )
 
         if not replay.get("applied", False):
             return False
@@ -809,11 +836,15 @@ class AlbumentationsWrapper:
                 boxes = target_out["boxes"]
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
             if keypoints_np is not None:
-                did_flip = (
-                    self._replay_contains_horizontal_flip(augmented.get("replay"))
-                    if self._keypoint_flip_pairs
-                    else False
-                )
+                replay = augmented.get("replay")
+                if self.transform.save_applied_params and "applied_transforms" in augmented:
+                    replay = {
+                        "transforms": [
+                            {"__class_fullname__": name, "params": params, "applied": True}
+                            for name, params in augmented["applied_transforms"]
+                        ]
+                    }
+                did_flip = self._replay_contains_horizontal_flip(replay) if self._keypoint_flip_pairs else False
                 target_out["keypoints"] = self._rebuild_keypoints_from_albu(
                     augmented,
                     kept_idxs,

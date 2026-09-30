@@ -323,6 +323,127 @@ class TestAlbumentationsWrapper:
             ),
         )
 
+    @pytest.mark.parametrize("num_flips", [0, 1, 2, 3])
+    @pytest.mark.parametrize(
+        "transform_name",
+        # SquareSymmetry is not exported by the minimum supported Albumentations version.
+        ["HorizontalFlip", "TimeReverse", "D4"] + (["SquareSymmetry"] if hasattr(alb, "SquareSymmetry") else []),
+    )
+    @pytest.mark.parametrize("container_name", ["Sequential", "OneOf", "SomeOf", "SomeOf-replacement"])
+    def test_repeated_horizontal_flips_preserve_keypoint_identities(
+        self, num_flips: int, transform_name: str, container_name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Swap joint identities and visibility only for an odd number of applied flips."""
+        num_transforms = 1 if container_name == "SomeOf-replacement" else num_flips
+        transforms = [getattr(alb, transform_name)(p=1.0) for _ in range(num_transforms)]
+        if transform_name in {"D4", "SquareSymmetry"}:
+            for transform in transforms:
+                monkeypatch.setattr(transform, "get_params", mock.Mock(return_value={"group_element": "h"}))
+        if container_name == "SomeOf-replacement":
+            transforms = [alb.SomeOf(transforms, n=num_flips, replace=True, p=1.0)]
+        transforms.extend([alb.HorizontalFlip(p=0.0), alb.Sequential([alb.HorizontalFlip(p=1.0)], p=0.0)])
+        if container_name != "Sequential":
+            transforms = [
+                alb.Sequential(transforms[:1], p=1.0),
+                alb.Sequential(transforms[1:], p=1.0),
+            ]
+            if container_name == "OneOf":
+                transforms = [alb.OneOf([alb.Sequential(transforms, p=1.0)], p=1.0)]
+            else:
+                transforms = [alb.SomeOf(transforms, n=2, replace=False, p=1.0)]
+        wrapper = AlbumentationsWrapper(alb.Sequential(transforms, p=1.0), keypoint_flip_pairs=[0, 1, 2, 3])
+        image_array = np.arange(50 * 100 * 3, dtype=np.uint8).reshape(50, 100, 3)
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 90.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor(
+                [[[10.0, 10.0, 2.0], [80.0, 30.0, 1.0], [20.0, 15.0, 2.0], [0.0, 0.0, 0.0], [50.0, 20.0, 2.0]]]
+            ),
+        }
+
+        transformed_image, transformed = wrapper(Image.fromarray(image_array), target)
+
+        if num_flips % 2:
+            expected_image = np.fliplr(image_array)
+            expected_boxes = torch.tensor([[10.0, 5.0, 95.0, 45.0]])
+            expected_keypoints = torch.tensor(
+                [[[19.0, 30.0, 1.0], [89.0, 10.0, 2.0], [0.0, 0.0, 0.0], [79.0, 15.0, 2.0], [49.0, 20.0, 2.0]]]
+            )
+        else:
+            expected_image = image_array
+            expected_boxes = target["boxes"]
+            expected_keypoints = target["keypoints"]
+        np.testing.assert_array_equal(np.asarray(transformed_image), expected_image)
+        torch.testing.assert_close(transformed["boxes"], expected_boxes)
+        torch.testing.assert_close(transformed["labels"], target["labels"])
+        torch.testing.assert_close(transformed["keypoints"], expected_keypoints, rtol=0, atol=0)
+
+    @pytest.mark.parametrize("scenario", ["skip-between-flips", "skip-last-flip", "vary-d4-elements"])
+    def test_repeated_transform_uses_each_execution(self, scenario: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Repeated transforms count only applied horizontal mirrors with their own parameters."""
+        if scenario == "vary-d4-elements":
+            transform = alb.D4(p=1.0)
+            monkeypatch.setattr(
+                transform,
+                "get_params",
+                mock.Mock(side_effect=[{"group_element": "h"}, {"group_element": "v"}, {"group_element": "h"}]),
+            )
+        else:
+            transform = alb.HorizontalFlip(p=1.0)
+            applied = [True, False, True] if scenario == "skip-between-flips" else [True, True, False]
+            monkeypatch.setattr(transform, "should_apply", mock.Mock(side_effect=applied))
+        wrapper = AlbumentationsWrapper(alb.SomeOf([transform], n=3, replace=True, p=1.0), keypoint_flip_pairs=[0, 1])
+        image_array = np.arange(50 * 100 * 3, dtype=np.uint8).reshape(50, 100, 3)
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 90.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 1.0], [0.0, 0.0, 0.0]]]),
+        }
+
+        transformed_image, transformed = wrapper(Image.fromarray(image_array), target)
+
+        expected_image = np.flipud(image_array) if scenario == "vary-d4-elements" else image_array
+        expected_keypoints = (
+            torch.tensor([[[10.0, 39.0, 2.0], [80.0, 19.0, 1.0], [0.0, 0.0, 0.0]]])
+            if scenario == "vary-d4-elements"
+            else target["keypoints"]
+        )
+        np.testing.assert_array_equal(np.asarray(transformed_image), expected_image)
+        torch.testing.assert_close(transformed["boxes"], target["boxes"])
+        torch.testing.assert_close(transformed["labels"], target["labels"])
+        torch.testing.assert_close(transformed["keypoints"], expected_keypoints, rtol=0, atol=0)
+
+    @pytest.mark.parametrize("pipeline", ["direct", "nested", "mixed"])
+    def test_one_or_other_preserves_flip_parity(self, pipeline: str) -> None:
+        """Containers without execution logging still preserve paired keypoint identities."""
+        transform = alb.OneOrOther(alb.HorizontalFlip(p=1.0), alb.VerticalFlip(p=1.0), p=1.0)
+        if pipeline == "nested":
+            transform = alb.Sequential([alb.OneOf([transform], p=1.0)], p=1.0)
+        elif pipeline == "mixed":
+            transform = alb.Sequential([transform, alb.HorizontalFlip(p=1.0)], p=1.0)
+        wrapper = AlbumentationsWrapper(transform, keypoint_flip_pairs=[0, 1])
+        image_array = np.arange(50 * 100 * 3, dtype=np.uint8).reshape(50, 100, 3)
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 90.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 1.0], [0.0, 0.0, 0.0]]]),
+        }
+
+        transformed_image, transformed = wrapper(Image.fromarray(image_array), target)
+
+        if pipeline == "mixed":
+            expected_image = image_array
+            expected_boxes = target["boxes"]
+            expected_keypoints = target["keypoints"]
+        else:
+            expected_image = np.fliplr(image_array)
+            expected_boxes = torch.tensor([[10.0, 5.0, 95.0, 45.0]])
+            expected_keypoints = torch.tensor([[[19.0, 30.0, 1.0], [89.0, 10.0, 2.0], [0.0, 0.0, 0.0]]])
+        np.testing.assert_array_equal(np.asarray(transformed_image), expected_image)
+        torch.testing.assert_close(transformed["boxes"], expected_boxes)
+        torch.testing.assert_close(transformed["labels"], target["labels"])
+        torch.testing.assert_close(transformed["keypoints"], expected_keypoints, rtol=0, atol=0)
+
     def test_nested_horizontal_flip_swaps_slots_after_all_geometry(self):
         """Nested HFlip+VFlip should mirror coordinates once, then swap only the left/right slots."""
         wrapper = AlbumentationsWrapper(
@@ -2219,6 +2340,18 @@ class TestNormalize:
 
 class TestReplayContainsHorizontalFlip:
     """Unit tests for AlbumentationsWrapper._replay_contains_horizontal_flip using fixture dicts."""
+
+    @pytest.mark.parametrize("num_flips", [0, 1, 2, 3])
+    @pytest.mark.parametrize("axis_key", ["axis", "d"])
+    def test_legacy_flip_parity(self, num_flips: int, axis_key: str) -> None:
+        """Legacy Flip replay parameters contribute to horizontal-flip parity."""
+        replay = {
+            "transforms": [
+                {"__class_fullname__": "Flip", "applied": True, "params": {axis_key: 1}} for _ in range(num_flips)
+            ]
+        }
+
+        assert AlbumentationsWrapper._replay_contains_horizontal_flip(replay) == bool(num_flips % 2)
 
     @pytest.mark.parametrize(
         "replay,expected",
