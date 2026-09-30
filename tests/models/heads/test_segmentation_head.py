@@ -266,9 +266,14 @@ def test_depthwise_conv_no_cudnn_restores_flag_under_concurrent_calls() -> None:
         time.sleep(0.2)
         return real_conv2d(*args, **kwargs)
 
+    errors: list[BaseException] = []
+
     def worker(delay: float) -> None:
-        time.sleep(delay)
-        _DepthwiseConvWithoutCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
+        try:
+            time.sleep(delay)
+            _DepthwiseConvWithoutCuDNN.apply(x, weight, None, (1, 1), (1, 1), (1, 1), dim)
+        except BaseException as exc:
+            errors.append(exc)
 
     original = torch.backends.cudnn.enabled
     torch.backends.cudnn.enabled = True
@@ -279,6 +284,7 @@ def test_depthwise_conv_no_cudnn_restores_flag_under_concurrent_calls() -> None:
                 thread.start()
             for thread in threads:
                 thread.join()
+        assert not errors
         assert torch.backends.cudnn.enabled is True
     finally:
         torch.backends.cudnn.enabled = original
