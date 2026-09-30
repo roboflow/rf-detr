@@ -413,6 +413,42 @@ class TestAlbumentationsWrapper:
         torch.testing.assert_close(transformed["labels"], target["labels"])
         torch.testing.assert_close(transformed["keypoints"], expected_keypoints, rtol=0, atol=0)
 
+    @pytest.mark.parametrize("outer_container", ["Compose", "RandomOrder"])
+    def test_container_allowlist_nesting_uses_execution_log(self, outer_container: str) -> None:
+        """A repeating SomeOf(replace=True) nested under Compose or RandomOrder still logs each applied occurrence.
+
+        Existing repeated-flip coverage always wraps containers in an outer Sequential; this exercises the other two
+        names on the execution-log allowlist (Compose, RandomOrder) as the outer container, proving parity is derived
+        from the execution log rather than silently falling back to ReplayCompose metadata.
+        """
+        transform = alb.HorizontalFlip(p=1.0)
+        some_of = alb.SomeOf([transform], n=3, replace=True, p=1.0)
+        outer = alb.Compose([some_of]) if outer_container == "Compose" else alb.RandomOrder([some_of], n=1, p=1.0)
+        wrapper = AlbumentationsWrapper(outer, keypoint_flip_pairs=[0, 1])
+
+        assert wrapper._uses_execution_log is True
+
+        image_array = np.arange(50 * 100 * 3, dtype=np.uint8).reshape(50, 100, 3)
+        target = {
+            "boxes": torch.tensor([[5.0, 5.0, 90.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 1.0]]]),
+        }
+
+        transformed_image, transformed = wrapper(Image.fromarray(image_array), target)
+
+        # 3 real applications of HorizontalFlip(p=1.0) inside SomeOf(replace=True) is an odd count, so the net
+        # effect is a single flip -- the same parity a correctly-functioning execution log must derive even
+        # though ReplayCompose metadata would only record one entry for the repeated nested occurrence.
+        np.testing.assert_array_equal(np.asarray(transformed_image), np.fliplr(image_array))
+        torch.testing.assert_close(transformed["boxes"], torch.tensor([[10.0, 5.0, 95.0, 45.0]]))
+        torch.testing.assert_close(
+            transformed["keypoints"],
+            torch.tensor([[[19.0, 30.0, 1.0], [89.0, 10.0, 2.0]]]),
+            rtol=0,
+            atol=0,
+        )
+
     @pytest.mark.parametrize("pipeline", ["direct", "nested", "mixed"])
     def test_one_or_other_preserves_flip_parity(self, pipeline: str) -> None:
         """Containers without execution logging still preserve paired keypoint identities."""
@@ -1203,6 +1239,54 @@ class TestAlbumentationsWrapperFromConfig:
         assert len(transforms) == 1
         transform_names = [t.transform.transforms[0].__class__.__name__ for t in transforms]
         assert transform_names == ["HorizontalFlip"]
+
+    def test_from_config_some_of_replacement_uses_execution_log(self):
+        """from_config-built SomeOf(replace=True) parity matches the equivalent direct-constructor wrapper.
+
+        Existing from_config coverage only builds OneOf/Sequential containers with default probabilities; this builds a
+        repeating SomeOf via from_config and checks it behaves identically to the same container built directly with
+        AlbumentationsWrapper, proving the execution-log path also works end-to-end through config-driven construction.
+        """
+        config = {
+            "SomeOf": {
+                "transforms": [{"HorizontalFlip": {"p": 1.0}}],
+                "n": 2,
+                "replace": True,
+                "p": 1.0,
+            }
+        }
+        transforms = AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=[0, 1])
+        wrapper = transforms[0]
+        direct = AlbumentationsWrapper(
+            alb.SomeOf([alb.HorizontalFlip(p=1.0)], n=2, replace=True, p=1.0),
+            keypoint_flip_pairs=[0, 1],
+        )
+
+        assert wrapper._uses_execution_log is True
+        assert direct._uses_execution_log is True
+
+        image_array = np.arange(50 * 100 * 3, dtype=np.uint8).reshape(50, 100, 3)
+        config_target = {
+            "boxes": torch.tensor([[5.0, 5.0, 90.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 1.0]]]),
+        }
+        direct_target = {
+            "boxes": torch.tensor([[5.0, 5.0, 90.0, 45.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[10.0, 10.0, 2.0], [80.0, 30.0, 1.0]]]),
+        }
+
+        config_image, config_out = wrapper(Image.fromarray(image_array), config_target)
+        direct_image, direct_out = direct(Image.fromarray(image_array), direct_target)
+
+        np.testing.assert_array_equal(np.asarray(config_image), np.asarray(direct_image))
+        torch.testing.assert_close(config_out["boxes"], direct_out["boxes"])
+        torch.testing.assert_close(config_out["keypoints"], direct_out["keypoints"], rtol=0, atol=0)
+        # Two real applications of a p=1.0 HorizontalFlip is an even count, so the net geometric effect --
+        # and the keypoint-slot parity -- must match the untransformed input exactly.
+        np.testing.assert_array_equal(np.asarray(config_image), image_array)
+        torch.testing.assert_close(config_out["keypoints"], config_target["keypoints"], rtol=0, atol=0)
 
 
 class TestRandomSizedCropCompat:
@@ -2464,6 +2548,50 @@ class TestReplayHorizontalFlipParity:
     def test_replay_horizontal_flip_parity(self, replay: object, expected: bool) -> None:
         """Fixture replay dicts should be correctly classified as horizontal flip or not."""
         assert AlbumentationsWrapper._replay_horizontal_flip_parity(replay) == expected
+
+
+class TestFirstUnloggedContainer:
+    """Unit tests for AlbumentationsWrapper._first_unlogged_container using fixture container trees."""
+
+    def test_empty_container_is_fully_logged(self) -> None:
+        """A container with zero children reports no offending container."""
+        assert AlbumentationsWrapper._first_unlogged_container(alb.Compose([])) is None
+
+    def test_deeply_nested_allowlisted_containers_are_fully_logged(self) -> None:
+        """SomeOf(replace=True) nested inside SomeOf(replace=True) inside Sequential is still fully logged.
+
+        Exercises depth > 2 nesting where every container along the path is on the execution-log allowlist, confirming
+        the recursive walk does not mistake depth alone for an unlogged container.
+        """
+        tree = alb.Sequential(
+            [
+                alb.SomeOf(
+                    [alb.SomeOf([alb.HorizontalFlip(p=1.0)], n=1, replace=True, p=1.0)],
+                    n=1,
+                    replace=True,
+                    p=1.0,
+                )
+            ],
+            p=1.0,
+        )
+
+        assert AlbumentationsWrapper._first_unlogged_container(tree) is None
+
+    def test_deeply_nested_offending_container_is_reported(self) -> None:
+        """A non-allowlisted container nested below allowlisted ones is still identified as the offender."""
+        tree = alb.Sequential(
+            [
+                alb.SomeOf(
+                    [alb.OneOrOther(alb.HorizontalFlip(p=1.0), alb.VerticalFlip(p=1.0), p=1.0)],
+                    n=1,
+                    replace=True,
+                    p=1.0,
+                )
+            ],
+            p=1.0,
+        )
+
+        assert AlbumentationsWrapper._first_unlogged_container(tree) == "OneOrOther"
 
 
 class TestFromConfigStrict:
