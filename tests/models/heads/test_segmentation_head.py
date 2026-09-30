@@ -49,6 +49,8 @@ def test_depthwise_conv_block_forward(device: str) -> None:
     assert y.shape == x.shape
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 def test_depthwise_conv_forward_disables_cudnn_on_cuda(monkeypatch) -> None:
     """On CUDA, forward must run with cuDNN disabled.
 
@@ -56,8 +58,6 @@ def test_depthwise_conv_forward_disables_cudnn_on_cuda(monkeypatch) -> None:
     reaches ``torch.backends.cudnn.flags(enabled=False)`` at all, since ATen's ``ConvParams::use_cudnn``
     never reads the flag for a CPU tensor in the first place.
     """
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is not available")
     block = DepthwiseConvBlock(dim=8).to("cuda")
     enabled_calls: list[bool] = []
     original_flags = torch.backends.cudnn.flags
@@ -75,9 +75,6 @@ def test_depthwise_conv_forward_disables_cudnn_on_cuda(monkeypatch) -> None:
     assert y.shape == x.shape
     assert enabled_calls, "torch.backends.cudnn.flags was never called"
     assert all(not e for e in enabled_calls)
-
-
-test_depthwise_conv_forward_disables_cudnn_on_cuda = pytest.mark.gpu(test_depthwise_conv_forward_disables_cudnn_on_cuda)
 
 
 def test_depthwise_conv_forward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
@@ -105,6 +102,8 @@ def test_depthwise_conv_forward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
     assert not enabled_calls, "torch.backends.cudnn.flags must not be called for a CPU tensor"
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
 def test_depthwise_conv_backward_disables_cudnn_on_cuda(monkeypatch) -> None:
     """Backward pass must also run with cuDNN disabled on CUDA (issue #731).
 
@@ -112,8 +111,6 @@ def test_depthwise_conv_backward_disables_cudnn_on_cuda(monkeypatch) -> None:
     re-enabled, causing RuntimeError on T4/P100 GPUs. The gate keys backward off the saved tensor's device, so this must
     still hold on CUDA even though the CPU path (below) now skips the scope entirely.
     """
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is not available")
     block = DepthwiseConvBlock(dim=8).to("cuda")
     enabled_calls: list[bool] = []
     original_flags = torch.backends.cudnn.flags
@@ -135,11 +132,6 @@ def test_depthwise_conv_backward_disables_cudnn_on_cuda(monkeypatch) -> None:
     # cuDNN must be disabled for both forward and backward
     assert len(enabled_calls) >= 2
     assert all(not e for e in enabled_calls)
-
-
-test_depthwise_conv_backward_disables_cudnn_on_cuda = pytest.mark.gpu(
-    test_depthwise_conv_backward_disables_cudnn_on_cuda
-)
 
 
 def test_depthwise_conv_backward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
@@ -332,6 +324,11 @@ class TestCudnnDisabledConcurrency:
     anything on a CPU-only runner.
     """
 
+    @pytest.fixture(autouse=True)
+    def _cudnn_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Start every test in this class with ``cudnn.enabled=True``, the pre-lock steady state."""
+        monkeypatch.setattr(torch.backends.cudnn, "enabled", True)
+
     def test_restores_flag_under_concurrent_overlapping_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Overlapping ``_cudnn_disabled()`` calls from several threads must leave every flag restored.
 
@@ -347,7 +344,6 @@ class TestCudnnDisabledConcurrency:
         """
         from rfdetr.models.heads.segmentation import _cudnn_disabled
 
-        monkeypatch.setattr(torch.backends.cudnn, "enabled", True)
         monkeypatch.setattr(torch.backends.cudnn, "benchmark", True)
         num_workers = 3
         barrier = threading.Barrier(num_workers)
@@ -377,7 +373,7 @@ class TestCudnnDisabledConcurrency:
         assert torch.backends.cudnn.enabled is True
         assert torch.backends.cudnn.benchmark is True
 
-    def test_restores_flag_and_releases_lock_when_conv_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_restores_flag_and_releases_lock_when_conv_raises(self) -> None:
         """An exception inside ``_cudnn_disabled()`` must still restore the flag and release the lock.
 
         ``mock.patch.object(F, "conv2d", side_effect=RuntimeError)`` drives the raise through a direct
@@ -386,8 +382,6 @@ class TestCudnnDisabledConcurrency:
         was released: a leaked lock would otherwise only surface as a 240s pytest-timeout.
         """
         from rfdetr.models.heads.segmentation import _cudnn_disabled
-
-        monkeypatch.setattr(torch.backends.cudnn, "enabled", True)
 
         with mock.patch.object(F, "conv2d", side_effect=RuntimeError("boom")):
             with pytest.raises(RuntimeError, match="boom"), _cudnn_disabled():
@@ -407,7 +401,7 @@ class TestCudnnDisabledConcurrency:
         assert not thread.is_alive(), "follow-up call did not finish within 5s — lock not released"
         assert follow_up_ran.is_set()
 
-    def test_forward_and_backward_call_sites_share_the_lock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_forward_and_backward_call_sites_share_the_lock(self) -> None:
         """A forward-shaped call and a backward-shaped call must serialise through the same lock.
 
         One thread drives ``F.conv2d`` inside ``_cudnn_disabled()`` — the forward call site. The other
@@ -420,7 +414,6 @@ class TestCudnnDisabledConcurrency:
         """
         from rfdetr.models.heads.segmentation import _cudnn_disabled, conv2d_input
 
-        monkeypatch.setattr(torch.backends.cudnn, "enabled", True)
         dim = 4
         weight = torch.randn(dim, 1, 3, 3)
         grad_output = torch.randn(1, dim, 4, 4)
@@ -460,7 +453,7 @@ class TestCudnnDisabledConcurrency:
 
     @pytest.mark.gpu
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is not available")
-    def test_restores_flag_under_concurrent_overlapping_calls_gpu(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_restores_flag_under_concurrent_overlapping_calls_gpu(self) -> None:
         """GPU mirror: overlapping ``_DepthwiseConvWithoutCuDNN.apply()`` calls on real CUDA tensors.
 
         Real CUDA tensors satisfy ``x.is_cuda``, so once ``_cudnn_disabled()`` gates entry on it, ``.apply()`` still
@@ -470,7 +463,6 @@ class TestCudnnDisabledConcurrency:
         """
         from rfdetr.models.heads.segmentation import _DepthwiseConvWithoutCuDNN
 
-        monkeypatch.setattr(torch.backends.cudnn, "enabled", True)
         dim = 4
         weight = torch.randn(dim, 1, 3, 3, device="cuda")
         x = torch.randn(1, dim, 4, 4, device="cuda")
