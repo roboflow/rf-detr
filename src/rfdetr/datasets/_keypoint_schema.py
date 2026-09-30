@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from rfdetr.datasets._yolo_yaml import _extract_yolo_class_names_from_data, _load_yaml_mapping
+from rfdetr.datasets._yolo_yaml import _ascii_digit_key, _extract_yolo_class_names_from_data, _load_yaml_mapping
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -115,7 +115,12 @@ def _extract_yolo_keypoint_names(data: dict[str, Any], num_keypoints: int) -> li
     raw_kpt_names = data.get("kpt_names")
     keypoint_names: Any = None
     if isinstance(raw_kpt_names, dict) and raw_kpt_names:
-        keypoint_names = raw_kpt_names.get(0, raw_kpt_names.get("0"))
+        # Reuse the same ASCII-digit key normalization as class names, so a "00"-style key is
+        # recognized as keypoint-name key 0 just as it is for the top-level "names" mapping.
+        keypoint_names = next(
+            (value for key, value in raw_kpt_names.items() if _ascii_digit_key(key) == 0),
+            None,
+        )
     elif isinstance(raw_kpt_names, list):
         keypoint_names = raw_kpt_names
 
