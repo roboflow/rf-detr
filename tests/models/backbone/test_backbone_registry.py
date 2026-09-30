@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -205,8 +206,14 @@ class TestUnregisteredEncoders:
 
     def test_unknown_non_dinov2_name_names_the_registered_encoders(self) -> None:
         register_backbone("toy_encoder", _ToyBackbone)
+        # Exactly the registry's contents: an installed extension package (e.g. rfdetr_plus) adds its own encoders.
+        registered = ", ".join(sorted(backbone_pkg._BACKBONE_REGISTRY))
+        assert "toy_encoder" in backbone_pkg._BACKBONE_REGISTRY
 
-        with pytest.raises(ValueError, match=r"Unknown encoder 'not_a_registered_encoder'.*registered: .*toy_encoder"):
+        with pytest.raises(
+            ValueError,
+            match=rf"^Unknown encoder 'not_a_registered_encoder': .*\(registered: {re.escape(registered)}\)\.",
+        ):
             _build("not_a_registered_encoder")
 
     def test_dinov2_encoder_receives_the_backbone_arguments(self, monkeypatch: pytest.MonkeyPatch) -> None:
