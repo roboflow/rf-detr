@@ -44,9 +44,20 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
 
     The `.trt` engine produced by `format="tensorrt"` is a standalone artifact for raw TensorRT deployment. It is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases.
 
-    If you plan to run inference with [`inference-models`](index.md#run-inference-with-inference-models) (the recommended path), do **not** pass `format="tensorrt"` — `inference-models` builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let `inference-models` handle the backend.
+    If you plan to run inference with [`inference-models`](index.md#run-inference-with-inference-models) (a separate deployment option), do **not** pass `format="tensorrt"` — `inference-models` builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let `inference-models` handle the backend.
 
-## Python API Conversion
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model_fp16.trt")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+The engine must be compatible with the target GPU and TensorRT version. See [Predict with RFDETRInference](index.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Convert an existing ONNX file with the Python API
 
 Use this only to convert an **already-exported** `.onnx` file without re-running the model export. To go straight from a checkpoint to an engine, use [`format="tensorrt"`](#export-directly-to-tensorrt) above.
 

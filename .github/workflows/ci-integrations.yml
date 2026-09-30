@@ -49,7 +49,7 @@ jobs:
         run: uv cache prune --ci
 
   export-parity:
-    # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnx, which previously
+    # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnx/tflite, which previously
     # differed only in: os, python-version, an optional extra dependency-group
     # (ci-executorch-pin), an optional extra to bolt on (`,coreml`, for the one delegate combo
     # row), and (onnx alone) whether to collect coverage — now every row does, tagged by its own
@@ -66,7 +66,7 @@ jobs:
     concurrency:
       group: pytest-${{ matrix.format }}${{ matrix.extra_plus }}-${{ matrix.python-version }}-${{ matrix.os || 'ubuntu-latest' }}-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +94,8 @@ jobs:
           # coreai-torch requires Python >= 3.11, so 3.11/3.13 bracket it (not 3.10).
           - { format: "coreai", os: "xcode-27", python-version: "3.11" }
           - { format: "coreai", os: "xcode-27", python-version: "3.13" }
+          # onnx2tf pins NumPy 1.26.4, so [tflite] is supported only on Python 3.12.
+          - { format: "tflite", os: "ubuntu-latest", python-version: "3.12" }
           # executorch+coreml delegate: needs macOS (CoreML delegate lowers through coremltools),
           # single interpreter (3.13, executorch 1.3.1's wheel ceiling) — the plain executorch row
           # above already brackets the Python range for the runtime itself. Reuses the
@@ -190,6 +192,16 @@ jobs:
           import onnxruntime
 
           print(f"onnx {onnx.__version__} (IR {onnx.IR_VERSION}) / onnxruntime {onnxruntime.__version__} import OK")
+        shell: python
+
+      - name: 🔎 Verify TFLite conversion and runtime imports
+        if: matrix.format == 'tflite'
+        run: |
+          import tensorflow as tf
+          import onnx2tf
+
+          assert callable(tf.lite.Interpreter), "TFLite interpreter is unavailable"
+          print(f"tensorflow {tf.__version__} / onnx2tf / TFLite interpreter import OK")
         shell: python
 
       # Real export/convert + load/inference per format is heavy; single-worker. Target is
@@ -300,7 +312,7 @@ jobs:
         # `e2e_tensorrt`) — excluded from the ci-tests-gpu.yml default filter (`and not e2e_tensorrt`) so it
         # only runs here.
         run: |
-          uv run --no-sync pytest tests/export/test_tensorrt_export.py \
+          uv run --no-sync pytest tests/ \
             -m e2e_tensorrt -n 1 \
             --timeout=600 \
             --durations=20
@@ -374,9 +386,9 @@ jobs:
 
   export-priority-guardian:
     runs-on: ubuntu-latest
-    # export-parity is a single matrix job now (13 format/os/python rows, see above); GitHub sets
+    # export-parity is a single matrix job now (14 format/os/python rows, see above); GitHub sets
     # its overall `result` to failure if any row fails regardless of fail-fast, so one need covers
-    # all 13 — the per-row breakdown lives in the Actions UI (each row's own check run), not here.
+    # all 14 — the per-row breakdown lives in the Actions UI (each row's own check run), not here.
     needs: [export-parity, tensorrt-parity]
     if: always()
     steps:
@@ -394,4 +406,4 @@ jobs:
           echo "One or more export jobs did not succeed; failing explicitly."
           exit 1
       - name: ✅ all export jobs succeeded
-        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnx; plus tensorrt) completed successfully."
+        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnx, tflite; plus tensorrt) completed successfully."

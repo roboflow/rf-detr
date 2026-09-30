@@ -11,8 +11,8 @@ tensors in and returning the model's raw output tensors. Turning those raw outpu
 ``rfdetr.export._tflite.inference``, which are private and exist to pin numerical parity with
 :meth:`rfdetr.detr.RFDETR.predict`, not to be imported.
 
-For multi-backend inference (PyTorch / ONNX / TensorRT) with automatic backend selection, prefer `inference-models
-<https://github.com/roboflow/inference/tree/main/inference_models>`_.
+Use :class:`rfdetr.inference.RFDETRInference` for image inputs and Supervision predictions across native models and
+export formats. This module provides raw OpenVINO session access for advanced calls.
 """
 
 from __future__ import annotations

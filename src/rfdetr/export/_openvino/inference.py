@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from rfdetr.export._openvino.exporter import _check_openvino_available
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -48,7 +50,13 @@ class OpenVINOInference:
             boxes, labels = outputs
     """
 
-    def __init__(self, model_path: str | Path, device: str = "AUTO", cache_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        model_path: str | Path,
+        device: str = "AUTO",
+        cache_dir: str | None = None,
+        inference_precision: str | None = None,
+    ) -> None:
         """Initialize OpenVINO inference session.
 
         Args:
@@ -56,6 +64,7 @@ class OpenVINOInference:
             device: Device the model is compiled for, e.g. ``"AUTO"``, ``"CPU"``, ``"GPU"`` or ``"NPU"``.
             cache_dir: Directory holding the compiled-model cache. When set, OpenVINO reuses the
                 compiled kernels across process starts instead of recompiling the model every time.
+            inference_precision: Optional execution precision hint. Only ``"f32"`` is supported.
 
         Raises:
             ImportError: If OpenVINO is not installed.
@@ -74,7 +83,12 @@ class OpenVINOInference:
             # Must be set before compilation so compiled kernels are reused across process starts.
             core.set_property({"CACHE_DIR": cache_dir})
         model = core.read_model(model_path)
-        self.compiled_model = core.compile_model(model, device)
+        if inference_precision is None:
+            self.compiled_model = core.compile_model(model, device)
+        elif inference_precision == "f32":
+            self.compiled_model = core.compile_model(model, device, {"INFERENCE_PRECISION_HINT": ov.Type.f32})
+        else:
+            raise ValueError(f"Unsupported OpenVINO inference precision: {inference_precision!r}.")
         self.infer_request = self.compiled_model.create_infer_request()
         # Guards infer_request.infer() + get_output_tensor(): both touch the same shared
         # buffers, which are not safe for concurrent access from multiple threads.
@@ -123,3 +137,46 @@ class OpenVINOInference:
     def __call__(self, input_data: NDArray[Any]) -> tuple[NDArray[Any], ...]:
         """Alias for infer() to match typical model calling convention."""
         return self.infer(input_data)
+
+
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
+    """Load an OpenVINO graph through its existing inference class."""
+    if device == "auto":
+        target = "AUTO"
+    elif device.lower() in {"cpu", "gpu", "npu"} or re.fullmatch(r"(?:gpu|npu)\.[0-9]+", device.lower()):
+        target = device.upper()
+    else:
+        raise ValueError("OpenVINO device must be cpu, gpu, npu, gpu.N, npu.N, or auto.")
+    try:
+        import openvino as ov
+    except ImportError as exc:
+        raise ImportError("OpenVINO inference requires openvino.") from exc
+    if target != "AUTO":
+        available = ov.Core().available_devices
+        default_family = target in {"CPU", "GPU", "NPU"}
+        if target not in available and not (
+            default_family and any(name.startswith(f"{target}.") for name in available)
+        ):
+            raise RuntimeError(f"OpenVINO device {target} is unavailable. Available devices: {available}.")
+
+    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array
+
+    session = OpenVINOInference(path, device=target, inference_precision="f32")
+    if metadata.input_dtype != "float32" or metadata.input_layout != "NCHW":
+        raise ValueError("OpenVINO inference wrapper requires a float32 NCHW input.")
+    shape = session.input_layer.partial_shape
+    for axis, want in enumerate(metadata.input_shape):
+        dimension = shape[axis]
+        if dimension.is_static and want != -1 and dimension.get_length() != want:
+            raise ValueError(f"OpenVINO input axis {axis} disagrees with export metadata.")
+    if any(isinstance(key, str) for key in metadata.outputs.values()):
+        raise ValueError("OpenVINO output mappings must use positions.")
+    positions = [index for index in metadata.outputs.values() if isinstance(index, int)]
+    if any(index < 0 or index >= len(session.output_layers) for index in positions):
+        raise ValueError("OpenVINO output position is absent from model.")
+
+    def execute(batch: Any) -> tuple[NDArray[Any], ...]:
+        """Run the session, which returns owned output arrays."""
+        return session.infer(_input_array(batch, metadata))
+
+    return ExportRuntime("openvino", metadata, session, target, metadata.input_name, execute, borrowed_outputs=False)

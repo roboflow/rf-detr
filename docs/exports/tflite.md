@@ -103,7 +103,18 @@ The `onnx2tf` converter **always** produces both FP32 and FP16 TFLite files, reg
 
     Segmentation masks and keypoints are both rank-4, so neither the name nor the rank tells them apart. The TFLite `_run_inference` reference helper safely defaults `rank4_output` to `None`, decoding a mask only from an output that names itself. For a name-stripped segmentation export, pass `rank4_output="masks"`; pass `"keypoints"` to suppress anonymous-mask decoding for a keypoint export.
 
-## TFLite Inference Example
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model_fp32.tflite")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+The loader reads the TFLite input layout from export metadata. It returns the same Supervision result types as the native model. See [Predict with RFDETRInference](index.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use the TFLite interpreter directly
 
 ```python
 import numpy as np

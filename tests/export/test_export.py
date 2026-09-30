@@ -49,6 +49,20 @@ if TYPE_CHECKING:
 _IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
 
+@pytest.fixture(autouse=True)
+def _skip_metadata_publication_for_export_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep facade tests focused on conversion when their fake artifacts have no file bytes.
+
+    The metadata round-trip tests use the real writer in ``test_metadata.py``. This fixture does not replace
+    ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
+
+    Examples:
+        Requires pytest's monkeypatch lifecycle, so this example cannot run standalone:
+        >>> _skip_metadata_publication_for_export_stubs(None)  # doctest: +SKIP
+    """
+    monkeypatch.setattr("rfdetr.export.base.write_metadata", lambda *_args, **_kwargs: None)
+
+
 @contextmanager
 def ignore_tracer_warnings() -> Iterator[None]:
     """Suppress torch.jit.TracerWarning during export tests to reduce log spam."""
@@ -84,6 +98,50 @@ class _DummyCoreModel:
         if self._segmentation_head:
             out["pred_masks"] = torch.zeros(1, 1, 2, 2)
         return out
+
+
+def _make_export_model(
+    *,
+    core_model: _DummyCoreModel | None = None,
+    segmentation_head: bool = False,
+    device: str = "cpu",
+    resolution: int = 14,
+    patch_size: int = 14,
+    num_windows: int = 1,
+    size: str | None = None,
+) -> types.SimpleNamespace:
+    """Build an RFDETR export double with a valid detection or segmentation prediction contract.
+
+    Examples:
+        >>> model = _make_export_model(segmentation_head=True)
+        >>> model.class_names, model.model.postprocess.num_select
+        (['object'], 1)
+    """
+    return types.SimpleNamespace(
+        model=types.SimpleNamespace(
+            model=core_model or _DummyCoreModel(segmentation_head=segmentation_head),
+            device=device,
+            resolution=resolution,
+            postprocess=types.SimpleNamespace(
+                num_select=1,
+                trace_alpha=0.2,
+                upsample_masks_to_image_size=True,
+            ),
+        ),
+        model_config=types.SimpleNamespace(
+            segmentation_head=segmentation_head,
+            use_grouppose_keypoints=False,
+            num_channels=3,
+            num_classes=1,
+            num_keypoints_per_class=[],
+            patch_size=patch_size,
+            num_windows=num_windows,
+        ),
+        class_names=["object"],
+        means=[0.485, 0.456, 0.406],
+        stds=[0.229, 0.224, 0.225],
+        size=size,
+    )
 
 
 def _run_onnx_export(
@@ -376,17 +434,7 @@ def test_rfdetr_export_dynamic_batch_forwards_dynamic_axes(
 ) -> None:
     """`RFDETR.export(..., dynamic_batch=True)` must pass a non-None `dynamic_axes` dict to `export_onnx`;
     `dynamic_batch=False` must pass `None`."""
-    model = types.SimpleNamespace(
-        model=types.SimpleNamespace(
-            model=_DummyCoreModel(segmentation_head=segmentation_head), device="cpu", resolution=14
-        ),
-        model_config=types.SimpleNamespace(
-            segmentation_head=segmentation_head,
-            use_grouppose_keypoints=False,
-            num_channels=3,
-        ),
-        size=None,
-    )
+    model = _make_export_model(segmentation_head=segmentation_head)
 
     captured: dict = {}
 
@@ -452,11 +500,7 @@ def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace
         >>> m.model.device
         'cuda'
     """
-    return types.SimpleNamespace(
-        model=types.SimpleNamespace(model=_DeviceTrackingCoreModel(), device=device, resolution=14),
-        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
-        size=None,
-    )
+    return _make_export_model(core_model=_DeviceTrackingCoreModel(), device=device)
 
 
 def _make_mock_infer_tensor() -> MagicMock:
@@ -521,11 +565,7 @@ def test_rfdetr_export_warns_when_max_batch_size_used_without_tensorrt(
     `format="onnx"` with `dynamic_batch=True` accepts a dynamic batch axis but has no optimization-profile concept for
     `max_batch_size` to tune, so passing it there previously vanished with no signal at all.
     """
-    model = types.SimpleNamespace(
-        model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
-        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
-        size=None,
-    )
+    model = _make_export_model()
     onnx_output = str(tmp_path / "inference_model.onnx")
 
     monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
@@ -682,11 +722,8 @@ def test_rfdetr_export_moves_the_live_model_under_the_device_move_lock(
     """
     core_model = _LockTrackingCoreModel()
     original_device = "meta"
-    model = types.SimpleNamespace(
-        model=types.SimpleNamespace(model=core_model, device=original_device, resolution=14),
-        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
-        size=None,
-    )
+    model = _make_export_model(resolution=14, patch_size=14, num_windows=1, device=original_device)
+    model.model.model = core_model
 
     # Mock infer tensor (as in the TensorRT tests above): a real one cannot be copied off the "meta" device.
     monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
@@ -776,20 +813,10 @@ class TestExportPatchSize:
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path, patch_size: int, num_windows: int
     ) -> types.SimpleNamespace:
         """Build a minimal RFDETR-like namespace with controllable patch_size/num_windows."""
-        model = types.SimpleNamespace(
-            model=types.SimpleNamespace(
-                model=_DummyCoreModel(),
-                device="cpu",
-                resolution=patch_size * num_windows * 2,  # always valid
-            ),
-            model_config=types.SimpleNamespace(
-                segmentation_head=False,
-                use_grouppose_keypoints=False,
-                patch_size=patch_size,
-                num_windows=num_windows,
-                num_channels=3,
-            ),
-            size=None,
+        model = _make_export_model(
+            resolution=patch_size * num_windows * 2,
+            patch_size=patch_size,
+            num_windows=num_windows,
         )
 
         def _fake_make_infer_image(*_a, **_kw):
@@ -1019,15 +1046,7 @@ class TestExportOnnxVariantNaming:
         """
         captured: dict = {}
 
-        model = types.SimpleNamespace(
-            model=types.SimpleNamespace(model=_DummyCoreModel(), device="cpu", resolution=14),
-            model_config=types.SimpleNamespace(
-                segmentation_head=False,
-                use_grouppose_keypoints=False,
-                num_channels=3,
-            ),
-            size=size,
-        )
+        model = _make_export_model(size=size)
 
         def _fake_make_infer_image(*_args, **_kwargs):
             return torch.zeros(1, 3, 14, 14)
@@ -1202,7 +1221,14 @@ def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
     obj.model = MagicMock()
     obj.model.resolution = 32
     obj.model.device = "cpu"
+    obj.model.class_names = ["object"]
+    obj.model.args = types.SimpleNamespace(num_classes=1, num_keypoints_per_class=[])
+    obj.model.postprocess.num_select = 1
+    obj.model.postprocess.trace_alpha = 0.2
+    obj.model.postprocess.upsample_masks_to_image_size = True
     obj.model.model.to.return_value = obj.model.model
+    obj.means = [0.485, 0.456, 0.406]
+    obj.stds = [0.229, 0.224, 0.225]
     backbone = torch.nn.Identity()
     backbone.export = MagicMock()
     backbone.forward_export = MagicMock(return_value=([torch.zeros(1, 4, 2, 2)], None, None))
@@ -1214,6 +1240,8 @@ def test_public_export_preserves_backbone_marker_in_custom_tensorrt_name(
         patch_size=16,
         num_windows=1,
         num_channels=3,
+        num_classes=1,
+        num_keypoints_per_class=[],
         projector_scale=["P4"],
     )
     stem = "custom-backbone" if backbone_only else "custom"
@@ -1404,6 +1432,10 @@ def _stub_export_dependencies(
         stubs["rfdetr.export._tflite.exporter.TFLiteExporter.check_dependencies"] = MagicMock(return_value=None)
         stubs["rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx"] = MagicMock(
             return_value=tmp_path / "inference_model_fp32.tflite"
+        )
+        # A fake flatbuffer has no signature for the metadata publication step to inspect.
+        stubs["rfdetr.export._tflite.exporter.TFLiteExporter._metadata_for_artifact"] = MagicMock(
+            side_effect=lambda metadata, _path: metadata
         )
     for target, stub in stubs.items():
         monkeypatch.setattr(target, stub)

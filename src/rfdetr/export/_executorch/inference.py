@@ -13,7 +13,11 @@ Nothing decodes detections here, same division of responsibility as :mod:`rfdetr
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import torch
+
+from rfdetr.export._runtime.metadata import ExportMetadata
 
 
 def load_executorch_method(pte_path: str | Path, *, method_name: str = "forward") -> Any:
@@ -43,3 +47,32 @@ def load_executorch_method(pte_path: str | Path, *, method_name: str = "forward"
     from executorch.runtime import Runtime
 
     return Runtime.get().load_program(str(pte_path)).load_method(method_name)
+
+
+def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
+    """Load an ExecuTorch method with its embedded delegate policy."""
+    from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, _require_apple
+
+    delegate = (metadata.backend or "xnnpack").lower()
+    if delegate == "xnnpack":
+        if device not in {"auto", "cpu"}:
+            raise ValueError("ExecuTorch XNNPACK requires cpu or auto.")
+        target = "cpu"
+    elif delegate == "coreml":
+        _require_apple("ExecuTorch CoreML")
+        if device != "auto":
+            raise ValueError("ExecuTorch CoreML uses an embedded compute policy; request auto.")
+        target = "coreml"
+    elif delegate == "qnn":
+        if device not in {"auto", "qnn"}:
+            raise ValueError("ExecuTorch QNN requires auto or qnn.")
+        target = "qnn"
+    else:
+        raise ValueError(f"Unsupported ExecuTorch delegate {delegate!r}.")
+    session = load_executorch_method(path)
+
+    def execute(batch: torch.Tensor) -> list[Any]:
+        """Clone mutable input storage before each ExecuTorch call."""
+        return cast(list[Any], session.execute([torch.from_numpy(_input_array(batch, metadata)).clone()]))
+
+    return ExportRuntime("executorch", metadata, session, target, metadata.input_name, execute)

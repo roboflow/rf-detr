@@ -4,7 +4,22 @@ description: Run inference with exported RF-DETR ONNX models using ONNX Runtime.
 
 # ONNX Inference
 
-The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). Nothing is decoded inside the graph, so your inference code must apply sigmoid, exclude the checkpoint's background slot when it has one, and convert box format yourself.
+For the common prediction API, load the ONNX file with `RFDETRInference`. The exported graph itself returns raw tensors; the advanced ONNX Runtime example below shows how to run and decode those tensors directly.
+
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model.onnx")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This returns `supervision.Detections` for detection and segmentation models, or `supervision.KeyPoints` for keypoint models. See [Predict with RFDETRInference](index.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, batch behavior, and runtime settings.
+
+## Advanced: Run ONNX Runtime directly
+
+The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). The code below decodes those outputs. It keeps a NumPy reference path for callers who need direct runtime access.
 
 !!! warning "Match outputs by name, not by shape"
 

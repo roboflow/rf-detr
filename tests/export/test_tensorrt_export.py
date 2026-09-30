@@ -18,6 +18,7 @@ import importlib.util
 import re
 import sys
 import types
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -2182,6 +2183,68 @@ class TestTensorRTEndToEnd:
             assert got.shape == reference[name].shape
             diff = float(np.abs(got - reference[name]).max())
             assert diff < 1e-4, f"TRTInference {name} differs from polygraphy on the same engine: {diff}"
+
+    def test_public_prediction_waits_for_non_default_input_stream(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stream-free TensorRT launch reads normalized input only after its torch stream finishes."""
+        from supervision import Detections
+
+        from rfdetr import RFDETRInference
+
+        _, resolution, engine_path = trt_dynamic_engine
+        image = np.random.default_rng(42).integers(0, 256, (resolution, resolution, 3), dtype=np.uint8)
+        model = RFDETRInference(engine_path, device="cuda:0")
+        baseline = model.predict(image, threshold=0.0, include_source_image=False)
+        assert isinstance(baseline, Detections)
+        assert baseline.confidence is not None and baseline.class_id is not None
+        baseline_boxes = baseline.xyxy.copy()
+        baseline_scores = baseline.confidence.copy()
+        baseline_classes = baseline.class_id.copy()
+
+        producer = torch.cuda.Stream(device="cuda:0")
+        warm_image = image.copy()
+        warm_image[0, 0, 0] ^= 1
+        with torch.cuda.stream(producer):
+            model.predict(warm_image, threshold=0.0, include_source_image=False)
+        release = torch.cuda.Stream(device="cuda:0")
+        gate = torch.cuda.Event()
+        run_sync = tensorrt_inference.TRTInference.run_sync
+        engine_input_ready: list[bool] = []
+
+        def monitored_run(
+            self: tensorrt_inference.TRTInference, blob: Mapping[str, torch.Tensor]
+        ) -> dict[str, torch.Tensor]:
+            """Record whether input preparation finished before TensorRT executes.
+
+            Examples:
+                Requires a live CUDA TensorRT engine.
+                >>> monitored_run({})  # doctest: +SKIP
+            """
+            engine_input_ready.append(producer.query())
+            return run_sync(self, blob)
+
+        monkeypatch.setattr(tensorrt_inference.TRTInference, "run_sync", monitored_run)
+        with torch.cuda.stream(release):
+            torch.cuda._sleep(1_000_000_000)
+            gate.record()
+        with torch.cuda.stream(producer):
+            producer.wait_event(gate)
+            assert not producer.query(), "The producer stream must still be waiting before prediction."
+            actual = model.predict(image, threshold=0.0, include_source_image=False)
+
+        assert engine_input_ready == [True]
+
+        assert isinstance(actual, Detections)
+        assert actual.confidence is not None and actual.class_id is not None
+        np.testing.assert_array_equal(actual.class_id, baseline_classes)
+        np.testing.assert_allclose(actual.xyxy, baseline_boxes, atol=1e-4, rtol=0)
+        np.testing.assert_allclose(actual.confidence, baseline_scores, atol=1e-6, rtol=0)
+
+        later = model.predict(image, threshold=0.0, include_source_image=False)
+        assert isinstance(later, Detections)
+        np.testing.assert_allclose(later.xyxy, baseline_boxes, atol=1e-4, rtol=0)
+        np.testing.assert_array_equal(baseline.xyxy, baseline_boxes)
 
     def test_trt_inference_helper_refuses_a_batch_beyond_the_profile(
         self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]

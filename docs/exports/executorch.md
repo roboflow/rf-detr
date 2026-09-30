@@ -99,7 +99,18 @@ The `soc` parameter is required for QNN and must be a `QcomChipset` name matchin
 - **`dynamic_batch=True` is not supported.** The ExecuTorch runtime cannot resize RF-DETR's windowed-attention reshapes for a variable batch size. Export one `.pte` file per batch size instead (e.g. `batch_size=1` for single-image inference).
 - **QNN requires a source build.** The QNN backend is not available via the pip wheel; see the ExecuTorch documentation for source-build instructions against the QAIRT SDK.
 
-## ExecuTorch Inference Example
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-medium_xnnpack.pte")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This loads the `.pte` with ExecuTorch and returns the shared Supervision result types. See [Predict with RFDETRInference](index.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use the ExecuTorch runtime directly
 
 !!! warning "torch/executorch ABI compatibility"
 

@@ -3,17 +3,22 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""ModelContext and model-context builder for RF-DETR inference."""
+"""Public inference facade and model-context builder for RF-DETR."""
 
 from __future__ import annotations
 
-__all__ = ["ModelContext"]
+__all__ = ["ModelContext", "RFDETRInference"]
 
+import os
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import numpy as np
 import torch
+from PIL import Image
 
+from rfdetr._prediction import PredictionContext, predict
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
@@ -21,7 +26,135 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
+    from supervision import Detections, KeyPoints
+
     from rfdetr.config import ModelConfig
+    from rfdetr.detr import RFDETR
+
+
+class RFDETRInference:
+    """Predict with a live native model, checkpoint, or exported artifact.
+
+    This facade shares prediction behavior across native models and exported runtimes.
+    """
+
+    def __init__(
+        self,
+        source: RFDETR | str | os.PathLike[str],
+        *,
+        device: str = "auto",
+        metadata: dict[str, Any] | str | os.PathLike[str] | None = None,
+        trust_checkpoint: bool = False,
+    ) -> None:
+        """Create a prediction facade from native weights or an exported artifact.
+
+        Args:
+            source: A live RFDETR model or a checkpoint or exported artifact path.
+            device: Runtime device, or ``"auto"`` to inherit the source device.
+            metadata: Optional metadata for an exported artifact.
+            trust_checkpoint: Allow loading a checkpoint that contains custom Python objects.
+
+        Raises:
+            ValueError: If metadata or a device conflicts with a native source.
+
+        Native device selection uses exact ``torch.device`` matching. For example,
+        ``"cuda"`` and ``"cuda:0"`` are different explicit device values.
+        """
+        # Keep RFDETR imports local because detr imports ModelContext from this module.
+        from rfdetr.detr import RFDETR
+
+        self._native_model: RFDETR | None = None
+        self._export_context: PredictionContext | None = None
+        if isinstance(source, RFDETR):
+            self._set_native_model(source, device, metadata)
+            return
+
+        path = Path(source)
+        if path.suffix.lower() in {".pt", ".pth", ".ckpt"}:
+            if metadata is not None:
+                raise ValueError("metadata is only valid for exported artifacts.")
+            checkpoint_options: dict[str, Any] = {"trust_checkpoint": trust_checkpoint}
+            if device != "auto":
+                checkpoint_options["device"] = device
+            native_model = RFDETR.from_checkpoint(path, **checkpoint_options)
+            self._set_native_model(native_model, device, None)
+            return
+
+        from rfdetr.export._runtime.context import load_exported_context
+
+        self._export_context = load_exported_context(path, device=device, metadata=metadata)
+
+    def _set_native_model(
+        self,
+        native_model: RFDETR,
+        device: str,
+        metadata: dict[str, Any] | str | os.PathLike[str] | None,
+    ) -> None:
+        """Store a native model after validating facade-only arguments."""
+        if metadata is not None:
+            raise ValueError("metadata is only valid for exported artifacts.")
+        model_device = native_model.model.device
+        if device != "auto" and torch.device(device) != model_device:
+            raise ValueError(f"The live model uses device {model_device}, but device={device!r} was requested.")
+        self._native_model = native_model
+
+    def _prediction_context(self) -> PredictionContext:
+        """Build a fresh context for prediction or return the loaded export context."""
+        if self._native_model is not None:
+            return self._native_model._prediction_context()
+        assert self._export_context is not None
+        return self._export_context
+
+    @property
+    def class_names(self) -> list[str]:
+        """Return a copy of the source class names."""
+        if self._native_model is not None:
+            return self._native_model.class_names
+        return list(self._prediction_context().class_names)
+
+    @property
+    def runtime_info(self) -> dict[str, Any]:
+        """Return the runtime and device policy for the source."""
+        if self._native_model is not None:
+            return {"backend": "pytorch", "device": str(self._native_model.model.device)}
+        return dict(self._prediction_context().runtime_info)
+
+    @torch.inference_mode()
+    def predict(
+        self,
+        images: str
+        | Image.Image
+        | np.ndarray[Any, Any]
+        | torch.Tensor
+        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        **kwargs: Any,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
+        """Run prediction with the shared native and exported inference pipeline.
+
+        Args:
+            images: One image or a batch of images accepted by RF-DETR prediction.
+            threshold: Minimum confidence score for a prediction.
+            shape: Optional input height and width.
+            patch_size: Optional patch size used for shape validation.
+            include_source_image: Include each source image in prediction metadata.
+            **kwargs: Additional options accepted by the shared prediction pipeline.
+
+        Returns:
+            A Supervision prediction object or a list of prediction objects.
+        """
+        return predict(
+            self._prediction_context(),
+            images,
+            threshold=threshold,
+            shape=shape,
+            patch_size=patch_size,
+            include_source_image=include_source_image,
+            **kwargs,
+        )
 
 
 class ModelContext:

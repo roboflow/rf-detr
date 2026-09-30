@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Final, Generic, TypeVar, cast
 
 from rfdetr.export._backend import _switch_to_export_mode
+from rfdetr.export._runtime.metadata import ExportMetadata, write_metadata
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.export.registry import require_entry
 from rfdetr.utilities.logger import get_logger
@@ -379,8 +380,19 @@ class Exporter(ABC, Generic[_ConfigT]):
         # switch is idempotent so a two-stage format composing another exporter stays safe.
         _switch_to_export_mode(graph.model)
         path = Path(self._convert(graph))
+        if graph.metadata is not None and graph.metadata.format == self.format:
+            for artifact in self._metadata_artifacts(path):
+                write_metadata(artifact, self._metadata_for_artifact(graph.metadata, artifact))
         logger.info(f"Successfully exported {self.display_name or self.format} model to: {path}")
         return path
+
+    def _metadata_artifacts(self, path: Path) -> tuple[Path, ...]:
+        """List final artifacts that need their own inference metadata."""
+        return (path,)
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Return metadata unchanged unless the format overrides the graph interface."""
+        return metadata
 
     @abstractmethod
     def _convert(self, graph: ExportGraph) -> Path | str:
