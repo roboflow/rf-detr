@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-29T18:30:15">
+  <meta property="article:modified_time" content="2026-09-30T17:28:15">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-29T18:30:15",
+    "dateModified": "2026-09-30T17:28:15",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3219,40 +3219,48 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </thead>
 <tbody>
 <tr>
-<td>NVIDIA L4</td>
+<td>NVIDIA L4 (pkg <code>inference-models</code>)</td>
 <td>TensorRT via <code>inference-models</code> (managed engine, auto precision)</td>
-<td>4.91 ± 0.14</td>
-<td>203.5</td>
+<td>3.41 ± 0.06</td>
+<td>293.5</td>
+<td>19.88 ms / 50.3 FPS</td>
+<td><a href="../cookbooks/export-cuda/">CUDA</a></td>
+</tr>
+<tr>
+<td>NVIDIA L4 (plain <code>rfdetr</code>)</td>
+<td>TensorRT raw <code>.trt</code> engine (<code>TRTInference</code>, fp16, no extra pkg)</td>
+<td>9.82 ± 0.34</td>
+<td>101.8</td>
 <td>19.88 ms / 50.3 FPS</td>
 <td><a href="../cookbooks/export-cuda/">CUDA</a></td>
 </tr>
 <tr>
 <td>Apple M-series (ANE/GPU)</td>
-<td>Core AI fp16</td>
-<td>11.45 ± 0.18</td>
-<td>87.3</td>
-<td>22.62 ms / 44.2 FPS</td>
+<td>CoreML fp32 (default)</td>
+<td>11.57 ± 0.28</td>
+<td>86.5</td>
+<td>24.12 ms / 41.5 FPS</td>
 <td><a href="../cookbooks/export-apple/">Apple</a></td>
 </tr>
 <tr>
 <td>x86 CPU (4 cores)</td>
 <td>OpenVINO fp32 IR</td>
-<td>311.92 ± 46.04</td>
-<td>3.2</td>
-<td>345.76 ms / 2.9 FPS</td>
+<td>357.47 ± 56.88</td>
+<td>2.8</td>
+<td>377.34 ms / 2.7 FPS</td>
 <td><a href="../cookbooks/export-cpu/">CPU</a></td>
 </tr>
 <tr>
 <td>ARM CPU (edge proxy)</td>
-<td>ExecuTorch XNNPACK</td>
-<td>87.33 ± 1.13</td>
-<td>11.5</td>
-<td>—</td>
+<td>ExecuTorch XNNPACK, fp32</td>
+<td>80.74 ± 1.90</td>
+<td>12.4</td>
+<td>54.54 ms / 18.3 FPS</td>
 <td><a href="../cookbooks/export-mobile/">Mobile</a></td>
 </tr>
 </tbody>
 </table>
-<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare <em>within</em> a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 12–17% of the mean — on that machine no CPU format separates from the others by more than one standard deviation. The <code>inference-models</code> call in the L4 row selects and loads a separate prebuilt TensorRT engine package; the <code>.trt</code> file <code>model.export(format="trt")</code> writes is a standalone artifact this table does not time — see the <a href="../cookbooks/export-cuda/#6-tensorrt">CUDA cookbook</a>.</p>
+<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare <em>within</em> a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 15–20% of the mean — on that machine no CPU format separates from the others by more than one standard deviation. <strong>Two L4 rows, on purpose</strong>: the first goes through <code>inference-models</code>, a separate package that selects and loads its own prebuilt TensorRT engine; the second times the <code>.trt</code> file <code>model.export(format="trt")</code> itself writes, loaded directly with <code>rfdetr</code>'s own <code>TRTInference</code> reference runtime — no extra package beyond <code>rfdetr[tensorrt]</code>. Both are real end-to-end numbers on the same L4 — see the <a href="../cookbooks/export-cuda/#6-tensorrt">CUDA cookbook</a> for the full table and the open gap against Roboflow's own product-page number.</p>
 <div class="admonition note">
 <p class="admonition-title">Which latency number is this?</p>
 <p>RF-DETR latency appears on three different pages, and they are three different measurements:</p>
@@ -3613,7 +3621,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 18:30:15 UTC">2026-09-29 18:30:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 17:28:15 UTC">2026-09-30 17:28:15</span>
   </span>
 
     
