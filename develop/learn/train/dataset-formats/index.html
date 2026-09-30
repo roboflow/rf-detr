@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-30T22:01:46">
+  <meta property="article:modified_time" content="2026-09-30T22:57:19">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-30T22:01:46",
+    "dateModified": "2026-09-30T22:57:19",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3789,7 +3789,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">1</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dog</span>
 </span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">2</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bird</span>
 </span></code></pre></div>
-<p>Both formats are supported.</p>
+<p>Both formats are supported. Dictionary keys may be integers or quoted numeric strings (for example, <code>"0"</code>). Class IDs must be unique after numeric conversion and form a contiguous range starting at <code>0</code>; names are ordered by numeric ID.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Zero-padded numeric keys in the dictionary format</p>
+<p>Two-digit zero padding (e.g. <code>08</code>) works correctly, but three-digit-or-more zero padding does not: under YAML 1.1, an unquoted key like <code>010</code> is parsed as the octal integer 8, colliding with <code>008</code>. Quote such keys (<code>"010"</code>) or drop the leading-zero padding (<code>10</code>) to avoid this.</p>
 </div>
 <h3 id="label-file-format">Label File Format<a class="headerlink" href="#label-file-format" title="Permanent link">&para;</a></h3>
 <p>Each image has a corresponding <code>.txt</code> file in the <code>labels/</code> directory with the same base name. Each line in the label file represents one object:</p>
@@ -4104,7 +4108,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 22:01:46 UTC">2026-09-30 22:01:46</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 22:57:19 UTC">2026-09-30 22:57:19</span>
   </span>
 
     
