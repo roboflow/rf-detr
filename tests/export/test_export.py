@@ -645,6 +645,47 @@ def test_rfdetr_export_moves_the_live_model_under_the_device_move_lock(
     )
 
 
+def test_rfdetr_export_warns_when_trt_metadata_used_without_tensorrt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`trt_metadata=True` outside `format="tensorrt"` is ignored and must warn rather than silently no-op."""
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    with pytest.warns(UserWarning, match=r"`trt_metadata`.*ignored"):
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="onnx", trt_metadata=True, shape=(14, 14))
+
+
+def test_rfdetr_export_tensorrt_forwards_trt_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`RFDETR.export(format="tensorrt", trt_metadata=True)` sets it on the exporter's configuration, unwarned."""
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
+    monkeypatch.setattr("rfdetr.export._tensorrt.exporter.TensorRTExporter._write_metadata", lambda *_a, **_kw: None)
+
+    with (
+        patch.object(
+            TensorRTExporter, "build_engine", autospec=True, return_value=str(tmp_path / "inference_model.trt")
+        ) as build_engine,
+        warnings.catch_warnings(),
+    ):
+        warnings.simplefilter("error", UserWarning)
+        _detr_module.RFDETR.export(
+            model, output_dir=str(tmp_path), format="tensorrt", trt_metadata=True, shape=(14, 14)
+        )
+
+    assert build_engine.call_args.args[0].config.metadata is True
+
+
 def test_rfdetr_export_tensorrt_dynamic_batch_requires_max_batch_size(tmp_path: Path) -> None:
     """`RFDETR.export(format="tensorrt", dynamic_batch=True)` without `max_batch_size` must raise.
 

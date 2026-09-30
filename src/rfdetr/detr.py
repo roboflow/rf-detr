@@ -1891,6 +1891,7 @@ class RFDETR:
         soc: str | None = None,
         fp16: bool = True,
         max_batch_size: int | None = None,
+        trt_metadata: bool = False,
         notes: object = None,
         coreml_precision: str | None = None,
         coreai_precision: str | None = None,
@@ -2023,6 +2024,12 @@ class RFDETR:
                 one optimization profile spanning batch ``1 .. max_batch_size`` and tuned for *batch_size*
                 (``batch_size <= max_batch_size``).  Ignored for every other format or combination; passing a
                 non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
+            trt_metadata: Also write ``<engine>.json`` beside a ``format="tensorrt"`` engine, so a consumer that does
+                not import the model (a C++ service, Triton, DeepStream) can learn the engine's input size and
+                normalization, output names, batch profile, the precision actually built, and the TensorRT version and
+                GPU it was built on.  A ``.trt`` file has no slot for this.  It does not record class names.
+                ``False`` (default) writes no description.  Ignored for every other format; ``True`` there emits a
+                ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -2079,6 +2086,7 @@ class RFDETR:
                 ``format="tflite"``, is not one of their accepted values; if ``notes`` holds a non-finite float or a
                 circular reference, for a format that embeds it; or if ``format="tensorrt"`` with
                 ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+                Also raised for ``format="tensorrt"`` when ``trt_metadata`` is not a ``bool``.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, or ``format="litert"`` — those paths require a fixed
@@ -2100,6 +2108,7 @@ class RFDETR:
                 missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
+            OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.
         """
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
@@ -2119,6 +2128,12 @@ class RFDETR:
             warnings.warn(
                 f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
                 f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if trt_metadata and format != "tensorrt":
+            warnings.warn(
+                f"`trt_metadata` is only used for format='tensorrt' (got format={format!r}). This argument is ignored.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -2165,6 +2180,7 @@ class RFDETR:
             max_images=max_images,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
+            trt_metadata=trt_metadata,
         )
         # Constructing the exporter validates the format's own settings (precision, quantization, notes, ...), then
         # warns about the ones it ignores.

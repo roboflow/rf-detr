@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `RFDETR.export(format="tensorrt", trt_metadata=True)` writes `<engine>.json` next to the engine. It lists what a program needs to run the engine without importing the model: the input name, size, layout and normalization (RGB order, divide by 255, mean and std, and the resize method), the output names in order, the batch profile (static size or dynamic min/opt/max), the precision actually built, the opset, the TensorRT version and GPU, and `notes`. A `.trt` file has no slot for this, so a C++, Triton or DeepStream consumer had to be told by hand, and `notes` only reached the intermediate ONNX. The file is written atomically and gets the engine's permission bits and group. When the option is off, an earlier description with the same name is reported with a warning, never deleted. Class names and the background slot are not recorded yet. Off by default; other formats warn and ignore it. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
 ### Changed
 
 - `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
