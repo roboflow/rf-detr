@@ -279,6 +279,7 @@ class SegmentationHead(nn.Module):
         spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         mask_logits = []
+        # Both branches below contract with einsum; forward_export writes the same math as a MatMul for CoreML.
         if not skip_blocks:
             for block, qf in zip(self.blocks, query_features):
                 spatial_features = block(spatial_features)
@@ -358,7 +359,12 @@ class SegmentationHead(nn.Module):
         spatial_features_proj = self.spatial_features_proj(spatial_features)
 
         qf = self.query_features_proj(self.query_features_block(query_features[0]))
-        return [torch.einsum("bchw,bnc->bnhw", spatial_features_proj, qf) + self.bias]
+        # Same contraction as einsum("bchw,bnc->bnhw") in forward, written as a MatMul: ONNX Runtime's CoreML
+        # provider has no Einsum support, so an exported Einsum runs on the CPU between two CoreML partitions.
+        batch_size, num_queries = qf.shape[:2]
+        height, width = spatial_features_proj.shape[-2:]
+        mask_logits = torch.matmul(qf, spatial_features_proj.flatten(2)).view(batch_size, num_queries, height, width)
+        return [mask_logits + self.bias]
 
 
 def point_sample(input: Tensor, point_coords: Tensor, **kwargs: Any) -> Tensor:
