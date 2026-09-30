@@ -2861,56 +2861,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;clip_gradients
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" clip_gradients">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;optimizer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_val
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_algorithm
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4445,56 +4395,6 @@
       
     </span>
   </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;clip_gradients
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label=" clip_gradients">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;optimizer
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_val
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;gradient_clip_algorithm
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
@@ -6257,91 +6157,6 @@ other names can be loaded from <code>pytorch-optimizer</code>.</p>
 <div class="doc doc-object doc-function">
 
 
-<h3 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">clip_gradients</span><span class="p">(</span><span class="n">optimizer</span><span class="p">,</span> <span class="n">gradient_clip_val</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gradient_clip_algorithm</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
-
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients" class="headerlink" title="Permanent link">&para;</a></h3>
-
-
-    <div class="doc doc-contents ">
-
-        <p>Override PTL gradient clipping to support fused AdamW.</p>
-<p>PTL's AMP precision plugin refuses to clip gradients when the optimizer declares it handles unscaling internally
-(fused=True).  When fused is active we are on BF16 (no GradScaler) so <code>clip_grad_norm_</code> is correct.  For the
-non-fused path (FP16 + GradScaler or FP32) we delegate to <code>super()</code> to preserve scaler-aware unscaling.</p>
-
-
-<p><span class="doc-section-title">Parameters:</span></p>
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Type</th>
-          <th>Description</th>
-          <th>Default</th>
-        </tr>
-      </thead>
-      <tbody>
-          <tr class="doc-section-item">
-            <td>
-<h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="doc doc-heading doc-heading-parameter">                  <code>optimizer</code>
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(optimizer)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
-            <td>
-                  <code><span title="torch.optim.Optimizer">Optimizer</span> | <span title="pytorch_lightning.core.optimizer.LightningOptimizer">LightningOptimizer</span></code>
-            </td>
-            <td>
-              <div class="doc-md-description">
-                <p>The current optimizer.</p>
-              </div>
-            </td>
-            <td>
-                <em>required</em>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td>
-<h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_val</code>
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_val)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
-            <td>
-                  <code><span title="float">float</span> | None</code>
-            </td>
-            <td>
-              <div class="doc-md-description">
-                <p>Maximum gradient norm.</p>
-              </div>
-            </td>
-            <td>
-                  <code>None</code>
-            </td>
-          </tr>
-          <tr class="doc-section-item">
-            <td>
-<h4 id="rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="doc doc-heading doc-heading-parameter">                  <code>gradient_clip_algorithm</code>
-<a href="#rfdetr.training.module_model.RFDETRModelModule.clip_gradients(gradient_clip_algorithm)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
-            <td>
-                  <code><span title="str">str</span> | None</code>
-            </td>
-            <td>
-              <div class="doc-md-description">
-                <p>Clipping algorithm; forwarded to super()
-for the non-fused path.</p>
-              </div>
-            </td>
-            <td>
-                  <code>None</code>
-            </td>
-          </tr>
-      </tbody>
-    </table>
-
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
 <h3 id="rfdetr.training.module_model.RFDETRModelModule.on_load_checkpoint" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">on_load_checkpoint</span><span class="p">(</span><span class="n">checkpoint</span><span class="p">)</span></code>
 
@@ -7832,6 +7647,13 @@ model can distribute rates across ViT encoder layers.</p>
 </ul>
 <p>For segmentation models (<code>segmentation=True</code>) additional metrics <code>val/segm_mAP_50_95</code> and <code>val/segm_mAP_50</code>
 are logged.</p>
+<p>In mAP, crowd regions (<code>iscrowd=1</code>) are scored as in pycocotools: a detection on one is ignored, not counted as a
+false positive. <code>ConvertCoco</code> drops them from the dataset targets so training never matches them; for validation
+and test the callback reads them back from the split's COCO API (by <code>image_id</code>) and appends them to the metric
+ground truth as <code>iscrowd=1</code> rows. The macro-F1 sweep sees the same rows but matches them by union IoU, so it
+ignores a detection only when its IoU with the crowd is at least 0.5. Datasets without a COCO API (webdataset
+shards) get no crowd rows. Train-split metrics (<code>compute_train_metrics</code>) are computed on augmented images, where
+annotation-file geometry no longer applies, and get none either.</p>
 
 
 <p><span class="doc-section-title">Parameters:</span></p>
