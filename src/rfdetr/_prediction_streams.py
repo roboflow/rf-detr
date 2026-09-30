@@ -11,8 +11,8 @@ from math import isfinite
 from threading import Condition, Event, Thread
 from time import monotonic
 from typing import Any
+from urllib.parse import urlparse
 
-import cv2
 import numpy as np
 
 
@@ -21,7 +21,22 @@ class _LiveCapture:
 
     def __init__(self, source: str | int, vid_stride: int, stream_buffer: bool) -> None:
         """Read an initial frame before starting background capture."""
+        try:
+            import cv2
+        except ImportError as error:
+            raise ImportError(
+                'Live prediction requires OpenCV. Install it with `uv pip install "rfdetr[stream]"`.'
+            ) from error
+
         self.source = source
+        self.network = isinstance(source, str) and urlparse(source).scheme.lower() in {
+            "http",
+            "https",
+            "rtsp",
+            "rtsps",
+            "rtmp",
+            "tcp",
+        }
         self.vid_stride = vid_stride
         self.stream_buffer = stream_buffer
         self.frames: deque[np.ndarray[Any, Any]] = deque()
@@ -31,7 +46,7 @@ class _LiveCapture:
         self.finished = False
         self.capture = (
             cv2.VideoCapture(source)
-            if isinstance(source, int)
+            if not self.network
             else cv2.VideoCapture(
                 source,
                 cv2.CAP_ANY,
@@ -45,12 +60,7 @@ class _LiveCapture:
             if not success:
                 raise ValueError("Could not read the first frame from the live video source.")
             frame_count = self.capture.get(cv2.CAP_PROP_FRAME_COUNT)
-            self.frame_count = (
-                int(frame_count)
-                if isinstance(frame_count, (int, float)) and isfinite(frame_count) and frame_count > 0
-                else None
-            )
-            self.frames_read = 1
+            self.finite = isinstance(frame_count, (int, float)) and isfinite(frame_count) and frame_count > 0
             self.first: np.ndarray[Any, Any] | None = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         except BaseException:
             self.capture.release()
@@ -64,6 +74,8 @@ class _LiveCapture:
 
     def _run(self) -> None:
         """Capture frames until closed, reconnecting after transient read failures."""
+        import cv2  # Loaded at the optional dependency boundary in __init__.
+
         failures = 0
         try:
             while not self.stop.is_set():
@@ -74,22 +86,20 @@ class _LiveCapture:
                 success = False
                 frame = None
                 for _ in range(self.vid_stride):
-                    if self.frame_count is not None and self.frames_read >= self.frame_count:
-                        return
                     success, frame = self.capture.read()
-                    if success:
-                        self.frames_read += 1
                     if not success or self.stop.is_set():
                         break
                 if self.stop.is_set():
                     break
                 if not success or frame is None:
+                    if self.finite:
+                        return
                     failures += 1
                     if failures > 3:
                         raise RuntimeError("Live video source failed after three reconnect attempts.")
                     if self.stop.wait(0.1):
                         break
-                    if isinstance(self.source, int):
+                    if not self.network:
                         self.capture.open(self.source)
                     else:
                         self.capture.open(

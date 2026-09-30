@@ -26,6 +26,13 @@ if TYPE_CHECKING:
 class TestPredictSources:
     """Exercise source inputs through the public prediction API."""
 
+    def test_prediction_input_has_public_import(self) -> None:
+        """Wrappers can annotate prediction inputs without private imports."""
+        from rfdetr import PredictionInput
+        from rfdetr.prediction import PredictionInput as PublicPredictionInput
+
+        assert PredictionInput is PublicPredictionInput
+
     def test_directory_batches_flush_partial_batch(self, tmp_path: Path) -> None:
         """Batch inference preserves source order and emits the final partial batch."""
         for index in range(5):
@@ -114,7 +121,9 @@ class TestPredictSources:
         """A real video yields RGB predictions in frame order."""
         path = tmp_path / "frames.avi"
         writer = cv2.VideoWriter(str(path), cv2.VideoWriter.fourcc(*"MJPG"), 5, (32, 24))
-        assert writer.isOpened()
+        if not writer.isOpened():
+            writer.release()
+            pytest.skip("The OpenCV build has no MJPG encoder.")
         try:
             writer.write(np.full((24, 32, 3), (0, 0, 255), dtype=np.uint8))
             writer.write(np.full((24, 32, 3), (255, 0, 0), dtype=np.uint8))
@@ -140,7 +149,7 @@ class TestPredictSources:
             "rtsps://camera.example/live",
             "rtmp://camera.example/live",
             "tcp://camera.example/live",
-            "http://camera.example/live",
+            "http://camera.example/live.mjpg",
         ],
     )
     def test_live_capture_is_lazy_and_closes_on_early_exit(self, source: int | str) -> None:
@@ -162,14 +171,15 @@ class TestPredictSources:
 
         capture.release.assert_called_once()
 
-    def test_writable_uint8_source_image_is_retained_by_reference(self) -> None:
-        """Source metadata does not duplicate the caller's writable RGB array."""
+    def test_source_image_mutation_does_not_modify_input(self) -> None:
+        """Annotating retained source pixels must not modify the caller's image."""
         image = np.full((24, 32, 3), 127, dtype=np.uint8)
 
         result = _DummyRFDETR().predict(image)
 
         assert isinstance(result, sv.Detections)
-        assert result.metadata["source_image"] is image
+        result.metadata["source_image"][:] = 0
+        np.testing.assert_array_equal(image, np.full((24, 32, 3), 127, dtype=np.uint8))
 
     @pytest.mark.parametrize("source", [0, "rtsp://camera.example/live"])
     def test_eager_live_capture_warns_before_opening(self, source: int | str) -> None:
