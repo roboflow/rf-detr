@@ -1009,6 +1009,110 @@ class TestPredictUint8Conversion:
         to_tensor_spy.assert_called_once_with(image)
 
 
+class TestPredictNegativeStrideNumpy:
+    """``predict()`` must accept NumPy views with negative strides, such as the documented ``frame[:, :, ::-1]``.
+
+    ``torch.from_numpy`` rejects negative strides, and both the fused uint8 conversion and the ``F.to_tensor`` fallback
+    go through it. A flipped view must reach the model as exactly the tensor its contiguous copy produces.
+    """
+
+    @staticmethod
+    def _predict_batch(
+        model: RFDETR, image: np.ndarray[Any, Any], include_source_image: bool
+    ) -> tuple[torch.Tensor, sv.Detections]:
+        """Run ``predict()`` once and return the normalized batch that reached the model, plus the detections.
+
+        Args:
+            model: Weight-free model whose ``model.model.model`` is an ``nn.Module``.
+            image: The single NumPy image handed to ``predict()``.
+            include_source_image: Forwarded to ``predict()``.
+
+        Returns:
+            The captured ``(1, C, H, W)`` batch and the returned detections.
+        """
+        batches: list[torch.Tensor] = []
+
+        def capture_model_input(_module: torch.nn.Module, args: tuple[torch.Tensor, ...]) -> None:
+            """Capture the normalized batch delivered to the model boundary.
+
+            Examples:
+                This test-local closure requires the enclosing capture list.
+                >>> capture_model_input(torch.nn.Identity(), (torch.zeros(1, 3, 28, 28),))  # doctest: +SKIP
+            """
+            batches.append(args[0].detach().clone())
+
+        model_module = model.model.model
+        assert model_module is not None
+        with model_module.register_forward_pre_hook(capture_model_input):
+            detections = model.predict(image, include_source_image=include_source_image)
+
+        assert len(batches) == 1, f"expected one forward call, got {len(batches)}"
+        return batches[0], detections
+
+    @pytest.mark.parametrize(
+        "include_source_image",
+        [pytest.param(True, id="with_source_image"), pytest.param(False, id="without_source_image")],
+    )
+    @pytest.mark.parametrize("dtype", [pytest.param(np.uint8, id="uint8"), pytest.param(np.float32, id="float32")])
+    def test_negative_stride_view_matches_contiguous_copy(
+        self, dtype: type[np.generic], include_source_image: bool
+    ) -> None:
+        """A negative-stride view feeds the model the same batch, and returns the same source image, as its copy."""
+        pixels = np.random.default_rng(20260925).integers(0, 256, size=(17, 29, 3), dtype=np.uint8)
+        image = pixels if dtype is np.uint8 else (pixels / 255).astype(dtype)
+        view = image[:, :, ::-1]  # the BGR-to-RGB idiom from docs/learn/pretrained.md
+        assert any(stride < 0 for stride in view.strides), f"test setup: expected a negative stride, got {view.strides}"
+        model = _DummyRFDETR()
+
+        unflipped, _ = self._predict_batch(model, image, include_source_image)
+        expected, expected_detections = self._predict_batch(model, np.ascontiguousarray(view), include_source_image)
+        actual, actual_detections = self._predict_batch(model, view, include_source_image)
+
+        assert not torch.equal(expected, unflipped), "test setup: the flip must change the model input"
+        assert torch.equal(actual, expected), (
+            "negative-stride view must reach the model exactly like its contiguous copy"
+        )
+        if include_source_image:
+            np.testing.assert_array_equal(
+                actual_detections.metadata["source_image"],
+                expected_detections.metadata["source_image"],
+                err_msg="source_image must hold the flipped pixels",
+            )
+
+    def test_uint8_view_converts_the_retained_source_image(self) -> None:
+        """``source_image`` is already a positive-stride copy of a uint8 view, so conversion reuses it instead of
+        copying the frame a second time."""
+        model = _DummyRFDETR()
+        view = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)[:, :, ::-1]
+
+        with patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy:
+            detections = model.predict(view)
+
+        converter_spy.assert_called_once()
+        assert converter_spy.call_args.args[0] is detections.metadata["source_image"]
+
+    @pytest.mark.parametrize(
+        "image",
+        [
+            pytest.param(np.zeros((17, 58, 3), dtype=np.uint8)[:, ::2], id="uint8_positive_step"),
+            pytest.param(np.zeros((17, 58, 3), dtype=np.float32)[:, ::2], id="float32_positive_step"),
+        ],
+    )
+    def test_non_negative_stride_views_are_converted_without_a_copy(self, image: np.ndarray[Any, Any]) -> None:
+        """Positive-step views still hand the caller's own array to the tensor conversion."""
+        model = _DummyRFDETR()
+
+        with (
+            patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy,
+            patch("rfdetr.detr.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
+        ):
+            model.predict(image)
+
+        converted = [call.args[0] for call in converter_spy.call_args_list + to_tensor_spy.call_args_list]
+        assert len(converted) == 1, f"expected one tensor conversion, got {len(converted)}"
+        assert converted[0] is image, "a view torch.from_numpy accepts must not be copied before conversion"
+
+
 class TestPredictPixelRangeValidation:
     """``predict()`` must still reject out-of-[0, 1]-range tensor inputs, now that the range check is deferred (see the
     ``pending_checks`` comment in ``detr.py``) instead of raised inline, per image, inside the conversion loop."""
