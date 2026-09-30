@@ -35,6 +35,7 @@ from rfdetr.export._executorch.exporter import (
     ExecuTorchExporter,
     _check_executorch_available,
 )
+from rfdetr.export._executorch.inference import load_executorch_method
 from rfdetr.export.prepare import ExportGraph
 from tests._online import is_online
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
@@ -1009,10 +1010,7 @@ class TestExecutorchEndToEnd:
     def test_forward_method_loads(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """The exported ``.pte`` must expose a loadable ``forward`` method (runtime metadata smoke check)."""
         _, _, pte_path, _ = exported
-        _check_executorch_available(require_runtime=True)
-        from executorch.runtime import Runtime
-
-        method = Runtime.get().load_program(str(pte_path)).load_method("forward")
+        method = load_executorch_method(pte_path)
         assert method is not None
 
     def test_output_shapes_and_dtypes_match(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
