@@ -48,6 +48,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+inference-models = [
+    "inference-models>=0.39,<0.40; python_version < '3.14'",
+    "onnx>=1.16.0,<2.0",
+]
 lora = [
     "peft",                            # LoRA backbone fine-tuning
 ]
@@ -355,6 +359,12 @@ conflicts = [
     [
         { group = "ci-executorch-pin" },
         { group = "typing" },
+    ],
+    # inference-models 0.39 requires setuptools>=83; the Torch 2.12 stack pinned for
+    # ExecuTorch requires setuptools<82, so these cannot share an environment.
+    [
+        { group = "ci-executorch-pin" },
+        { extra = "inference-models" },
     ],
     # litert-torch 0.9.x pins torch<2.14 in its own metadata; the typing group pins torch==2.14.0.
     [

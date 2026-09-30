@@ -621,6 +621,7 @@ class RFDETR:
         path: str | os.PathLike[str],
         *,
         device: str = "auto",
+        backend: str = "rfdetr",
         metadata: dict[str, Any] | str | os.PathLike[str] | None = None,
     ) -> RFDETRInference:
         """Load an exported artifact without constructing a native network.
@@ -628,6 +629,7 @@ class RFDETR:
         Args:
             path: Exported model file or bundle.
             device: Runtime device, or automatic selection with ``"auto"``.
+            backend: ``"rfdetr"`` for the shared pipeline, or ``"inference_models"`` for its complete pipeline.
             metadata: Missing legacy metadata as a mapping or JSON path.
 
         Returns:
@@ -637,12 +639,14 @@ class RFDETR:
             FileNotFoundError: If the artifact does not exist.
             ValueError: If metadata or the requested device is incompatible.
         """
+        if backend not in {"rfdetr", "inference_models"}:
+            raise ValueError(f"Unsupported prediction backend {backend!r}. Use rfdetr or inference_models.")
         artifact = Path(path)
         if not artifact.exists():
             raise FileNotFoundError(artifact)
         from rfdetr.export._runtime.context import load_exported_model
 
-        return load_exported_model(cls, artifact, device=device, metadata=metadata)
+        return load_exported_model(cls, artifact, device=device, metadata=metadata, backend=backend)
 
     @classmethod
     def from_checkpoint(cls, path: str | os.PathLike[str], *, trust_checkpoint: bool = False, **kwargs: Any) -> RFDETR:

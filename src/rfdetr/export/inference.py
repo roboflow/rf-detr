@@ -15,7 +15,7 @@ parity helpers.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import torch
@@ -26,27 +26,31 @@ if TYPE_CHECKING:
 
     from rfdetr.detr import RFDETR
     from rfdetr.export._openvino.inference import OpenVINOInference
+    from rfdetr.export._runtime.inference_models import InferenceModelsPredictor
 
 __all__ = ["OpenVINOInference", "RFDETRInference"]
 
 
 class RFDETRInference:
-    """Predict with an exported artifact through the shared RF-DETR pipeline.
+    """Predict with an exported artifact through its selected prediction backend.
 
     Create instances with ``RFDETR.from_export()`` or ``rfdetr.from_export()``. This class exposes prediction, labels,
     and runtime information. It does not expose training, evaluation, export, or native optimization.
     """
 
-    def __init__(self, predictor: RFDETR) -> None:
-        """Wrap an internal predictor that already has an exported runtime.
+    def __init__(self, predictor: RFDETR | InferenceModelsPredictor) -> None:
+        """Wrap a loaded prediction backend.
 
         Args:
-            predictor: The exported predictor built by the public factory.
+            predictor: The prediction backend built by the public factory.
 
         Raises:
             ValueError: If the predictor uses native weights.
         """
-        if predictor._exported_context is None:
+        # RFDETR imports this public wrapper, so resolve the type after module initialization.
+        from rfdetr.detr import RFDETR
+
+        if isinstance(predictor, RFDETR) and predictor._exported_context is None:
             raise ValueError("RFDETRInference requires an exported predictor. Use RFDETR.from_export().")
         self._predictor = predictor
 
@@ -73,7 +77,7 @@ class RFDETRInference:
         include_source_image: bool = True,
         **kwargs: Any,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
-        """Run exported inference with the input and result contract of ``RFDETR.predict``.
+        """Run the selected pipeline with the input and result contract of ``RFDETR.predict``.
 
         Args:
             images: One RGB image or a batch, using the same input formats as ``RFDETR.predict``.
@@ -86,13 +90,16 @@ class RFDETRInference:
         Returns:
             Detections or keypoints for each image. A batch input returns a list.
         """
-        return self._predictor.predict(
-            images,
-            threshold=threshold,
-            shape=shape,
-            patch_size=patch_size,
-            include_source_image=include_source_image,
-            **kwargs,
+        return cast(
+            "Detections | KeyPoints | list[Detections | KeyPoints]",
+            self._predictor.predict(
+                images,
+                threshold=threshold,
+                shape=shape,
+                patch_size=patch_size,
+                include_source_image=include_source_image,
+                **kwargs,
+            ),
         )
 
 

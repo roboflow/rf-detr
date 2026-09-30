@@ -372,26 +372,53 @@ jobs:
         continue-on-error: true
         run: uv cache prune --ci
 
+  inference-models-prediction:
+    name: inference-models prediction
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: inference-models-prediction-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Set up uv
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          python-version: "3.12"
+          activate-environment: true
+      - name: Install OpenCV system dependency
+        run: sudo apt-get update && sudo apt-get install -y libgl1
+      - name: Install prediction dependencies
+        run: uv pip install -e ".[inference-models]" "inference-models[onnx-cpu]>=0.39,<0.40" --group tests
+      - name: Verify runtime imports
+        run: uv run --no-sync python -c "import cv2, inference_models, onnxruntime"
+      - name: Test the public prediction backend
+        run: uv run --no-sync pytest tests/inference/test_inference_models_backend.py --timeout=240
+
   export-priority-guardian:
     runs-on: ubuntu-latest
     # export-parity is a single matrix job now (13 format/os/python rows, see above); GitHub sets
     # its overall `result` to failure if any row fails regardless of fail-fast, so one need covers
     # all 13 — the per-row breakdown lives in the Actions UI (each row's own check run), not here.
-    needs: [export-parity, tensorrt-parity]
+    needs: [export-parity, tensorrt-parity, inference-models-prediction]
     if: always()
     steps:
       - name: 📋 Display export job results
         run: |
           echo "export-parity:   ${{ needs.export-parity.result }}"
           echo "tensorrt-parity: ${{ needs.tensorrt-parity.result }}"
+          echo "inference-models-prediction: ${{ needs.inference-models-prediction.result }}"
       # Fail explicitly on any non-success result (failure, cancelled, or skipped) instead of
       # relying on timeout behavior, so a cancelled or skipped export job still blocks the gate.
       - name: ❌ Fail guardian unless every export job succeeded
         if: >-
           needs.export-parity.result != 'success' ||
-          needs.tensorrt-parity.result != 'success'
+          needs.tensorrt-parity.result != 'success' ||
+          needs.inference-models-prediction.result != 'success'
         run: |
           echo "One or more export jobs did not succeed; failing explicitly."
           exit 1
       - name: ✅ all export jobs succeeded
-        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnx; plus tensorrt) completed successfully."
+        run: echo "All export jobs (export-parity matrix - executorch, coreml, coreai, executorch+coreml, openvino, litert, onnx; plus tensorrt and inference-models prediction) completed successfully."

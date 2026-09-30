@@ -56,7 +56,43 @@ The loader accepts the TensorRT `.trt` extension and the `.engine` alias. Both T
 
 Use `device="auto"` to let the runtime select an available policy. An explicit device request must match the runtime and available hardware. For example, TensorRT requires CUDA. Core AI accepts `auto` or `cpu`; its GPU and Neural Engine options express a preference and cannot pin execution to that device. An incompatible request raises an error instead of switching devices. Install the runtime package for the chosen format on the target system. The format guides describe package and hardware limits.
 
-The wrapper currently runs preprocessing and postprocessing on the CPU and copies runtime outputs into owned tensors. The benchmarks below measure the existing per-runtime cookbook pipelines, not this wrapper.
+The default `backend="rfdetr"` runs preprocessing and postprocessing on the CPU and copies runtime outputs into owned tensors. The benchmarks below measure the existing per-runtime cookbook pipelines, not this wrapper.
+
+### Complete inference-models pipeline
+
+For detection exports in ONNX or TensorRT format, select `backend="inference_models"` to run its complete prediction pipeline:
+
+```python
+from rfdetr import RFDETR
+
+model = RFDETR.from_export(
+    "output/rfdetr-small.onnx",
+    backend="inference_models",
+    device="cuda:0",
+)
+detections = model.predict("image.jpg", threshold=0.5)
+print(model.runtime_info)
+```
+
+This backend requires `inference-models` 0.39.x and Python 3.10–3.13. Install the runtime extra for your hardware in the same environment:
+
+```bash
+# ONNX on CPU
+uv pip install "rfdetr[inference-models]" "inference-models[onnx-cpu]>=0.39,<0.40"
+
+# ONNX on CUDA
+uv pip install "rfdetr[inference-models]" "inference-models[onnx-cu12]>=0.39,<0.40"
+```
+
+For TensorRT, follow the [SDK's TensorRT installation instructions](https://inference-models.roboflow.com/getting-started/installation/) and build the engine with a compatible TensorRT version on the target GPU. The dependency loads only when selected. The `rfdetr[inference-models]` extra includes ONNX for metadata inspection; it does not select CPU or GPU runtime packages.
+
+This backend passes original RGB images to `inference_models.infer()`. That library performs resizing, normalization, execution, and postprocessing. RF-DETR adapts inputs and converts the results to `supervision.Detections`. It preserves class IDs, class names, single-image versus list returns, and source-image metadata. It validates the artifact's batch and input-shape limits before inference.
+
+The two backends can produce different coordinates and scores. `inference_models` uses its own resize rules and rounds box coordinates to pixels. Changing the backend does not guarantee identical numbers. Its selected optimizations can also depend on the installed version, hardware, and input type. Inspect `runtime_info` after prediction and measure the complete `predict()` call on your target hardware.
+
+The adapter supports detection exports with float32 input and output tensors. The exported query count must match `num_select`. ONNX weights must be stored inside the model file. TensorRT outputs must use the standard `dets` and `labels` names. Unsupported tasks, formats, and export settings raise an error.
+
+Set `include_source_image=False` when you do not need the original image in result metadata. Source capture can copy GPU tensors to the CPU. Conversion to `sv.Detections` still copies prediction results to the CPU.
 
 ## Measured Performance by Hardware
 

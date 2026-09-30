@@ -248,6 +248,12 @@ uv run twine check --strict dist/*
 - Inference metadata records the artifact interface and task semantics. ONNX embeds versioned metadata. Other formats use `<artifact-name>.rfdetr.json` beside the final artifact. Validate it against the actual interface; `metadata=` supplies a JSON path or mapping for older artifacts. Do not treat user `notes` as inference metadata or infer task and background placement from tensor rank.
 - `.trt` and `.engine` identify TensorRT engines. Both TFLite routes use `.tflite`, but onnx2tf uses NHWC and LiteRT uses NCHW; use metadata to select the layout. LiteRT cannot export full keypoint models. Reject backbone-only artifacts and native-only operations such as training, re-export, native optimization, and evaluation.
 
+**Exported Prediction:**
+
+- `RFDETR.from_export(..., backend="rfdetr")` retains the shared RF-DETR preprocessing and postprocessing pipeline.
+- `backend="inference_models"` selects the complete optional `inference_models` pipeline for ONNX/TensorRT detection. Dispatch before RF-DETR preprocessing; never route it through the raw-tensor runtime adapter.
+- Preserve the public `RFDETRInference.predict()` input/result contract at the adapter boundary. Keep the optional SDK import lazy and use its public package loader. Report its numerical differences and selected execution policy instead of claiming identical predictions or guaranteed acceleration.
+
 **Model Selection (examples, docs, CI, tests, defaults):**
 
 - **Default to `RFDETRSmall` / `"rfdetr-small"` in docs and examples.** Use it wherever an example needs a concrete detection model.

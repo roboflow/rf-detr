@@ -45,11 +45,16 @@ def load_exported_model(
     *,
     device: str,
     metadata: dict[str, Any] | str | os.PathLike[str] | None,
+    backend: str = "rfdetr",
 ) -> RFDETRInference:
     """Construct an inference-only wrapper from a validated artifact."""
     contract = read_metadata(path, Path(metadata) if isinstance(metadata, os.PathLike) else metadata)
     if cls.size is not None and cls.size != contract.variant:
         raise ValueError(f"{cls.__name__} requires variant {cls.size!r}, but artifact declares {contract.variant!r}.")
+    if backend == "inference_models":
+        from rfdetr.export._runtime.inference_models import InferenceModelsPredictor
+
+        return RFDETRInference(InferenceModelsPredictor(path, contract, device))
     runtime = load_runtime(path, contract, device=device)
     context = ExportedModelContext(
         metadata=contract,
