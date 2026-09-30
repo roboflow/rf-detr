@@ -2748,6 +2748,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p>Keypoint pipelines composed from <code>Sequential</code>, <code>OneOf</code>, and <code>SomeOf</code> Albumentations containers now swap paired joint identities only after an odd number of applied horizontal flips, including repeated selection by <code>SomeOf(replace=True)</code>. Trees containing any container type outside that recognised set -- programmatic containers such as <code>OneOrOther</code>, subclasses of the recognised container classes, and any other unknown container -- fall back to replay-based handling, which cannot distinguish repeated draws of the same child. (<a href="https://github.com/roboflow/rf-detr/pull/1569">#1569</a>)</p>
+</li>
+<li>
 <p>The segmentation head's depthwise convolution no longer leaves cuDNN disabled for the whole process when several threads run it at once. It wraps <code>F.conv2d</code> in <code>torch.backends.cudnn.flags(enabled=False)</code>, which saves the current value on entry and restores it on exit but is process-global and not thread-safe, so a second thread entering while the first was inside saved <code>False</code> and restored it last. After that every convolution in the process took the non-cuDNN path with no error or warning, and detections near the score threshold changed (24 instead of 25 on one real frame, with the flag as the only difference). The forward and backward scopes now share a lock, and a CPU input skips them entirely — ATen reads the flag only for a CUDA input, so the lock there only serialised independent convolutions. (<a href="https://github.com/roboflow/rf-detr/pull/1565">#1565</a>)</p>
 </li>
 <li>
