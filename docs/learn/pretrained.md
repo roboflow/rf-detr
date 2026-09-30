@@ -132,7 +132,7 @@ Set `vid_stride` to capture every Nth frame for prediction. It defaults to `1`. 
 
 Video, camera, network stream, and screen capture require `uv pip install "rfdetr[stream]"`. Use `screen` to capture the desktop. Add an optional monitor index, or a monitor index and crop rectangle. For example, use `screen 1 100 100 640 480`. YouTube page URLs also require this optional extra for `yt-dlp` URL resolution. Recorded YouTube videos end at the final frame. Live YouTube URLs continue as live sources.
 
-The generator closes its capture at the end, on error, or when you call `close()`. If an OpenCV backend blocks while it reads, capture cleanup waits for that read to return. Network read timeouts depend on backend support.
+The generator closes its capture at the end, on error, or when you call `close()`. If an OpenCV backend blocks while it reads, capture cleanup waits for that read to return. Network read timeouts depend on backend support. When a finite network stream stops, RF-DETR logs a warning because OpenCV cannot distinguish EOF from a read failure.
 
 OpenCV converts captured video frames from BGR to RGB before prediction.
 

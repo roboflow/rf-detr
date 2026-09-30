@@ -15,6 +15,10 @@ from urllib.parse import urlparse
 
 import numpy as np
 
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
 
 class _LiveCapture:
     """Own one capture and its bounded frame queue."""
@@ -93,6 +97,11 @@ class _LiveCapture:
                     break
                 if not success or frame is None:
                     if self.finite:
+                        if self.network:
+                            logger.warning(
+                                "Finite network stream stopped at end of file or a read failure. "
+                                "OpenCV cannot distinguish EOF from a timeout; results may be incomplete."
+                            )
                         return
                     failures += 1
                     if failures > 3:
