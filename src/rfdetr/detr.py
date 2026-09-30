@@ -281,6 +281,9 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
 
 #: Serialises the deferred weight move: overlapping in-place ``nn.Module.to()`` calls on one module race on the
 #: parameter storage and can leave corrupted weights behind without raising.
+#: Notebook DDP avoids inheriting this lock because ``build_trainer()`` in ``training/trainer.py`` replaces
+#: ``ddp_notebook`` with ``start_method="spawn"``. Forking while the lock is held leaves it locked in the child;
+#: before supporting fork-based model use, reset it with ``os.register_at_fork(after_in_child=...)``.
 _DEVICE_MOVE_LOCK = threading.Lock()
 
 
