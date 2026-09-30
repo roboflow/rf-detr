@@ -148,7 +148,7 @@ class TestBuildRoboflowFromYoloAugConfig:
             patch("rfdetr.datasets.yolo.Path") as mock_path,
             patch(f"rfdetr.datasets.yolo.{transform_fn}") as mock_transform,
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
-            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs", return_value=fake_dirs),
+            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs_with_notes", return_value=(fake_dirs, ())),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transform.return_value = MagicMock()
@@ -187,7 +187,7 @@ class TestBuildRoboflowFromYoloAugConfig:
             patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
-            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs", return_value=fake_dirs),
+            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs_with_notes", return_value=(fake_dirs, ())),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transform.return_value = MagicMock()
@@ -1105,7 +1105,7 @@ class TestResolveYoloSplitDirs:
             pytest.skip(f"cannot create symlinks in this environment: {exc}")
         data_file = root / "data.yaml"
         data_file.write_text("path: .\nval: val/images\nnames:\n  0: person\n", encoding="utf-8")
-        assert _parse_yaml_split_dirs(root, data_file, "val") is None
+        assert _parse_yaml_split_dirs(root, data_file, "val")[0] is None
 
     def test_nested_split_with_no_images_segment_resolves_via_subdirectories(self, tmp_path: Path) -> None:
         """A split path with no ``images`` segment under an images-named ancestor still resolves."""
@@ -1136,7 +1136,7 @@ class TestResolveYoloSplitDirs:
         (root / "labels" / "val").mkdir(parents=True)
         data_file = root / "data.yaml"
         data_file.write_text("path: .\nval: Images/val\nnames:\n  0: person\n", encoding="utf-8")
-        assert _parse_yaml_split_dirs(root, data_file, "val") is None
+        assert _parse_yaml_split_dirs(root, data_file, "val")[0] is None
 
     def test_bare_leaf_images_split_with_empty_tail(self, tmp_path: Path) -> None:
         """A split path that is itself a bare ``images`` leaf swaps with an empty tail."""
