@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 from PIL import Image
 
 from rfdetr.datasets import build_dataset, detect_roboflow_format
@@ -146,3 +147,50 @@ class TestYoloEntryPointFallbacks:
         assert not is_valid_yolo_dataset(str(root))
         with pytest.raises(ValueError, match="Could not detect dataset format"):
             detect_roboflow_format(root)
+
+    def test_empty_directory_reports_no_format(self, tmp_path: Path) -> None:
+        """Format detection raises a clear error on a directory with no COCO or YOLO markers.
+
+        A plain empty directory (no data.yaml/data.yml, no train images, no COCO annotation file) is the baseline
+        failure case; the only existing coverage of this ValueError goes through the path-traversal rejection instead.
+        """
+        with pytest.raises(ValueError, match="Could not detect dataset format"):
+            detect_roboflow_format(tmp_path)
+
+    @pytest.mark.parametrize("layout", ["images-first", "relative-path", "absolute-path"])
+    def test_train_only_yaml_layout_is_invalid(self, tmp_path: Path, layout: str) -> None:
+        """A train-only YAML-declared layout fails the class-discovery validity gate.
+
+        Only the legacy-layout train-only case was covered before; a YAML-declared train path (images-first, relative-
+        path, or absolute-path base) with no val/valid split must be rejected the same way, since building still
+        requires a resolvable val split.
+        """
+        base = tmp_path / "content" if layout in ("relative-path", "absolute-path") else tmp_path
+        config = "names: [person]\n"
+        if layout == "relative-path":
+            config += "path: content\n"
+        elif layout == "absolute-path":
+            config += f"path: {base.as_posix()}\n"
+        image_dir = base / "images" / "train"
+        label_dir = base / "labels" / "train"
+        config += "train: images/train\n"
+        image_dir.mkdir(parents=True)
+        label_dir.mkdir(parents=True)
+        Image.new("RGB", (8, 6), color="white").save(image_dir / "sample0.png")
+        (label_dir / "sample0.txt").write_text("0 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        (tmp_path / "data.yaml").write_text(config, encoding="utf-8")
+        assert not is_valid_yolo_dataset(str(tmp_path))
+
+    def test_malformed_yaml_class_discovery_raises(self, tmp_path: Path) -> None:
+        """Class-name loading surfaces the parse error instead of silently misreading names.
+
+        The legacy filesystem fallback tolerates malformed YAML for format detection and
+        validity (test_legacy_fallback), but class discovery still opens and parses the
+        same malformed file directly: it must not silently return the wrong names.
+        """
+        (tmp_path / "data.yaml").write_text("invalid: [", encoding="utf-8")
+        for split in ("train", "valid"):
+            for subdir in ("images", "labels"):
+                (tmp_path / split / subdir).mkdir(parents=True)
+        with pytest.raises(yaml.YAMLError):
+            RFDETR._load_classes(str(tmp_path))
