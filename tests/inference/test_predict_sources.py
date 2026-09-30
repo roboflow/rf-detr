@@ -7,7 +7,7 @@
 
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import cv2
@@ -25,6 +25,48 @@ if TYPE_CHECKING:
 
 class TestPredictSources:
     """Exercise source inputs through the public prediction API."""
+
+    def test_directory_batches_flush_partial_batch(self, tmp_path: Path) -> None:
+        """Batch inference preserves source order and emits the final partial batch."""
+        for index in range(5):
+            Image.new("RGB", (32, 24), color=(index, 0, 0)).save(tmp_path / f"{index}.png")
+        model = _DummyRFDETR()
+        sizes = []
+        assert model.model.model is not None
+        handle = model.model.model.register_forward_pre_hook(lambda module, args: sizes.append(len(args[0])))
+        try:
+            results = list(model.predict(tmp_path, stream=True, batch=2))
+        finally:
+            handle.remove()
+        assert sizes == [2, 2, 1]
+        assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == list(range(5))
+
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_bchw_tensor_preserves_order_and_rgb(self, stream: bool) -> None:
+        """BCHW tensors produce one result per RGB image."""
+        images = torch.zeros((2, 3, 24, 32))
+        images[0, 0] = 1
+        images[1, 2] = 1
+        predictions = _DummyRFDETR().predict(images, stream=stream, batch=2)
+        assert isinstance(predictions, (list, Generator))
+        results = list(predictions)
+        assert [cast(sv.Detections, result).metadata["source_image"][0, 0].tolist() for result in results] == [
+            [255, 0, 0],
+            [0, 0, 255],
+        ]
+
+    def test_video_stride_and_partial_batch(self, tmp_path: Path) -> None:
+        """Frame stride selects every Nth frame and retains a partial final batch."""
+        path = tmp_path / "frames.avi"
+        path.touch()
+        capture = MagicMock()
+        capture.read.side_effect = [(True, np.full((24, 32, 3), index, dtype=np.uint8)) for index in range(1, 8)] + [
+            (False, None)
+        ]
+        with patch("cv2.VideoCapture", return_value=capture):
+            results = list(_DummyRFDETR().predict(path, stream=True, vid_stride=2, batch=2))
+        assert [cast(sv.Detections, result).metadata["source_image"][0, 0, 0] for result in results] == [2, 4, 6]
+        capture.release.assert_called_once()
 
     def test_path_image_returns_single_prediction(self, tmp_path: Path) -> None:
         """A Path image has the same return type and pixels as a string path."""
@@ -89,7 +131,18 @@ class TestPredictSources:
         np.testing.assert_allclose(results[0].metadata["source_image"][0, 0], [255, 0, 0], atol=5)
         np.testing.assert_allclose(results[1].metadata["source_image"][0, 0], [0, 0, 255], atol=5)
 
-    @pytest.mark.parametrize("source", [0, "rtsp://camera.example/live", "rtsps://camera.example/live"])
+    @pytest.mark.parametrize(
+        "source",
+        [
+            0,
+            "0",
+            "rtsp://camera.example/live",
+            "rtsps://camera.example/live",
+            "rtmp://camera.example/live",
+            "tcp://camera.example/live",
+            "http://camera.example/live",
+        ],
+    )
     def test_live_capture_is_lazy_and_closes_on_early_exit(self, source: int | str) -> None:
         """Live sources open on demand, convert RGB, and close explicitly."""
         capture = MagicMock()
@@ -102,7 +155,8 @@ class TestPredictSources:
             result = next(results)
             assert isinstance(result, sv.Detections)
             np.testing.assert_array_equal(result.metadata["source_image"][0, 0], [30, 20, 10])
-            open_capture.assert_called_once_with(source)
+            open_capture.assert_called_once()
+            assert open_capture.call_args.args[0] == (0 if source == "0" else source)
             assert not torch.is_inference_mode_enabled()
             results.close()
 
@@ -118,12 +172,29 @@ class TestPredictSources:
         assert result.metadata["source_image"] is image
 
     @pytest.mark.parametrize("source", [0, "rtsp://camera.example/live"])
-    def test_live_capture_requires_streaming(self, source: int | str) -> None:
-        """An unbounded source cannot accumulate an eager list."""
+    def test_eager_live_capture_warns_before_opening(self, source: int | str) -> None:
+        """Eager live inference is allowed with a memory warning."""
+        capture = MagicMock()
+        capture.isOpened.return_value = False
+        with patch("cv2.VideoCapture", return_value=capture) as open_capture:
+            with pytest.warns(UserWarning, match="accumulate in memory"):
+                with pytest.raises(ValueError, match="Could not open"):
+                    _DummyRFDETR().predict(source)
+            open_capture.assert_called_once()
+
+    @pytest.mark.parametrize("option", ["batch", "vid_stride"])
+    @pytest.mark.parametrize("value", [0, -1, True, 1.5])
+    def test_invalid_source_options_fail_before_capture(self, option: str, value: object) -> None:
+        """Invalid batching and stride options fail without opening a device."""
         with patch("cv2.VideoCapture") as open_capture:
-            with pytest.raises(ValueError, match="stream=True"):
-                _DummyRFDETR().predict(source)
+            with pytest.raises(ValueError, match=f"{option} must be a positive integer"):
+                _DummyRFDETR().predict(0, stream=True, **cast(Any, {option: value}))
             open_capture.assert_not_called()
+
+    def test_stream_buffer_requires_boolean(self) -> None:
+        """A misspelled buffer value must not enable buffering implicitly."""
+        with pytest.raises(ValueError, match="stream_buffer must be a boolean"):
+            _DummyRFDETR().predict([], stream_buffer=cast(Any, "false"))
 
     def test_video_glob_expands_before_capture(self, tmp_path: Path) -> None:
         """A video glob opens each matching file, rather than the pattern."""

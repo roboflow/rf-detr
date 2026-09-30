@@ -48,6 +48,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+stream = [
+    "mss>=9",                         # Desktop capture
+    "yt-dlp>=2024.8.6",               # Resolve YouTube video streams
+]
 lora = [
     "peft",                            # LoRA backbone fine-tuning
 ]
