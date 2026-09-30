@@ -796,6 +796,7 @@ class Transformer(nn.Module):
                 # concat on dim=1, the nq dimension, (bs, nq, d) --> (bs, nq, d). Eval/export run one group;
                 # a single-input Concat would reach the ONNX graph, where CoreML rejects it and splits the graph.
                 if group_detr == 1:
+                    # refpoint_embed_ts is a .detach() view sharing boxes_ts's storage; the cat below used to copy.
                     refpoint_embed_ts, memory_ts, boxes_ts = (
                         refpoint_embed_ts_parts[0],
                         memory_ts_parts[0],

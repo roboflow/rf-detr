@@ -279,6 +279,7 @@ class SegmentationHead(nn.Module):
         spatial_features = F.interpolate(spatial_features, size=target_size, mode="bilinear", align_corners=False)
 
         mask_logits = []
+        # Both branches below contract with einsum; forward_export writes the same math as a MatMul for CoreML.
         if not skip_blocks:
             for block, qf in zip(self.blocks, query_features):
                 spatial_features = block(spatial_features)
