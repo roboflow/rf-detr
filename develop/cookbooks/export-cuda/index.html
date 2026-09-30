@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-25T17:47:43">
+  <meta property="article:modified_time" content="2026-09-29T18:30:15">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-25T17:47:43",
+    "dateModified": "2026-09-29T18:30:15",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3637,6 +3637,18 @@ artifact for raw TensorRT deployment, locked to this GPU + TensorRT version. <co
 builds and manages its <strong>own</strong> engine internally, so it does not load that file — it is the
 easier, portable inference path used below.</p>
 </blockquote>
+<blockquote>
+<p><strong>Which latency number is this?</strong> Every latency number in this notebook is an <strong>export-cookbook measurement</strong>:
+forward-only and end-to-end timings for each export format, on one L4, against a PyTorch
+anchor measured on that same L4. Its value is <em>ratios within this machine</em> — never set these
+milliseconds against the architecture headline on the
+<a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a> (T4, TensorRT FP16,
+model only) or the number on
+<a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a> (L4,
+Roboflow Inference, model only) without checking hardware, precision, batch size, and scope
+match. See <a href="#7-results">Section 7</a> for where this notebook's own TensorRT number disagrees with
+Roboflow's model page.</p>
+</blockquote>
 </div>
 </div>
 </div>
@@ -4280,12 +4292,14 @@ print(f"TensorRT engine: {trt_engine_path}  ({trt_size_mb:.1f} MB)")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p>Inference goes through <code>inference-models</code>, which builds and manages its own TensorRT engine
-— the easier, portable path that also handles preprocessing, postprocessing, and class names —
-rather than loading the <code>.trt</code> file exported above. Its precision is controlled by
-<code>AutoModel.from_pretrained(..., quantization=...)</code>, independent of the <code>fp16</code> kwarg used for the
-standalone <code>.trt</code> export: <code>quantization=None</code> (default) picks automatically based on device
-capabilities, and <code>"fp32"</code>/<code>"fp16"</code>/<code>"bf16"</code>/<code>"int8"</code> request one explicitly.</p>
+<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p>Inference goes through <code>inference-models</code>, which selects and loads its own <strong>managed TensorRT
+engine package</strong> — the easier, portable path that also handles preprocessing, postprocessing,
+and class names — rather than loading the <code>.trt</code> file exported above. Its precision is
+controlled by <code>AutoModel.from_pretrained(..., quantization=...)</code>, independent of the <code>fp16</code>
+kwarg used for the standalone <code>.trt</code> export: <code>quantization=None</code> (default) picks automatically
+based on device capabilities, and <code>"fp32"</code>/<code>"fp16"</code>/<code>"bf16"</code>/<code>"int8"</code> request one explicitly.
+<code>verbose=True</code> prints <code>inference-models</code>' own package-selection log line, which names the
+backend and the quantization it actually picked for <code>quantization=None</code> below.</p>
 </div>
 </div>
 </div>
@@ -4311,7 +4325,7 @@ capabilities, and <code>"fp32"</code>/<code>"fp16"</code>/<code>"bf16"</code>/<c
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">BackendType</span>
 
 <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">trt_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">)</span>
+    <span class="n">trt_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">trt_predictions</span> <span class="o">=</span> <span class="n">trt_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">))</span>
 <span class="n">trt_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 
@@ -4323,7 +4337,7 @@ capabilities, and <code>"fp32"</code>/<code>"fp16"</code>/<code>"bf16"</code>/<c
 <div class="clipboard-copy-txt" id="cell-9">from inference_models import AutoModel, BackendType
 
 with measure_memory(device="cuda") as mem:
-    trt_model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT)
+    trt_model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT, verbose=True)
     trt_predictions = trt_model(np.array(image))
 trt_memory_mb = mem.delta_mb
 
@@ -4369,7 +4383,7 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trt_end2end</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
     <span class="k">lambda</span><span class="p">:</span> <span class="n">trt_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">)),</span>
-    <span class="n">label</span><span class="o">=</span><span class="s2">"TensorRT (inference-models, auto) end2end"</span><span class="p">,</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">"TensorRT (inference-models, managed engine) auto end2end"</span><span class="p">,</span>
     <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
     <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
     <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
@@ -4380,7 +4394,7 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-10">trt_end2end = measure_latency(
     lambda: trt_model(np.array(image)),
-    label="TensorRT (inference-models, auto) end2end",
+    label="TensorRT (inference-models, managed engine) auto end2end",
     device="cuda",
     warmup=WARMUP_RUNS,
     runs=MEASURE_RUNS,
@@ -4425,7 +4439,9 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">trt_fp32_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"fp32"</span><span class="p">)</span>
+    <span class="n">trt_fp32_model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+        <span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"fp32"</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
     <span class="n">trt_fp32_predictions</span> <span class="o">=</span> <span class="n">trt_fp32_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">))</span>
 <span class="n">trt_fp32_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
 
@@ -4436,7 +4452,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 
 <span class="n">trt_fp32_end2end</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
     <span class="k">lambda</span><span class="p">:</span> <span class="n">trt_fp32_model</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">image</span><span class="p">)),</span>
-    <span class="n">label</span><span class="o">=</span><span class="s2">"TensorRT (inference-models, fp32) end2end"</span><span class="p">,</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">"TensorRT (inference-models, managed engine) fp32 end2end"</span><span class="p">,</span>
     <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
     <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
     <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
@@ -4447,7 +4463,9 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-11">with measure_memory(device="cuda") as mem:
-    trt_fp32_model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT, quantization="fp32")
+    trt_fp32_model = AutoModel.from_pretrained(
+        "rfdetr-small", backend=BackendType.TRT, quantization="fp32", verbose=True
+    )
     trt_fp32_predictions = trt_fp32_model(np.array(image))
 trt_fp32_memory_mb = mem.delta_mb
 
@@ -4458,7 +4476,7 @@ visualize_detections(trt_fp32_detections, image, EXPORT_DIR / "annotated_tensorr
 
 trt_fp32_end2end = measure_latency(
     lambda: trt_fp32_model(np.array(image)),
-    label="TensorRT (inference-models, fp32) end2end",
+    label="TensorRT (inference-models, managed engine) fp32 end2end",
     device="cuda",
     warmup=WARMUP_RUNS,
     runs=MEASURE_RUNS,
@@ -4523,16 +4541,16 @@ allocations, not just PyTorch's caching allocator.</p>
 <td>291.5</td>
 </tr>
 <tr>
-<td>TensorRT</td>
-<td>auto (inference-models)</td>
+<td>TensorRT (inference-models)</td>
+<td>managed engine, auto</td>
 <td>—</td>
 <td>4.91 ± 0.14</td>
 <td>203.5</td>
 <td>140.5</td>
 </tr>
 <tr>
-<td>TensorRT</td>
-<td>fp32 (inference-models)</td>
+<td>TensorRT (inference-models)</td>
+<td>managed engine, fp32</td>
 <td>—</td>
 <td>7.96 ± 0.30</td>
 <td>125.6</td>
@@ -4540,6 +4558,9 @@ allocations, not just PyTorch's caching allocator.</p>
 </tr>
 </tbody>
 </table>
+<p>Both TensorRT rows go through <code>inference-models</code>' own managed engine, not the <code>.trt</code> file
+<code>model.export(format="trt")</code> produced above — see "Two TensorRT artifacts, on purpose" at the
+top of this notebook.</p>
 <p>Unlike the CPU and mobile cookbooks — where fp16 bought nothing, because those CPUs have no native
 fp16 kernels — reduced precision is a decisive win on a GPU with tensor cores. TensorRT's
 auto-selected precision is <strong>1.62× faster than the same engine forced to fp32</strong> (4.91 vs 7.96 ms)
@@ -4549,6 +4570,18 @@ notebooks' fp16 rows make visible by contrast: fp16 pays off where the silicon i
 <p>ONNX's <code>forward</code> (7.36 ms) is far below its <code>end2end</code> (12.30 ms) because that gap is CPU-side
 pre/postprocessing, which no execution provider accelerates — worth remembering when comparing a
 forward-only number from one runtime against an end-to-end number from another.</p>
+<blockquote>
+<p><strong>Open gap: this TensorRT number vs Roboflow's product page.</strong>
+<a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>
+reports <strong>8.3 ms</strong> for <code>rfdetr-small</code> TensorRT FP16 on an L4 through Roboflow Inference,
+scoped to the model only (pre/postprocessing excluded). The managed-engine row above is
+<strong>4.91 ms end-to-end</strong> (pre/postprocessing included) — an end-to-end number faster than a
+model-only number on the same GPU model is not something scope alone explains. The ONNX
+numbers roughly agree instead (12.30 ms here vs 12.9 ms on that page), so the gap looks
+specific to the TensorRT path. This has <strong>not</strong> been rerun side by side on one L4 with the
+same image and a logged <code>inference-models</code> version — until that happens, treat both numbers
+as unreconciled rather than picking one to publish.</p>
+</blockquote>
 </div>
 </div>
 </div>
@@ -4603,8 +4636,8 @@ forward-only number from one runtime against an end-to-end number from another.<
         <span class="n">_result_row</span><span class="p">(</span><span class="s2">"PyTorch predict()"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">pytorch_fp32</span><span class="p">,</span> <span class="n">pytorch_fp32_memory_mb</span><span class="p">),</span>
         <span class="n">_result_row</span><span class="p">(</span><span class="s2">"PyTorch inference()"</span><span class="p">,</span> <span class="s2">"fp16+JIT"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">pytorch_fp16_jit</span><span class="p">,</span> <span class="n">pytorch_fp16_jit_memory_mb</span><span class="p">),</span>
         <span class="n">_result_row</span><span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="s2">"CUDA EP"</span><span class="p">,</span> <span class="n">onnx_forward</span><span class="p">,</span> <span class="n">onnx_end2end</span><span class="p">,</span> <span class="n">onnx_memory_mb</span><span class="p">),</span>
-        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="s2">"auto (inference-models)"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">trt_end2end</span><span class="p">,</span> <span class="n">trt_memory_mb</span><span class="p">),</span>
-        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"TensorRT"</span><span class="p">,</span> <span class="s2">"fp32 (inference-models)"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">trt_fp32_end2end</span><span class="p">,</span> <span class="n">trt_fp32_memory_mb</span><span class="p">),</span>
+        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"TensorRT (inference-models)"</span><span class="p">,</span> <span class="s2">"managed engine, auto"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">trt_end2end</span><span class="p">,</span> <span class="n">trt_memory_mb</span><span class="p">),</span>
+        <span class="n">_result_row</span><span class="p">(</span><span class="s2">"TensorRT (inference-models)"</span><span class="p">,</span> <span class="s2">"managed engine, fp32"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">trt_fp32_end2end</span><span class="p">,</span> <span class="n">trt_fp32_memory_mb</span><span class="p">),</span>
     <span class="p">]</span>
 <span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"Format"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">summary</span><span class="o">.</span><span class="n">to_string</span><span class="p">())</span>
@@ -4642,8 +4675,8 @@ summary = pd.DataFrame(
         _result_row("PyTorch predict()", "fp32", None, pytorch_fp32, pytorch_fp32_memory_mb),
         _result_row("PyTorch inference()", "fp16+JIT", None, pytorch_fp16_jit, pytorch_fp16_jit_memory_mb),
         _result_row("ONNX", "CUDA EP", onnx_forward, onnx_end2end, onnx_memory_mb),
-        _result_row("TensorRT", "auto (inference-models)", None, trt_end2end, trt_memory_mb),
-        _result_row("TensorRT", "fp32 (inference-models)", None, trt_fp32_end2end, trt_fp32_memory_mb),
+        _result_row("TensorRT (inference-models)", "managed engine, auto", None, trt_end2end, trt_memory_mb),
+        _result_row("TensorRT (inference-models)", "managed engine, fp32", None, trt_fp32_end2end, trt_fp32_memory_mb),
     ]
 ).set_index("Format")
 print(summary.to_string())
@@ -4702,7 +4735,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 25, 2026 17:47:43 UTC">2026-09-25 17:47:43</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 18:30:15 UTC">2026-09-29 18:30:15</span>
   </span>
 
     

@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-29T11:52:13">
+  <meta property="article:modified_time" content="2026-09-29T18:30:15">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-29T11:52:13",
+    "dateModified": "2026-09-29T18:30:15",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3183,7 +3183,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Export to OpenVINO IR for optimized inference on CPU (x86, ARM), GPU (Intel integrated &amp; discrete GPU) and AI accelerators (Intel NPU)</li>
 <li>Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment</li>
 <li>Export to LiteRT (<code>.tflite</code>) straight from PyTorch with <code>litert-torch</code> — no ONNX or TensorFlow step</li>
-<li>TensorRT conversion delivers lowest latency on NVIDIA GPUs (2.3 ms for Nano)</li>
+<li>TensorRT conversion delivers the lowest latency on NVIDIA GPUs — 2.3 ms for Nano on a T4, TensorRT FP16, model only, batch 1 (the architecture headline on the <a href="../learn/benchmarks/">Benchmarks page</a>; this page's own L4 end-to-end numbers below are a different measurement, see "Which latency number is this?")</li>
 <li>INT8 quantization is dynamic-range and needs no calibration data</li>
 <li>Custom input resolutions supported (must be divisible by <code>patch_size × num_windows</code>, which varies by model variant)</li>
 <li>Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)</li>
@@ -3220,7 +3220,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td>NVIDIA L4</td>
-<td>TensorRT (auto precision)</td>
+<td>TensorRT via <code>inference-models</code> (managed engine, auto precision)</td>
 <td>4.91 ± 0.14</td>
 <td>203.5</td>
 <td>19.88 ms / 50.3 FPS</td>
@@ -3252,7 +3252,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare <em>within</em> a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 12–17% of the mean — on that machine no CPU format separates from the others by more than one standard deviation.</p>
+<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare <em>within</em> a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 12–17% of the mean — on that machine no CPU format separates from the others by more than one standard deviation. The <code>inference-models</code> call in the L4 row selects and loads a separate prebuilt TensorRT engine package; the <code>.trt</code> file <code>model.export(format="trt")</code> writes is a standalone artifact this table does not time — see the <a href="../cookbooks/export-cuda/#6-tensorrt">CUDA cookbook</a>.</p>
+<div class="admonition note">
+<p class="admonition-title">Which latency number is this?</p>
+<p>RF-DETR latency appears on three different pages, and they are three different measurements:</p>
+<ul>
+<li><strong>Architecture headline</strong> (T4, TensorRT FP16, model only, batch 1) — the number that compares architectures. See the <a href="../learn/benchmarks/">Benchmarks page</a>.</li>
+<li><strong>Deployed product</strong> (L4, Roboflow Inference, model only, batch 1) — what a Roboflow Inference user gets. See <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>.</li>
+<li><strong>Export cookbooks</strong> (this page and below) — end-to-end and forward-only timings for every export format, on one machine per cookbook. Their value is <strong>ratios within one machine</strong>, not absolute milliseconds to set against the other two pages.</li>
+</ul>
+<p>Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The L4 TensorRT figures on this page and on Roboflow's model page do not currently agree — see the <a href="../cookbooks/export-cuda/#7-results">CUDA cookbook's Results section</a> for the open gap.</p>
+</div>
 <div class="admonition warning">
 <p class="admonition-title">fp16 pays off only where the silicon implements it</p>
 <p>Reduced precision is not a portable speedup, and the cookbooks measure this directly:</p>
@@ -3603,7 +3613,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 11:52:13 UTC">2026-09-29 11:52:13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 18:30:15 UTC">2026-09-29 18:30:15</span>
   </span>
 
     
