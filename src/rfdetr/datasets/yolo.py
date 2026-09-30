@@ -42,6 +42,28 @@ REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 YOLO_IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpg", ".jpeg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
 
 
+def _yolo_data_file(dataset_dir: str | os.PathLike[str]) -> Path | None:
+    """Return the first existing YOLO data file in a dataset root, checked in priority order.
+
+    Args:
+        dataset_dir: Path to the YOLO dataset root.
+
+    Returns:
+        Path to ``data.yaml`` or ``data.yml``, whichever exists first per
+        :data:`REQUIRED_YOLO_YAML_FILES`, or ``None`` when neither exists.
+
+    Examples:
+        >>> _yolo_data_file("/missing") is None
+        True
+    """
+    root = Path(dataset_dir)
+    for filename in REQUIRED_YOLO_YAML_FILES:
+        data_file = root / filename
+        if data_file.exists():
+            return data_file
+    return None
+
+
 class YoloSplitUnavailableError(FileNotFoundError):
     """Signal that a requested YOLO split has no image directory to evaluate."""
 
@@ -616,9 +638,7 @@ def is_valid_yolo_dataset(dataset_dir: str) -> bool:
         ``True`` if the directory satisfies all YOLO format requirements,
         ``False`` otherwise.
     """
-    contains_required_yolo_yaml = any(
-        os.path.exists(os.path.join(dataset_dir, yaml_file)) for yaml_file in REQUIRED_YOLO_YAML_FILES
-    )
+    contains_required_yolo_yaml = _yolo_data_file(dataset_dir) is not None
     has_train = os.path.exists(os.path.join(dataset_dir, "train"))
     has_val = any(os.path.exists(os.path.join(dataset_dir, d)) for d in _VALID_VAL_DIR_NAMES)
     contains_required_split_dirs = has_train and has_val
@@ -982,7 +1002,7 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
             try:
                 self.keypoint_schema = infer_yolo_keypoint_schema(data_file)
             except (FileNotFoundError, ValueError, OSError) as exc:
-                raise ValueError(f"YOLO keypoint training requires kpt_shape metadata in {data_file!r}.") from exc
+                raise ValueError(f"Invalid YOLO pose data file {data_file!r}: {exc}") from exc
         else:
             self.keypoint_schema = None
         self.num_keypoints = max(num_keypoints_per_class or [], default=0)
@@ -1064,7 +1084,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         raise FileNotFoundError(f"YOLO dataset root not found: {root}")
 
     # Prefer data.yaml; fall back to data.yml if present; default to data.yaml for error reporting
-    data_file = next((root / f for f in REQUIRED_YOLO_YAML_FILES if (root / f).exists()), root / "data.yaml")
+    data_file = _yolo_data_file(root) or root / "data.yaml"
     split_key = image_set.split("_")[0]
     img_folder, lb_folder = _resolve_yolo_split_dirs(root, data_file, split_key)
     if split_key == "test":
@@ -1088,9 +1108,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         try:
             infer_yolo_keypoint_schema(data_file)
         except (FileNotFoundError, ValueError, OSError) as exc:
-            raise ValueError(
-                "YOLO keypoint training requires an Ultralytics pose data.yaml/data.yml with valid kpt_shape metadata."
-            ) from exc
+            raise ValueError(f"Invalid YOLO pose data file {data_file!r}: {exc}") from exc
 
     if square_resize_div_64:
         dataset = YoloDetection(

@@ -40,7 +40,7 @@ from rfdetr.datasets._keypoint_schema import (
 )
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
-from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, _extract_yolo_class_names, is_valid_yolo_dataset
+from rfdetr.datasets.yolo import _extract_yolo_class_names, _yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
@@ -2498,12 +2498,7 @@ class RFDETR:
             >>> RFDETR._yolo_data_file_path("/missing") is None
             True
         """
-        root = Path(dataset_dir)
-        for filename in REQUIRED_YOLO_YAML_FILES:
-            data_file = root / filename
-            if data_file.exists():
-                return data_file
-        return None
+        return _yolo_data_file(dataset_dir)
 
     @staticmethod
     def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
