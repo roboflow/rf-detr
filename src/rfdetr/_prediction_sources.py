@@ -265,7 +265,14 @@ def _resolve_youtube(source: str) -> tuple[str, bool]:
         yt_dlp = import_module("yt_dlp")
     except ImportError as error:
         raise ImportError("YouTube prediction requires yt-dlp. Install rfdetr[stream].") from error
-    with yt_dlp.YoutubeDL({"format": "best[ext=mp4]/best", "quiet": True, "noplaylist": True}) as downloader:
+    # Prefer H.264 because some OpenCV builds cannot decode YouTube's AV1 formats.
+    with yt_dlp.YoutubeDL(
+        {
+            "format": "bestvideo[vcodec^=avc1]/best[vcodec^=avc1]/bestvideo[ext=mp4]/best[ext=mp4]/bestvideo/best",
+            "quiet": True,
+            "noplaylist": True,
+        }
+    ) as downloader:
         info = downloader.extract_info(source, download=False)
     if not info or not isinstance(info.get("url"), str):
         raise ValueError("Could not resolve a video URL from the YouTube source.")
