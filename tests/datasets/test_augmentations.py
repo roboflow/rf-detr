@@ -2338,8 +2338,8 @@ class TestNormalize:
         torch.testing.assert_close(target["boxes"], boxes_original, rtol=0.0, atol=0.0)
 
 
-class TestReplayContainsHorizontalFlip:
-    """Unit tests for AlbumentationsWrapper._replay_contains_horizontal_flip using fixture dicts."""
+class TestReplayHorizontalFlipParity:
+    """Unit tests for AlbumentationsWrapper._replay_horizontal_flip_parity using fixture dicts."""
 
     @pytest.mark.parametrize("num_flips", [0, 1, 2, 3])
     @pytest.mark.parametrize("axis_key", ["axis", "d"])
@@ -2351,7 +2351,7 @@ class TestReplayContainsHorizontalFlip:
             ]
         }
 
-        assert AlbumentationsWrapper._replay_contains_horizontal_flip(replay) == bool(num_flips % 2)
+        assert AlbumentationsWrapper._replay_horizontal_flip_parity(replay) == bool(num_flips % 2)
 
     @pytest.mark.parametrize(
         "replay,expected",
@@ -2461,9 +2461,9 @@ class TestReplayContainsHorizontalFlip:
             ),
         ],
     )
-    def test_replay_contains_horizontal_flip(self, replay: object, expected: bool) -> None:
+    def test_replay_horizontal_flip_parity(self, replay: object, expected: bool) -> None:
         """Fixture replay dicts should be correctly classified as horizontal flip or not."""
-        assert AlbumentationsWrapper._replay_contains_horizontal_flip(replay) == expected
+        assert AlbumentationsWrapper._replay_horizontal_flip_parity(replay) == expected
 
 
 class TestFromConfigStrict:

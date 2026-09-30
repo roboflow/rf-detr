@@ -450,17 +450,28 @@ class AlbumentationsWrapper:
         # Auto-detect if transform is geometric (recursively for containers)
         self._is_geometric = _is_geometric_transform(transform)
         self._keypoint_flip_pairs = list(keypoint_flip_pairs or [])
+        self._uses_execution_log = False
 
         if self._is_geometric:
             # Wrap geometric transform with bbox handling capabilities
             # bbox_params configure how Albumentations should transform bounding boxes:
-            needs_replay = bool(self._keypoint_flip_pairs)
-            if needs_replay and not hasattr(alb, "ReplayCompose"):
-                logger.warning(
-                    "albumentations.ReplayCompose not available; horizontal-flip keypoint "
-                    "slot swapping is disabled. Upgrade albumentations to >=1.3."
-                )
-            compose_cls = alb.ReplayCompose if (needs_replay and hasattr(alb, "ReplayCompose")) else alb.Compose
+            needs_swap = bool(self._keypoint_flip_pairs)
+            # Log entries exist only because Albumentations' update_params_shape injects a
+            # "shape" key into params; a param-less custom transform without that injection
+            # would silently drop out of parity tracking.
+            self._uses_execution_log = needs_swap and self._records_each_applied_transform(transform)
+            if self._uses_execution_log:
+                # ReplayCompose deep-copies params per step; pointless once the log decides the swap.
+                compose_cls = alb.Compose
+            elif needs_swap and hasattr(alb, "ReplayCompose"):
+                compose_cls = alb.ReplayCompose
+            else:
+                if needs_swap:
+                    logger.warning(
+                        "albumentations.ReplayCompose not available; horizontal-flip keypoint "
+                        "slot swapping is disabled. Upgrade albumentations to >=1.3."
+                    )
+                compose_cls = alb.Compose
             self.transform = compose_cls(
                 [transform],
                 bbox_params=alb.BboxParams(
@@ -475,10 +486,9 @@ class AlbumentationsWrapper:
                     remove_invisible=False,
                 ),
             )
-            # Replay stores each transform once; the execution log preserves SomeOf(replace=True) repetitions.
-            self.transform.save_applied_params = (
-                needs_replay and hasattr(alb, "ReplayCompose") and self._records_each_applied_transform(transform)
-            )
+            self.transform.save_applied_params = self._uses_execution_log
+            if needs_swap and not self._uses_execution_log:
+                self._warn_unlogged_repeating_container(transform)
         else:
             # Wrap non-geometric transform without bbox handling
             # Simpler composition since boxes don't need transformation
@@ -580,15 +590,80 @@ class AlbumentationsWrapper:
         Returns:
             ``True`` when execution logging covers every nested transform.
         """
-        if not hasattr(transform, "transforms"):
-            return True
-        if type(transform).__name__ not in CONTAINER_TRANSFORM_NAMES | {"Compose", "ReplayCompose", "RandomOrder"}:
-            return False
-        return all(AlbumentationsWrapper._records_each_applied_transform(child) for child in transform.transforms)
+        return AlbumentationsWrapper._first_unlogged_container(transform) is None
 
     @staticmethod
-    def _replay_contains_horizontal_flip(replay: Any) -> bool:
+    def _first_unlogged_container(transform: alb.BasicTransform) -> str | None:
+        """Return the class name of the first container that disables execution logging.
+
+        Any container type outside the exact-name allowlist -- including a subclass of an
+        allowlisted class -- blocks execution logging for the whole tree.
+
+        Args:
+            transform: Albumentations transform or container to inspect.
+
+        Returns:
+            Class name of the offending container, or ``None`` when the tree is fully logged.
+        """
+        if not hasattr(transform, "transforms"):
+            return None
+        if type(transform).__name__ not in CONTAINER_TRANSFORM_NAMES | {"Compose", "ReplayCompose", "RandomOrder"}:
+            return type(transform).__name__
+        for child in transform.transforms:
+            offender = AlbumentationsWrapper._first_unlogged_container(child)
+            if offender is not None:
+                return offender
+        return None
+
+    @staticmethod
+    def _has_repeating_some_of(transform: alb.BasicTransform) -> bool:
+        """Return whether the tree contains a ``SomeOf`` drawing the same child more than once.
+
+        Args:
+            transform: Albumentations transform or container to inspect.
+
+        Returns:
+            ``True`` when a ``SomeOf(replace=True)`` node -- or a subclass of one -- with
+            ``n > 1`` is present.
+        """
+        # isinstance, not an exact name check: a SomeOf subclass repeats draws just the same.
+        if isinstance(transform, alb.SomeOf) and getattr(transform, "replace", False):
+            if int(getattr(transform, "n", 1) or 1) > 1:
+                return True
+        children = getattr(transform, "transforms", None)
+        if not children:
+            return False
+        return any(AlbumentationsWrapper._has_repeating_some_of(child) for child in children)
+
+    @staticmethod
+    def _warn_unlogged_repeating_container(transform: alb.BasicTransform) -> None:
+        """Warn once when replay fallback can mislabel repeated ``SomeOf(replace=True)`` draws.
+
+        Replay metadata stores each transform once, so a child drawn twice by
+        ``SomeOf(replace=True)`` collapses into a single entry and the horizontal-flip parity
+        derived from it can be wrong. Only fires for keypoint pipelines, which are the only
+        consumers of that parity.
+
+        Args:
+            transform: Albumentations transform or container wrapped by this instance.
+        """
+        if not AlbumentationsWrapper._has_repeating_some_of(transform):
+            return
+        offender = AlbumentationsWrapper._first_unlogged_container(transform)
+        logger.warning(
+            "Albumentations container %r is not recognised for execution logging, so keypoint "
+            "horizontal-flip parity falls back to replay metadata. Repeated draws from "
+            "SomeOf(replace=True) collapse into a single replay entry and the paired-joint swap "
+            "may be applied incorrectly.",
+            offender or "unknown",
+        )
+
+    @staticmethod
+    def _replay_horizontal_flip_parity(replay: Any) -> bool:
         """Return whether Albumentations replay metadata applied an odd number of horizontal flips.
+
+        Only horizontal mirrors are counted; vertical flips, transposes and non-``h`` ``D4``
+        elements never toggle the keypoint-slot swap.
 
         Args:
             replay: ``ReplayCompose`` metadata from an Albumentations call.
@@ -602,7 +677,7 @@ class AlbumentationsWrapper:
         transforms = replay.get("transforms")
         if isinstance(transforms, list):
             return (
-                sum(AlbumentationsWrapper._replay_contains_horizontal_flip(transform) for transform in transforms) % 2
+                sum(AlbumentationsWrapper._replay_horizontal_flip_parity(transform) for transform in transforms) % 2
                 == 1
             )
 
@@ -685,6 +760,43 @@ class AlbumentationsWrapper:
             result = result[:, perm, :]
 
         return result
+
+    def _resolve_keypoint_swap(
+        self,
+        augmented: dict[str, Any],
+        kept_idxs: list[int],
+        keypoints_np: NDArray[Any],
+    ) -> Tensor:
+        """Rebuild keypoints, swapping paired joints when horizontal-flip parity is odd.
+
+        Prefers the execution log, which records every applied child occurrence, and falls back
+        to ``ReplayCompose`` metadata otherwise. The log entries are reshaped into replay-shaped
+        dicts so a single parity predicate serves both sources.
+
+        Args:
+            augmented: Augmented output dict from Albumentations.
+            kept_idxs: Original instance indices of surviving boxes.
+            keypoints_np: Original keypoint array, shape (N_orig, K, 3).
+
+        Returns:
+            Keypoint tensor of shape ``(len(kept_idxs), K, 3)``.
+        """
+        replay = augmented.get("replay")
+        if self._uses_execution_log and "applied_transforms" in augmented:
+            replay = {
+                "transforms": [
+                    {"__class_fullname__": name, "params": params, "applied": True}
+                    for name, params in augmented["applied_transforms"]
+                ]
+            }
+        did_flip = self._replay_horizontal_flip_parity(replay) if self._keypoint_flip_pairs else False
+        return self._rebuild_keypoints_from_albu(
+            augmented,
+            kept_idxs,
+            keypoints_np,
+            flip_pairs=self._keypoint_flip_pairs,
+            did_flip=did_flip,
+        )
 
     @staticmethod
     def _clear_per_instance_fields(target: dict[str, Any], num_boxes: int) -> dict[str, Any]:
@@ -836,22 +948,7 @@ class AlbumentationsWrapper:
                 boxes = target_out["boxes"]
                 target_out["area"] = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
             if keypoints_np is not None:
-                replay = augmented.get("replay")
-                if self.transform.save_applied_params and "applied_transforms" in augmented:
-                    replay = {
-                        "transforms": [
-                            {"__class_fullname__": name, "params": params, "applied": True}
-                            for name, params in augmented["applied_transforms"]
-                        ]
-                    }
-                did_flip = self._replay_contains_horizontal_flip(replay) if self._keypoint_flip_pairs else False
-                target_out["keypoints"] = self._rebuild_keypoints_from_albu(
-                    augmented,
-                    kept_idxs,
-                    keypoints_np,
-                    flip_pairs=self._keypoint_flip_pairs,
-                    did_flip=did_flip,
-                )
+                target_out["keypoints"] = self._resolve_keypoint_swap(augmented, kept_idxs, keypoints_np)
         image_out = Image.fromarray(augmented["image"])
         if masks_list is not None and "masks" in augmented:
             height, width = augmented["image"].shape[:2]
