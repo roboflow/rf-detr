@@ -653,19 +653,64 @@ class _SegmentationHeadExportWrapper(nn.Module):
 
 
 class TestSegmentationHeadForwardExport:
-    """``forward_export`` must match the training path and avoid ops ONNX Runtime's CoreML provider cannot run."""
+    """``forward_export`` must match the eager evaluation path's last layer and avoid ops ONNX Runtime's CoreML
+    provider cannot run.
 
-    def test_matches_training_path_with_blocks(self) -> None:
-        head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=2, downsample_ratio=1)
+    Training drives ``sparse_forward``, not ``forward`` — ``forward`` is the eager evaluation path that applies
+    each block in sequence, appending one mask per block. ``forward_export`` always applies every block in a
+    single pass and returns only the result of the final block, so the true contract is
+    ``forward_export(sf, [qf])[0] == forward(sf, [qf] * num_blocks)[-1]`` for any ``num_blocks`` — not just
+    ``num_blocks=1``, where ``[0] == [-1]`` trivially and a bug in how later blocks accumulate would stay hidden.
+    """
+
+    @pytest.mark.parametrize("num_blocks", [1, 3])
+    def test_matches_eager_eval_path_last_layer(self, num_blocks: int) -> None:
+        head = SegmentationHead(in_dim=4, num_blocks=num_blocks, bottleneck_ratio=2, downsample_ratio=1)
         spatial_features = torch.randn(2, 4, 4, 4)
-        query_features = [torch.randn(2, 3, 4)]
+        query_features = torch.randn(2, 3, 4)
 
         with torch.no_grad():
-            expected = head.forward(spatial_features, query_features, (4, 4), skip_blocks=False)[0]
+            expected = head.forward(spatial_features, [query_features] * num_blocks, (4, 4), skip_blocks=False)[-1]
             head.export()
-            actual = head.forward(spatial_features, query_features, (4, 4), skip_blocks=False)[0]
+            actual = head.forward(spatial_features, [query_features], (4, 4), skip_blocks=False)[0]
 
         assert actual.shape == (2, 3, 4, 4)
+        torch.testing.assert_close(actual, expected)
+
+    def test_matches_eager_eval_path_last_layer_with_skip_blocks(self) -> None:
+        """The same last-layer equality must hold on the encoder-only ``skip_blocks=True`` path too."""
+        head = SegmentationHead(in_dim=4, num_blocks=2, bottleneck_ratio=2, downsample_ratio=1)
+        spatial_features = torch.randn(2, 4, 4, 4)
+        query_features = torch.randn(2, 3, 4)
+
+        with torch.no_grad():
+            expected = head.forward(spatial_features, [query_features], (4, 4), skip_blocks=True)[-1]
+            head.export()
+            actual = head.forward(spatial_features, [query_features], (4, 4), skip_blocks=True)[0]
+
+        assert actual.shape == (2, 3, 4, 4)
+        torch.testing.assert_close(actual, expected)
+
+    def test_matches_einsum_reference_with_non_square_spatial_features(self) -> None:
+        """A batch=2, channels=4, height=5, width=7 case: the existing tests above only use square 4x4 spatial
+        features, so an axis-swap bug in ``forward_export``'s ``.view(batch_size, num_queries, height, width)``
+        reshape would be invisible to them."""
+        head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
+        spatial_features = torch.randn(2, 4, 5, 7)
+        query_features = [torch.randn(2, 3, 4)]
+        image_size = (5, 7)
+
+        with torch.no_grad():
+            resized = F.interpolate(spatial_features, size=image_size, mode="bilinear", align_corners=False)
+            block_output = head.blocks[0](resized)
+            expected_proj = head.spatial_features_proj(block_output)
+            expected_qf = head.query_features_proj(head.query_features_block(query_features[0]))
+            expected = torch.einsum("bchw,bnc->bnhw", expected_proj, expected_qf) + head.bias
+
+            head.export()
+            actual = head.forward(spatial_features, query_features, image_size)[0]
+
+        assert actual.shape == (2, 3, 5, 7)
         torch.testing.assert_close(actual, expected)
 
     @pytest.mark.integration
