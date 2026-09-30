@@ -115,9 +115,41 @@ Pass `output_name="my-model"` to override the variant name and write `{output_na
 
 With `backbone_only=True`, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a `-backbone` marker before the extension even when `output_name` is set, for example `my-model-backbone.onnx`. This distinguishes the backbone artifact from the full detector exported with the same name.
 
+## Predict with RFDETRInference
+
+Use `RFDETRInference` to predict with a live native model, a native checkpoint, or any full export supported below. It uses the same image inputs and Supervision results as `RFDETR.predict()`.
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model.onnx")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+Detection and segmentation return `supervision.Detections`. Keypoint models return `supervision.KeyPoints`. A path ending in `.pth` or `.pt` loads a native checkpoint. To use an existing model instance, pass it directly:
+
+```python
+from rfdetr import RFDETRInference, RFDETRSmall
+
+native_model = RFDETRSmall()
+model = RFDETRInference(native_model)
+```
+
+This wraps the live model without copying its weights. Each prediction reads the model's current state, including changes from training or inference optimization. When you pass a path, the `RFDETRInference` instance loads and owns the native model or exported runtime.
+
+The public constructor supports ONNX, TensorRT (`.trt` and `.engine`), TFLite, LiteRT, ExecuTorch, OpenVINO, native CoreML, Core AI, and native `.pth`/`.pt` checkpoints. Install the runtime package for the format on the target system. LiteRT currently cannot export a full keypoint model. Backbone-only exports contain features rather than predictions and are not supported by this prediction API.
+
+Pass a list to `predict()` to return one result per image. Each call runs the list as one batch. A fixed-shape export must accept that batch size and input shape. If it does not, `predict()` raises before runtime execution. It does not split or pad the list.
+
+`runtime_info` reports the selected runtime and device policy. Some vendor runtimes choose a physical device after model load, so the policy might not identify one chip. An explicit device request must match the runtime and available hardware. For example, TensorRT requires CUDA. Core AI accepts `auto` or `cpu`; its GPU and Neural Engine options express a preference and cannot pin execution to that device.
+
+New exports include versioned inference metadata. ONNX stores it in the model. Other formats use an adjacent `<artifact-name>.rfdetr.json` file. For example, `model.trt` uses `model.trt.rfdetr.json`. Keep this file with the artifact. For an older export, pass a JSON path or mapping through `metadata=`. The metadata must supply missing task, class, output, and preprocessing semantics. The loader rejects missing or conflicting values. User-defined `notes` are separate from inference metadata.
+
+The shared API prepares images and decodes results on the native model's device or the runtime adapter's tensor device. TensorRT keeps tensors on CUDA through decoding. The other exported adapters currently use CPU tensors for these stages. Runtime outputs belong to each call, so later calls cannot change earlier results. The benchmarks in the overview measure the per-runtime cookbook pipelines.
+
 ## Run Inference with `inference-models`
 
-[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.
+[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is a separate deployment option. It supports PyTorch, ONNX, and TensorRT with automatic backend selection and its own API.
 
 ### Installation
 
@@ -181,4 +213,4 @@ predictions = model(image)
 
 ## Using the Exported Model
 
-Once exported, you can use the ONNX model with various inference frameworks. See [ONNX Inference](onnx.md) for a complete example, or the format-specific pages for other runtimes.
+Use `RFDETRInference` for the common prediction path. The format guides also show direct runtime calls for advanced access and forward-only timing.

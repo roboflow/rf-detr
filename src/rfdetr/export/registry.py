@@ -15,14 +15,19 @@ exporter class and the configuration dataclass it is built from.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
+    from rfdetr.export._runtime.adapters import ExportRuntime
+    from rfdetr.export._runtime.metadata import ExportMetadata
     from rfdetr.export.base import Exporter
+
+RuntimeLoader = Callable[[Path, "ExportMetadata", str], "ExportRuntime"]
 
 logger = get_logger()
 
@@ -124,6 +129,27 @@ REGISTRY: Mapping[str, ExporterEntry] = {
 
 #: Short spellings accepted for a format, mapped to the canonical name.
 ALIASES: Mapping[str, str] = {"trt": "tensorrt", "pte": "executorch"}
+
+#: Format-owned runtime loaders. Import a loader only when its artifact is opened.
+RUNTIME_LOADERS: Mapping[str, str] = {
+    "onnx": "rfdetr.export._onnx.inference:load_export_runtime",
+    "tflite": "rfdetr.export._tflite.inference:load_export_runtime",
+    "litert": "rfdetr.export._tflite.inference:load_export_runtime",
+    "tensorrt": "rfdetr.export._tensorrt.inference:load_export_runtime",
+    "openvino": "rfdetr.export._openvino.inference:load_export_runtime",
+    "coreml": "rfdetr.export._coreml.inference:load_export_runtime",
+    "coreai": "rfdetr.export._coreai.inference:load_export_runtime",
+    "executorch": "rfdetr.export._executorch.inference:load_export_runtime",
+}
+
+
+def resolve_runtime_loader(format: str) -> RuntimeLoader:
+    """Import the loader for one exported artifact format."""
+    target = RUNTIME_LOADERS.get(format)
+    if target is None:
+        raise ValueError(f"Unsupported export format {format!r}.")
+    module_name, _, attribute = target.partition(":")
+    return cast(RuntimeLoader, getattr(importlib.import_module(module_name), attribute))
 
 
 def normalize_format(format: str) -> str:

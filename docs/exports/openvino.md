@@ -57,9 +57,22 @@ OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="f
 model.export(format="openvino", openvino_precision="float32")
 ```
 
-## OpenVINO Inference Example
+## Predict with RFDETRInference
 
-`OpenVINOInference` loads an exported IR and runs it. It takes already-preprocessed NCHW tensors and returns the model's raw output tensors — decoding those into detections is up to you (see [ONNX Inference](onnx.md) for the decode steps).
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-medium.xml")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+<span id="openvino-inference-example"></span>
+
+## Advanced: Use the OpenVINO session directly
+
+`OpenVINOInference` remains available for callers who need a raw OpenVINO session. It takes already-preprocessed NCHW tensors and returns raw output tensors. The common `RFDETRInference` API above handles preprocessing and decoding.
 
 !!! warning "The input array must be float32 and contiguous"
 

@@ -103,6 +103,7 @@ from tqdm.auto import tqdm  # NOT from tqdm import tqdm
 - **Logging:** Use `logger.debug()` for detailed tensor/shape info (not `logger.info()`)
 - **Segmentation models:** Return `pred_masks` as `torch.Tensor` or dict with keys `['spatial_features', 'query_features', 'bias']`
 - **Checkpoint handling:** Always check file existence before operations
+- **Inference:** Use `RFDETRInference(source)` as the shared prediction API for a live `RFDETR` instance, a `.pth`/`.pt` checkpoint, or a full export. A live instance stays shared, so predictions read its current training and optimization state. Keep one call as one batch and reject incompatible shape, batch, or explicit device requests. Use validated inference metadata for task, class, output, and preprocessing semantics; do not use user `notes`. ONNX embeds metadata; other formats use an adjacent `<artifact-name>.rfdetr.json` file. Keep runtime adapters lazy and limit them to runtime execution and tensor mapping. Keep raw runtime interfaces available for advanced access and forward-only benchmarks. Reject backbone-only artifacts. See `AGENTS.md` for format constraints.
 - **License headers:** All Python files require Apache 2.0 header (enforced by pre-commit)
 
 **Best Practices:**

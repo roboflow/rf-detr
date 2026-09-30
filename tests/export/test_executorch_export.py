@@ -379,6 +379,7 @@ class TestExportFormatParameter:
         pte_out.write_bytes(b"pte")
 
         self._mock_stack = contextlib.ExitStack()
+        self._mock_stack.enter_context(mock.patch("rfdetr.export.base.write_metadata"))
         # make_infer_image returns a small tensor instead of building a real image.
         self._mock_stack.enter_context(
             mock.patch(
@@ -419,11 +420,21 @@ class TestExportFormatParameter:
         obj.model.resolution = 560
         obj.model.device = "cpu"
         obj.model.model.to.return_value = obj.model.model
+        obj.model.args = None
+        obj.model.class_names = ["object"]
+        obj.model.postprocess.num_select = 100
+        obj.model.postprocess.trace_alpha = 0.2
+        obj.model.postprocess.upsample_masks_to_image_size = True
+        obj.means = [0.485, 0.456, 0.406]
+        obj.stds = [0.229, 0.224, 0.225]
         obj.model_config = mock.MagicMock()
         obj.model_config.segmentation_head = False
         obj.model_config.use_grouppose_keypoints = False
         obj.model_config.patch_size = 14
         obj.model_config.num_windows = 1
+        obj.model_config.num_channels = 3
+        obj.model_config.num_classes = 1
+        obj.model_config.num_keypoints_per_class = []
         return obj
 
     @pytest.mark.parametrize(

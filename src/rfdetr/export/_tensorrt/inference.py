@@ -22,6 +22,7 @@ import contextlib
 import time
 from collections import OrderedDict, namedtuple
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -38,6 +39,7 @@ try:
 except ImportError:
     cuda = None
 
+from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._tensorrt.exporter import Fp16Strategy, fp16_source_graph, resolve_fp16_strategy
 from rfdetr.export.prepare import BATCH_AXIS
 from rfdetr.utilities.logger import get_logger
@@ -676,3 +678,50 @@ class TimeProfiler(contextlib.ContextDecorator):
         if torch.cuda.is_available():
             torch.cuda.synchronize(self.device)
         return time.perf_counter()
+
+
+def load_export_runtime(path: str | Path, metadata: ExportMetadata, device: str) -> Any:
+    """Load a TensorRT engine while preserving device tensors through execution."""
+    if device == "auto":
+        device = "cuda:0"
+    if not device.startswith("cuda") or not torch.cuda.is_available():
+        raise RuntimeError("TensorRT requires an available CUDA device.")
+
+    from rfdetr.export._runtime.adapters import ExportRuntime
+
+    session = TRTInference(str(path), device=device, sync_mode=True)
+    if len(session.input_names) != 1 or session.input_names[0] != metadata.input_name:
+        raise ValueError("TensorRT input binding disagrees with export metadata.")
+    binding = session.bindings[session.input_names[0]]
+    if len(binding.shape) != 4:
+        raise ValueError(f"TensorRT input rank must be 4, got {len(binding.shape)}.")
+    if np.dtype(binding.dtype) != np.dtype(metadata.input_dtype):
+        raise ValueError("TensorRT input dtype disagrees with export metadata.")
+    if metadata.input_layout != "NCHW":
+        raise ValueError("TensorRT inference requires an NCHW input.")
+    if any(got != want for got, want in zip(binding.shape[1:], metadata.input_shape[1:])):
+        raise ValueError("TensorRT input spatial shape disagrees with export metadata.")
+    if metadata.input_shape[0] != -1 and binding.shape[0] != metadata.input_shape[0]:
+        raise ValueError("TensorRT fixed batch size disagrees with export metadata.")
+    missing = {name for name in metadata.outputs.values() if isinstance(name, str)} - set(session.output_names)
+    if missing:
+        raise ValueError(f"TensorRT output names absent from engine: {sorted(missing)}.")
+    input_dtype = torch.from_numpy(np.empty(0, dtype=binding.dtype)).dtype
+
+    def execute(batch: torch.Tensor) -> dict[str, Tensor]:
+        """Feed the engine a contiguous tensor on its own CUDA device."""
+        tensor = batch.to(device=session.engine_device, dtype=input_dtype).contiguous()
+        # execute_v2 has no stream argument; wait for torch's input work before it reads the pointer.
+        if session.engine_device.type == "cuda":
+            torch.cuda.current_stream(session.engine_device).synchronize()
+        return session({session.input_names[0]: tensor})
+
+    return ExportRuntime(
+        "tensorrt",
+        metadata,
+        session,
+        str(session.engine_device),
+        session.input_names[0],
+        execute,
+        device=session.engine_device,
+    )

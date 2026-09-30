@@ -23,7 +23,7 @@ RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native Co
 The export docs are split into three pages:
 
 - **Overview** (this page) — supported formats and measured performance per hardware.
-- [Export Basics](basics.md) — installation, a first `model.export()` call, output files, and inference with `inference-models`.
+- [Export Basics](basics.md) — installation, a first `model.export()` call, output files, and prediction with `RFDETRInference`.
 - [Advanced Export](advanced.md) — the full parameter reference, custom resolution, backbone-only export, and how the export pipeline works.
 
 For detailed installation, examples, and inference code per format, see the format guides:
@@ -82,7 +82,7 @@ The format guides listed above cover installation, export examples, output files
 After exporting your model, you may want to:
 
 - [Deploy to Roboflow](../learn/deploy.md) for cloud-based inference and workflow integration
-- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
+- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) as a separate option for PyTorch, ONNX, or TensorRT inference
 - Deploy TFLite and LiteRT `.tflite` models on mobile/edge devices with the LiteRT runtime
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO

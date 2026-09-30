@@ -62,7 +62,18 @@ model.export(format="coreml", coreml_precision="float16")
 
     This is a property of the ranking, not a conversion error, and it is not specific to `format="coreml"`: any runtime whose arithmetic differs from eager in the last bits can trip it, and fp16 — the ExecuTorch CoreML delegate, or `coreml_precision="float16"` — makes it more likely, not less. Detections comfortably above a confidence threshold survive it: on one pretrained `RFDETRSmall` image at threshold 0.5 (Apple M3 Pro, coremltools 9.0, default `ComputeUnit.ALL`) the two agree on every detection, within 1.1e-4 on scores and 0.005 px on boxes. A detection sitting *on* the threshold can still cross it, since a swap was measured to move post-processed scores by up to 1.2e-3. Compare **post-processed detections**, not raw tensors, when validating an export.
 
-## CoreML Inference Example
+## Predict with RFDETRInference
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/rfdetr-medium_fp32.mlpackage")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+This returns the shared Supervision result types. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
+
+## Advanced: Use Core ML directly
 
 ```python
 import coremltools as ct
