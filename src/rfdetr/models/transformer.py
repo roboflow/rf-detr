@@ -152,7 +152,7 @@ def gen_encoder_output_proposals(
         proposals.append(proposal)
         _cur += height * width
 
-    output_proposals = torch.cat(proposals, 1)
+    output_proposals = proposals[0] if len(proposals) == 1 else torch.cat(proposals, 1)
     output_proposals_valid = ((output_proposals > 0.01) & (output_proposals < 0.99)).all(-1, keepdim=True)
 
     if unsigmoid:
@@ -793,11 +793,20 @@ class Transformer(nn.Module):
                     refpoint_embed_ts_parts.append(refpoint_embed_gidx)
                     memory_ts_parts.append(tgt_undetach_gidx)
                     boxes_ts_parts.append(refpoint_embed_gidx_undetach)
-                # concat on dim=1, the nq dimension, (bs, nq, d) --> (bs, nq, d)
-                refpoint_embed_ts = torch.cat(refpoint_embed_ts_parts, dim=1)
-                # (bs, nq, d)
-                memory_ts = torch.cat(memory_ts_parts, dim=1)
-                boxes_ts = torch.cat(boxes_ts_parts, dim=1)
+                # concat on dim=1, the nq dimension, (bs, nq, d) --> (bs, nq, d). Eval/export run one group;
+                # a single-input Concat would reach the ONNX graph, where CoreML rejects it and splits the graph.
+                if group_detr == 1:
+                    # refpoint_embed_ts is a .detach() view sharing boxes_ts's storage; the cat below used to copy.
+                    refpoint_embed_ts, memory_ts, boxes_ts = (
+                        refpoint_embed_ts_parts[0],
+                        memory_ts_parts[0],
+                        boxes_ts_parts[0],
+                    )
+                else:
+                    refpoint_embed_ts = torch.cat(refpoint_embed_ts_parts, dim=1)
+                    # (bs, nq, d)
+                    memory_ts = torch.cat(memory_ts_parts, dim=1)
+                    boxes_ts = torch.cat(boxes_ts_parts, dim=1)
                 # This loop discards its own per-group class ranking scores after topk (same as the
                 # batched path above) instead of gathering them -- unlike the batched path, this rare
                 # fallback (custom/heterogeneous group modules, or group_detr==1) is left as is; the
@@ -848,7 +857,12 @@ class Transformer(nn.Module):
                 else:
                     refpoint_embed_ts_subset = refpoint_embed_ts_subset + refpoint_embed_ts
 
-                refpoint_embed = torch.concat([refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
+                # When every query comes from the two-stage selection, the remainder is empty; concatenating it
+                # puts a zero-sized tensor in the exported graph, which CoreML rejects.
+                if refpoint_embed_subset.shape[-2] == 0:
+                    refpoint_embed = refpoint_embed_ts_subset
+                else:
+                    refpoint_embed = torch.concat([refpoint_embed_ts_subset, refpoint_embed_subset], dim=-2)
 
             # Insert register tokens per group
             original_num_queries_per_group = None

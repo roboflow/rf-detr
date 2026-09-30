@@ -226,6 +226,67 @@ def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_pa
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
+@pytest.mark.integration
+@pytest.mark.e2e_onnx
+class TestExportedGraphAvoidsCoreMLRejectedOps:
+    """A real whole-model export must avoid the ops ONNX Runtime's CoreML provider rejects — the unit tests in
+    ``test_transformer_onnx_two_stage.py`` and ``test_segmentation_head.py`` only check the ``Transformer`` and
+    ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as ``RFDETR.export()``
+    actually produces it.
+
+    ``pretrain_weights=None`` builds each model without downloading or loading a checkpoint, keeping this CPU-runnable
+    and fast.
+    """
+
+    @staticmethod
+    def _exported_graph(tmp_path: Path, model: object) -> "onnx.GraphProto":
+        """Export ``model`` to ONNX under ``tmp_path`` and return its shape-inferred graph.
+
+        Args:
+            tmp_path: Directory to export into; must contain no other ``*.onnx`` file.
+            model: An ``RFDETR*`` model instance with an ``export`` method.
+
+        Returns:
+            The exported model's graph, after :func:`onnx.shape_inference.infer_shapes`.
+
+        Examples:
+            Requires a full model export to a temp dir; exercised by the tests below instead.
+            >>> TestExportedGraphAvoidsCoreMLRejectedOps._exported_graph(tmp_path, model)  # doctest: +SKIP
+        """
+        import onnx
+
+        with ignore_tracer_warnings():
+            model.export(output_dir=str(tmp_path), verbose=False)
+        (onnx_path,) = tmp_path.glob("*.onnx")
+        return onnx.shape_inference.infer_shapes(onnx.load(str(onnx_path))).graph
+
+    def test_detection_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
+        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+        from tests.models.test_transformer_onnx_two_stage import (
+            find_single_input_concat_nodes,
+            find_zero_dim_float_concat_nodes,
+        )
+
+        graph = self._exported_graph(tmp_path, RFDETRNano(pretrain_weights=None))
+
+        assert "Einsum" not in {node.op_type for node in graph.node}
+        assert find_single_input_concat_nodes(graph) == []
+        assert find_zero_dim_float_concat_nodes(graph) == []
+
+    def test_segmentation_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
+        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+        from tests.models.test_transformer_onnx_two_stage import (
+            find_single_input_concat_nodes,
+            find_zero_dim_float_concat_nodes,
+        )
+
+        graph = self._exported_graph(tmp_path, RFDETRSegNano(pretrain_weights=None))
+
+        assert "Einsum" not in {node.op_type for node in graph.node}
+        assert find_single_input_concat_nodes(graph) == []
+        assert find_zero_dim_float_concat_nodes(graph) == []
+
+
 def test_dinov2_export_uses_precomputed_positions_for_exact_rectangular_grid() -> None:
     """DINOv2 export must bypass interpolation only for its precomputed rectangular grid."""
     patch_size = 8
