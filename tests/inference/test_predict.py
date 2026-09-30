@@ -1029,6 +1029,13 @@ class TestPredictNegativeStrideNumpy:
 
         Returns:
             The captured ``(1, C, H, W)`` batch and the returned detections.
+
+        Examples:
+            >>> batch, detections = TestPredictNegativeStrideNumpy._predict_batch(
+            ...     _DummyRFDETR(), np.zeros((17, 29, 3), dtype=np.uint8), include_source_image=True
+            ... )
+            >>> tuple(batch.shape[:2]), detections.metadata["source_image"].shape
+            ((1, 3), (17, 29, 3))
         """
         batches: list[torch.Tensor] = []
 
@@ -1049,10 +1056,7 @@ class TestPredictNegativeStrideNumpy:
         assert len(batches) == 1, f"expected one forward call, got {len(batches)}"
         return batches[0], detections
 
-    @pytest.mark.parametrize(
-        "include_source_image",
-        [pytest.param(True, id="with_source_image"), pytest.param(False, id="without_source_image")],
-    )
+    @pytest.mark.parametrize("include_source_image", [True, False])
     @pytest.mark.parametrize("dtype", [pytest.param(np.uint8, id="uint8"), pytest.param(np.float32, id="float32")])
     def test_negative_stride_view_matches_contiguous_copy(
         self, dtype: type[np.generic], include_source_image: bool
