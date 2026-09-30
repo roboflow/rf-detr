@@ -233,6 +233,67 @@ def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_pa
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
+@pytest.mark.integration
+@pytest.mark.e2e_onnx
+class TestExportedGraphAvoidsCoreMLRejectedOps:
+    """A real whole-model export must avoid the ops ONNX Runtime's CoreML provider rejects — the unit tests in
+    ``test_transformer_onnx_two_stage.py`` and ``test_segmentation_head.py`` only check the ``Transformer`` and
+    ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as ``RFDETR.export()``
+    actually produces it.
+
+    ``pretrain_weights=None`` builds each model without downloading or loading a checkpoint, keeping this CPU-runnable
+    and fast.
+    """
+
+    @staticmethod
+    def _exported_graph(tmp_path: Path, model: object) -> "onnx.GraphProto":
+        """Export ``model`` to ONNX under ``tmp_path`` and return its shape-inferred graph.
+
+        Args:
+            tmp_path: Directory to export into; must contain no other ``*.onnx`` file.
+            model: An ``RFDETR*`` model instance with an ``export`` method.
+
+        Returns:
+            The exported model's graph, after :func:`onnx.shape_inference.infer_shapes`.
+
+        Examples:
+            Requires a full model export to a temp dir; exercised by the tests below instead.
+            >>> TestExportedGraphAvoidsCoreMLRejectedOps._exported_graph(tmp_path, model)  # doctest: +SKIP
+        """
+        import onnx
+
+        with ignore_tracer_warnings():
+            model.export(output_dir=str(tmp_path), verbose=False)
+        (onnx_path,) = tmp_path.glob("*.onnx")
+        return onnx.shape_inference.infer_shapes(onnx.load(str(onnx_path))).graph
+
+    def test_detection_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
+        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+        from tests.models.test_transformer_onnx_two_stage import (
+            find_single_input_concat_nodes,
+            find_zero_dim_float_concat_nodes,
+        )
+
+        graph = self._exported_graph(tmp_path, RFDETRNano(pretrain_weights=None))
+
+        assert "Einsum" not in {node.op_type for node in graph.node}
+        assert find_single_input_concat_nodes(graph) == []
+        assert find_zero_dim_float_concat_nodes(graph) == []
+
+    def test_segmentation_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
+        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+        from tests.models.test_transformer_onnx_two_stage import (
+            find_single_input_concat_nodes,
+            find_zero_dim_float_concat_nodes,
+        )
+
+        graph = self._exported_graph(tmp_path, RFDETRSegNano(pretrain_weights=None))
+
+        assert "Einsum" not in {node.op_type for node in graph.node}
+        assert find_single_input_concat_nodes(graph) == []
+        assert find_zero_dim_float_concat_nodes(graph) == []
+
+
 def test_dinov2_export_uses_precomputed_positions_for_exact_rectangular_grid() -> None:
     """DINOv2 export must bypass interpolation only for its precomputed rectangular grid."""
     patch_size = 8
@@ -365,6 +426,19 @@ class _DeviceTrackingCoreModel(_DummyCoreModel):
     def to(self, device, *_args, **_kwargs):
         self.to_calls.append(device)
         return self
+
+
+class _LockTrackingCoreModel(_DeviceTrackingCoreModel):
+    """`_DeviceTrackingCoreModel` variant that also records whether the module's move lock was held per `.to()`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock_held: list[bool] = []
+
+    def to(self, device, *args, **kwargs):
+        """Record the device-move lock state, then track the target device as the base class does."""
+        self.lock_held.append(_detr_module._device_move_lock(self).locked())
+        return super().to(device, *args, **kwargs)
 
 
 def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace:
@@ -593,6 +667,42 @@ def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.Monk
     assert core_model.to_calls == ["cpu", original_device], (
         f"expected exactly one staging move to 'cpu' then one restore to {original_device!r} even though "
         f"build_engine raised, got device move sequence {core_model.to_calls!r}"
+    )
+
+
+def test_rfdetr_export_moves_the_live_model_under_the_device_move_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both live-model moves in `export()` — the CPU staging move and the `finally` restore — must hold the lock.
+
+    `export()` moves the very module `predict()` runs on, and `nn.Module.to()` rewrites parameter storage in place. A
+    thread reaching its first `predict()` mid-export would otherwise rewrite the same tensors concurrently — the race
+    that left a cold segmentation model with silently corrupted weights. The deepcopy taken between the two moves is a
+    private object no other thread can see, so its own `.to()` is deliberately not covered here.
+    """
+    core_model = _LockTrackingCoreModel()
+    original_device = "meta"
+    model = types.SimpleNamespace(
+        model=types.SimpleNamespace(model=core_model, device=original_device, resolution=14),
+        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
+        size=None,
+    )
+
+    # Mock infer tensor (as in the TensorRT tests above): a real one cannot be copied off the "meta" device.
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr(
+        "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+        lambda *_a, **_kw: str(tmp_path / "inference_model.onnx"),
+    )
+    # No `deepcopy` patch: the export copy must stay a distinct object so only the live model's moves are recorded.
+
+    _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14))
+
+    assert core_model.to_calls == ["cpu", original_device], (
+        f"precondition: expected the staging move and the restore, got {core_model.to_calls!r}"
+    )
+    assert core_model.lock_held == [True, True], (
+        f"both live-model moves must run under the module's device-move lock, got lock states {core_model.lock_held!r}"
     )
 
 
