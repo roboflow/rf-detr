@@ -23,13 +23,9 @@ from torchvision.datasets import VisionDataset
 
 from rfdetr.config import MultiScale
 from rfdetr.datasets._aug_utils import resolve_keypoint_flip_pairs
-from rfdetr.datasets._keypoint_schema import (
-    YoloKeypointSchema,
-    _extract_yolo_class_names_from_data,
-    _load_yaml_mapping,
-    infer_yolo_keypoint_schema,
-)
+from rfdetr.datasets._keypoint_schema import YoloKeypointSchema, infer_yolo_keypoint_schema
 from rfdetr.datasets._torchvision import Compose
+from rfdetr.datasets._yolo_yaml import _extract_yolo_class_names_from_data, _load_yaml_mapping
 from rfdetr.datasets.coco import (
     make_coco_transforms,
     make_coco_transforms_square_div_64,
@@ -1179,7 +1175,7 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
             try:
                 self.keypoint_schema = infer_yolo_keypoint_schema(data_file)
             except (FileNotFoundError, ValueError, OSError) as exc:
-                raise ValueError(f"YOLO keypoint training requires kpt_shape metadata in {data_file!r}.") from exc
+                raise ValueError(f"Invalid YOLO pose data file {data_file!r}: {exc}") from exc
         else:
             self.keypoint_schema = None
         self.num_keypoints = max(num_keypoints_per_class or [], default=0)
@@ -1296,9 +1292,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
         try:
             infer_yolo_keypoint_schema(data_file)
         except (FileNotFoundError, ValueError, OSError) as exc:
-            raise ValueError(
-                "YOLO keypoint training requires an Ultralytics pose data.yaml/data.yml with valid kpt_shape metadata."
-            ) from exc
+            raise ValueError(f"Invalid YOLO pose data file {data_file!r}: {exc}") from exc
 
     if square_resize_div_64:
         dataset = YoloDetection(
