@@ -19,8 +19,8 @@ import importlib
 import json
 import logging
 import os
+import stat
 import sys
-import tempfile
 import threading
 import warnings
 from pathlib import Path
@@ -2020,6 +2020,19 @@ class TestSaveTrainingConfig:
             self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_class_names=[_UnserializableValue()])
         assert _count_config_write_warnings(caplog.records) == 1
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_training_config_json_mode_follows_umask(self, tmp_path: Path) -> None:
+        """training_config.json gets the mode ``open()`` would give it, not the temp file's owner-only ``0o600``."""
+        output_dir = tmp_path / "out"
+        previous_umask = os.umask(0o022)
+        try:
+            _save_training_config(
+                _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
+            )
+        finally:
+            os.umask(previous_umask)
+        assert stat.S_IMODE((output_dir / "training_config.json").stat().st_mode) == 0o644
+
     def test_torn_write_keeps_prior_training_config_intact(self, tmp_path: Path) -> None:
         """A write that fails partway through must not corrupt the previously saved good copy.
 
@@ -2034,12 +2047,10 @@ class TestSaveTrainingConfig:
         config_path = output_dir / "training_config.json"
         prior_payload = {"marker": "prior-good-copy", "run": 1}
         config_path.write_text(json.dumps(prior_payload))
-        real_named_temporary_file = tempfile.NamedTemporaryFile
+        real_fdopen = os.fdopen
 
         def _torn_temporary_file(*args: Any, **kwargs: Any) -> Any:
-            handle = real_named_temporary_file(*args, **kwargs)
-            if str(kwargs.get("dir")) != str(output_dir):
-                return handle
+            handle = real_fdopen(*args, **kwargs)
             real_write = handle.write
 
             def _torn_write(data: str) -> int:
@@ -2050,7 +2061,7 @@ class TestSaveTrainingConfig:
             handle.write = _torn_write
             return handle
 
-        with patch("tempfile.NamedTemporaryFile", side_effect=_torn_temporary_file):
+        with patch("os.fdopen", side_effect=_torn_temporary_file):
             _save_training_config(
                 _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
             )
@@ -2075,12 +2086,12 @@ class TestSaveTrainingConfig:
         payload_b = ["bb"] * 100  # much longer serialized payload than payload_a
         a_paused = threading.Event()
         b_done = threading.Event()
-        real_named_temporary_file = tempfile.NamedTemporaryFile
+        real_fdopen = os.fdopen
         errors: list[BaseException] = []
 
         def _paced_temporary_file(*args: Any, **kwargs: Any) -> Any:
-            handle = real_named_temporary_file(*args, **kwargs)
-            if str(kwargs.get("dir")) != str(output_dir) or threading.current_thread().name != "writer-a":
+            handle = real_fdopen(*args, **kwargs)
+            if threading.current_thread().name != "writer-a":
                 return handle
             real_write = handle.write
 
@@ -2099,7 +2110,7 @@ class TestSaveTrainingConfig:
 
         def _writer_a() -> None:
             try:
-                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
+                with patch("os.fdopen", side_effect=_paced_temporary_file):
                     _save_training_config(
                         _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_a
                     )
@@ -2109,7 +2120,7 @@ class TestSaveTrainingConfig:
         def _writer_b() -> None:
             try:
                 assert a_paused.wait(timeout=5), "writer a did not pause in time"
-                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
+                with patch("os.fdopen", side_effect=_paced_temporary_file):
                     _save_training_config(
                         _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_b
                     )

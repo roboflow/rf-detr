@@ -8,10 +8,10 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from collections import OrderedDict
 from typing import Any
 
+from rfdetr.utilities.files import _mkstemp_default_mode
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -218,8 +218,8 @@ def strip_checkpoint(
         new_state_dict.update(extra_metadata)
     # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
-    with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
-        tmp_path = tmp_file.name
+    tmp_fd, tmp_path = _mkstemp_default_mode(checkpoint_dir)
+    os.close(tmp_fd)
     try:
         torch.save(new_state_dict, tmp_path)
         # Atomic replace avoids leaving a partially written checkpoint on save failures/interruption.

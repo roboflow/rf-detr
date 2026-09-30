@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Iterable, Iterator, Literal, Optional
@@ -298,3 +299,20 @@ class TestDownloadFile:
         assert target_path.read_bytes() == b"data"
         _assert_no_download_temp_files(tmp_path)
         mock_open.assert_not_called()
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.parametrize("umask", [0o022, 0o077])
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
+    def test_download_file_mode_follows_umask(self, mock_get: Mock, umask: int, tmp_path: Path) -> None:
+        """The downloaded file gets the mode ``open()`` would give it, not ``mkstemp``'s owner-only ``0o600``."""
+        target_path = tmp_path / "weights.bin"
+        mock_get.return_value = _FakeResponse([b"data"], headers={"content-length": "4"})
+
+        previous_umask = os.umask(umask)
+        try:
+            _download_file("https://example.com/file.bin", str(target_path))
+        finally:
+            os.umask(previous_umask)
+
+        assert stat.S_IMODE(target_path.stat().st_mode) == 0o666 & ~umask

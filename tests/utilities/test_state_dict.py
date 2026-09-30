@@ -6,6 +6,8 @@
 """Unit tests for rfdetr.utilities.state_dict."""
 
 import logging
+import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -512,3 +514,14 @@ class TestStripCheckpoint:
         strip_checkpoint(ckpt_path, extra_metadata={"rfdetr_version": "override"})
         result = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         assert result["rfdetr_version"] == "override"
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_strip_keeps_the_mode_torch_save_gave_the_file(self, tmp_path) -> None:
+        """The stripped checkpoint stays readable by others instead of taking the rewrite's ``0o600`` temp mode."""
+        previous_umask = os.umask(0o022)
+        try:
+            ckpt_path = self._make_minimal_ckpt(tmp_path)
+            strip_checkpoint(ckpt_path)
+        finally:
+            os.umask(previous_umask)
+        assert stat.S_IMODE(ckpt_path.stat().st_mode) == 0o644

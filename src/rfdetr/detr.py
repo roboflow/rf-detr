@@ -44,6 +44,7 @@ from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, in
 from rfdetr.datasets.yolo import find_yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
+from rfdetr.utilities.files import _mkstemp_default_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -605,10 +606,8 @@ def _save_training_config(config: TrainConfig, model_config: ModelConfig, class_
         # same shape as utilities.state_dict's checkpoint rewrite.
         tmp_path: str | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                "w", dir=config.output_dir, delete=False, encoding="utf-8", suffix=".tmp"
-            ) as tmp_file:
-                tmp_path = tmp_file.name
+            tmp_fd, tmp_path = _mkstemp_default_mode(config.output_dir, suffix=".tmp")
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_file:
                 tmp_file.write(payload)
                 tmp_file.flush()
             os.replace(tmp_path, os.path.join(config.output_dir, "training_config.json"))

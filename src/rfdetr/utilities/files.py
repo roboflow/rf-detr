@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import secrets
 import tempfile
 
 import requests
@@ -19,6 +20,44 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 30.0
+
+
+def _mkstemp_default_mode(directory: str | os.PathLike[str], prefix: str = "tmp", suffix: str = "") -> tuple[int, str]:
+    """Create and open a new temporary file whose permissions follow the process umask.
+
+    A drop-in for :func:`tempfile.mkstemp` for files that are renamed into place with :func:`os.replace`.
+    ``mkstemp`` creates its file readable and writable by the owner only (``0o600``), and the rename keeps that mode,
+    so the final file would be unreadable to every other user, unlike the same file written with :func:`open`. This
+    creates the file with mode ``0o666`` and lets the OS apply the umask, exactly as :func:`open` does.
+
+    Args:
+        directory: Directory to create the file in.
+        prefix: Start of the file name.
+        suffix: End of the file name.
+
+    Returns:
+        An open OS-level file descriptor and the absolute path of the file.
+
+    Raises:
+        FileExistsError: If no unused file name was found.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     fd, path = _mkstemp_default_mode(directory, prefix="weights.pth.", suffix=".tmp")
+        ...     os.close(fd)
+        ...     os.path.basename(path).startswith("weights.pth."), path.endswith(".tmp")
+        (True, True)
+    """
+    # The flags tempfile.mkstemp uses; O_BINARY keeps Windows from translating newlines.
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    for _ in range(tempfile.TMP_MAX):
+        path = os.path.abspath(os.path.join(directory, f"{prefix}{secrets.token_hex(8)}{suffix}"))
+        try:
+            return os.open(path, flags, 0o666), path
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"No usable temporary file name found in {directory!r}.")
 
 
 def _compute_file_md5(filepath: str) -> str:
@@ -88,10 +127,10 @@ def _download_file(
             total_size = None
 
         target_dir = os.path.dirname(filename) or "."
-        fd, temp_filename = tempfile.mkstemp(
+        fd, temp_filename = _mkstemp_default_mode(
+            target_dir,
             prefix=f"{os.path.basename(filename)}.",
             suffix=".tmp",
-            dir=target_dir,
         )
         try:
             with (
