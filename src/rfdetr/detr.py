@@ -27,7 +27,6 @@ import numpy as np
 import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
-import yaml
 from PIL import Image
 
 from rfdetr._namespace import _namespace_from_configs
@@ -41,7 +40,7 @@ from rfdetr.datasets._keypoint_schema import (
 )
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
-from rfdetr.datasets.yolo import find_yolo_data_file, is_valid_yolo_dataset
+from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
@@ -2269,13 +2268,7 @@ class RFDETR:
 
         yaml_path = find_yolo_data_file(dataset_dir)
         if yaml_path is not None and is_valid_yolo_dataset(dataset_dir):
-            with open(yaml_path) as f:
-                data = yaml.safe_load(f)
-            if "names" in data:
-                if isinstance(data["names"], dict):
-                    return [str(data["names"][i]) for i in sorted(data["names"].keys())]
-                return [str(name) for name in data["names"]]
-            raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
+            return _extract_yolo_class_names(str(yaml_path))
         if yaml_path is not None:
             # A data file that is present but whose splits do not resolve is a different
             # problem from having none, and listing the names checked for implied the latter.
