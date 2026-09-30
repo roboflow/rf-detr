@@ -601,14 +601,6 @@ def _build_coco_api_from_samples(
     return coco
 
 
-@overload
-def find_yolo_data_file(dataset_dir: str | Path, default: None = None) -> Path | None: ...
-
-
-@overload
-def find_yolo_data_file(dataset_dir: str | Path, default: Path) -> Path: ...
-
-
 def find_yolo_data_file(dataset_dir: str | Path, default: Path | None = None) -> Path | None:
     """Return the YOLO data file of a dataset root.
 
