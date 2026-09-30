@@ -56,7 +56,12 @@ class _TwoStageExportWrapper(nn.Module):
             query_feat: Query feature embeddings of shape ``(num_queries, C)``.
 
         Returns:
-            Decoder hidden states of shape ``(num_layers, B, num_queries, C)``.
+            Last decoder layer's hidden states of shape ``(B, num_queries, C)`` (export mode keeps only the last layer).
+
+        Examples:
+            >>> wrapper = _build_two_stage_wrapper(num_queries=6)
+            >>> tuple(wrapper(*_example_inputs(num_queries=6)).shape)
+            (1, 6, 16)
         """
         return self.transformer([src], None, [pos], refpoint_embed, query_feat)[0]
 
@@ -109,7 +114,12 @@ def _example_inputs(num_queries: int) -> tuple[torch.Tensor, ...]:
 
 @pytest.fixture(scope="module")
 def two_stage_onnx(tmp_path_factory: pytest.TempPathFactory) -> onnx.ModelProto:
-    """Export a two-stage Transformer whose 6 selected proposals fill all 6 queries, with inferred shapes."""
+    """Export a two-stage Transformer whose 6 selected proposals fill all 6 queries, with inferred shapes.
+
+    Examples:
+        Pytest fixture functions cannot be called directly outside fixture injection.
+        >>> two_stage_onnx(tmp_path_factory)  # doctest: +SKIP
+    """
     onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
     out = tmp_path_factory.mktemp("onnx_two_stage") / "transformer.onnx"
     torch.onnx.export(
@@ -124,6 +134,8 @@ def two_stage_onnx(tmp_path_factory: pytest.TempPathFactory) -> onnx.ModelProto:
     return onnx.shape_inference.infer_shapes(onnx.load(str(out)))
 
 
+@pytest.mark.integration
+@pytest.mark.e2e_onnx
 class TestTwoStageExportGraph:
     """The exported two-stage graph must not contain the degenerate Concats CoreML rejects."""
 

@@ -7,6 +7,7 @@
 
 import inspect
 from contextlib import contextmanager
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -381,7 +382,22 @@ class _SegmentationHeadExportWrapper(nn.Module):
         self.head = head
 
     def forward(self, spatial_features: torch.Tensor, query_features: torch.Tensor) -> torch.Tensor:
-        """Return mask logits of shape ``(B, N, H, W)`` for one decoder layer's query features."""
+        """Return mask logits for one decoder layer's query features at a fixed 4x4 image size.
+
+        Args:
+            spatial_features: Spatial feature map of shape ``(B, C, H, W)``.
+            query_features: One decoder layer's query features of shape ``(B, N, C)``.
+
+        Returns:
+            Mask logits of shape ``(B, N, 4, 4)``.
+
+        Examples:
+            >>> head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=2, downsample_ratio=1)
+            >>> head.export()
+            >>> wrapper = _SegmentationHeadExportWrapper(head)
+            >>> tuple(wrapper(torch.randn(1, 4, 4, 4), torch.randn(1, 3, 4)).shape)
+            (1, 3, 4, 4)
+        """
         return self.head(spatial_features, [query_features], (4, 4))[0]
 
 
@@ -401,7 +417,9 @@ class TestSegmentationHeadForwardExport:
         assert actual.shape == (2, 3, 4, 4)
         torch.testing.assert_close(actual, expected)
 
-    def test_onnx_graph_has_no_einsum(self, tmp_path) -> None:
+    @pytest.mark.integration
+    @pytest.mark.e2e_onnx
+    def test_onnx_graph_has_no_einsum(self, tmp_path: Path) -> None:
         onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
         head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=2, downsample_ratio=1).eval()
         head.export()
