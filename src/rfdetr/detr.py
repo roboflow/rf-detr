@@ -2116,10 +2116,10 @@ class RFDETR:
                 ``backend="qnn"``); also raised for ``format="tensorrt"`` with ``fp16=True`` on a
                 strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
-                ``fp16=False``. Each format's availability check runs before the model does; what it does not
-                cover (a backend's extension, the TensorRT cast's packages, TensorRT's lean runtime library for
-                ``trt_version_compatible=True``, the Core AI runtime package) is found missing only during the
-                conversion.
+                ``fp16=False``. Each format's availability check runs before the model does, and so does the
+                check for TensorRT's lean runtime library that ``trt_version_compatible=True`` needs; what they do
+                not cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package) is
+                found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
@@ -2207,8 +2207,10 @@ class RFDETR:
         # The request holds up; now the host must too. A missing install is refused here rather than inside the
         # conversion, which is reached only after prepare_export_graph's full forward pass below. It follows every check
         # of the request above, so an invalid request is reported as one whether or not the format's dependency happens
-        # to be installed: installing an extra would not help it.
+        # to be installed: installing an extra would not help it. The configuration-dependent check comes last, once the
+        # packages it may import are known to be there.
         exporter_class.check_dependencies()
+        exporter.check_environment()
         logger.info(f"Exporting model to {format} format")
 
         device = self.model.device

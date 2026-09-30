@@ -539,6 +539,11 @@ def test_exporter_check_dependencies_defaults_to_a_no_op() -> None:
     assert Exporter.check_dependencies() is None
 
 
+def test_exporter_check_environment_defaults_to_a_no_op(tmp_path: Path) -> None:
+    """The base hook does nothing, so a format whose settings need only its packages has nothing to override."""
+    assert Exporter.check_environment(OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))) is None
+
+
 @pytest.mark.parametrize(
     ("keyword", "value"),
     [("trt_hardware_compatibility", "ampere_plus"), ("trt_version_compatible", True)],
@@ -1823,9 +1828,85 @@ class TestExportDependencyCheck:
     """A format's missing package is reported before the forward pass, naming the extra that installs it.
 
     Constructing an exporter never checks: a TensorRT ``dry_run`` and the tests that stub a conversion build exporters
-    without the format's packages. ``RFDETR.export`` calls ``check_dependencies`` after construction, and
-    ``Exporter.__call__`` calls it again before the conversion.
+    without the format's packages. ``RFDETR.export`` calls ``check_dependencies`` after construction, then
+    ``check_environment`` for what the configuration needs of the installed packages, and ``Exporter.__call__`` calls
+    both again before the conversion.
     """
+
+    @pytest.mark.parametrize(
+        ("setting", "error"),
+        [
+            pytest.param({"trt_version_compatible": True}, ImportError, id="missing-lean-runtime"),
+            pytest.param({"trt_hardware_compatibility": "ampere_plus"}, ValueError, id="missing-hardware-level"),
+        ],
+    )
+    def test_a_configuration_the_host_cannot_build_never_reaches_the_forward_pass(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        setting: dict[str, object],
+        error: type[Exception],
+    ) -> None:
+        """A TensorRT without the lean runtime or the hardware level refuses the request before the model runs.
+
+        The check needs the configuration, which the ``check_dependencies`` class method does not see.
+        """
+        make_infer_image = MagicMock(side_effect=lambda *_a, **_kw: _make_mock_infer_tensor())
+        monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", make_infer_image)
+        monkeypatch.setattr(
+            "rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: str(tmp_path / "model.onnx")
+        )
+        monkeypatch.setattr("rfdetr.detr.deepcopy", lambda module: module)
+        monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", True)
+        monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_POLYGRAPHY_AVAILABLE", True)
+        tensorrt = types.ModuleType("tensorrt")
+        tensorrt.__version__ = "11.3.0.99"
+        monkeypatch.setitem(sys.modules, "tensorrt", tensorrt)
+        monkeypatch.setitem(sys.modules, "tensorrt_lean_libs", None)
+        monkeypatch.setattr(
+            "rfdetr.export._tensorrt.exporter.ctypes.CDLL",
+            MagicMock(side_effect=OSError("libnvinfer_lean.so.11: cannot open shared object file")),
+        )
+
+        with pytest.raises(error):
+            _detr_module.RFDETR.export(
+                _make_tensorrt_export_model(), output_dir=str(tmp_path), format="tensorrt", shape=(14, 14), **setting
+            )
+
+        make_infer_image.assert_not_called()
+
+    def test_a_missing_tensorrt_is_named_before_the_configuration_is_checked(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``check_environment`` may import the format's packages, so it runs only once they were found installed.
+
+        A host without TensorRT is told which extra to install, not shown the import error of a portability probe.
+        """
+        monkeypatch.setattr("rfdetr.export._tensorrt.exporter._IS_TENSORRT_AVAILABLE", False)
+        monkeypatch.setitem(sys.modules, "tensorrt", None)
+
+        with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
+            _detr_module.RFDETR.export(
+                _make_tensorrt_export_model(),
+                output_dir=str(tmp_path),
+                format="tensorrt",
+                shape=(14, 14),
+                trt_version_compatible=True,
+            )
+
+    def test_an_exporter_handed_a_graph_checks_its_configuration_before_converting(self, tmp_path: Path) -> None:
+        """``Exporter.__call__`` repeats the check for a caller that skips ``RFDETR.export``, as for packages."""
+        exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False))
+
+        with (
+            patch.object(OnnxExporter, "check_dependencies"),
+            patch.object(OnnxExporter, "check_environment", side_effect=ImportError("a library is missing")),
+            patch.object(OnnxExporter, "_convert") as convert,
+            pytest.raises(ImportError, match="a library is missing"),
+        ):
+            exporter(_make_export_graph())
+
+        convert.assert_not_called()
 
     def test_missing_onnx_never_reaches_the_forward_pass(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A base install without ``onnx`` learns which extra to install before the model runs, not after the trace."""

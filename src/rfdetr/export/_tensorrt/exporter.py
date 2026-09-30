@@ -920,21 +920,31 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
 
         check_onnx_available('Install with: pip install "rfdetr[tensorrt]"', stage="TensorRT export")
 
+    def check_environment(self) -> None:
+        """Refuse a portability request that the installed TensorRT cannot build, before the forward pass.
+
+        ``RFDETR.export`` and ``Exporter.__call__`` call it after :meth:`check_dependencies`; :meth:`build_engine`, a
+        public entry point that bypasses both, calls it too.
+
+        Raises:
+            ImportError: If ``version_compatible`` is set and TensorRT's lean runtime library cannot be loaded.
+            ValueError: If ``hardware_compatibility`` names a level this TensorRT does not have.
+        """
+        self._require_lean_runtime()
+        if self.config.hardware_compatibility is not None:
+            self._hardware_compatibility_level(self.config.hardware_compatibility)
+
     def _convert(self, graph: ExportGraph) -> str:
         """Export to ONNX, build the engine from it, and return the engine's path.
 
         Raises:
-            ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, or ``version_compatible`` is set and the
-                lean runtime library cannot be loaded, before the ONNX export runs.
-            ValueError: If ``hardware_compatibility`` names a level the installed TensorRT does not have, likewise.
+            ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, before the ONNX export runs.
         """
         from rfdetr.export._onnx.exporter import OnnxExporter
 
         # Exporter.__call__ has already run check_dependencies; this repeats its TensorRT half for a caller of _convert
         # itself, which would otherwise learn of a missing TensorRT only from build_engine, after the ONNX export.
         self._require_tensorrt()
-        # A portability request this TensorRT cannot build is refused now, not after the ONNX stage has run.
-        self._require_portability_environment()
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
         # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
@@ -992,7 +1002,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             return engine_path
 
         self._require_tensorrt()
-        self._require_portability_environment()
+        self.check_environment()
 
         strategy, trt_version = self._fp16_strategy() if fp16 else (Fp16Strategy.BUILDER_FLAG, "unknown")
         if strategy is Fp16Strategy.UNAVAILABLE:
@@ -1075,17 +1085,6 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 f"TensorRT export requires {named}, which this environment does not have. "
                 "Install with: pip install rfdetr[tensorrt]"
             )
-
-    def _require_portability_environment(self) -> None:
-        """Refuse a portability request that the installed TensorRT cannot build, before the ONNX export and the build.
-
-        Raises:
-            ImportError: If ``version_compatible`` is set and TensorRT's lean runtime library cannot be loaded.
-            ValueError: If ``hardware_compatibility`` names a level this TensorRT does not have.
-        """
-        self._require_lean_runtime()
-        if self.config.hardware_compatibility is not None:
-            self._hardware_compatibility_level(self.config.hardware_compatibility)
 
     def _require_lean_runtime(self) -> None:
         """Refuse ``version_compatible`` when this TensorRT cannot load its lean runtime library.

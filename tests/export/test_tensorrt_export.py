@@ -18,6 +18,7 @@ import importlib.util
 import re
 import sys
 import types
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import get_args, get_type_hints
@@ -1577,7 +1578,7 @@ class TestPortableEngines:
     def test_a_missing_lean_runtime_is_refused_before_the_onnx_export(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """``_convert`` checks first, so the user does not wait for the ONNX stage only to be refused after it."""
+        """``Exporter.__call__`` checks first, so the user is not refused only after the ONNX stage has run."""
         _patch_polygraphy_chain_recording(monkeypatch)
         onnx_calls: list[str] = []
         monkeypatch.setattr(
@@ -1588,7 +1589,7 @@ class TestPortableEngines:
         monkeypatch.setattr(tensorrt_export.ctypes, "CDLL", _cannot_load)
 
         with pytest.raises(ImportError, match="lean runtime"):
-            TensorRTExporter(TensorRTConfig(version_compatible=True))._convert(_minimal_export_graph())
+            TensorRTExporter(TensorRTConfig(version_compatible=True))(_minimal_export_graph())
 
         assert onnx_calls == []
 
@@ -1608,9 +1609,26 @@ class TestPortableEngines:
         config = TensorRTConfig(hardware_compatibility="same_compute_capability")
 
         with pytest.raises(ValueError, match="same_compute_capability"):
-            TensorRTExporter(config)._convert(_minimal_export_graph())
+            TensorRTExporter(config)(_minimal_export_graph())
 
         assert onnx_calls == []
+
+    @pytest.mark.parametrize(
+        "run",
+        [
+            pytest.param(lambda exporter: exporter(_minimal_export_graph()), id="call"),
+            pytest.param(lambda exporter: exporter.build_engine("model.onnx"), id="build_engine"),
+        ],
+    )
+    def test_a_host_without_tensorrt_is_named_before_the_portability_check(
+        self, monkeypatch: pytest.MonkeyPatch, run: Callable[[TensorRTExporter], object]
+    ) -> None:
+        """The packages are checked before the configuration, whose lean probe would import the missing TensorRT."""
+        monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", False)
+        monkeypatch.setitem(sys.modules, "tensorrt", None)
+
+        with pytest.raises(ImportError, match=r"rfdetr\[tensorrt\]"):
+            run(TensorRTExporter(TensorRTConfig(version_compatible=True)))
 
     @pytest.mark.parametrize(
         ("options", "suffix"),
