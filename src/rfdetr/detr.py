@@ -202,8 +202,7 @@ _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("xxlarge", "RFDETR2XLarge"),
     ("xlarge", "RFDETRXLarge"),
 )
-# Release-file stems of the PE-Core-T plus models, matched before every other entry: they cannot collide with a core
-# name, whereas bare size words ("pico", "atto") occur inside unrelated path components.
+# PE-Core-T release-file stems, matched in the file name only: bare "atto" or "pico" occur in other words.
 _CHECKPOINT_PLUS_STEM_ENTRIES: tuple[tuple[str, str], ...] = (
     ("rf-detr-atto", "RFDETRAtto"),
     ("rfdetr-atto", "RFDETRAtto"),
@@ -814,8 +813,7 @@ class RFDETR:
         import rfdetr.variants as rfdetr_variants
 
         _plus_available = False
-        # A broken rfdetr_plus install (e.g. a missing dependency) must not stop core checkpoints from loading; the
-        # error is raised only if the checkpoint turns out to need a plus class.
+        # Raised only if the checkpoint needs a plus class: a broken rfdetr_plus must not block core checkpoints.
         _plus_import_error: ImportError | None = None
         _plus_symbols: dict[str, type[RFDETR]] = {}
         _plus_entries: list[tuple[str, type[RFDETR]]] = []
@@ -948,7 +946,7 @@ class RFDETR:
         if weights_name in {"", "none", "null"}:
             weights_name = os.path.basename(os.fspath(path)).lower()
             _filename_fallback = True
-        # Plus release stems are matched in the file name only: a directory such as "rf-detr-pico/" names no model.
+        # A directory such as "rf-detr-pico/" names no model.
         weights_file = os.path.basename(weights_name)
 
         if model_cls is None:
@@ -960,40 +958,29 @@ class RFDETR:
                 "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
             ) or any(name in weights_file for name, _ in _CHECKPOINT_PLUS_STEM_ENTRIES)
             if not _plus_available and (plus_by_model_name or plus_by_weights_name):
-                if _plus_import_error is not None:
-                    raise ImportError(
-                        f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
-                        f"rfdetr_plus package, which is installed but failed to import: {_plus_import_error}"
-                    ) from _plus_import_error
                 from rfdetr.platform import _INSTALL_MSG
 
+                reason = (
+                    f", which is installed but failed to import: {_plus_import_error}"
+                    if _plus_import_error
+                    else ". " + _INSTALL_MSG.format(name="platform model downloads")
+                )
                 raise ImportError(
                     f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
-                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
-                )
-            # An installed rfdetr_plus that predates the checkpoint's model: never fall back to filename matching,
-            # which could resolve a different class.
-            if plus_by_model_name:
+                    f"rfdetr_plus package{reason}"
+                ) from _plus_import_error
+            # An installed rfdetr_plus that predates the checkpoint's model (by name or release stem): never fall back
+            # to other names, which could resolve a core class (e.g. "small" in "rf-detr-pico-small-ft.pth").
+            missing_symbol = normalized_name if plus_by_model_name else None
+            for stem, symbol in _CHECKPOINT_PLUS_STEM_ENTRIES:
+                if missing_symbol is None and stem in weights_file and symbol not in _plus_symbols:
+                    missing_symbol = symbol
+            if missing_symbol is not None:
                 from rfdetr.platform.models import _UPGRADE_MSG
 
                 raise ImportError(
-                    f"Checkpoint model_name={saved_model_name!r}: " + _UPGRADE_MSG.format(name=normalized_name)
-                )
-            # Same for a plus release-file stem whose class the installed rfdetr_plus lacks: a core size word elsewhere
-            # in the path (e.g. "rf-detr-pico-small-ft.pth") must not resolve it to a core class.
-            missing_stem_symbol = next(
-                (
-                    symbol
-                    for name, symbol in _CHECKPOINT_PLUS_STEM_ENTRIES
-                    if name in weights_file and symbol not in _plus_symbols
-                ),
-                None,
-            )
-            if missing_stem_symbol is not None:
-                from rfdetr.platform.models import _UPGRADE_MSG
-
-                raise ImportError(
-                    f"Checkpoint pretrain_weights={weights_name!r}: " + _UPGRADE_MSG.format(name=missing_stem_symbol)
+                    f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r}: "
+                    + _UPGRADE_MSG.format(name=missing_symbol)
                 )
 
             model_cls = next((klass for name, klass in _plus_stem_entries if name in weights_file), None)
@@ -1002,13 +989,6 @@ class RFDETR:
                     if name in weights_name:
                         model_cls = klass
                         break
-
-            if model_cls is None and plus_by_weights_name:
-                from rfdetr.platform.models import _UPGRADE_MSG
-
-                raise ImportError(
-                    f"Checkpoint pretrain_weights={weights_name!r}: " + _UPGRADE_MSG.format(name="Its model")
-                )
 
             if _filename_fallback and model_cls is not None:
                 logger.info(
