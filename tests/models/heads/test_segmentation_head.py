@@ -49,8 +49,44 @@ def test_depthwise_conv_block_forward(device: str) -> None:
     assert y.shape == x.shape
 
 
-def test_depthwise_conv_forward_disables_cudnn(monkeypatch) -> None:
-    """Depthwise conv should execute with cuDNN disabled during forward."""
+def test_depthwise_conv_forward_disables_cudnn_on_cuda(monkeypatch) -> None:
+    """On CUDA, forward must run with cuDNN disabled.
+
+    ``_cudnn_disabled()`` gates entry on ``x.is_cuda`` (see the module comment): only a CUDA tensor
+    reaches ``torch.backends.cudnn.flags(enabled=False)`` at all, since ATen's ``ConvParams::use_cudnn``
+    never reads the flag for a CPU tensor in the first place.
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    block = DepthwiseConvBlock(dim=8).to("cuda")
+    enabled_calls: list[bool] = []
+    original_flags = torch.backends.cudnn.flags
+
+    @contextmanager
+    def _tracking_flags(*, enabled: bool):
+        enabled_calls.append(enabled)
+        with original_flags(enabled=enabled):
+            yield
+
+    monkeypatch.setattr(torch.backends.cudnn, "flags", _tracking_flags)
+
+    x = torch.randn(1, 8, 4, 4, device="cuda")
+    y = block(x)
+    assert y.shape == x.shape
+    assert enabled_calls, "torch.backends.cudnn.flags was never called"
+    assert all(not e for e in enabled_calls)
+
+
+test_depthwise_conv_forward_disables_cudnn_on_cuda = pytest.mark.gpu(test_depthwise_conv_forward_disables_cudnn_on_cuda)
+
+
+def test_depthwise_conv_forward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
+    """On CPU, forward must NOT touch ``torch.backends.cudnn.flags`` at all.
+
+    ATen's ``ConvParams::use_cudnn`` short-circuits on ``!input.is_cuda()`` before ever reading the
+    flag, so mutating a process-global for a CPU-only conv buys nothing and only serializes concurrent
+    callers (see F1). ``_cudnn_disabled()`` gates on ``x.is_cuda`` precisely to keep this path untouched.
+    """
     block = DepthwiseConvBlock(dim=8)
     enabled_calls: list[bool] = []
     original_flags = torch.backends.cudnn.flags
@@ -66,15 +102,51 @@ def test_depthwise_conv_forward_disables_cudnn(monkeypatch) -> None:
     x = torch.randn(1, 8, 4, 4)
     y = block(x)
     assert y.shape == x.shape
-    assert enabled_calls, "torch.backends.cudnn.flags was never called"
+    assert not enabled_calls, "torch.backends.cudnn.flags must not be called for a CPU tensor"
+
+
+def test_depthwise_conv_backward_disables_cudnn_on_cuda(monkeypatch) -> None:
+    """Backward pass must also run with cuDNN disabled on CUDA (issue #731).
+
+    The previous fix (PR #728) only wrapped the forward pass in a context manager.  The backward kernels ran with cuDNN
+    re-enabled, causing RuntimeError on T4/P100 GPUs. The gate keys backward off the saved tensor's device, so this must
+    still hold on CUDA even though the CPU path (below) now skips the scope entirely.
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    block = DepthwiseConvBlock(dim=8).to("cuda")
+    enabled_calls: list[bool] = []
+    original_flags = torch.backends.cudnn.flags
+
+    @contextmanager
+    def _tracking_flags(*, enabled: bool):
+        enabled_calls.append(enabled)
+        with original_flags(enabled=enabled):
+            yield
+
+    monkeypatch.setattr(torch.backends.cudnn, "flags", _tracking_flags)
+
+    x = torch.randn(1, 8, 4, 4, device="cuda", requires_grad=True)
+    y = block(x)
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == x.shape
+    # cuDNN must be disabled for both forward and backward
+    assert len(enabled_calls) >= 2
     assert all(not e for e in enabled_calls)
 
 
-def test_depthwise_conv_backward_disables_cudnn(monkeypatch) -> None:
-    """Backward pass must also run with cuDNN disabled (issue #731).
+test_depthwise_conv_backward_disables_cudnn_on_cuda = pytest.mark.gpu(
+    test_depthwise_conv_backward_disables_cudnn_on_cuda
+)
 
-    The previous fix (PR #728) only wrapped the forward pass in a context manager.  The backward kernels ran with cuDNN
-    re-enabled, causing RuntimeError on T4/P100 GPUs.
+
+def test_depthwise_conv_backward_skips_cudnn_flags_on_cpu(monkeypatch) -> None:
+    """On CPU, backward must NOT touch ``torch.backends.cudnn.flags`` either.
+
+    Backward gates on the saved (forward-input) tensor's device, mirroring the forward gate, so a CPU-only training step
+    never mutates the process-global cuDNN flags.
     """
     block = DepthwiseConvBlock(dim=8)
     enabled_calls: list[bool] = []
@@ -94,9 +166,7 @@ def test_depthwise_conv_backward_disables_cudnn(monkeypatch) -> None:
 
     assert x.grad is not None
     assert x.grad.shape == x.shape
-    # cuDNN must be disabled for both forward and backward
-    assert len(enabled_calls) >= 2
-    assert all(not e for e in enabled_calls)
+    assert not enabled_calls, "torch.backends.cudnn.flags must not be called for a CPU tensor"
 
 
 @pytest.mark.parametrize(
