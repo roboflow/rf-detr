@@ -251,7 +251,7 @@ uv run twine check --strict dist/*
 **Exported Prediction:**
 
 - `RFDETR.from_export(..., backend="rfdetr")` retains the shared RF-DETR preprocessing and postprocessing pipeline.
-- `backend="inference_models"` selects the complete optional `inference_models` pipeline for ONNX/TensorRT detection. Dispatch before RF-DETR preprocessing; never route it through the raw-tensor runtime adapter.
+- `backend="inference_models"` selects the complete optional `inference_models` pipeline for ONNX/TensorRT detection, segmentation, and keypoints. Dispatch before RF-DETR preprocessing; never route it through the raw-tensor runtime adapter.
 - Preserve the public `RFDETRInference.predict()` input/result contract at the adapter boundary. Keep the optional SDK import lazy and use its public package loader. Report its numerical differences and selected execution policy instead of claiming identical predictions or guaranteed acceleration.
 
 **Model Selection (examples, docs, CI, tests, defaults):**

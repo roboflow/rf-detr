@@ -40,7 +40,7 @@ uv build
 
 **CUDA graph precision:** `cuda_graphs=True` routes BF16 capture through PyTorch and fixed-shape FP8 capture through Transformer Engine when `compile=False`. Keep the registered model unchanged. FP8 graphs require the active Lightning recipe, one GPU, detection, and no accumulation; see `AGENTS.md` for guards. Never wrap a compiled model with the eager capture runner.
 
-**Exported prediction:** `RFDETR.from_export()` returns an inference-only `RFDETRInference`. Its default backend uses RF-DETR preprocessing and postprocessing. The optional `inference_models` backend runs that SDK's complete pipeline for ONNX/TensorRT detection; keep its dispatch above preprocessing and its imports lazy.
+**Exported prediction:** `RFDETR.from_export()` returns an inference-only `RFDETRInference`. Its default backend uses RF-DETR preprocessing and postprocessing. The optional `inference_models` backend runs that SDK's complete pipeline for ONNX/TensorRT detection, segmentation, and keypoints; keep its dispatch above preprocessing and its imports lazy.
 
 ## Code Quality
 

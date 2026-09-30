@@ -21,7 +21,7 @@ import numpy as np
 import requests
 import torch
 from PIL import Image
-from supervision import Detections
+from supervision import Detections, KeyPoints
 
 if TYPE_CHECKING:
     from rfdetr.export._runtime.metadata import ExportMetadata
@@ -37,15 +37,17 @@ def _onnx_signature(path: Path, metadata: ExportMetadata) -> int:
     graph = onnx.load(str(path), load_external_data=False).graph
     if any(tensor.data_location == onnx.TensorProto.EXTERNAL for tensor in graph.initializer):
         raise ValueError("inference_models bridge does not support ONNX external weight files.")
-    if len(graph.input) != 1 or len(graph.output) != 2:
-        raise ValueError("inference_models requires one ONNX input and exactly two detection outputs.")
+    if len(graph.input) != 1 or len(graph.output) != (3 if metadata.task != "detect" else 2):
+        raise ValueError("inference_models requires one ONNX input and the task's expected outputs.")
     if graph.input[0].name != metadata.input_name:
         raise ValueError("ONNX input name disagrees with inference metadata.")
-    if [output.name for output in graph.output] != [
-        metadata.outputs["pred_boxes"],
-        metadata.outputs["pred_logits"],
-    ]:
-        raise ValueError("inference_models requires boxes then logits as the first two ONNX outputs.")
+    expected_outputs = [metadata.outputs["pred_boxes"], metadata.outputs["pred_logits"]]
+    if metadata.task == "segment":
+        expected_outputs.append(metadata.outputs["pred_masks"])
+    elif metadata.task == "keypoints":
+        expected_outputs.append(metadata.outputs["pred_keypoints"])
+    if [output.name for output in graph.output] != expected_outputs:
+        raise ValueError("inference_models requires task outputs in boxes, logits, then task-head order.")
     shapes = [
         [
             dimension.dim_value if dimension.HasField("dim_value") else -1
@@ -53,7 +55,7 @@ def _onnx_signature(path: Path, metadata: ExportMetadata) -> int:
         ]
         for value in (graph.input[0], *graph.output)
     ]
-    input_shape, boxes_shape, logits_shape = shapes
+    input_shape, boxes_shape, logits_shape = shapes[:3]
     if len(input_shape) != 4 or len(boxes_shape) != 3 or len(logits_shape) != 3:
         raise ValueError("ONNX input, boxes, or logits have an unsupported rank.")
     if any(value.type.tensor_type.elem_type != onnx.TensorProto.FLOAT for value in (graph.input[0], *graph.output)):
@@ -61,7 +63,9 @@ def _onnx_signature(path: Path, metadata: ExportMetadata) -> int:
     for actual, expected in zip(input_shape, metadata.input_shape):
         if (actual <= 0) != (expected == -1) or (actual > 0 and actual != expected):
             raise ValueError("ONNX input shape disagrees with inference metadata.")
-    if any(output[0] > 0 and output[0] != input_shape[0] for output in (boxes_shape, logits_shape)):
+    if any(not output for output in shapes[1:]):
+        raise ValueError("ONNX task output has an unsupported scalar shape.")
+    if any(output[0] > 0 and output[0] != input_shape[0] for output in shapes[1:]):
         raise ValueError("ONNX output batch dimension disagrees with the input.")
     if boxes_shape[-1] != 4 or boxes_shape[1] <= 0 or logits_shape[1] != boxes_shape[1]:
         raise ValueError("ONNX detection outputs have incompatible query shapes.")
@@ -71,6 +75,22 @@ def _onnx_signature(path: Path, metadata: ExportMetadata) -> int:
         )
     if logits_shape[-1] <= 0 or logits_shape[-1] < metadata.num_classes:
         raise ValueError("ONNX logit class count disagrees with inference metadata.")
+    if metadata.task == "segment":
+        mask_shape = shapes[3]
+        if len(mask_shape) != 4 or mask_shape[1] != boxes_shape[1] or min(mask_shape[2:]) <= 0:
+            raise ValueError("ONNX mask shape disagrees with detection queries or spatial size.")
+    elif metadata.task == "keypoints":
+        keypoint_shape = shapes[3]
+        if len(metadata.num_keypoints_per_class) != logits_shape[-1]:
+            raise ValueError("Keypoint schema must describe each ONNX logit slot.")
+        expected_slots = logits_shape[-1] * max(metadata.num_keypoints_per_class)
+        if (
+            len(keypoint_shape) != 4
+            or keypoint_shape[1] != boxes_shape[1]
+            or keypoint_shape[2] != expected_slots
+            or keypoint_shape[3] != 8
+        ):
+            raise ValueError("ONNX keypoint shape disagrees with query and class schema.")
     return logits_shape[-1]
 
 
@@ -87,8 +107,8 @@ def _tensorrt_signature(path: Path, metadata: ExportMetadata, device: torch.devi
         engine = runtime.deserialize_cuda_engine(path.read_bytes())
     if engine is None:
         raise ValueError(f"TensorRT could not deserialize {path}.")
-    if engine.num_io_tensors != 3:
-        raise ValueError("inference_models requires one TensorRT input and two detection outputs.")
+    if engine.num_io_tensors != (4 if metadata.task != "detect" else 3):
+        raise ValueError("inference_models requires one TensorRT input and the task's expected outputs.")
     names = [engine.get_tensor_name(index) for index in range(engine.num_io_tensors)]
     if (
         metadata.input_name not in names
@@ -96,7 +116,18 @@ def _tensorrt_signature(path: Path, metadata: ExportMetadata, device: torch.devi
         or metadata.outputs["pred_logits"] != "labels"
     ):
         raise ValueError("inference_models TensorRT requires input, dets, and labels bindings.")
-    if set(names) != {metadata.input_name, "dets", "labels"}:
+    expected_names = {metadata.input_name, "dets", "labels"}
+    if metadata.task == "segment":
+        if metadata.outputs["pred_masks"] != "masks":
+            raise ValueError("inference_models TensorRT segmentation requires a masks binding.")
+        expected_names.add("masks")
+        if [name for name in names if name != metadata.input_name] != ["dets", "labels", "masks"]:
+            raise ValueError("inference_models TensorRT segmentation requires boxes, logits, then masks.")
+    elif metadata.task == "keypoints":
+        if metadata.outputs["pred_keypoints"] != "keypoints":
+            raise ValueError("inference_models TensorRT keypoints requires a keypoints binding.")
+        expected_names.add("keypoints")
+    if set(names) != expected_names:
         raise ValueError("TensorRT engine bindings disagree with inference metadata.")
     input_shape = tuple(engine.get_tensor_shape(metadata.input_name))
     boxes_shape = tuple(engine.get_tensor_shape("dets"))
@@ -108,7 +139,10 @@ def _tensorrt_signature(path: Path, metadata: ExportMetadata, device: torch.devi
     for actual, expected in zip(input_shape, metadata.input_shape):
         if (actual <= 0) != (expected == -1) or (actual > 0 and actual != expected):
             raise ValueError("TensorRT input shape disagrees with inference metadata.")
-    if any(output[0] > 0 and output[0] != input_shape[0] for output in (boxes_shape, logits_shape)):
+    output_shapes = [tuple(engine.get_tensor_shape(name)) for name in names if name != metadata.input_name]
+    if any(not shape for shape in output_shapes):
+        raise ValueError("TensorRT task output has an unsupported scalar shape.")
+    if any(shape[0] > 0 and shape[0] != input_shape[0] for shape in output_shapes):
         raise ValueError("TensorRT output batch dimension disagrees with the input.")
     opt_batch = metadata.input_shape[0]
     if opt_batch == -1:
@@ -126,16 +160,36 @@ def _tensorrt_signature(path: Path, metadata: ExportMetadata, device: torch.devi
         )
     if logits_shape[-1] <= 0 or logits_shape[-1] < metadata.num_classes:
         raise ValueError("TensorRT logit class count disagrees with inference metadata.")
+    if metadata.task == "segment":
+        mask_shape = tuple(engine.get_tensor_shape("masks"))
+        if len(mask_shape) != 4 or mask_shape[1] != boxes_shape[1] or min(mask_shape[2:]) <= 0:
+            raise ValueError("TensorRT mask shape disagrees with detection queries or spatial size.")
+    elif metadata.task == "keypoints":
+        keypoint_shape = tuple(engine.get_tensor_shape("keypoints"))
+        if len(metadata.num_keypoints_per_class) != logits_shape[-1]:
+            raise ValueError("Keypoint schema must describe each TensorRT logit slot.")
+        expected_slots = logits_shape[-1] * max(metadata.num_keypoints_per_class)
+        if (
+            len(keypoint_shape) != 4
+            or keypoint_shape[1] != boxes_shape[1]
+            or keypoint_shape[2] != expected_slots
+            or keypoint_shape[3] != 8
+        ):
+            raise ValueError("TensorRT keypoint shape disagrees with query and class schema.")
     return logits_shape[-1], opt_batch
 
 
 class InferenceModelsPredictor:
-    """Run a detection export through inference-models' complete public pipeline."""
+    """Run a supported export through inference-models' complete public pipeline."""
 
     def __init__(self, path: Path, metadata: ExportMetadata, device: str) -> None:
         """Build one local inference-models package around a validated RF-DETR artifact."""
-        if metadata.task != "detect" or metadata.format not in {"onnx", "tensorrt"}:
-            raise ValueError("inference_models supports full object-detection ONNX and TensorRT exports only.")
+        if metadata.task not in {"detect", "segment", "keypoints"} or metadata.format not in {"onnx", "tensorrt"}:
+            raise ValueError("inference_models supports detection, segmentation, or keypoints on ONNX/TRT.")
+        if metadata.task == "segment" and not metadata.upsample_masks_to_image_size:
+            raise ValueError("inference_models segmentation always returns source-image-size masks.")
+        if metadata.task == "keypoints" and metadata.trace_alpha != 0.2:
+            raise ValueError("inference_models keypoint score fusion requires trace_alpha=0.2.")
         if metadata.input_layout != "NCHW" or metadata.input_dtype != "float32" or metadata.num_channels != 3:
             raise ValueError("inference_models requires a float32 NCHW RGB detection export.")
         if metadata.selection_policy != "all_logits" or metadata.box_format != "cxcywh_normalized":
@@ -196,12 +250,25 @@ class InferenceModelsPredictor:
         self._package = tempfile.TemporaryDirectory(prefix="rfdetr-inference-models-")
         package_dir = Path(self._package.name)
         package_backend = "onnx" if metadata.format == "onnx" else "trt"
+        self._keypoint_raw_class_ids = [
+            index for index, count in enumerate(metadata.num_keypoints_per_class) if count > 0
+        ]
+        slot_names = [
+            f"__rfdetr_slot_{index}__"
+            if metadata.task == "keypoints"
+            else metadata.class_id_to_name.get(index, f"__unmapped_{index}__")
+            for index in range(slots)
+        ]
         try:
             (package_dir / "model_config.json").write_text(
                 json.dumps(
                     {
                         "model_architecture": "rfdetr",
-                        "task_type": "object-detection",
+                        "task_type": {
+                            "detect": "object-detection",
+                            "segment": "instance-segmentation",
+                            "keypoints": "keypoint-detection",
+                        }[metadata.task],
                         "backend_type": package_backend,
                     }
                 ),
@@ -224,12 +291,35 @@ class InferenceModelsPredictor:
                             if metadata.input_shape[0] != -1
                             else {"max_dynamic_batch_size": metadata.max_batch_size}
                         ),
+                        # The SDK keypoint decoder requires a remapping object even when every slot is active.
+                        "class_names_operations": (
+                            [
+                                {"type": "class_name_removal", "class_name": slot_names[index]}
+                                for index, count in enumerate(metadata.num_keypoints_per_class)
+                                if count == 0
+                            ]
+                            or [{"type": "class_name_removal", "class_name": "__rfdetr_no_slot__"}]
+                        )
+                        if metadata.task == "keypoints"
+                        else None,
                     }
                 ),
                 encoding="utf-8",
             )
-            slot_names = [metadata.class_id_to_name.get(index, f"__unmapped_{index}__") for index in range(slots)]
             (package_dir / "class_names.txt").write_text("\n".join(slot_names) + "\n", encoding="utf-8")
+            if metadata.task == "keypoints":
+                keypoint_descriptions = [
+                    {
+                        "object_class": slot_names[index],
+                        "object_class_id": index,
+                        "keypoints": {str(point): f"keypoint_{point}" for point in range(count)},
+                        "edges": [],
+                    }
+                    for index, count in enumerate(metadata.num_keypoints_per_class)
+                ]
+                (package_dir / "keypoints_metadata.json").write_text(
+                    json.dumps(keypoint_descriptions), encoding="utf-8"
+                )
             package_weights = package_dir / ("weights.onnx" if package_backend == "onnx" else "engine.plan")
             try:
                 os.link(path.resolve(), package_weights)
@@ -302,7 +392,7 @@ class InferenceModelsPredictor:
         patch_size: int | None = None,
         include_source_image: bool = True,
         **kwargs: Any,
-    ) -> Detections | list[Detections]:
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Run one SDK batch and add the native RF-DETR result metadata."""
         if kwargs:
             raise ValueError(f"Unsupported inference_models predict options: {sorted(kwargs)}.")
@@ -380,12 +470,49 @@ class InferenceModelsPredictor:
                     )
             else:
                 raise TypeError(f"Unsupported image input type: {type(item).__name__}.")
-        predictions = self._model.infer(sdk_images, confidence=threshold, input_color_format="rgb")
+        infer_options: dict[str, Any] = {"confidence": threshold, "input_color_format": "rgb"}
+        if self.metadata.task == "segment":
+            infer_options.update(mask_format="dense", max_detections=self.metadata.num_select)
+        elif self.metadata.task == "keypoints":
+            infer_options["key_points_threshold"] = 0.0
+        predictions = self._model.infer(sdk_images, **infer_options)
+        if self.metadata.task == "keypoints":
+            if not isinstance(predictions, tuple) or len(predictions) != 2:
+                raise RuntimeError("inference_models did not return keypoints and companion detections.")
+            keypoint_predictions, box_predictions = predictions
+            if box_predictions is None or len(keypoint_predictions) != batch_size or len(box_predictions) != batch_size:
+                raise RuntimeError("inference_models keypoint batch or companion detections are incomplete.")
+            keypoint_results: list[Detections | KeyPoints] = []
+            for index, (prediction, box_prediction) in enumerate(zip(keypoint_predictions, box_predictions)):
+                key_points = prediction.to_supervision()
+                boxes = box_prediction.to_supervision()
+                if len(key_points) != len(boxes):
+                    raise RuntimeError("inference_models keypoints and companion boxes are misaligned.")
+                compact_ids = key_points.class_id
+                if compact_ids is None or any(
+                    int(class_id) < 0 or int(class_id) >= len(self._keypoint_raw_class_ids) for class_id in compact_ids
+                ):
+                    raise RuntimeError("inference_models returned a keypoint class outside the export schema.")
+                key_points.class_id = np.asarray(
+                    [self._keypoint_raw_class_ids[int(class_id)] for class_id in compact_ids], dtype=np.int64
+                )
+                key_points.data["xyxy"] = boxes.xyxy.astype(np.float32)
+                key_points.data["class_name"] = np.asarray(
+                    [self.metadata.class_id_to_name.get(int(class_id), "") for class_id in key_points.class_id],
+                    dtype=object,
+                )
+                key_points.data["source_shape"] = np.tile(
+                    np.asarray(sizes[index], dtype=np.int64), (len(key_points), 1)
+                )
+                if include_source_image:
+                    key_points.data["source_image"] = [source_images[index] for _ in range(len(key_points))]
+                keypoint_results.append(key_points)
+            return keypoint_results[0] if single else keypoint_results
         if len(predictions) != batch_size:
             raise RuntimeError(f"inference_models returned {len(predictions)} results for {batch_size} images.")
-        results: list[Detections] = []
+        results: list[Detections | KeyPoints] = []
         for index, prediction in enumerate(predictions):
-            if self.device.type == "cuda" and prediction.xyxy.device != self.device:
+            if self.metadata.task == "detect" and self.device.type == "cuda" and prediction.xyxy.device != self.device:
                 raise RuntimeError(
                     f"inference_models returned predictions on {prediction.xyxy.device} "
                     f"instead of requested {self.device}."

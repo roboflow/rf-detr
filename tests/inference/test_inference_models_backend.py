@@ -125,20 +125,13 @@ class TestBackendSelection:
         with pytest.raises(ImportError, match="inference.models|inference_models"):
             RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
 
-    @pytest.mark.parametrize("task", ["segment", "keypoints", "backbone"])
-    def test_unsupported_task(self, exported_detection: tuple[Path, dict[str, Any]], task: str) -> None:
-        """Detection-only SDK loading rejects other tasks before prediction."""
+    def test_unsupported_backbone(self, exported_detection: tuple[Path, dict[str, Any]]) -> None:
+        """A backbone artifact has no full SDK prediction pipeline."""
         path, metadata = exported_detection
-        metadata = dict(metadata, task=task)
-        outputs = dict(metadata["outputs"])
-        if task == "segment":
-            outputs["pred_masks"] = "masks"
-        elif task == "keypoints":
-            outputs["pred_keypoints"] = "keypoints"
-            metadata["num_keypoints_per_class"] = [1]
-        metadata["outputs"] = outputs
-        with pytest.raises(ValueError, match="detect|task|support"):
-            RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        with pytest.raises(ValueError, match="backbone|task|support"):
+            RFDETR.from_export(
+                path, metadata=dict(metadata, task="backbone", outputs={}), backend="inference_models", device="cpu"
+            )
 
     def test_unsupported_format(self, tmp_path: Path, exported_detection: tuple[Path, dict[str, Any]]) -> None:
         """The SDK bridge rejects artifact formats outside its supported set."""
@@ -528,3 +521,264 @@ class TestDynamicBatch:
         model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
         with pytest.raises(ValueError, match="batch|Batch|maximum"):
             model.predict([red_image, red_image, red_image])
+
+
+@pytest.fixture
+def exported_segmentation(
+    exported_detection: tuple[Path, dict[str, Any]], tmp_path: Path
+) -> tuple[Path, dict[str, Any]]:
+    """Add one left-half mask to the red-sensitive ONNX detector.
+
+    Examples:
+        >>> exported_segmentation()  # doctest: +SKIP
+        # Pytest supplies the ONNX artifact and a temporary output directory.
+    """
+    pytest.importorskip("inference_models")
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    path, metadata = exported_detection
+    graph_model = onnx.load(path)
+    masks = np.full((1, 1, 4, 4), -10.0, dtype=np.float32)
+    masks[:, :, :, :2] = 10.0
+    graph_model.graph.node.append(helper.make_node("Constant", [], ["masks"], value=numpy_helper.from_array(masks)))
+    graph_model.graph.output.append(helper.make_tensor_value_info("masks", TensorProto.FLOAT, [1, 1, 4, 4]))
+    onnx.checker.check_model(graph_model)
+    segmentation_path = tmp_path / "segmenter.onnx"
+    onnx.save(graph_model, segmentation_path)
+    return segmentation_path, dict(metadata, task="segment", outputs={**metadata["outputs"], "pred_masks": "masks"})
+
+
+class TestInstanceSegmentation:
+    """The SDK backend returns full-resolution instance masks through public predict."""
+
+    def test_red_image_mask_and_source_metadata(
+        self, exported_segmentation: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """The image-sensitive graph returns a source-aligned mask and class."""
+        pytest.importorskip("inference_models")
+        path, metadata = exported_segmentation
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        result = model.predict(red_image)
+        assert isinstance(result, sv.Detections)
+        np.testing.assert_allclose(result.xyxy, [[24, 16, 72, 48]], atol=1)
+        np.testing.assert_array_equal(result.class_id, [17])
+        assert list(result.data["class_name"]) == ["cat"]
+        np.testing.assert_array_equal(result.data["source_shape"], [[64, 96]])
+        np.testing.assert_array_equal(result.metadata["source_image"], red_image)
+        mask = result.mask
+        assert isinstance(mask, np.ndarray)
+        assert mask.shape == (1, 64, 96)
+        assert mask.dtype == np.bool_
+        assert mask[0, 32, 12]
+        assert not mask[0, 32, 84]
+
+    def test_blue_image_has_no_instance(
+        self, exported_segmentation: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """A blue image leaves the input-sensitive segmentation output empty."""
+        path, metadata = exported_segmentation
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        blue = red_image.copy()
+        blue[:, :, 0] = 0
+        blue[:, :, 2] = 255
+        result = model.predict(blue, include_source_image=False)
+        assert isinstance(result, sv.Detections)
+        assert len(result) == 0
+        mask = result.mask
+        assert isinstance(mask, np.ndarray)
+        assert mask.shape == (0, 64, 96)
+        assert "source_image" not in result.metadata
+
+    def test_source_image_can_be_omitted(
+        self, exported_segmentation: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """Mask predictions need no copied source image when capture is disabled."""
+        path, metadata = exported_segmentation
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        result = model.predict(red_image, include_source_image=False)
+        assert isinstance(result, sv.Detections)
+        assert len(result) == 1
+        assert "source_image" not in result.metadata
+
+    def test_refuses_non_upsampled_mask_contract(self, exported_segmentation: tuple[Path, dict[str, Any]]) -> None:
+        """The SDK cannot match native low-resolution mask output semantics."""
+        path, metadata = exported_segmentation
+        with pytest.raises(ValueError, match="mask|upsampl"):
+            RFDETR.from_export(
+                path,
+                metadata=dict(metadata, upsample_masks_to_image_size=False),
+                backend="inference_models",
+                device="cpu",
+            )
+
+
+@pytest.fixture
+def exported_keypoints(exported_detection: tuple[Path, dict[str, Any]], tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    """Add a one-point legacy-background-first pose to the red-sensitive ONNX graph.
+
+    Examples:
+        >>> exported_keypoints()  # doctest: +SKIP
+        # Pytest supplies the ONNX artifact and a temporary output directory.
+    """
+    pytest.importorskip("inference_models")
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+
+    path, metadata = exported_detection
+    graph_model = onnx.load(path)
+    next(node for node in graph_model.graph.node if "labels" in node.output).output[0] = "all_labels"
+    graph_model.graph.initializer.append(numpy_helper.from_array(np.array([0, 17], dtype=np.int64), name="pose_slots"))
+    graph_model.graph.node.append(helper.make_node("Gather", ["all_labels", "pose_slots"], ["labels"], axis=2))
+    point = np.zeros((1, 1, 2, 8), dtype=np.float32)
+    point[0, 0, 1] = [0.25, 0.75, 10.0, 10.0, 2.0, 0.0, 2.0, 10.0]
+    graph_model.graph.node.append(helper.make_node("Constant", [], ["keypoints"], value=numpy_helper.from_array(point)))
+    graph_model.graph.output[1].type.tensor_type.shape.dim[2].dim_value = 2
+    graph_model.graph.output.append(helper.make_tensor_value_info("keypoints", TensorProto.FLOAT, [1, 1, 2, 8]))
+    onnx.checker.check_model(graph_model)
+    keypoint_path = tmp_path / "keypoints.onnx"
+    onnx.save(graph_model, keypoint_path)
+    return keypoint_path, dict(
+        metadata,
+        task="keypoints",
+        outputs={**metadata["outputs"], "pred_keypoints": "keypoints"},
+        class_names=["person"],
+        class_id_to_name={"1": "person"},
+        num_classes=2,
+        num_keypoints_per_class=[0, 1],
+    )
+
+
+class TestKeypointPrediction:
+    """The SDK backend returns native Supervision keypoints with source metadata."""
+
+    def test_legacy_background_first_preserves_raw_class_id(
+        self, exported_keypoints: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """One red-sensitive person pose keeps RF-DETR's original class slot."""
+        pytest.importorskip("inference_models")
+        path, metadata = exported_keypoints
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        result = model.predict(red_image)
+        assert isinstance(result, sv.KeyPoints)
+        assert result.xy.shape == (1, 1, 2)
+        np.testing.assert_allclose(result.xy[0, 0], [24, 48], atol=1)
+        np.testing.assert_array_equal(result.class_id, [1])
+        assert list(result.data["class_name"]) == ["person"]
+        np.testing.assert_allclose(np.asarray(result.data["xyxy"], dtype=np.float32), [[24, 16, 72, 48]], atol=1)
+        np.testing.assert_array_equal(result.data["source_shape"], [[64, 96]])
+        np.testing.assert_array_equal(result.data["source_image"][0], red_image)
+        assert np.asarray(result.data["covariance"]).shape == (1, 1, 2, 2)
+        assert result.keypoint_confidence is not None
+        assert result.detection_confidence is not None
+        assert result.keypoint_confidence[0, 0] > 0.9
+        assert result.detection_confidence[0] > 0.5
+
+    def test_foreground_name_resembling_background_is_preserved(
+        self, exported_keypoints: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """An actual class named like an internal placeholder survives remapping."""
+        path, metadata = exported_keypoints
+        unusual_name = "__background_0__"
+        metadata = dict(metadata, class_names=[unusual_name], class_id_to_name={"1": unusual_name})
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        result = model.predict(red_image)
+        assert isinstance(result, sv.KeyPoints)
+        np.testing.assert_array_equal(result.class_id, [1])
+        assert list(result.data["class_name"]) == [unusual_name]
+
+    def test_active_first_preserves_zero_class_id(
+        self, exported_keypoints: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any], tmp_path: Path
+    ) -> None:
+        """An active-first keypoint artifact keeps class slot zero."""
+        import onnx
+        from onnx import numpy_helper
+
+        path, metadata = exported_keypoints
+        graph_model = onnx.load(path)
+        for initializer in graph_model.graph.initializer:
+            if initializer.name == "pose_slots":
+                initializer.CopyFrom(numpy_helper.from_array(np.array([17], dtype=np.int64), name="pose_slots"))
+        for node in graph_model.graph.node:
+            if "keypoints" in node.output:
+                point = np.zeros((1, 1, 1, 8), dtype=np.float32)
+                point[0, 0, 0] = [0.25, 0.75, 10.0, 10.0, 2.0, 0.0, 2.0, 10.0]
+                node.attribute[0].t.CopyFrom(numpy_helper.from_array(point))
+        graph_model.graph.output[1].type.tensor_type.shape.dim[2].dim_value = 1
+        graph_model.graph.output[2].type.tensor_type.shape.dim[2].dim_value = 1
+        onnx.checker.check_model(graph_model)
+        active_path = tmp_path / "active-keypoints.onnx"
+        onnx.save(graph_model, active_path)
+        active_metadata = dict(
+            metadata,
+            class_id_to_name={"0": "person"},
+            num_classes=1,
+            num_keypoints_per_class=[1],
+        )
+        model = RFDETR.from_export(active_path, metadata=active_metadata, backend="inference_models", device="cpu")
+        result = model.predict(red_image)
+        assert isinstance(result, sv.KeyPoints)
+        np.testing.assert_array_equal(result.class_id, [0])
+        assert list(result.data["class_name"]) == ["person"]
+        np.testing.assert_allclose(result.xy[0, 0], [24, 48], atol=1)
+
+    def test_blue_image_has_no_pose(
+        self, exported_keypoints: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """A blue image leaves the input-sensitive pose output empty."""
+        path, metadata = exported_keypoints
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        blue = red_image.copy()
+        blue[:, :, 0] = 0
+        blue[:, :, 2] = 255
+        result = model.predict(blue, include_source_image=False)
+        assert isinstance(result, sv.KeyPoints)
+        assert len(result) == 0
+        assert result.xy.shape == (0, 1, 2)
+        assert "source_image" not in result.data
+
+    def test_source_image_is_snapshot(
+        self, exported_keypoints: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """Pose source capture owns the image after the caller mutates it."""
+        path, metadata = exported_keypoints
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        result = model.predict(red_image)
+        assert isinstance(result, sv.KeyPoints)
+        red_image[:, :, 0] = 0
+        assert np.all(result.data["source_image"][0][:, :, 0] == 255)
+
+    def test_fixed_batch_rejected(
+        self, exported_keypoints: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
+    ) -> None:
+        """A fixed one-image keypoint artifact refuses two source images."""
+        path, metadata = exported_keypoints
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        with pytest.raises(ValueError, match="Batch size|batch"):
+            model.predict([red_image, red_image])
+
+    def test_refuses_other_trace_alpha(self, exported_keypoints: tuple[Path, dict[str, Any]]) -> None:
+        """A different native keypoint score rule cannot be represented by the SDK."""
+        path, metadata = exported_keypoints
+        with pytest.raises(ValueError, match="trace_alpha|alpha"):
+            RFDETR.from_export(path, metadata=dict(metadata, trace_alpha=0.1), backend="inference_models", device="cpu")
+
+    def test_refuses_rank_three_keypoints(
+        self, exported_keypoints: tuple[Path, dict[str, Any]], tmp_path: Path
+    ) -> None:
+        """Malformed packed keypoint output fails before SDK inference."""
+        import onnx
+        from onnx import numpy_helper
+
+        path, metadata = exported_keypoints
+        graph_model = onnx.load(path)
+        for node in graph_model.graph.node:
+            if "keypoints" in node.output:
+                packed = np.zeros((1, 1, 8), dtype=np.float32)
+                node.attribute[0].t.CopyFrom(numpy_helper.from_array(packed))
+        graph_model.graph.output[2].type.tensor_type.shape.dim.pop()
+        onnx.checker.check_model(graph_model)
+        malformed_path = tmp_path / "rank-three-keypoints.onnx"
+        onnx.save(graph_model, malformed_path)
+        with pytest.raises(ValueError, match="keypoint|rank|shape"):
+            RFDETR.from_export(malformed_path, metadata=metadata, backend="inference_models", device="cpu")

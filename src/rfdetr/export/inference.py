@@ -15,7 +15,7 @@ parity helpers.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -90,16 +90,13 @@ class RFDETRInference:
         Returns:
             Detections or keypoints for each image. A batch input returns a list.
         """
-        return cast(
-            "Detections | KeyPoints | list[Detections | KeyPoints]",
-            self._predictor.predict(
-                images,
-                threshold=threshold,
-                shape=shape,
-                patch_size=patch_size,
-                include_source_image=include_source_image,
-                **kwargs,
-            ),
+        return self._predictor.predict(
+            images,
+            threshold=threshold,
+            shape=shape,
+            patch_size=patch_size,
+            include_source_image=include_source_image,
+            **kwargs,
         )
 
 

@@ -60,7 +60,7 @@ The default `backend="rfdetr"` runs preprocessing and postprocessing on the CPU 
 
 ### Complete inference-models pipeline
 
-For detection exports in ONNX or TensorRT format, select `backend="inference_models"` to run its complete prediction pipeline:
+For detection, segmentation, or keypoint exports in ONNX or TensorRT format, select `backend="inference_models"` to run its complete prediction pipeline:
 
 ```python
 from rfdetr import RFDETR
@@ -86,13 +86,23 @@ uv pip install "rfdetr[inference-models]" "inference-models[onnx-cu12]>=0.39,<0.
 
 For TensorRT, follow the [SDK's TensorRT installation instructions](https://inference-models.roboflow.com/getting-started/installation/) and build the engine with a compatible TensorRT version on the target GPU. The dependency loads only when selected. The `rfdetr[inference-models]` extra includes ONNX for metadata inspection; it does not select CPU or GPU runtime packages.
 
-This backend passes original RGB images to `inference_models.infer()`. That library performs resizing, normalization, execution, and postprocessing. RF-DETR adapts inputs and converts the results to `supervision.Detections`. It preserves class IDs, class names, single-image versus list returns, and source-image metadata. It validates the artifact's batch and input-shape limits before inference.
+This backend passes original RGB images to `inference_models.infer()`. That library performs resizing, normalization, execution, and postprocessing. RF-DETR adapts inputs and converts the SDK results to the public result type:
+
+| Task                  | Result                   | Task-specific data                                                                 |
+| --------------------- | ------------------------ | ---------------------------------------------------------------------------------- |
+| Detection             | `supervision.Detections` | Boxes and detection scores                                                         |
+| Instance segmentation | `supervision.Detections` | Boxes, detection scores, and masks                                                 |
+| Keypoint detection    | `supervision.KeyPoints`  | Keypoint and detection scores, visibility, covariance, and boxes in `data["xyxy"]` |
+
+The adapter preserves original class IDs, class names, single-image versus list returns, and source-image metadata. It validates the artifact's batch and input-shape limits before inference. Backbone exports and the SDK's separate two-stage keypoint architecture are outside this single-artifact API.
 
 The two backends can produce different coordinates and scores. `inference_models` uses its own resize rules and rounds box coordinates to pixels. Changing the backend does not guarantee identical numbers. Its selected optimizations can also depend on the installed version, hardware, and input type. Inspect `runtime_info` after prediction and measure the complete `predict()` call on your target hardware.
 
-The adapter supports detection exports with float32 input and output tensors. The exported query count must match `num_select`. ONNX weights must be stored inside the model file. TensorRT outputs must use the standard `dets` and `labels` names. Unsupported tasks, formats, and export settings raise an error.
+Keypoint selection also differs: the SDK considers every query/class pair, so result counts can differ from the default backend. The SDK supplies pixel-space covariance but does not expose raw precision-Cholesky values. Results therefore omit `data["keypoint_precision_cholesky"]`.
 
-Set `include_source_image=False` when you do not need the original image in result metadata. Source capture can copy GPU tensors to the CPU. Conversion to `sv.Detections` still copies prediction results to the CPU.
+The adapter requires float32 input and output tensors. The exported query count must match `num_select`. ONNX weights must be stored inside the model file. TensorRT outputs must use the standard `dets`, `labels`, and task-specific `masks` or `keypoints` names. Segmentation exports must use `upsample_masks_to_image_size=True`; the SDK returns masks at the original image size. Keypoint exports must use `trace_alpha=0.20`, which matches the SDK's score fusion. Unsupported tasks, formats, and export settings raise an error.
+
+Set `include_source_image=False` when you do not need the original image in result metadata. Source capture can copy GPU tensors to the CPU. Conversion to Supervision results still copies prediction results to the CPU.
 
 ## Measured Performance by Hardware
 
