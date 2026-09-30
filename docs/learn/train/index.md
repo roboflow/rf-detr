@@ -140,10 +140,10 @@ For YOLO pose datasets, use `infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml
 
 RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format. Simply pass your dataset directory to the `train()` method and the appropriate data loader will be used.
 
-| Format   | Detection Method                         | Learn More                                          |
-| -------- | ---------------------------------------- | --------------------------------------------------- |
-| **COCO** | Looks for `train/_annotations.coco.json` | [COCO Format Guide](dataset-formats.md#coco-format) |
-| **YOLO** | Looks for `data.yaml` + `train/images/`  | [YOLO Format Guide](dataset-formats.md#yolo-format) |
+| Format   | Detection Method                                               | Learn More                                          |
+| -------- | -------------------------------------------------------------- | --------------------------------------------------- |
+| **COCO** | Looks for `train/_annotations.coco.json`                       | [COCO Format Guide](dataset-formats.md#coco-format) |
+| **YOLO** | Looks for `data.yaml` or `data.yml` + resolved training images | [YOLO Format Guide](dataset-formats.md#yolo-format) |
 
 For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare `kpt_shape` in `data.yaml`; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as pose labels.
 
