@@ -247,8 +247,8 @@ class TestTwoStageQueryAssembly:
 
 class TestSingleLevelProposalsFastPath:
     """``gen_encoder_output_proposals``'s single-level fast path (``proposals[0]``) must match the general
-    ``torch.cat(proposals, dim=1)`` path it replaces for exactly one level -- only checked for graph shape/node
-    absence in ``TestTwoStageExportGraph`` above, never against the ``torch.cat`` reference values."""
+    ``torch.cat(proposals, dim=1)`` path it replaces for exactly one level -- only checked for graph shape/node absence
+    in ``TestTwoStageExportGraph`` above, never against the ``torch.cat`` reference values."""
 
     def test_single_level_fast_path_matches_cat_reference(self) -> None:
         torch.manual_seed(0)
@@ -261,8 +261,10 @@ class TestSingleLevelProposalsFastPath:
 
 
 class TestGroupDetrOneTrainingMode:
-    """``group_detr == 1`` at transformer.py:798 is only exercised via ``.eval()`` in the tests above. The branch
-    is logic-identical in train/eval, so this is a coverage addition, not a bug-hunt."""
+    """``group_detr == 1`` at transformer.py:798 is only exercised via ``.eval()`` in the tests above.
+
+    The branch is logic-identical in train/eval, so this is a coverage addition, not a bug-hunt.
+    """
 
     def test_group_detr_one_in_training_mode_does_not_error(self) -> None:
         num_queries = 6
@@ -276,8 +278,8 @@ class TestGroupDetrOneTrainingMode:
 
 class TestNumRegistersWithFullProposalRemainder:
     """Register insertion (``num_registers > 0``) has no regression case combined with the full-remainder branch
-    (``ts_len == num_queries``, i.e. ``refpoint_embed_subset.shape[-2] == 0``): both conditions land together
-    whenever a model with decoder registers also has every query slot filled by two-stage proposals.
+    (``ts_len == num_queries``, i.e. ``refpoint_embed_subset.shape[-2] == 0``): both conditions land together whenever a
+    model with decoder registers also has every query slot filled by two-stage proposals.
 
     Exercised in the non-export eval path: register removal (``hs.split(n_with_reg, dim=2)``) indexes the
     decoder's stacked-intermediate-layers output, a shape only the non-export decoder path produces (export mode

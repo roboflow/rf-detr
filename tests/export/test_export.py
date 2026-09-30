@@ -238,9 +238,11 @@ def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_pa
 class TestExportedGraphAvoidsCoreMLRejectedOps:
     """A real whole-model export must avoid the ops ONNX Runtime's CoreML provider rejects — the unit tests in
     ``test_transformer_onnx_two_stage.py`` and ``test_segmentation_head.py`` only check the ``Transformer`` and
-    ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as
-    ``RFDETR.export()`` actually produces it. ``pretrain_weights=None`` builds each model without downloading or
-    loading a checkpoint, keeping this CPU-runnable and fast.
+    ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as ``RFDETR.export()``
+    actually produces it.
+
+    ``pretrain_weights=None`` builds each model without downloading or loading a checkpoint, keeping this CPU-runnable
+    and fast.
     """
 
     @staticmethod
