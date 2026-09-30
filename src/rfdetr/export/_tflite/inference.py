@@ -129,7 +129,9 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
             return {item["name"]: value for item, value in zip(details, raw)}
         return raw
 
-    return ExportRuntime(metadata.format.lower(), metadata, session, "cpu", input_info["index"], execute)
+    return ExportRuntime(
+        metadata.format.lower(), metadata, session, "cpu", input_info["index"], execute, borrowed_outputs=False
+    )
 
 
 def _decode_masks(mask_logits: NDArray[np.floating[Any]], out_size: tuple[int, int]) -> NDArray[np.bool_]:

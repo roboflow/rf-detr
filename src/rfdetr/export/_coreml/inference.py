@@ -59,4 +59,4 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
         prediction = session.predict({input_info.name: _input_array(batch, metadata)})
         return {name: prediction[name] for name in names}
 
-    return ExportRuntime("coreml", metadata, session, device, input_info.name, execute)
+    return ExportRuntime("coreml", metadata, session, device, input_info.name, execute, borrowed_outputs=False)

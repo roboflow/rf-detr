@@ -72,7 +72,7 @@ This returns the shared Supervision result types. See [Predict with RFDETRInfere
 
 ## Advanced: Use the OpenVINO session directly
 
-`OpenVINOInference` remains available for callers who need a raw OpenVINO session. It takes already-preprocessed NCHW tensors and returns raw output tensors. The common `RFDETRInference` API above handles preprocessing and decoding.
+`OpenVINOInference` remains available for callers who need a raw OpenVINO session. It takes already-preprocessed NCHW tensors and returns raw output tensors. The common adapter also uses this class for raw session execution; it is not deprecated. Use `RFDETRInference` above for image preprocessing and result decoding.
 
 !!! warning "The input array must be float32 and contiguous"
 

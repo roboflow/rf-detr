@@ -45,6 +45,8 @@ This returns the shared Supervision result types. See [Predict with RFDETRInfere
 
 ## Advanced: Use Core AI directly
 
+The shared `RFDETRInference` loader also uses Core AI's vendor runtime API directly; this example shows that API for callers who need raw outputs.
+
 === "Python"
 
     ```python
