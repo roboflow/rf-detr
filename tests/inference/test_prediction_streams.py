@@ -20,6 +20,20 @@ from .helpers import _DummyRFDETR
 class TestLivePredictions:
     """Exercise live sources through the public prediction API."""
 
+    @pytest.mark.parametrize("entry", ["video.mp4", "https://example.com/video.mp4"])
+    def test_manifest_video_without_frame_count_stops_at_eof(self, tmp_path: Path, entry: str) -> None:
+        """Known video files end without reconnecting when frame-count metadata is absent."""
+        (tmp_path / "video.mp4").touch()
+        source = tmp_path / "video.streams"
+        source.write_text(entry)
+        capture = MagicMock()
+        capture.get.return_value = 0
+        capture.read.side_effect = [(True, np.zeros((24, 32, 3), dtype=np.uint8))] + [(False, None)] * 4
+        with patch("cv2.VideoCapture", return_value=capture):
+            assert len(list(_DummyRFDETR().predict(source, stream=True, stream_buffer=True))) == 1
+        capture.open.assert_not_called()
+        capture.release.assert_called_once()
+
     def test_finite_network_read_failure_is_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """A remote file ending on a failed read must not silently hide a timeout."""
         source = tmp_path / "video.streams"

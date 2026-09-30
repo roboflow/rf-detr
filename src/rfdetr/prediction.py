@@ -12,6 +12,9 @@ import numpy as np
 import torch
 from PIL import Image
 
+#: Image data or a path to an image or expandable media source.
 ImageInput: TypeAlias = str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor
+#: One prediction source, including a camera index.
 PredictionSource: TypeAlias = ImageInput | int
+#: Accepted scalar and sequence inputs to RFDETR.predict().
 PredictionInput: TypeAlias = PredictionSource | list[PredictionSource] | tuple[PredictionSource, ...]
