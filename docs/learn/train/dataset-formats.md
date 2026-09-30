@@ -271,6 +271,10 @@ test: test/images
 
     Both formats are supported. Dictionary keys may be integers or quoted numeric strings (for example, `"0"`). Class IDs must be unique after numeric conversion and form a contiguous range starting at `0`; names are ordered by numeric ID.
 
+!!! warning "Zero-padded numeric keys in the dictionary format"
+
+    Two-digit zero padding (e.g. `08`) works correctly, but three-digit-or-more zero padding does not: under YAML 1.1, an unquoted key like `010` is parsed as the octal integer 8, colliding with `008`. Quote such keys (`"010"`) or drop the leading-zero padding (`10`) to avoid this.
+
 ### Label File Format
 
 Each image has a corresponding `.txt` file in the `labels/` directory with the same base name. Each line in the label file represents one object:
