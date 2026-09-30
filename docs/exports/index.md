@@ -74,7 +74,7 @@ detections = model.predict("image.jpg", threshold=0.5)
 print(model.runtime_info)
 ```
 
-This backend requires `inference-models` 0.39.x and Python 3.10–3.13. Install the runtime extra for your hardware in the same environment:
+This backend requires `inference-models` 0.39.x and Python 3.10–3.13. The SDK adds dependencies for other model families, including diffusers, python-doctr, and easyocr. On Python 3.14, the `rfdetr[inference-models]` extra installs ONNX but skips the unsupported SDK; this backend requires a Python 3.10–3.13 environment. Install the runtime extra for your hardware in the same environment:
 
 ```bash
 # ONNX on CPU
@@ -96,7 +96,7 @@ This backend passes original RGB images to `inference_models.infer()`. That libr
 
 The adapter preserves original class IDs, class names, single-image versus list returns, and source-image metadata. It validates the artifact's batch and input-shape limits before inference. Backbone exports and the SDK's separate two-stage keypoint architecture are outside this single-artifact API.
 
-The two backends can produce different coordinates and scores. `inference_models` uses its own resize rules and rounds box coordinates to pixels. Changing the backend does not guarantee identical numbers. Its selected optimizations can also depend on the installed version, hardware, and input type. Inspect `runtime_info` after prediction and measure the complete `predict()` call on your target hardware.
+The two backends can produce different coordinates and scores. `inference_models` uses its own resize rules and rounds box and keypoint coordinates to whole pixels. The adapter returns float32 coordinates, but this cast cannot recover sub-pixel precision. Changing the backend does not guarantee identical numbers. Its selected optimizations can also depend on the installed version, hardware, and input type. Inspect `runtime_info` after prediction and measure the complete `predict()` call on your target hardware.
 
 Keypoint selection also differs: the SDK considers every query/class pair, so result counts can differ from the default backend. The SDK supplies pixel-space covariance but does not expose raw precision-Cholesky values. Results therefore omit `data["keypoint_precision_cholesky"]`.
 

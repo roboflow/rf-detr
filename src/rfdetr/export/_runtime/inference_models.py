@@ -3,7 +3,12 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Use the public inference-models pipeline for supported RF-DETR exports."""
+"""Use inference-models 0.39's public pipeline for RF-DETR exports.
+
+The pinned SDK rounds boxes and keypoints, always aligns dense masks to source size, requires class remapping for
+keypoints, and fixes keypoint score fusion at alpha=0.20. Recheck these assumptions before changing the SDK version
+bound.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +18,7 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -25,6 +31,51 @@ from supervision import Detections, KeyPoints
 
 if TYPE_CHECKING:
     from rfdetr.export._runtime.metadata import ExportMetadata
+
+
+def _check_task_shapes(
+    input_shape: tuple[int, ...],
+    output_shapes: list[tuple[int, ...]],
+    metadata: ExportMetadata,
+    format_name: str,
+) -> int:
+    """Validate the RF-DETR shape contract shared by ONNX and TensorRT."""
+    boxes_shape, logits_shape = output_shapes[:2]
+    if len(input_shape) != 4 or len(boxes_shape) != 3 or len(logits_shape) != 3:
+        raise ValueError(f"{format_name} input, boxes, or logits have an unsupported rank.")
+    for actual, expected in zip(input_shape, metadata.input_shape):
+        if (actual <= 0) != (expected == -1) or (actual > 0 and actual != expected):
+            raise ValueError(f"{format_name} input shape disagrees with inference metadata.")
+    if any(not output for output in output_shapes):
+        raise ValueError(f"{format_name} task output has an unsupported scalar shape.")
+    if any(output[0] > 0 and output[0] != input_shape[0] for output in output_shapes):
+        raise ValueError(f"{format_name} output batch dimension disagrees with the input.")
+    if boxes_shape[-1] != 4 or boxes_shape[1] <= 0 or logits_shape[1] != boxes_shape[1]:
+        raise ValueError(f"{format_name} detection outputs have incompatible query shapes.")
+    if metadata.num_select != boxes_shape[1]:
+        raise ValueError(
+            f"inference_models selects every query ({boxes_shape[1]}); metadata requests {metadata.num_select}."
+        )
+    slots = logits_shape[-1]
+    if slots <= 0 or slots < metadata.num_classes:
+        raise ValueError(f"{format_name} logit class count disagrees with inference metadata.")
+    if metadata.task == "segment":
+        mask_shape = output_shapes[2]
+        if len(mask_shape) != 4 or mask_shape[1] != boxes_shape[1] or min(mask_shape[2:]) <= 0:
+            raise ValueError(f"{format_name} mask shape disagrees with detection queries or spatial size.")
+    elif metadata.task == "keypoints":
+        keypoint_shape = output_shapes[2]
+        if len(metadata.num_keypoints_per_class) != slots:
+            raise ValueError(f"Keypoint schema must describe each {format_name} logit slot.")
+        expected_slots = slots * max(metadata.num_keypoints_per_class)
+        if (
+            len(keypoint_shape) != 4
+            or keypoint_shape[1] != boxes_shape[1]
+            or keypoint_shape[2] != expected_slots
+            or keypoint_shape[3] != 8
+        ):
+            raise ValueError(f"{format_name} keypoint shape disagrees with query and class schema.")
+    return slots
 
 
 def _onnx_signature(path: Path, metadata: ExportMetadata) -> int:
@@ -49,49 +100,15 @@ def _onnx_signature(path: Path, metadata: ExportMetadata) -> int:
     if [output.name for output in graph.output] != expected_outputs:
         raise ValueError("inference_models requires task outputs in boxes, logits, then task-head order.")
     shapes = [
-        [
+        tuple(
             dimension.dim_value if dimension.HasField("dim_value") else -1
             for dimension in value.type.tensor_type.shape.dim
-        ]
+        )
         for value in (graph.input[0], *graph.output)
     ]
-    input_shape, boxes_shape, logits_shape = shapes[:3]
-    if len(input_shape) != 4 or len(boxes_shape) != 3 or len(logits_shape) != 3:
-        raise ValueError("ONNX input, boxes, or logits have an unsupported rank.")
     if any(value.type.tensor_type.elem_type != onnx.TensorProto.FLOAT for value in (graph.input[0], *graph.output)):
         raise ValueError("inference_models requires float32 ONNX input and outputs.")
-    for actual, expected in zip(input_shape, metadata.input_shape):
-        if (actual <= 0) != (expected == -1) or (actual > 0 and actual != expected):
-            raise ValueError("ONNX input shape disagrees with inference metadata.")
-    if any(not output for output in shapes[1:]):
-        raise ValueError("ONNX task output has an unsupported scalar shape.")
-    if any(output[0] > 0 and output[0] != input_shape[0] for output in shapes[1:]):
-        raise ValueError("ONNX output batch dimension disagrees with the input.")
-    if boxes_shape[-1] != 4 or boxes_shape[1] <= 0 or logits_shape[1] != boxes_shape[1]:
-        raise ValueError("ONNX detection outputs have incompatible query shapes.")
-    if metadata.num_select != boxes_shape[1]:
-        raise ValueError(
-            f"inference_models selects every query ({boxes_shape[1]}); metadata requests {metadata.num_select}."
-        )
-    if logits_shape[-1] <= 0 or logits_shape[-1] < metadata.num_classes:
-        raise ValueError("ONNX logit class count disagrees with inference metadata.")
-    if metadata.task == "segment":
-        mask_shape = shapes[3]
-        if len(mask_shape) != 4 or mask_shape[1] != boxes_shape[1] or min(mask_shape[2:]) <= 0:
-            raise ValueError("ONNX mask shape disagrees with detection queries or spatial size.")
-    elif metadata.task == "keypoints":
-        keypoint_shape = shapes[3]
-        if len(metadata.num_keypoints_per_class) != logits_shape[-1]:
-            raise ValueError("Keypoint schema must describe each ONNX logit slot.")
-        expected_slots = logits_shape[-1] * max(metadata.num_keypoints_per_class)
-        if (
-            len(keypoint_shape) != 4
-            or keypoint_shape[1] != boxes_shape[1]
-            or keypoint_shape[2] != expected_slots
-            or keypoint_shape[3] != 8
-        ):
-            raise ValueError("ONNX keypoint shape disagrees with query and class schema.")
-    return logits_shape[-1]
+    return _check_task_shapes(shapes[0], shapes[1:], metadata, "ONNX")
 
 
 def _tensorrt_signature(path: Path, metadata: ExportMetadata, device: torch.device) -> tuple[int, int]:
@@ -130,20 +147,15 @@ def _tensorrt_signature(path: Path, metadata: ExportMetadata, device: torch.devi
     if set(names) != expected_names:
         raise ValueError("TensorRT engine bindings disagree with inference metadata.")
     input_shape = tuple(engine.get_tensor_shape(metadata.input_name))
-    boxes_shape = tuple(engine.get_tensor_shape("dets"))
-    logits_shape = tuple(engine.get_tensor_shape("labels"))
-    if len(input_shape) != 4 or len(boxes_shape) != 3 or len(logits_shape) != 3:
-        raise ValueError("TensorRT input, boxes, or logits have an unsupported rank.")
     if any(engine.get_tensor_dtype(name) != trt.float32 for name in names):
         raise ValueError("inference_models requires float32 TensorRT I/O bindings.")
-    for actual, expected in zip(input_shape, metadata.input_shape):
-        if (actual <= 0) != (expected == -1) or (actual > 0 and actual != expected):
-            raise ValueError("TensorRT input shape disagrees with inference metadata.")
-    output_shapes = [tuple(engine.get_tensor_shape(name)) for name in names if name != metadata.input_name]
-    if any(not shape for shape in output_shapes):
-        raise ValueError("TensorRT task output has an unsupported scalar shape.")
-    if any(shape[0] > 0 and shape[0] != input_shape[0] for shape in output_shapes):
-        raise ValueError("TensorRT output batch dimension disagrees with the input.")
+    output_names = ["dets", "labels"]
+    if metadata.task == "segment":
+        output_names.append("masks")
+    elif metadata.task == "keypoints":
+        output_names.append("keypoints")
+    output_shapes = [tuple(engine.get_tensor_shape(name)) for name in output_names]
+    slots = _check_task_shapes(input_shape, output_shapes, metadata, "TensorRT")
     opt_batch = metadata.input_shape[0]
     if opt_batch == -1:
         if metadata.max_batch_size is None:
@@ -152,31 +164,7 @@ def _tensorrt_signature(path: Path, metadata: ExportMetadata, device: torch.devi
         if profile_min[0] != 1 or metadata.max_batch_size > profile_max[0]:
             raise ValueError("TensorRT batch profile disagrees with inference metadata.")
         opt_batch = min(profile_opt[0], metadata.max_batch_size)
-    if boxes_shape[-1] != 4 or boxes_shape[1] <= 0 or logits_shape[1] != boxes_shape[1]:
-        raise ValueError("TensorRT detection outputs have incompatible query shapes.")
-    if metadata.num_select != boxes_shape[1]:
-        raise ValueError(
-            f"inference_models selects every query ({boxes_shape[1]}); metadata requests {metadata.num_select}."
-        )
-    if logits_shape[-1] <= 0 or logits_shape[-1] < metadata.num_classes:
-        raise ValueError("TensorRT logit class count disagrees with inference metadata.")
-    if metadata.task == "segment":
-        mask_shape = tuple(engine.get_tensor_shape("masks"))
-        if len(mask_shape) != 4 or mask_shape[1] != boxes_shape[1] or min(mask_shape[2:]) <= 0:
-            raise ValueError("TensorRT mask shape disagrees with detection queries or spatial size.")
-    elif metadata.task == "keypoints":
-        keypoint_shape = tuple(engine.get_tensor_shape("keypoints"))
-        if len(metadata.num_keypoints_per_class) != logits_shape[-1]:
-            raise ValueError("Keypoint schema must describe each TensorRT logit slot.")
-        expected_slots = logits_shape[-1] * max(metadata.num_keypoints_per_class)
-        if (
-            len(keypoint_shape) != 4
-            or keypoint_shape[1] != boxes_shape[1]
-            or keypoint_shape[2] != expected_slots
-            or keypoint_shape[3] != 8
-        ):
-            raise ValueError("TensorRT keypoint shape disagrees with query and class schema.")
-    return logits_shape[-1], opt_batch
+    return slots, opt_batch
 
 
 class InferenceModelsPredictor:
@@ -200,8 +188,23 @@ class InferenceModelsPredictor:
             raise ValueError("Artifact extension does not match inference metadata.")
         if not path.is_file():
             raise FileNotFoundError(path)
-        auto_device = device
-        if device == "auto":
+        slots = _onnx_signature(path, metadata) if metadata.format == "onnx" else None
+        requested: torch.device | None = None
+        if device != "auto":
+            try:
+                requested = torch.device(device)
+            except RuntimeError as error:
+                raise ValueError(f"Unsupported device {device!r}.") from error
+            if requested.type not in {"cpu", "cuda"}:
+                raise ValueError("inference_models accepts cpu, cuda:N, or auto only.")
+        try:
+            auto_model_type: Any = importlib.import_module("inference_models").AutoModel
+        except ImportError as error:
+            raise ImportError(
+                "backend='inference_models' requires inference-models>=0.39,<0.40 on Python 3.10-3.13 "
+                f"with the selected runtime extra; SDK import failed: {error}"
+            ) from error
+        if requested is None:
             cuda_ready = torch.cuda.is_available()
             if metadata.format == "onnx":
                 try:
@@ -209,13 +212,7 @@ class InferenceModelsPredictor:
                 except ImportError as error:
                     raise ImportError("The inference_models ONNX backend needs onnxruntime.") from error
                 cuda_ready = cuda_ready and "CUDAExecutionProvider" in ort.get_available_providers()
-            auto_device = "cuda:0" if cuda_ready else "cpu"
-        try:
-            requested = torch.device(auto_device)
-        except RuntimeError as error:
-            raise ValueError(f"Unsupported device {device!r}.") from error
-        if requested.type not in {"cpu", "cuda"}:
-            raise ValueError("inference_models accepts cpu, cuda:N, or auto only.")
+            requested = torch.device("cuda:0" if cuda_ready else "cpu")
         if metadata.format == "tensorrt" and requested.type != "cuda":
             raise ValueError("TensorRT requires CUDA; it cannot run on CPU.")
         if requested.type == "cuda" and (
@@ -234,16 +231,9 @@ class InferenceModelsPredictor:
             provider = "CUDAExecutionProvider" if requested.type == "cuda" else "CPUExecutionProvider"
             if provider not in ort.get_available_providers():
                 raise RuntimeError(f"Requested ONNX provider {provider} is unavailable.")
-            slots = _onnx_signature(path, metadata)
         else:
             slots, profile_opt_batch = _tensorrt_signature(path, metadata, requested)
-
-        try:
-            auto_model_type: Any = importlib.import_module("inference_models").AutoModel
-        except ImportError as error:
-            raise ImportError(
-                "backend='inference_models' requires inference-models with the selected ONNX or TensorRT extra."
-            ) from error
+        assert slots is not None
 
         self.metadata = metadata
         self.device = requested
@@ -373,11 +363,12 @@ class InferenceModelsPredictor:
     @property
     def runtime_info(self) -> dict[str, Any]:
         """Report the loaded backend and the SDK's effective pipeline stages."""
+        optimization = getattr(self._model, "optimization_runtime_metadata", None)
         return {
             "backend": "inference_models",
             "format": self.metadata.format,
             "device": str(self.device),
-            "optimization": getattr(self._model, "optimization_runtime_metadata", None),
+            "optimization": dict(optimization) if isinstance(optimization, Mapping) else optimization,
         }
 
     def predict(
@@ -431,7 +422,7 @@ class InferenceModelsPredictor:
                 else:
                     item = Image.open(item)
             if isinstance(item, Image.Image):
-                array = np.asarray(item.convert("RGB"), dtype=np.uint8)
+                array = np.array(item.convert("RGB"), dtype=np.uint8, copy=True)
                 sdk_images.append(array)
                 if include_source_image:
                     source_images.append(array)
@@ -488,6 +479,7 @@ class InferenceModelsPredictor:
                 boxes = box_prediction.to_supervision()
                 if len(key_points) != len(boxes):
                     raise RuntimeError("inference_models keypoints and companion boxes are misaligned.")
+                key_points.xy = key_points.xy.astype(np.float32, copy=False)
                 compact_ids = key_points.class_id
                 if compact_ids is None or any(
                     int(class_id) < 0 or int(class_id) >= len(self._keypoint_raw_class_ids) for class_id in compact_ids
@@ -512,12 +504,16 @@ class InferenceModelsPredictor:
             raise RuntimeError(f"inference_models returned {len(predictions)} results for {batch_size} images.")
         results: list[Detections | KeyPoints] = []
         for index, prediction in enumerate(predictions):
+            # Other SDK task postprocessors may move results; preprocessing probes the selected device for all tasks.
             if self.metadata.task == "detect" and self.device.type == "cuda" and prediction.xyxy.device != self.device:
                 raise RuntimeError(
                     f"inference_models returned predictions on {prediction.xyxy.device} "
                     f"instead of requested {self.device}."
                 )
             detections = prediction.to_supervision()
+            detections.xyxy = detections.xyxy.astype(np.float32, copy=False)
+            if detections.class_id is not None:
+                detections.class_id = detections.class_id.astype(np.int64, copy=False)
             class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
             names = [
                 self.metadata.class_id_to_name.get(

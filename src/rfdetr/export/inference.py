@@ -21,10 +21,11 @@ import numpy as np
 import torch
 from PIL import Image
 
+from rfdetr.detr import RFDETR
+
 if TYPE_CHECKING:
     from supervision import Detections, KeyPoints
 
-    from rfdetr.detr import RFDETR
     from rfdetr.export._openvino.inference import OpenVINOInference
     from rfdetr.export._runtime.inference_models import InferenceModelsPredictor
 
@@ -47,9 +48,6 @@ class RFDETRInference:
         Raises:
             ValueError: If the predictor uses native weights.
         """
-        # RFDETR imports this public wrapper, so resolve the type after module initialization.
-        from rfdetr.detr import RFDETR
-
         if isinstance(predictor, RFDETR) and predictor._exported_context is None:
             raise ValueError("RFDETRInference requires an exported predictor. Use RFDETR.from_export().")
         self._predictor = predictor

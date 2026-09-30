@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Public inference_models backend contracts."""
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,30 @@ from PIL import Image
 
 from rfdetr import RFDETRInference
 from rfdetr.detr import RFDETR
+
+_NO_OPTIONAL_RUNTIME_SCRIPT = """
+import importlib.abc
+import json
+import sys
+from rfdetr.detr import RFDETR
+
+class BlockOptionalRuntime(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'onnxruntime', 'inference_models'}:
+            raise ModuleNotFoundError(f'No module named {fullname!r}', name=fullname)
+        return None
+
+for name in list(sys.modules):
+    if name.split('.')[0] in {'onnxruntime', 'inference_models'}:
+        del sys.modules[name]
+sys.meta_path.insert(0, BlockOptionalRuntime())
+try:
+    RFDETR.from_export(sys.argv[1], metadata=json.loads(sys.argv[2]), backend='inference_models', device='cpu')
+except Exception as error:
+    print(f'{type(error).__name__}: {error}')
+else:
+    print('NO_ERROR')
+"""
 
 
 @pytest.fixture(scope="module")
@@ -116,14 +142,17 @@ class TestBackendSelection:
         with pytest.raises(ValueError, match="backend"):
             RFDETR.from_export(artifact, backend="not-a-backend", device="cpu")
 
-    def test_missing_dependency(
-        self, exported_detection: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A missing optional SDK reports the required extra."""
+    def test_missing_dependency(self, exported_detection: tuple[Path, dict[str, Any]]) -> None:
+        """A valid graph reports the missing SDK even without ONNX Runtime."""
         path, metadata = exported_detection
-        monkeypatch.setitem(sys.modules, "inference_models", None)
-        with pytest.raises(ImportError, match="inference.models|inference_models"):
-            RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        result = subprocess.run(
+            [sys.executable, "-c", _NO_OPTIONAL_RUNTIME_SCRIPT, str(path), json.dumps(metadata)],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert result.stdout.strip().startswith("ImportError:")
+        assert "requires inference-models" in result.stdout
 
     def test_unsupported_backbone(self, exported_detection: tuple[Path, dict[str, Any]]) -> None:
         """A backbone artifact has no full SDK prediction pipeline."""
@@ -151,11 +180,32 @@ class TestPublicPrediction:
         assert isinstance(result, sv.Detections)
         np.testing.assert_allclose(result.xyxy, [[24, 16, 72, 48]], atol=1)
         np.testing.assert_array_equal(result.class_id, [17])
+        assert result.xyxy.dtype == np.float32
+        assert result.class_id is not None
+        assert result.class_id.dtype == np.int64
         assert list(result.data["class_name"]) == ["cat"]
         np.testing.assert_array_equal(result.data["source_shape"], [[64, 96]])
         np.testing.assert_array_equal(result.metadata["source_image"], red_image)
         assert model.class_names == ["cat"]
         assert model.runtime_info["backend"] == "inference_models"
+
+    @pytest.mark.parametrize("input_kind", ["pil", "path"])
+    def test_source_image_from_pil_or_path_is_writeable(
+        self, model: RFDETRInference, red_image: np.ndarray[Any, Any], tmp_path: Path, input_kind: str
+    ) -> None:
+        """Detection source images from Pillow can be drawn on in place."""
+        image = Image.fromarray(red_image)
+        supplied: Image.Image | str = image
+        if input_kind == "path":
+            path = tmp_path / "red.png"
+            image.save(path)
+            supplied = str(path)
+        result = model.predict(supplied)
+        assert isinstance(result, sv.Detections)
+        source = result.metadata["source_image"]
+        assert isinstance(source, np.ndarray)
+        assert source.flags.writeable
+        source[0, 0, 0] = 0
 
     @pytest.mark.parametrize("input_kind", ["array", "pil", "path", "tensor"])
     def test_rgb_input_forms(
@@ -252,6 +302,18 @@ def batched_detection(exported_detection: tuple[Path, dict[str, Any]], tmp_path:
 class TestArtifactInterface:
     """The SDK backend checks artifact metadata before inference."""
 
+    def test_malformed_graph_without_optional_runtimes(self, exported_detection: tuple[Path, dict[str, Any]]) -> None:
+        """Graph errors win even when both the SDK and ONNX Runtime are absent."""
+        path, metadata = exported_detection
+        result = subprocess.run(
+            [sys.executable, "-c", _NO_OPTIONAL_RUNTIME_SCRIPT, str(path), json.dumps(dict(metadata, num_select=2))],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        assert result.stdout.strip().startswith("ValueError:")
+        assert "query" in result.stdout
+
     def test_num_select_mismatch(self, exported_detection: tuple[Path, dict[str, Any]]) -> None:
         """Metadata cannot request more queries than the graph provides."""
         path, metadata = exported_detection
@@ -273,7 +335,7 @@ class TestArtifactInterface:
     def test_unavailable_explicit_device(self, exported_detection: tuple[Path, dict[str, Any]]) -> None:
         """An unavailable explicit device never falls back to CPU."""
         path, metadata = exported_detection
-        with pytest.raises(ValueError, match="cpu|cuda|auto|device|support|mps|MPS"):
+        with pytest.raises(ValueError, match="cpu, cuda:N, or auto"):
             RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="mps")
 
     def test_mixed_fixed_batch(
@@ -563,6 +625,9 @@ class TestInstanceSegmentation:
         assert isinstance(result, sv.Detections)
         np.testing.assert_allclose(result.xyxy, [[24, 16, 72, 48]], atol=1)
         np.testing.assert_array_equal(result.class_id, [17])
+        assert result.xyxy.dtype == np.float32
+        assert result.class_id is not None
+        assert result.class_id.dtype == np.int64
         assert list(result.data["class_name"]) == ["cat"]
         np.testing.assert_array_equal(result.data["source_shape"], [[64, 96]])
         np.testing.assert_array_equal(result.metadata["source_image"], red_image)
@@ -572,6 +637,30 @@ class TestInstanceSegmentation:
         assert mask.dtype == np.bool_
         assert mask[0, 32, 12]
         assert not mask[0, 32, 84]
+
+    @pytest.mark.parametrize("input_kind", ["pil", "path"])
+    def test_source_image_from_pil_or_path_is_writeable(
+        self,
+        exported_segmentation: tuple[Path, dict[str, Any]],
+        red_image: np.ndarray[Any, Any],
+        tmp_path: Path,
+        input_kind: str,
+    ) -> None:
+        """Segmentation source images from Pillow can be drawn on in place."""
+        path, metadata = exported_segmentation
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        image = Image.fromarray(red_image)
+        supplied: Image.Image | str = image
+        if input_kind == "path":
+            image_path = tmp_path / "red.png"
+            image.save(image_path)
+            supplied = str(image_path)
+        result = model.predict(supplied)
+        assert isinstance(result, sv.Detections)
+        source = result.metadata["source_image"]
+        assert isinstance(source, np.ndarray)
+        assert source.flags.writeable
+        source[0, 0, 0] = 0
 
     def test_blue_image_has_no_instance(
         self, exported_segmentation: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
@@ -662,8 +751,11 @@ class TestKeypointPrediction:
         result = model.predict(red_image)
         assert isinstance(result, sv.KeyPoints)
         assert result.xy.shape == (1, 1, 2)
+        assert result.xy.dtype == np.float32
         np.testing.assert_allclose(result.xy[0, 0], [24, 48], atol=1)
         np.testing.assert_array_equal(result.class_id, [1])
+        assert result.class_id is not None
+        assert result.class_id.dtype == np.int64
         assert list(result.data["class_name"]) == ["person"]
         np.testing.assert_allclose(np.asarray(result.data["xyxy"], dtype=np.float32), [[24, 16, 72, 48]], atol=1)
         np.testing.assert_array_equal(result.data["source_shape"], [[64, 96]])
@@ -673,6 +765,30 @@ class TestKeypointPrediction:
         assert result.detection_confidence is not None
         assert result.keypoint_confidence[0, 0] > 0.9
         assert result.detection_confidence[0] > 0.5
+
+    @pytest.mark.parametrize("input_kind", ["pil", "path"])
+    def test_source_image_from_pil_or_path_is_writeable(
+        self,
+        exported_keypoints: tuple[Path, dict[str, Any]],
+        red_image: np.ndarray[Any, Any],
+        tmp_path: Path,
+        input_kind: str,
+    ) -> None:
+        """Keypoint source images from Pillow can be drawn on in place."""
+        path, metadata = exported_keypoints
+        model = RFDETR.from_export(path, metadata=metadata, backend="inference_models", device="cpu")
+        image = Image.fromarray(red_image)
+        supplied: Image.Image | str = image
+        if input_kind == "path":
+            image_path = tmp_path / "red.png"
+            image.save(image_path)
+            supplied = str(image_path)
+        result = model.predict(supplied)
+        assert isinstance(result, sv.KeyPoints)
+        source = result.data["source_image"][0]
+        assert isinstance(source, np.ndarray)
+        assert source.flags.writeable
+        source[0, 0, 0] = 0
 
     def test_foreground_name_resembling_background_is_preserved(
         self, exported_keypoints: tuple[Path, dict[str, Any]], red_image: np.ndarray[Any, Any]
