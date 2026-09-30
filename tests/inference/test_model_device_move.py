@@ -144,17 +144,34 @@ class TestMoveModelContextIndexNormalization:
 
 
 class _SlowCountingDeviceModule(_CountingDeviceModule):
-    """Counting stand-in whose ``.to()`` yields long enough for concurrent callers to overlap.
+    """Counting stand-in whose ``.to()`` mimics a real move: the first parameter lands first, the rest follow.
 
-    A real ``nn.Module.to()`` rewrites every parameter in place, which takes long enough for a second thread to observe
-    the still-unmoved first parameter. The sleep reproduces that window deterministically on a CPU-only runner.
+    ``nn.Module.to()`` rewrites parameters one after another, so once the first one reports the target device another
+    thread can see "already moved" while later parameters are still in flight. ``completed`` flips only when the whole
+    move is done, and the sleep holds the window open long enough for that overlap on a CPU-only runner.
     """
 
+    move_delay_s = 0.2
+
+    def __init__(self, initial_device: torch.device) -> None:
+        super().__init__(initial_device)
+        self.completed = False
+
     def to(self, device: torch.device) -> "_SlowCountingDeviceModule":
-        """Record the call, hold the move open briefly, then move the fake parameter to *device*."""
+        """Record the call, expose the target device at once, and finish the move after ``move_delay_s``.
+
+        Examples:
+            >>> module = _SlowCountingDeviceModule(torch.device("cpu"))
+            >>> module.move_delay_s = 0.0
+            >>> module.to(torch.device("meta")) is module
+            True
+            >>> next(module.parameters()).device, module.completed, module.to_call_count
+            (device(type='meta'), True, 1)
+        """
         self.to_call_count += 1
-        time.sleep(0.2)
         self._device = device
+        time.sleep(self.move_delay_s)
+        self.completed = True
         return self
 
 
@@ -166,15 +183,21 @@ class TestMoveModelContextConcurrency:
     raising, so the first move has to be serialised and the later callers must observe it as done.
     """
 
-    def test_concurrent_first_calls_move_exactly_once(self) -> None:
-        """Four threads racing on a cold model must trigger a single ``.to()``."""
+    def test_concurrent_first_calls_move_exactly_once_and_wait_for_completion(self) -> None:
+        """Four threads racing on a cold model trigger a single ``.to()``, and none returns before it has finished."""
         module = _SlowCountingDeviceModule(initial_device=torch.device("cpu"))
         ctx = SimpleNamespace(device=torch.device("meta"), model=module)
         barrier = threading.Barrier(4)
+        returned_early: list[bool] = []
+        errors: list[BaseException] = []
 
         def worker() -> None:
-            barrier.wait()
-            _move_model_context_to_device(ctx)
+            try:
+                barrier.wait()
+                _move_model_context_to_device(ctx)
+                returned_early.append(not module.completed)
+            except BaseException as exc:
+                errors.append(exc)
 
         threads = [threading.Thread(target=worker) for _ in range(4)]
         for thread in threads:
@@ -182,5 +205,8 @@ class TestMoveModelContextConcurrency:
         for thread in threads:
             thread.join()
 
+        assert not errors
+        assert len(returned_early) == 4
+        assert not any(returned_early)
         assert module.to_call_count == 1
         assert next(module.parameters()).device == torch.device("meta")

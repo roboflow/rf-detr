@@ -279,8 +279,8 @@ def _resolve_patch_size(patch_size: int | None, model_config: object, caller: st
     return patch_size
 
 
-# Serialises the deferred weight move: overlapping in-place ``nn.Module.to()`` calls on one module race on the parameter
-# storage and can leave corrupted weights behind without raising.
+#: Serialises the deferred weight move: overlapping in-place ``nn.Module.to()`` calls on one module race on the
+#: parameter storage and can leave corrupted weights behind without raising.
 _DEVICE_MOVE_LOCK = threading.Lock()
 
 
@@ -306,21 +306,21 @@ def _move_model_context_to_device(model_ctx: Any) -> None:
         # ``.to("cuda")`` would actually place on, so the guard below can detect "already on the right device" and
         # skip re-moving every parameter on every call.
         target = torch.device(target.type, torch.cuda.current_device())
-    first_param = next(inner.parameters(), None)
-    if first_param is not None and first_param.device != target:
-        # Several threads sharing one model (e.g. one channel per thread) can reach their first ``predict()`` together.
-        # Serialise the move and re-check under the lock, so later callers see it as done instead of repeating it.
-        with _DEVICE_MOVE_LOCK:
-            first_param = next(inner.parameters(), None)
-            if first_param is None or first_param.device == target:
-                return
-            # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
-            # move can run while inference mode is active.  Tensors materialised by ``.to()`` under inference mode
-            # become *inference tensors*: they can never require gradients, so a later ``train()`` or auto-batch probe
-            # would silently produce no gradients.  Disable inference mode for the move so deferred device placement
-            # is safe regardless of decorator order.
-            with torch.inference_mode(False):
-                model_ctx.model = inner.to(target)
+    # Several threads sharing one model (e.g. one channel per thread) can reach their first ``predict()`` together.
+    # The device check runs under the lock: ``nn.Module.to()`` rewrites parameters one by one, so a lock-free check can
+    # see the first parameter already on ``target`` while later ones are still moving and let inference start on a
+    # half-moved model. Callers that arrive mid-move wait here until it has finished, then find nothing left to do.
+    with _DEVICE_MOVE_LOCK:
+        first_param = next(inner.parameters(), None)
+        if first_param is None or first_param.device == target:
+            return
+        # ``predict()`` stacks ``@torch.inference_mode()`` on top of ``@_ensure_model_on_device``, so the deferred
+        # move can run while inference mode is active.  Tensors materialised by ``.to()`` under inference mode become
+        # *inference tensors*: they can never require gradients, so a later ``train()`` or auto-batch probe would
+        # silently produce no gradients.  Disable inference mode for the move so deferred device placement is safe
+        # regardless of decorator order.
+        with torch.inference_mode(False):
+            model_ctx.model = inner.to(target)
 
 
 def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Callable[Concatenate[Any, _P], _R]:
