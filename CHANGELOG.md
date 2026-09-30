@@ -25,6 +25,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
+### Fixed
+
+- The deferred CPU-to-accelerator weight move on the first `predict()`, `inference()` or `export()` call is now serialised. Several threads sharing one model (for example one channel per thread) could reach that call together and run overlapping in-place `nn.Module.to()` calls on the same module. On a cold RF-DETR segmentation model, four threads calling `predict()` at once left 13 of 573 `state_dict` tensors corrupted, with no exception or warning, and the model then returned no detections on every frame. The device check and the move now both run under a lock, so a caller that arrives mid-move waits for it to finish instead of starting inference on a half-moved model. `export()`'s CPU staging move and its restore, and `evaluate()`'s move of the live weights to CPU for the eval transplant, take that same lock; each individual move is serialised, the span between a staging move and its restore is not. The lock is per model — held on the `nn.Module` being moved, so a cold move of one model does not stall a call on another, and two `RFDETR` instances sharing one module still serialise against each other.
+
 ## [1.11.1] — 2026-09-30
 
 ### Breaking Changes

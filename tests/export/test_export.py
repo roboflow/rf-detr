@@ -367,6 +367,19 @@ class _DeviceTrackingCoreModel(_DummyCoreModel):
         return self
 
 
+class _LockTrackingCoreModel(_DeviceTrackingCoreModel):
+    """`_DeviceTrackingCoreModel` variant that also records whether the module's move lock was held per `.to()`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock_held: list[bool] = []
+
+    def to(self, device, *args, **kwargs):
+        """Record the device-move lock state, then track the target device as the base class does."""
+        self.lock_held.append(_detr_module._device_move_lock(self).locked())
+        return super().to(device, *args, **kwargs)
+
+
 def _make_tensorrt_export_model(*, device: str = "cpu") -> types.SimpleNamespace:
     """Build the minimal `self`-like fake `RFDETR.export()` needs for the format="tensorrt" branch.
 
@@ -593,6 +606,42 @@ def test_rfdetr_export_tensorrt_failure_restores_device(monkeypatch: pytest.Monk
     assert core_model.to_calls == ["cpu", original_device], (
         f"expected exactly one staging move to 'cpu' then one restore to {original_device!r} even though "
         f"build_engine raised, got device move sequence {core_model.to_calls!r}"
+    )
+
+
+def test_rfdetr_export_moves_the_live_model_under_the_device_move_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both live-model moves in `export()` — the CPU staging move and the `finally` restore — must hold the lock.
+
+    `export()` moves the very module `predict()` runs on, and `nn.Module.to()` rewrites parameter storage in place. A
+    thread reaching its first `predict()` mid-export would otherwise rewrite the same tensors concurrently — the race
+    that left a cold segmentation model with silently corrupted weights. The deepcopy taken between the two moves is a
+    private object no other thread can see, so its own `.to()` is deliberately not covered here.
+    """
+    core_model = _LockTrackingCoreModel()
+    original_device = "meta"
+    model = types.SimpleNamespace(
+        model=types.SimpleNamespace(model=core_model, device=original_device, resolution=14),
+        model_config=types.SimpleNamespace(segmentation_head=False, use_grouppose_keypoints=False, num_channels=3),
+        size=None,
+    )
+
+    # Mock infer tensor (as in the TensorRT tests above): a real one cannot be copied off the "meta" device.
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr(
+        "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+        lambda *_a, **_kw: str(tmp_path / "inference_model.onnx"),
+    )
+    # No `deepcopy` patch: the export copy must stay a distinct object so only the live model's moves are recorded.
+
+    _detr_module.RFDETR.export(model, output_dir=str(tmp_path), shape=(14, 14))
+
+    assert core_model.to_calls == ["cpu", original_device], (
+        f"precondition: expected the staging move and the restore, got {core_model.to_calls!r}"
+    )
+    assert core_model.lock_held == [True, True], (
+        f"both live-model moves must run under the module's device-move lock, got lock states {core_model.lock_held!r}"
     )
 
 
