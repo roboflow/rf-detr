@@ -1470,6 +1470,12 @@ class TestClassNamesMatchDataset:
 
         Args:
             dm: Data module to set up.
+
+        Examples:
+            >>> dm = RFDETRDataModule(_base_model_config(), _base_train_config())
+            >>> TestClassNamesMatchDataset._fit_setup(dm)
+            >>> dm.class_names
+            ['cat', 'dog']
         """
         datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
         with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
@@ -1492,7 +1498,7 @@ class TestClassNamesMatchDataset:
     @pytest.mark.parametrize(
         "class_names",
         [
-            pytest.param(None, id="unset"),
+            None,
             pytest.param(["cat", "dog"], id="same"),
             pytest.param(["Katze", "Hund"], id="renamed"),
         ],
