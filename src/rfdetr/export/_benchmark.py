@@ -449,3 +449,209 @@ def visualize_detections(detections: sv.Detections, image: Image.Image, save_pat
         annotated.save(save_path)
         print(f"Saved annotated image: {save_path}")
     sv.plot_image(annotated)
+
+
+#: Annotation archive for COCO 2017; ``instances_val2017.json`` is the only member the accuracy helpers read.
+_COCO_ANNOTATIONS_URL = "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"
+_COCO_VAL_ANNOTATIONS_MEMBER = "annotations/instances_val2017.json"
+#: Score floor for mAP: low enough to keep the whole precision-recall curve, as ``RFDETR.evaluate`` does.
+_COCO_EVAL_THRESHOLD = 0.001
+
+
+@dataclass(frozen=True)
+class CocoValSubset:
+    """COCO val2017 images on disk, the annotation file, and the image IDs selected for evaluation.
+
+    Attributes:
+        images_dir: Directory holding the ``val2017`` JPEGs.
+        annotations_path: Path to ``instances_val2017.json``.
+        image_ids: Selected image IDs, in evaluation order.
+    """
+
+    images_dir: Path
+    annotations_path: Path
+    image_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CocoMapResult:
+    """Box mAP of one runtime on a COCO val2017 subset.
+
+    Attributes:
+        map50_95: COCO mAP averaged over IoU 0.50:0.95, in ``[0, 1]``.
+        map50: mAP at IoU 0.50, in ``[0, 1]``.
+        n_images: Number of images scored.
+    """
+
+    map50_95: float
+    map50: float
+    n_images: int
+
+
+def _download(url: str, dest: Path) -> None:
+    """Download *url* to *dest*, creating parent directories; a separate function so tests can replace it."""
+    import urllib.request
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(url, dest)
+
+
+def select_coco_val_ids(annotations_path: Path, n_images: int | None = 500, seed: int = 0) -> list[int]:
+    """Pick a reproducible subset of COCO val2017 image IDs.
+
+    Args:
+        annotations_path: Path to ``instances_val2017.json``.
+        n_images: Number of images, or ``None`` for every image in the split.
+        seed: Shuffle seed. The same seed selects the same images on every machine.
+
+    Returns:
+        Image IDs: sorted when *n_images* is ``None``, otherwise the first *n_images* of a seeded shuffle.
+
+    Raises:
+        ValueError: If *n_images* exceeds the number of images in the split.
+
+    Examples:
+        >>> select_coco_val_ids.__name__
+        'select_coco_val_ids'
+    """
+    import json
+
+    image_ids = sorted(image["id"] for image in json.loads(Path(annotations_path).read_text())["images"])
+    if n_images is None:
+        return image_ids
+    if n_images > len(image_ids):
+        raise ValueError(f"Requested {n_images} images, but the split has only {len(image_ids)}.")
+    rng = np.random.default_rng(seed)
+    return [int(image_id) for image_id in rng.permutation(image_ids)[:n_images]]
+
+
+def fetch_coco_val2017(root: Path, n_images: int | None = 500, seed: int = 0) -> CocoValSubset:
+    """Download the COCO val2017 annotations and the selected images into *root*, skipping files already present.
+
+    Only the images in the subset are fetched, one by one from their ``coco_url``, so a 500-image subset avoids
+    the full 780 MB image archive. The annotation file comes from the 241 MB annotation archive the first time.
+
+    Args:
+        root: Directory that receives ``annotations/instances_val2017.json`` and ``val2017/``.
+        n_images: Number of images to select, or ``None`` for the full split.
+        seed: Selection seed passed to :func:`select_coco_val_ids`.
+
+    Returns:
+        The subset, ready for :func:`evaluate_coco_map`.
+
+    Examples:
+        >>> fetch_coco_val2017.__name__
+        'fetch_coco_val2017'
+    """
+    import json
+    import zipfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    root = Path(root)
+    annotations_path = root / _COCO_VAL_ANNOTATIONS_MEMBER
+    if not annotations_path.exists():
+        archive = root / "annotations_trainval2017.zip"
+        if not archive.exists():
+            _download(_COCO_ANNOTATIONS_URL, archive)
+        with zipfile.ZipFile(archive) as zf:
+            zf.extract(_COCO_VAL_ANNOTATIONS_MEMBER, root)
+    image_ids = select_coco_val_ids(annotations_path, n_images, seed=seed)
+    images_dir = root / "val2017"
+    selected = set(image_ids)
+    records = [image for image in json.loads(annotations_path.read_text())["images"] if image["id"] in selected]
+    missing = [record for record in records if not (images_dir / record["file_name"]).exists()]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(lambda record: _download(record["coco_url"], images_dir / record["file_name"]), missing))
+    return CocoValSubset(images_dir=images_dir, annotations_path=annotations_path, image_ids=tuple(image_ids))
+
+
+def _coco_records(
+    output: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | sv.Detections,
+    image_id: int,
+    image_size: tuple[int, int],
+    num_select: int | None,
+    background_class_id: int | None,
+) -> list[dict[str, Any]]:
+    """Turn one image's runtime output into COCO detection records (``bbox`` in pixel ``xywh``)."""
+    if isinstance(output, sv.Detections):
+        if len(output) == 0:
+            return []
+        if output.confidence is None or output.class_id is None:
+            raise ValueError("Decoded detections need confidence and class_id to be scored.")
+        xyxy, scores, class_ids = output.xyxy, output.confidence, output.class_id
+    else:
+        boxes, logits = (np.asarray(array) for array in output)
+        if boxes.ndim == 3:
+            boxes, logits = boxes[0], logits[0]
+        decoded = decode_detections(
+            boxes,
+            logits,
+            image_size,
+            threshold=_COCO_EVAL_THRESHOLD,
+            num_select=num_select,
+            background_class_id=background_class_id,
+        )
+        xyxy, scores, class_ids = decoded.xyxy, decoded.confidence, decoded.class_id
+    return [
+        {
+            "image_id": image_id,
+            "category_id": int(class_id),
+            "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+            "score": float(score),
+        }
+        for (x1, y1, x2, y2), score, class_id in zip(xyxy, scores, class_ids)
+    ]
+
+
+def evaluate_coco_map(
+    run: Callable[[Image.Image], tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | sv.Detections],
+    subset: CocoValSubset,
+    *,
+    num_select: int | None = None,
+    background_class_id: int | None = None,
+    progress: bool = True,
+) -> CocoMapResult:
+    """Score one runtime's box mAP on a COCO val2017 subset, one image at a time (batch 1).
+
+    *run* receives each image as an RGB PIL image and returns either the raw ``(dets, labels)`` arrays (normalized
+    ``cxcywh`` boxes and class logits, with or without a leading batch axis of one) or already-decoded
+    :class:`supervision.Detections` in pixel ``xyxy`` (the ``RFDETR.predict()`` path). Raw outputs are decoded with
+    :func:`~rfdetr.export._runtime.decode.decode_detections` at a 0.001 score floor.
+
+    Args:
+        run: The runtime under test, wrapped to take one PIL image.
+        subset: Images and annotations from :func:`fetch_coco_val2017`.
+        num_select: Query/class pairs kept per image when decoding raw outputs; ``None`` keeps one per query.
+        background_class_id: Class slot dropped when decoding raw outputs. ``None`` (default) suits the official
+            COCO checkpoints, whose sparse category IDs use every slot; the decoder's own default ``-1`` would drop
+            category 90.
+        progress: Whether to show a progress bar.
+
+    Returns:
+        mAP@0.50:0.95 and mAP@0.50 over the subset.
+
+    Examples:
+        >>> evaluate_coco_map.__name__
+        'evaluate_coco_map'
+    """
+    from faster_coco_eval import COCO, COCOeval_faster
+    from PIL import Image as PILImage
+    from tqdm.auto import tqdm
+
+    coco_gt = COCO(str(subset.annotations_path))
+    records: list[dict[str, Any]] = []
+    for image_id in tqdm(subset.image_ids, desc="COCO mAP", disable=not progress):
+        file_name = coco_gt.loadImgs([image_id])[0]["file_name"]
+        with PILImage.open(subset.images_dir / file_name) as image:
+            rgb = image.convert("RGB")
+        records += _coco_records(run(rgb), image_id, rgb.size, num_select, background_class_id)
+    if not records:
+        return CocoMapResult(map50_95=0.0, map50=0.0, n_images=len(subset.image_ids))
+    evaluator = COCOeval_faster(coco_gt, coco_gt.loadRes(records), "bbox")
+    evaluator.params.imgIds = list(subset.image_ids)
+    evaluator.evaluate()
+    evaluator.accumulate()
+    evaluator.summarize()
+    return CocoMapResult(
+        map50_95=float(evaluator.stats[0]), map50=float(evaluator.stats[1]), n_images=len(subset.image_ids)
+    )

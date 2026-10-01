@@ -47,6 +47,8 @@ All numbers are batch 1, `RFDETRSmall`, rfdetr v1.11.0. Warmup and timed-run cou
 
 `Memory [MB]` in the cookbooks is comparable only within one cookbook: the CUDA cookbook measures device memory, the CPU, Apple and mobile cookbooks measure host resident memory (RSS).
 
+Each cookbook also scores every exported model and precision at batch 1 on the same seeded 500-image COCO val2017 subset (box mAP@50:95 and mAP@50), so a precision setting that loses accuracy shows up next to its latency. The subset is chosen for run time, so these are not the full-val2017 numbers on the [Benchmarks page](../learn/benchmarks.md); set `FULL_VAL = True` in a cookbook to score all 5000 images.
+
 !!! note "Which latency number is this?"
 
     RF-DETR latency appears on three different pages, and they are three different measurements:
