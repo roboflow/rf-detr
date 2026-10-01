@@ -137,15 +137,21 @@ class TRTInference:
             replay it on every later call, which removes most of the per-call launch cost at small batch sizes. Each
             call copies its inputs into static buffers the graph reads, so the caller's tensors may be new every call.
             A static engine keeps one graph; a dynamic engine one per set of input shapes it is called with, all
-            reading one buffer per input that is as large as the engine's profile maximum. A capture synchronizes the
-            device, empties torch's allocator cache, and fails if another thread synchronizes the device meanwhile, so
-            make the first call at each shape during warm-up. Uses its own torch stream, so it does not need pycuda,
-            and cannot be combined with ``sync_mode``.
+            reading one buffer per input that is as large as the engine's profile maximum. Profile 0, the optimization
+            profile the runtime runs, may vary only the batch, which bounds how many graphs a runtime keeps: for a
+            single-input engine such as RF-DETR's, one per batch size up to the profile maximum. Each graph holds
+            memory of its own (under 1 MiB on the device and about 2 MiB on the host for RF-DETR Nano and Small),
+            which matters for an engine exported with a large ``max_batch_size``. An engine whose profile varies another
+            axis, such as the image size, is refused, because it would keep a graph for every value of that axis it is
+            called with. A capture synchronizes the device, empties torch's allocator cache, and fails if another
+            thread synchronizes the device meanwhile, so make the first call at each shape during warm-up. Uses its own
+            torch stream, so it does not need pycuda, and cannot be combined with ``sync_mode``.
 
     Raises:
         ImportError: If TensorRT, or pycuda for ``sync_mode=False`` without *cuda_graph*, is not installed.
         ValueError: If *device* is not a CUDA device, the engine's tensor shapes cannot be resolved from its
-            optimization profile (see :meth:`get_bindings`), or *cuda_graph* is combined with ``sync_mode=True``.
+            optimization profile (see :meth:`get_bindings`), or *cuda_graph* is combined with ``sync_mode=True`` or
+            requested for an engine whose optimization profile varies an axis other than the batch.
         RuntimeError: If TensorRT cannot deserialize the engine or create its execution context.
 
     Attributes:
@@ -184,6 +190,8 @@ class TRTInference:
 
         with torch.cuda.device(self._engine_device):
             self.engine = self.load_engine(engine_path)
+            if cuda_graph:
+                self._refuse_unbounded_graph_shapes(self.engine)
 
             self.context = self.engine.create_execution_context()
             if self.context is None:
@@ -325,6 +333,42 @@ class TRTInference:
                 raise ValueError(
                     f"TensorRT refused input {name!r} at the profile maximum {max_shape} it reported itself; the "
                     "execution context is not on optimization profile 0."
+                )
+
+    @staticmethod
+    def _refuse_unbounded_graph_shapes(engine: Any) -> None:
+        """Refuse, for ``cuda_graph=True``, an engine whose profile varies an input on any axis but the batch.
+
+        A graph is captured and kept for every set of input shapes the runtime is called with. When the profile only
+        varies the batch, that is at most one graph per combination of the inputs' batch sizes; an axis such as the
+        image size would add one per value it is ever called with. The decision reads profile 0, the one this runtime
+        runs, not the ``-1`` axes: an engine reports an axis as dynamic when any of its profiles varies it, so one whose
+        profile 0 pins the image size and whose profile 1 varies it reports a dynamic image size and is still bounded
+        here. An input with a fixed batch is left to :meth:`get_bindings`: it has one shape, or a dynamic axis no mode
+        can size a buffer for.
+
+        Args:
+            engine: A deserialized TensorRT engine.
+
+        Raises:
+            ValueError: If the profile lets a dynamic-batch input take more than one size on another axis.
+        """
+        for name in engine:
+            if engine.get_tensor_mode(name) != trt.TensorIOMode.INPUT:
+                continue
+            if engine.get_tensor_shape(name)[BATCH_AXIS] != -1:
+                continue
+            min_shape, _, max_shape = (
+                tuple(int(dim) for dim in dims) for dims in engine.get_tensor_profile_shape(name, 0)
+            )
+            if min_shape[BATCH_AXIS + 1 :] != max_shape[BATCH_AXIS + 1 :]:
+                raise ValueError(
+                    f"cuda_graph=True needs an engine whose optimization profile varies only the batch, but input "
+                    f"{name!r} ranges from {min_shape} to {max_shape}. A graph is captured and kept for every set of "
+                    "input shapes the runtime is called with, so an input that takes many sizes on another axis "
+                    "would keep one for each. Build the runtime with sync_mode=True instead of cuda_graph=True, or "
+                    "build the engine with a profile that fixes every axis but the batch, as "
+                    'RFDETR.export(format="tensorrt") does.'
                 )
 
     def get_bindings(

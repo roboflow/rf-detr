@@ -155,7 +155,8 @@ class _FakeEngine:
     Shapes use ``-1`` for a dynamic batch axis, as TensorRT reports them; ``profile_max`` is the batch upper bound the
     single optimization profile declares on every dynamic input, whose minimum is batch 1. ``input_dtype`` is the numpy
     type the engine reports for its inputs (outputs are always float32). An image axis reported as ``-1`` ranges over
-    ``image_profile`` (minimum, maximum).
+    ``image_profile`` (minimum, maximum) in profile 0; ``second_image_profile`` adds a second profile, identical but for
+    ranging the image axes over that instead. A profile's optimal shape is batch 2, halfway through its image range.
     """
 
     def __init__(
@@ -164,11 +165,14 @@ class _FakeEngine:
         profile_max: int = 4,
         input_dtype: type = np.float32,
         image_profile: tuple[int, int] = (4, 16),
+        second_image_profile: tuple[int, int] | None = None,
     ) -> None:
         self._tensors = tensors
         self.profile_max = profile_max
         self.input_dtype = input_dtype
         self.image_profile = image_profile
+        self.second_image_profile = second_image_profile
+        self.num_optimization_profiles = 1 if second_image_profile is None else 2
 
     def __iter__(self):
         return iter(self._tensors)
@@ -185,13 +189,14 @@ class _FakeEngine:
     def get_tensor_profile_shape(
         self, name: str, profile_index: int
     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-        """Report the (minimum, optimal, maximum) shape of input *name*: batch from 1 to ``profile_max``, images per
-        ``image_profile``."""
-        low, high = self.image_profile
+        """Report the (minimum, optimal, maximum) shape of input *name* in profile *profile_index*: batch from 1 to
+        ``profile_max``, images over that profile's range."""
+        low, high = self.image_profile if profile_index == 0 else self.second_image_profile
         rest = self._tensors[name][1][1:]
         floor = tuple(low if dim == -1 else dim for dim in rest)
+        middle = tuple((low + high) // 2 if dim == -1 else dim for dim in rest)
         ceiling = tuple(high if dim == -1 else dim for dim in rest)
-        return ((1, *floor), (2, *floor), (self.profile_max, *ceiling))
+        return ((1, *floor), (2, *middle), (self.profile_max, *ceiling))
 
     def create_execution_context(self) -> "_FakeContext":
         return _FakeContext(self)
@@ -201,11 +206,12 @@ class _FakeContext:
     """Execution-context stand-in that resolves every dynamic shape from the input shapes it has been given.
 
     TensorRT sizes a dynamic engine's tensors on the execution context, not on the engine, so ``set_input_shape``
-    records the batch a call declares and ``get_tensor_shape`` then reports every dynamic tensor at it. A shape outside
-    the profile -- a batch below 1 or above the engine's profile maximum, or any other axis differing from the engine's
-    -- is refused by returning ``False``, which is how TensorRT reports it instead of raising. ``output_batch`` pins the
-    outputs to a batch of their own, modelling an engine whose output batch is not its input batch. The execution calls
-    are plain ``Mock`` objects so tests can assert on them.
+    records the shape a call declares and ``get_tensor_shape`` then reports a declared input at that shape and every
+    other dynamic tensor at its batch. A shape outside the profile -- a batch below 1 or above the engine's profile
+    maximum, or any other axis outside the range the profile gives it -- is refused by returning ``False``, which is how
+    TensorRT reports it instead of raising. ``output_batch`` pins the outputs to a batch of their own, modelling an
+    engine whose output batch is not its input batch. The execution calls are plain ``Mock`` objects so tests can assert
+    on them.
     """
 
     def __init__(self, engine: _FakeEngine, output_batch: int | None = None) -> None:
@@ -491,6 +497,8 @@ def _runtime_around(
     """Assemble a ``TRTInference`` around a fake engine and context without touching ``__init__`` (needs a GPU).
 
     A context matching *engine* is built here unless the test needs a non-default one (see :class:`_FakeContext`).
+    Skipping ``__init__`` also skips its refusals, such as that of an engine whose profile varies more than the batch
+    under ``cuda_graph=True``, so a test must not build a runtime here that construction would refuse.
     The engine "runs" on the CPU, so the fakes can hand it ordinary CPU tensors. Calling the runtime needs the
     ``fake_tensorrt`` and ``cuda_device_recorder`` fixtures; the doctest only builds it, and patches ``trt`` itself.
 
@@ -1196,16 +1204,6 @@ class TestTRTInferenceCudaGraph:
         views = {captured.inputs["input"].data_ptr() for captured in runtime._graphs.values()}
         assert (views, buffer.numel()) == ({buffer.data_ptr()}, 4 * 3 * 8 * 8)
 
-    def test_an_engine_with_a_dynamic_image_size_gets_a_graph_per_input_shape(self) -> None:
-        """A graph is only replayed for the shapes it was captured at: batch 1 at 16x16 is not batch 1 at 8x8."""
-        tensors = {"input": ("input", (-1, 3, -1, -1)), "dets": ("output", (-1, 5, 4))}
-        runtime = _runtime_around(_FakeEngine(tensors, profile_max=4), sync_mode=False, cuda_graph=True)
-
-        for side in (16, 8, 16):
-            runtime({"input": torch.zeros(1, 3, side, side)})
-
-        assert sorted(runtime._graphs) == [((1, 3, 8, 8),), ((1, 3, 16, 16),)]
-
     def test_every_input_of_a_multi_input_engine_is_copied_to_its_own_buffer(
         self, fake_cuda_graphs: _FakeCudaGraphs
     ) -> None:
@@ -1305,11 +1303,16 @@ class TestTRTInferenceCudaGraph:
 
 @pytest.mark.usefixtures("cuda_device_recorder", "fake_cuda_graphs")
 class TestTRTInferenceCudaGraphConstruction:
-    """The ``cuda_graph`` option is opt-in, needs no pycuda, and is refused where it cannot take effect."""
+    """The ``cuda_graph`` option is opt-in, needs no pycuda, and is refused where it cannot take effect or where its
+    graphs would have no bound."""
 
     @staticmethod
-    def _engine_file(fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> str:
-        """Point the fake runtime at a one-input engine and return a path TensorRT can be asked to load.
+    def _engine_file(fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, engine: _FakeEngine | None = None) -> str:
+        """Point the fake runtime at *engine* and return a path TensorRT can be asked to load.
+
+        Without *engine* it is one with a single fixed ``(1, 3, 8, 8)`` input. An engine given here should have no
+        output when construction is meant to succeed: it allocates the output buffers on the CUDA device, which
+        CPU-only CI does not have.
 
         Examples:
             >>> import tempfile
@@ -1317,10 +1320,15 @@ class TestTRTInferenceCudaGraphConstruction:
             >>> fake = _FakeTensorRTModule()
             >>> with tempfile.TemporaryDirectory() as directory, patch.object(trt_inference, "trt", fake):
             ...     path = TestTRTInferenceCudaGraphConstruction._engine_file(fake, Path(directory))
-            ...     Path(path).name, fake.runtime.engine is not None
-            ('model.trt', True)
+            ...     Path(path).name, fake.runtime.engine.get_tensor_shape("input")
+            ('model.trt', (1, 3, 8, 8))
+            >>> with tempfile.TemporaryDirectory() as directory, patch.object(trt_inference, "trt", fake):
+            ...     engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8))})
+            ...     _ = TestTRTInferenceCudaGraphConstruction._engine_file(fake, Path(directory), engine)
+            ...     fake.runtime.engine is engine
+            True
         """
-        fake_tensorrt.runtime.engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
+        fake_tensorrt.runtime.engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))}) if engine is None else engine
         engine_file = tmp_path / "model.trt"
         engine_file.write_bytes(b"engine")
         return str(engine_file)
@@ -1341,6 +1349,88 @@ class TestTRTInferenceCudaGraphConstruction:
             TRTInference(engine_file, sync_mode=True, cuda_graph=True)
 
         fake_tensorrt.runtime.deserialize_cuda_engine.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "tensors",
+        [
+            pytest.param({"input": ("input", (-1, 3, -1, -1))}, id="dynamic-image-size"),
+            pytest.param({"input": ("input", (-1, 3, -1, 8))}, id="dynamic-height-only"),
+            pytest.param({"input": ("input", (-1, 3, 8, 8)), "aux": ("input", (-1, -1))}, id="dynamic-second-input"),
+        ],
+    )
+    def test_an_engine_whose_profile_varies_more_than_the_batch_is_refused(
+        self,
+        fake_tensorrt: _FakeTensorRTModule,
+        tmp_path: Path,
+        tensors: dict[str, tuple[str, tuple[int, ...]]],
+    ) -> None:
+        """A graph is kept per input shape, so an engine whose profile takes any image size would keep one for every
+        size it is ever called with; only a profile that varies the batch alone bounds the graphs."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine(tensors))
+
+        with pytest.raises(ValueError, match="varies only the batch"):
+            TRTInference(engine_file, cuda_graph=True)
+
+    def test_the_refusal_comes_before_an_execution_context_is_created(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """The decision needs only the engine, so nothing the refused runtime would hold is allocated first."""
+        engine = _FakeEngine({"input": ("input", (-1, 3, -1, -1))})
+        engine.create_execution_context = Mock(side_effect=engine.create_execution_context)
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, engine)
+
+        with pytest.raises(ValueError, match="varies only the batch"):
+            TRTInference(engine_file, cuda_graph=True)
+
+        engine.create_execution_context.assert_not_called()
+
+    def test_the_refusal_advises_sync_mode(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
+        """``sync_mode=True`` is the mode that needs neither a graph nor pycuda, like the capture error's advice."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine({"input": ("input", (-1, 3, -1, -1))}))
+
+        with pytest.raises(ValueError, match="sync_mode=True instead of cuda_graph=True"):
+            TRTInference(engine_file, cuda_graph=True)
+
+    def test_a_fixed_batch_engine_with_a_dynamic_image_size_gets_the_error_of_every_mode(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """No mode can size such an input, so the refusal must not advise ``sync_mode=True`` for it."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine({"input": ("input", (1, 3, -1, -1))}))
+
+        with pytest.raises(ValueError, match="unresolved dimension"):
+            TRTInference(engine_file, cuda_graph=True)
+
+    def test_the_refused_engine_loads_with_the_advised_sync_mode(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """The refusal's advice works when followed verbatim: the same engine loads with ``sync_mode=True``."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine({"input": ("input", (-1, 3, -1, -1))}))
+
+        runtime = TRTInference(engine_file, sync_mode=True)
+
+        assert runtime.bindings["input"].shape == (4, 3, 16, 16)
+
+    @pytest.mark.parametrize(
+        "engine",
+        [
+            pytest.param(_FakeEngine({"input": ("input", (-1, 3, 8, 8))}), id="dynamic-batch"),
+            pytest.param(
+                _FakeEngine({"input": ("input", (-1, 3, -1, -1))}, image_profile=(8, 8), second_image_profile=(4, 16)),
+                id="image-size-pinned-in-profile-0",
+            ),
+        ],
+    )
+    def test_an_engine_whose_profile_varies_only_the_batch_is_accepted(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, engine: _FakeEngine
+    ) -> None:
+        """What ``RFDETR.export(format="tensorrt", dynamic_batch=True, max_batch_size=...)`` builds keeps graph replay,
+        and so does an engine that reports a dynamic image size because another profile varies it, while profile 0, the
+        one the runtime runs, pins it."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, engine)
+
+        runtime = TRTInference(engine_file, cuda_graph=True)
+
+        assert runtime._graph_stream is not None
 
     def test_cuda_graph_does_not_need_pycuda(
         self, fake_tensorrt: _FakeTensorRTModule, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
