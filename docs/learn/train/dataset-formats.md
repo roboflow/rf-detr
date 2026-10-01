@@ -11,9 +11,9 @@ RF-DETR supports training on datasets in two popular formats: **COCO** and **YOL
 When you call `model.train(dataset_dir=<path>)`, RF-DETR checks the following:
 
 1. **COCO format**: Looks for `train/_annotations.coco.json`
-2. **YOLO format**: Looks for `data.yaml` (or `data.yml`) and `train/images/` directory
+2. **YOLO format**: Looks for `data.yaml` (or `data.yml`) and a training image directory resolved from its split paths or the `train/images/` fallback
 
-If neither format is detected, an error is raised with instructions on what's expected.
+COCO takes precedence when both formats are present. If neither format is detected, an error is raised with instructions on what's expected.
 
 !!! tip "Roboflow Export"
 
@@ -235,6 +235,8 @@ dataset/
         └── ...
 ```
 
+The YAML split paths also support layouts such as `images/train` with `labels/train`, and `images/val` with `labels/val`. An optional `path` sets the base for these paths; relative bases are resolved from the dataset root, and a relative base that is not a directory under the root is ignored in favour of the root itself, so a stock Ultralytics file whose `path` repeats the dataset directory name works unchanged. YAML paths must resolve within the dataset root. Without usable YAML split paths, RF-DETR falls back to `train/images` and `valid/images` (or `val/images`), with matching `labels` directories. Class discovery requires both training and validation directories; the test split is optional.
+
 ### data.yaml Configuration
 
 The `data.yaml` file at the root of your dataset directory defines the class names:
@@ -252,11 +254,12 @@ val: valid/images
 test: test/images
 ```
 
-| Field                  | Description                                        |
-| ---------------------- | -------------------------------------------------- |
-| `names`                | List of class names (0-indexed)                    |
-| `nc`                   | Number of classes                                  |
-| `train`, `val`, `test` | Paths to image directories (relative to data.yaml) |
+| Field                  | Description                                                          |
+| ---------------------- | -------------------------------------------------------------------- |
+| `names`                | List of class names (0-indexed)                                      |
+| `nc`                   | Number of classes                                                    |
+| `train`, `val`, `test` | Paths to image directories (relative to `path`, or the dataset root) |
+| `path`                 | Optional base directory for split paths                              |
 
 !!! note "Alternative format"
 
@@ -269,7 +272,11 @@ test: test/images
       2: bird
     ```
 
-    Both formats are supported.
+    Both formats are supported. Dictionary keys may be integers or quoted numeric strings (for example, `"0"`). Class IDs must be unique after numeric conversion and form a contiguous range starting at `0`; names are ordered by numeric ID.
+
+!!! warning "Zero-padded numeric keys in the dictionary format"
+
+    Two-digit zero padding (e.g. `08`) works correctly, but three-digit-or-more zero padding does not: under YAML 1.1, an unquoted key like `010` is parsed as the octal integer 8, colliding with `008`. Quote such keys (`"010"`) or drop the leading-zero padding (`10`) to avoid this.
 
 ### Label File Format
 

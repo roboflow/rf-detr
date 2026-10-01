@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+import yaml
 from PIL import Image
 from pycocotools.coco import COCO
 
@@ -24,6 +25,7 @@ from rfdetr.datasets.yolo import (
     build_roboflow_from_yolo,
     is_valid_yolo_dataset,
 )
+from rfdetr.detr import RFDETR
 
 
 def _write_minimal_roboflow_yolo_dataset(tmp_path: Path) -> None:
@@ -148,7 +150,7 @@ class TestBuildRoboflowFromYoloAugConfig:
             patch("rfdetr.datasets.yolo.Path") as mock_path,
             patch(f"rfdetr.datasets.yolo.{transform_fn}") as mock_transform,
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
-            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs", return_value=fake_dirs),
+            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs_with_notes", return_value=(fake_dirs, ())),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transform.return_value = MagicMock()
@@ -187,7 +189,7 @@ class TestBuildRoboflowFromYoloAugConfig:
             patch("rfdetr.datasets.yolo.make_coco_transforms") as mock_transform,
             patch("rfdetr.datasets.yolo.YoloDetection") as mock_dataset,
             patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=False),
-            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs", return_value=fake_dirs),
+            patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs_with_notes", return_value=(fake_dirs, ())),
         ):
             mock_path.return_value.exists.return_value = True
             mock_transform.return_value = MagicMock()
@@ -207,7 +209,7 @@ class TestBuildRoboflowFromYoloAugConfig:
 
         from rfdetr.datasets import build_roboflow
 
-        with pytest.raises(ValueError, match="YOLO keypoint"):
+        with pytest.raises(ValueError, match="kpt_shape"):
             build_roboflow("train", args, resolution=64)
 
     def test_keypoint_mode_accepts_yolo_pose_format(self, tmp_path: Path) -> None:
@@ -1105,7 +1107,7 @@ class TestResolveYoloSplitDirs:
             pytest.skip(f"cannot create symlinks in this environment: {exc}")
         data_file = root / "data.yaml"
         data_file.write_text("path: .\nval: val/images\nnames:\n  0: person\n", encoding="utf-8")
-        assert _parse_yaml_split_dirs(root, data_file, "val") is None
+        assert _parse_yaml_split_dirs(root, data_file, "val")[0] is None
 
     def test_nested_split_with_no_images_segment_resolves_via_subdirectories(self, tmp_path: Path) -> None:
         """A split path with no ``images`` segment under an images-named ancestor still resolves."""
@@ -1136,7 +1138,7 @@ class TestResolveYoloSplitDirs:
         (root / "labels" / "val").mkdir(parents=True)
         data_file = root / "data.yaml"
         data_file.write_text("path: .\nval: Images/val\nnames:\n  0: person\n", encoding="utf-8")
-        assert _parse_yaml_split_dirs(root, data_file, "val") is None
+        assert _parse_yaml_split_dirs(root, data_file, "val")[0] is None
 
     def test_bare_leaf_images_split_with_empty_tail(self, tmp_path: Path) -> None:
         """A split path that is itself a bare ``images`` leaf swaps with an empty tail."""
@@ -1400,3 +1402,163 @@ class TestExtractYoloClassNames:
         data_file.write_text(yaml_content, encoding="utf-8")
         with pytest.raises(ValueError, match="0..N-1"):
             _extract_yolo_class_names(str(data_file))
+
+
+def _write_yolo_names_data_file(tmp_path: Path, names: list[str] | dict[int | str, str]) -> Path:
+    """Write a ``data.yaml`` with an arbitrary ``names`` value and a minimal ``kpt_shape``.
+
+    Examples:
+        >>> import tempfile
+        >>> root = Path(tempfile.mkdtemp())
+        >>> data_file = _write_yolo_names_data_file(root, ["person"])
+        >>> data_file.name
+        'data.yaml'
+    """
+    data_file = tmp_path / "data.yaml"
+    data_file.write_text(yaml.safe_dump({"names": names, "kpt_shape": [1, 3]}, sort_keys=False), encoding="utf-8")
+    return data_file
+
+
+#: Numeric-key ``names`` mappings (and the equivalent list form) that must all resolve to the
+#: same 12 class names in label-ID order, regardless of key type, ordering, or zero-padding.
+_VALID_NUMERIC_NAMES_CASES = [
+    pytest.param([f"class_{idx}" for idx in range(12)], id="list"),
+    pytest.param({idx: f"class_{idx}" for idx in reversed(range(12))}, id="integer"),
+    pytest.param({str(idx): f"class_{idx}" for idx in reversed(range(12))}, id="quoted"),
+    pytest.param({idx if idx % 2 else str(idx): f"class_{idx}" for idx in reversed(range(12))}, id="mixed"),
+    pytest.param({f"{idx:02}": f"class_{idx}" for idx in reversed(range(12))}, id="zero-padded"),
+]
+
+#: ``names`` mappings that must all be rejected as not forming a contiguous 0..N-1 ID space.
+_INVALID_CLASS_ID_CASES = [
+    pytest.param({0: "cat", "0": "dog"}, id="duplicate-mixed"),
+    pytest.param({"0": "cat", "00": "dog"}, id="duplicate-quoted"),
+    pytest.param({0: "cat", 2: "dog"}, id="sparse-integer"),
+    pytest.param({"0": "cat", "2": "dog"}, id="sparse-quoted"),
+    pytest.param({1: "cat", 2: "dog"}, id="nonzero-start"),
+    pytest.param({}, id="empty"),
+    pytest.param({"1.0": "cat"}, id="non-integer-decimal-string"),
+    pytest.param({"1e1": "cat"}, id="non-integer-exponent-string"),
+    pytest.param({" 0": "cat"}, id="whitespace-padded-leading"),
+    pytest.param({"1 ": "cat"}, id="whitespace-padded-trailing"),
+    pytest.param({-1: "cat"}, id="negative-integer-key"),
+    pytest.param({"-1": "cat"}, id="negative-string-key"),
+    pytest.param({"x": "cat"}, id="non-numeric-key"),
+    pytest.param({True: "cat"}, id="bool-key"),
+    pytest.param({"²": "cat"}, id="unicode-digit-superscript"),
+    pytest.param({"１": "cat"}, id="unicode-digit-fullwidth"),
+    pytest.param({"١": "cat"}, id="unicode-digit-arabic-indic"),
+]
+
+
+class TestYoloClassNamesEntryPoints:
+    """Keep detection, pose, and facade class names aligned with numeric label IDs.
+
+    Each behavior is checked once per entry point (direct detection construction, pose construction, and the ``RFDETR``
+    facade) in its own test method: the facade returns a plain list while ``YoloDetection`` exposes
+    ``.classes``/``.coco.cats``, so the three entry points need different assertions rather than a single branching test
+    body.
+    """
+
+    @pytest.mark.parametrize("names", _VALID_NUMERIC_NAMES_CASES)
+    def test_class_names_follow_numeric_ids_detection(
+        self, tmp_path: Path, names: list[str] | dict[int | str, str]
+    ) -> None:
+        """Numeric YAML keys retain label identity for a direct detection-mode dataset.
+
+        Builds a ``YoloDetection`` without keypoints from each numeric ``names`` variant and checks that class 10's name
+        and the parsed label survive key type, ordering, and zero-padding differences.
+        """
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        data_file = _write_yolo_names_data_file(tmp_path, names)
+        (tmp_path / "train" / "labels" / "sample.txt").write_text("10 0.5 0.5 0.5 0.5\n", encoding="utf-8")
+        dataset = YoloDetection(
+            str(tmp_path / "train" / "images"),
+            str(tmp_path / "train" / "labels"),
+            str(data_file),
+            include_keypoints=False,
+        )
+
+        expected_names = [f"class_{idx}" for idx in range(12)]
+        assert dataset.classes == expected_names
+        _, target = dataset[0]
+        assert target is not None
+        assert target["labels"].tolist() == [10]
+        assert dataset.coco.cats[10]["name"] == "class_10"
+
+    @pytest.mark.parametrize("names", _VALID_NUMERIC_NAMES_CASES)
+    def test_class_names_follow_numeric_ids_pose(self, tmp_path: Path, names: list[str] | dict[int | str, str]) -> None:
+        """Numeric YAML keys retain label identity for a pose-mode dataset.
+
+        Same check as the detection case, but with keypoints enabled and a label line carrying one keypoint, so the pose
+        entry point is verified independently of detection.
+        """
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        data_file = _write_yolo_names_data_file(tmp_path, names)
+        (tmp_path / "train" / "labels" / "sample.txt").write_text("10 0.5 0.5 0.5 0.5 0.25 0.25 2\n", encoding="utf-8")
+        dataset = YoloDetection(
+            str(tmp_path / "train" / "images"),
+            str(tmp_path / "train" / "labels"),
+            str(data_file),
+            include_keypoints=True,
+        )
+
+        expected_names = [f"class_{idx}" for idx in range(12)]
+        assert dataset.classes == expected_names
+        _, target = dataset[0]
+        assert target is not None
+        assert target["labels"].tolist() == [10]
+        assert dataset.coco.cats[10]["name"] == "class_10"
+
+    @pytest.mark.parametrize("names", _VALID_NUMERIC_NAMES_CASES)
+    def test_class_names_follow_numeric_ids_facade(
+        self, tmp_path: Path, names: list[str] | dict[int | str, str]
+    ) -> None:
+        """Numeric YAML keys retain label identity through the ``RFDETR`` facade.
+
+        ``RFDETR._load_classes`` returns a plain list rather than a dataset object, so this checks the facade's own
+        return value instead of ``.classes``/``.coco.cats``.
+        """
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        _write_yolo_names_data_file(tmp_path, names)
+
+        expected_names = [f"class_{idx}" for idx in range(12)]
+        assert RFDETR._load_classes(str(tmp_path)) == expected_names
+
+    @pytest.mark.parametrize("names", _INVALID_CLASS_ID_CASES)
+    def test_invalid_class_ids_raise_detection(self, tmp_path: Path, names: dict[int | str, str]) -> None:
+        """Ambiguous or non-contiguous IDs raise for a direct detection-mode dataset."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        data_file = _write_yolo_names_data_file(tmp_path, names)
+        with pytest.raises(ValueError, match="0..N-1"):
+            YoloDetection(
+                str(tmp_path / "train" / "images"),
+                str(tmp_path / "train" / "labels"),
+                str(data_file),
+                include_keypoints=False,
+            )
+
+    @pytest.mark.parametrize("names", _INVALID_CLASS_ID_CASES)
+    def test_invalid_class_ids_raise_pose(self, tmp_path: Path, names: dict[int | str, str]) -> None:
+        """Ambiguous or non-contiguous IDs raise for a pose-mode dataset.
+
+        The real cause must appear directly in the raised message (not only in ``__cause__``), so pose must not report a
+        different, misleading label space from detection/facade.
+        """
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        data_file = _write_yolo_names_data_file(tmp_path, names)
+        with pytest.raises(ValueError, match="0..N-1"):
+            YoloDetection(
+                str(tmp_path / "train" / "images"),
+                str(tmp_path / "train" / "labels"),
+                str(data_file),
+                include_keypoints=True,
+            )
+
+    @pytest.mark.parametrize("names", _INVALID_CLASS_ID_CASES)
+    def test_invalid_class_ids_raise_facade(self, tmp_path: Path, names: dict[int | str, str]) -> None:
+        """Ambiguous or non-contiguous IDs raise through the ``RFDETR`` facade."""
+        _write_minimal_roboflow_yolo_dataset(tmp_path)
+        _write_yolo_names_data_file(tmp_path, names)
+        with pytest.raises(ValueError, match="0..N-1"):
+            RFDETR._load_classes(str(tmp_path))
