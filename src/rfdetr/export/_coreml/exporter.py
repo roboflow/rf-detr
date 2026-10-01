@@ -43,6 +43,7 @@ import torch
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._neural_engine import neural_engine_model
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -93,9 +94,13 @@ class CoreMLConfig(ExportConfig):
 
     Attributes:
         compute_precision: ``"float32"``, ``"float16"``, or ``None`` for coremltools' default.
+        neural_engine: Rewrite the backbone attention and the two-stage query selection into ops the Apple Neural
+            Engine runs natively (:func:`~rfdetr.export._neural_engine.neural_engine_model`). Same weights. Faster on
+            the Neural Engine, slower on the CPU and the GPU.
     """
 
     compute_precision: str | None = None
+    neural_engine: bool = False
 
 
 class CoreMLExporter(Exporter[CoreMLConfig]):
@@ -114,7 +119,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
     """
 
     config_class = CoreMLConfig
-    setting_names = {"compute_precision": "coreml_precision"}
+    setting_names = {"compute_precision": "coreml_precision", "neural_engine": "coreml_neural_engine"}
     format = "coreml"
     display_name = "CoreML"
     dynamic_batch_reason = (
@@ -280,7 +285,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         Returns:
             The exported program, after ``run_decompositions``.
         """
-        model = graph.model.eval()
+        model = neural_engine_model(graph.model) if self.config.neural_engine else graph.model
+        model = model.eval()
         # strict=False: same rationale as ExecuTorch — submodule-lifted spatial_shapes constants
         # break lowering under strict=True on current torch.export + converter stacks.
         exported_program = torch.export.export(model, (graph.input_tensors,), strict=False)
