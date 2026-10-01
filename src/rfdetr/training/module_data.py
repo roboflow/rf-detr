@@ -117,6 +117,12 @@ def _check_class_names_match_dataset(
     Raises:
         ValueError: If ``class_names`` holds the dataset's names in order with one or more extra entries above them.
 
+    Warns:
+        A ``WARNING`` record on the ``rf-detr`` logger — not a :mod:`warnings` warning, which a ``stacklevel`` could
+        only ever attribute to Lightning's own hook dispatcher — when ``class_names`` differs from the dataset's
+        names in a way that shifts nothing: the dataset's own names reordered, or any other difference in length.
+        Emitted once per run rather than once per rank.
+
     Examples:
         >>> _check_class_names_match_dataset(["cat", "dog"], ["cat", "dog"], labels_remapped=True)
         >>> _check_class_names_match_dataset(["Katze", "Hund"], ["cat", "dog"], labels_remapped=True)
