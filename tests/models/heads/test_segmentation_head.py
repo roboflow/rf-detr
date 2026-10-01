@@ -5,14 +5,17 @@
 # ------------------------------------------------------------------------
 """Tests for DepthwiseConvBlock, _DepthwiseConvWithoutCuDNN, and SegmentationHead."""
 
+import inspect
 import threading
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from unittest import mock
 
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
+from torch import nn
 
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead, point_sample
 from rfdetr.utilities.tensors import _nearest_grid_sample
@@ -620,6 +623,114 @@ class TestSegmentationHeadSkipBlocksFalseUnaffected:
         assert len(actual_logits) == len(expected_logits)
         for actual, expected in zip(actual_logits, expected_logits):
             torch.testing.assert_close(actual, expected)
+
+
+class _SegmentationHeadExportWrapper(nn.Module):
+    """Wrap ``SegmentationHead`` in export mode so ``torch.onnx.export`` can trace its list/tuple arguments."""
+
+    def __init__(self, head: SegmentationHead) -> None:
+        super().__init__()
+        self.head = head
+
+    def forward(self, spatial_features: torch.Tensor, query_features: torch.Tensor) -> torch.Tensor:
+        """Return mask logits for one decoder layer's query features at a fixed 4x4 image size.
+
+        Args:
+            spatial_features: Spatial feature map of shape ``(B, C, H, W)``.
+            query_features: One decoder layer's query features of shape ``(B, N, C)``.
+
+        Returns:
+            Mask logits of shape ``(B, N, 4, 4)``.
+
+        Examples:
+            >>> head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=2, downsample_ratio=1)
+            >>> head.export()
+            >>> wrapper = _SegmentationHeadExportWrapper(head)
+            >>> tuple(wrapper(torch.randn(1, 4, 4, 4), torch.randn(1, 3, 4)).shape)
+            (1, 3, 4, 4)
+        """
+        return self.head(spatial_features, [query_features], (4, 4))[0]
+
+
+class TestSegmentationHeadForwardExport:
+    """``forward_export`` must match the eager evaluation path's last layer and avoid ops ONNX Runtime's CoreML provider
+    cannot run.
+
+    Training drives ``sparse_forward``, not ``forward`` — ``forward`` is the eager evaluation path that applies each
+    block in sequence, appending one mask per block. ``forward_export`` always applies every block in a single pass and
+    returns only the result of the final block, so the true contract is ``forward_export(sf, [qf])[0] == forward(sf,
+    [qf] * num_blocks)[-1]`` for any ``num_blocks`` — not just ``num_blocks=1``, where ``[0] == [-1]`` trivially and a
+    bug in how later blocks accumulate would stay hidden.
+    """
+
+    @pytest.mark.parametrize("num_blocks", [1, 3])
+    def test_matches_eager_eval_path_last_layer(self, num_blocks: int) -> None:
+        head = SegmentationHead(in_dim=4, num_blocks=num_blocks, bottleneck_ratio=2, downsample_ratio=1)
+        spatial_features = torch.randn(2, 4, 4, 4)
+        query_features = torch.randn(2, 3, 4)
+
+        with torch.no_grad():
+            expected = head.forward(spatial_features, [query_features] * num_blocks, (4, 4), skip_blocks=False)[-1]
+            head.export()
+            actual = head.forward(spatial_features, [query_features], (4, 4), skip_blocks=False)[0]
+
+        assert actual.shape == (2, 3, 4, 4)
+        torch.testing.assert_close(actual, expected)
+
+    def test_matches_eager_eval_path_last_layer_with_skip_blocks(self) -> None:
+        """The same last-layer equality must hold on the encoder-only ``skip_blocks=True`` path too."""
+        head = SegmentationHead(in_dim=4, num_blocks=2, bottleneck_ratio=2, downsample_ratio=1)
+        spatial_features = torch.randn(2, 4, 4, 4)
+        query_features = torch.randn(2, 3, 4)
+
+        with torch.no_grad():
+            expected = head.forward(spatial_features, [query_features], (4, 4), skip_blocks=True)[-1]
+            head.export()
+            actual = head.forward(spatial_features, [query_features], (4, 4), skip_blocks=True)[0]
+
+        assert actual.shape == (2, 3, 4, 4)
+        torch.testing.assert_close(actual, expected)
+
+    def test_matches_einsum_reference_with_non_square_spatial_features(self) -> None:
+        """A batch=2, channels=4, height=5, width=7 case: the existing tests above only use square 4x4 spatial features,
+        so an axis-swap bug in ``forward_export``'s ``.view(batch_size, num_queries, height, width)`` reshape would be
+        invisible to them."""
+        head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=1, downsample_ratio=1)
+        spatial_features = torch.randn(2, 4, 5, 7)
+        query_features = [torch.randn(2, 3, 4)]
+        image_size = (5, 7)
+
+        with torch.no_grad():
+            resized = F.interpolate(spatial_features, size=image_size, mode="bilinear", align_corners=False)
+            block_output = head.blocks[0](resized)
+            expected_proj = head.spatial_features_proj(block_output)
+            expected_qf = head.query_features_proj(head.query_features_block(query_features[0]))
+            expected = torch.einsum("bchw,bnc->bnhw", expected_proj, expected_qf) + head.bias
+
+            head.export()
+            actual = head.forward(spatial_features, query_features, image_size)[0]
+
+        assert actual.shape == (2, 3, 5, 7)
+        torch.testing.assert_close(actual, expected)
+
+    @pytest.mark.integration
+    @pytest.mark.e2e_onnx
+    def test_onnx_graph_has_no_einsum(self, tmp_path: Path) -> None:
+        onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
+        head = SegmentationHead(in_dim=4, num_blocks=1, bottleneck_ratio=2, downsample_ratio=1).eval()
+        head.export()
+        out = tmp_path / "segmentation_head.onnx"
+        dynamo_kwarg = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
+
+        torch.onnx.export(
+            _SegmentationHeadExportWrapper(head),
+            (torch.randn(1, 4, 4, 4), torch.randn(1, 3, 4)),
+            str(out),
+            opset_version=17,
+            **dynamo_kwarg,
+        )
+
+        assert "Einsum" not in {node.op_type for node in onnx.load(str(out)).graph.node}
 
 
 class TestPointSampleNearestRouting:
