@@ -167,7 +167,9 @@ class _SplitEinsumEncoder(nn.Module):
         super().__init__()
         self.config = encoder.config
         self.layer = nn.ModuleList(
-            _SplitEinsumLayer(cast(WindowedDinov2WithRegistersLayer, layer), self.config.num_attention_heads, query_chunk)
+            _SplitEinsumLayer(
+                cast(WindowedDinov2WithRegistersLayer, layer), self.config.num_attention_heads, query_chunk
+            )
             for layer in encoder.layer
         )
 
