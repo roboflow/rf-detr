@@ -2264,3 +2264,51 @@ class TestTensorRTEndToEnd:
             tensorrt_inference.TRTInference.build_engine(runtime_stand_in, str(onnx_path), str(target))
 
         assert target.read_bytes() == b"engine from an earlier build"
+
+    def test_cuda_graph_matches_the_plain_call_on_new_inputs(
+        self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """A replayed graph returns what the plain call returns, on tensors it was not captured on.
+
+        The first call captures; the later ones replay on other pointers and values and end on the first input again, so
+        a graph that had baked in the captured tensor instead of copying each input would fail.
+        """
+        _, example, engine_path = trt_engine
+        images = _distinct_batch(3, example.shape[-1]).cuda()
+        plain = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        graphed = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", cuda_graph=True)
+
+        matches = []
+        for index in (0, 1, 2, 0):
+            image = images[index : index + 1].contiguous()
+            expected = {name: tensor.clone() for name, tensor in plain({"input": image}).items()}
+            got = graphed({"input": image})
+            matches.append(
+                got.keys() == expected.keys()
+                and all(torch.allclose(got[name], expected[name], rtol=1e-3, atol=1e-3) for name in expected)
+            )
+
+        assert matches == [True, True, True, True]
+
+    def test_cuda_graph_serves_dynamic_batches_in_any_order(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """Batches 4, 1 and 3 in mixed order each match the plain call: one graph per batch size, trimmed outputs.
+
+        The graphs read views of one shared input buffer, so going from batch 4 down to 1 and 3 runs the smaller graphs
+        on a buffer whose tail still holds the rows of the larger batch.
+        """
+        _, resolution, engine_path = trt_dynamic_engine
+        images = _distinct_batch(4, resolution).cuda()
+        plain = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        graphed = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", cuda_graph=True)
+
+        batches, matches = (4, 1, 3, 1, 4, 3), []
+        for batch in batches:
+            image = images[:batch].contiguous()
+            expected = {name: tensor.clone() for name, tensor in plain({"input": image}).items()}
+            got = graphed({"input": image})
+            same = all(torch.allclose(got[name], expected[name], rtol=1e-3, atol=1e-3) for name in expected)
+            matches.append((got["dets"].shape[0], same))
+
+        assert matches == [(batch, True) for batch in batches]

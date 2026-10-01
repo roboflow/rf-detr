@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TRTInference(cuda_graph=True)` (`rfdetr.export._tensorrt.inference`; `python -m rfdetr.export.benchmark` does not expose it) captures the engine's launch into a CUDA graph on the first call at each set of input shapes and replays it on every later call, which removes most of the per-call launch cost at small batch sizes. It is off by default. Measured as wall-clock time per call, including the copy of the input, against the same engine run with `sync_mode=True` (3 x 1000 calls, minimum of the medians, RTX 5070 under WSL2): with TensorRT 10.16 a Nano FP16 engine took 1.65 ms at batch 1 and a replay 0.99 ms (1.67x faster), Small 2.10 ms and 1.49 ms (1.41x); at batch 8 the gain was 1.09x for Nano and 1.05x for Small. With TensorRT 11.3 Nano gained 1.71x and Small 1.42x at batch 1, and an FP32 dynamic-batch Nano engine 1.18x at batch 1 and 1.06x at batch 3, because most of its call time is GPU work. The default async path, which needs pycuda, was not measured. The outputs matched the plain call bit for bit on every engine measured. A static engine keeps one graph; a dynamic engine keeps one per set of input shapes it is called with, all reading one input buffer as large as the engine's profile maximum. The option uses its own torch stream, so it does not need pycuda, and it raises instead of falling back when combined with `sync_mode=True` or when the engine cannot be captured. ([#1582](https://github.com/roboflow/rf-detr/pull/1582))
+
 ### Changed
 
 - `format` in `RFDETR.export()` is case-insensitive, as `backend` already was: `format="ONNX"` exports ONNX instead of raising `Unsupported export format 'ONNX'`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
