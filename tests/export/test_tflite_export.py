@@ -252,6 +252,21 @@ class TestTFLiteQuantizationCheck:
             TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization=quantization))
 
 
+class TestTFLiteCalibrationDataWarning:
+    """``calibration_data`` never changes the ``.tflite`` artifact, so passing it warns when the exporter is built."""
+
+    @pytest.mark.parametrize("quantization", [None, "fp16", "int8"])
+    def test_calibration_data_warns_at_construction(self, tmp_path: Path, quantization: str | None) -> None:
+        with pytest.warns(UserWarning, match=r"`calibration_data` has no effect on the exported \.tflite"):
+            TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization=quantization, calibration_data=tmp_path))
+
+    def test_no_calibration_data_does_not_warn(self, tmp_path: Path) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization="int8"))
+        assert not [w for w in caught if "calibration_data" in str(w.message)]
+
+
 @onnx2tf_available
 class TestExportTfliteConverter:
     """Tests for ``TFLiteExporter.convert_onnx()``."""

@@ -1923,9 +1923,10 @@ class RFDETR:
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-                Also unsupported for ``format="openvino"``: the IR graph bakes a fixed input shape;
-                export one model per batch size instead. Also unsupported for ``format="litert"``:
-                the ``.tflite`` bakes a fixed input shape; export one file per batch size instead.
+                Also refused for ``format="openvino"``, where it is not needed: the converted IR
+                already has a dynamic input shape, so one export runs at any batch size. Also
+                unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed input shape;
+                export one file per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
                 provided explicitly it must match the instantiated model's

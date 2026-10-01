@@ -51,7 +51,7 @@ model.export(format="openvino", shape=(608, 608))
 
 ## OpenVINO Export with Precision
 
-OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only; actual execution precision still depends on the compiled device (`CPU`/`GPU`/`NPU`), so parity with the eager PyTorch model is not guaranteed on every device:
+OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only. The precision the device *computes* in is a runtime setting, chosen when the model is compiled (see the warning under [OpenVINO Inference Example](#openvino-inference-example)):
 
 ```python
 model.export(format="openvino", openvino_precision="float32")
@@ -90,16 +90,20 @@ outputs = model(image_array)
 boxes, labels = outputs  # boxes: normalized cxcywh (center_x, center_y, width, height), not xywh
 ```
 
+!!! warning "Execution precision: `OpenVINOInference` computes in float32 by default"
+
+    OpenVINO's CPU plugin picks its own execution precision: f16 on ARM CPUs (including Apple Silicon) and bf16 on x86 hosts with AMX or AVX512-BF16, whatever precision the IR was stored in. At either reduced precision RF-DETR's class logits collapse: on an Apple M4 Max, `RFDETRNano` went from 3 detections above 0.5 to none. `OpenVINOInference` therefore sets `INFERENCE_PRECISION_HINT` to `"f32"` unless told otherwise, which matches ONNX Runtime to within 0.01 on the confident logits. Pass `inference_precision=None` to keep the device default (faster on hardware that computes natively in reduced precision, at that accuracy cost), or another hint such as `"f16"` to set it explicitly. Further compile properties, such as `{"INFERENCE_NUM_THREADS": 4}`, go in `config`. Calling `openvino.Core().compile_model(...)` yourself leaves the device default in place, so pass `{"INFERENCE_PRECISION_HINT": "f32"}` there too.
+
 !!! tip "Construct once, and use one instance per worker thread"
 
     Building an `OpenVINOInference` compiles the model, which is the expensive step — do it once and reuse the instance for every image. Pass `cache_dir="<dir>"` to reuse compiled kernels across process starts as well. Calls through a single instance are serialized by an internal lock, so sharing one instance across threads is safe but not faster; for parallel throughput give each worker thread its own instance.
 
 ## Benchmark OpenVINO Model
 
-Use OpenVINO's `benchmark_app` tool to measure performance:
+Use OpenVINO's `benchmark_app` tool to measure performance. Pass `-infer_precision f32` so it times the same execution precision `OpenVINOInference` runs by default; without it, `benchmark_app` times the device's reduced-precision default:
 
 ```bash
-benchmark_app -m output/rfdetr-medium.xml -data_shape [1,3,576,576]
+benchmark_app -m output/rfdetr-medium.xml -data_shape [1,3,576,576] -infer_precision f32
 ```
 
 ## OpenVINO Model Outputs

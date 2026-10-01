@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,14 @@ class OpenVINOInference:
             boxes, labels = outputs
     """
 
-    def __init__(self, model_path: str | Path, device: str = "AUTO", cache_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        model_path: str | Path,
+        device: str = "AUTO",
+        cache_dir: str | None = None,
+        inference_precision: str | None = "f32",
+        config: Mapping[str, Any] | None = None,
+    ) -> None:
         """Initialize OpenVINO inference session.
 
         Args:
@@ -56,6 +64,15 @@ class OpenVINOInference:
             device: Device the model is compiled for, e.g. ``"AUTO"``, ``"CPU"``, ``"GPU"`` or ``"NPU"``.
             cache_dir: Directory holding the compiled-model cache. When set, OpenVINO reuses the
                 compiled kernels across process starts instead of recompiling the model every time.
+            inference_precision: OpenVINO ``INFERENCE_PRECISION_HINT``, the precision the device *computes*
+                in — independent of the IR's storage precision (``openvino_precision`` at export). Defaults
+                to ``"f32"``: OpenVINO's own CPU default is f16 on ARM and bf16 on x86 hosts with AMX or
+                AVX512-BF16, and at either precision RF-DETR's logits collapse (no detections clear a 0.5
+                threshold). ``None`` keeps the device default — faster where the hardware computes natively in
+                reduced precision (ARM CPU, Intel GPU/NPU), at that accuracy cost. Any other value, e.g.
+                ``"f16"`` or ``"bf16"``, is passed through unchanged.
+            config: Further compile properties for ``compile_model``, e.g. ``{"INFERENCE_NUM_THREADS": 4}``. Applied
+                after *inference_precision*, so an ``INFERENCE_PRECISION_HINT`` given here wins.
 
         Raises:
             ImportError: If OpenVINO is not installed.
@@ -74,7 +91,14 @@ class OpenVINOInference:
             # Must be set before compilation so compiled kernels are reused across process starts.
             core.set_property({"CACHE_DIR": cache_dir})
         model = core.read_model(model_path)
-        self.compiled_model = core.compile_model(model, device)
+        properties: dict[str, Any] = {}
+        if inference_precision is not None:
+            properties["INFERENCE_PRECISION_HINT"] = inference_precision
+        properties.update(config or {})
+        if properties:
+            self.compiled_model = core.compile_model(model, device, properties)
+        else:
+            self.compiled_model = core.compile_model(model, device)
         self.infer_request = self.compiled_model.create_infer_request()
         # Guards infer_request.infer() + get_output_tensor(): both touch the same shared
         # buffers, which are not safe for concurrent access from multiple threads.

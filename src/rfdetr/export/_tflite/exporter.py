@@ -80,6 +80,7 @@ import os
 import sys
 import sysconfig
 import threading
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generator, cast
@@ -948,6 +949,15 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                 f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}. "
                 "Static / full-integer INT8 is not supported; 'int8' is dynamic-range."
             )
+        if self.config.calibration_data is not None:
+            # A warning, not a refusal: the keyword is kept for a future static-INT8 path. stacklevel=4 skips this
+            # frame, Exporter.__init__ and RFDETR.export, to point at the caller.
+            warnings.warn(
+                "`calibration_data` has no effect on the exported .tflite models: INT8 is dynamic-range (weights only, "
+                "no activation calibration) and fp32/fp16 involve no calibration. This argument is ignored.",
+                UserWarning,
+                stacklevel=4,
+            )
 
     @classmethod
     def check_dependencies(cls) -> None:
@@ -1141,7 +1151,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             return onnx_path
 
     def _prepare_calibration(self, onnx_path: Path, output_dir: Path) -> Path:
-        """Write the ``.npy`` onnx2tf's conditional validation hook reads, and note when INT8 ignores it.
+        """Write the ``.npy`` onnx2tf's conditional validation hook reads.
 
         Args:
             onnx_path: Path to the ``.onnx`` file the input shape is read from.
@@ -1154,12 +1164,6 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             FileNotFoundError: If the configured *calibration_data* is a path that does not exist, or a
                 directory with no supported images.
         """
-        if self.config.calibration_data is not None and self.config.quantization == "int8":
-            logger.info(
-                "The provided calibration data has no effect on the generated INT8 model: "
-                "dynamic-range quantization does not use it."
-            )
-
         return _prepare_calibration_data(
             onnx_path, self.config.calibration_data, output_dir, max_images=self.config.max_images
         )

@@ -105,7 +105,10 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     setting_names = {"precision": "openvino_precision"}
     format = "openvino"
     display_name = "OpenVINO"
-    dynamic_batch_reason = "(the IR graph bakes a fixed input shape). Export one model per batch size instead."
+    dynamic_batch_reason = (
+        "(the converted IR already has a dynamic input shape, so one export runs at any batch size; there is no "
+        "separate dynamic-batch mode to select)."
+    )
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 
