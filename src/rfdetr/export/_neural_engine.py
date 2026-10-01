@@ -166,10 +166,9 @@ class _SplitEinsumEncoder(nn.Module):
     def __init__(self, encoder: WindowedDinov2WithRegistersEncoder, query_chunk: int) -> None:
         super().__init__()
         self.config = encoder.config
+        num_heads = self.config.num_attention_heads
         self.layer = nn.ModuleList(
-            _SplitEinsumLayer(
-                cast(WindowedDinov2WithRegistersLayer, layer), self.config.num_attention_heads, query_chunk
-            )
+            _SplitEinsumLayer(cast(WindowedDinov2WithRegistersLayer, layer), num_heads, query_chunk)
             for layer in encoder.layer
         )
 
@@ -227,7 +226,8 @@ def split_einsum_encoder(encoder: WindowedDinov2WithRegistersEncoder, query_chun
         ...     WindowedDinov2WithRegistersConfig,
         ... )
         >>> config = WindowedDinov2WithRegistersConfig(
-        ...     image_size=32, patch_size=16, hidden_size=32, num_hidden_layers=2, num_attention_heads=4, out_indices=[2]
+        ...     image_size=32, patch_size=16, hidden_size=32, num_hidden_layers=2, num_attention_heads=4,
+        ...     out_indices=[2],
         ... )
         >>> encoder = WindowedDinov2WithRegistersBackbone(config).encoder.eval()
         >>> hidden_states = torch.randn(1, 5, 32)
@@ -257,7 +257,8 @@ def neural_engine_model(model: nn.Module) -> nn.Module:
         >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersBackbone
         >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import WindowedDinov2WithRegistersConfig
         >>> config = WindowedDinov2WithRegistersConfig(
-        ...     image_size=32, patch_size=16, hidden_size=32, num_hidden_layers=2, num_attention_heads=4, out_indices=[2]
+        ...     image_size=32, patch_size=16, hidden_size=32, num_hidden_layers=2, num_attention_heads=4,
+        ...     out_indices=[2],
         ... )
         >>> rewritten = neural_engine_model(WindowedDinov2WithRegistersBackbone(config))
         >>> type(rewritten.encoder).__name__
