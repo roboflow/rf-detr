@@ -1113,9 +1113,9 @@ class TestE2EParityPrecondition:
     """
 
     @pytest.mark.parametrize("variant", _COREML_E2E_VARIANTS)
-    def test_structured_input_is_well_conditioned(self, variant: tuple[str, tuple[str, ...]]) -> None:
+    def test_structured_input_is_well_conditioned(self, variant: tuple[str, tuple[str, ...], bool]) -> None:
         """Seeded exactly like ``coreml_export``, the structured parity input must pass the margin check."""
-        model_cls_name, _ = variant
+        model_cls_name, _, _ = variant
         seed_all(_COREML_EXPORT_SEED)
         detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
         model = detector.model.model.to("cpu").eval()
