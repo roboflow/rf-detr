@@ -1513,15 +1513,30 @@ class TestClassNamesMatchDataset:
         with pytest.raises(ValueError, match=f"The extra entries — {listed_extras} —"):
             self._fit_setup(dm)
 
+    @pytest.mark.parametrize(
+        "class_names",
+        [
+            pytest.param([], id="empty"),
+            pytest.param(["dog"], id="one-shorter"),
+            pytest.param(["cat", "dog", "bird"], id="one-longer"),
+        ],
+    )
     def test_other_length_mismatch_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        class_names: list[str],
     ) -> None:
         """A list of another length can't line up with the labels either, but may be deliberate, so it only warns.
 
-        The warning reaches the ``rf-detr`` logger only: a second ``warnings.warn`` used to repeat it with a stacklevel
-        that pointed inside Lightning's hook dispatcher instead of the caller's own code.
+        Covers both directions of a plain length mismatch — empty, shorter, and longer than the dataset's own names —
+        none of which carries an extra entry above a real class, so each falls to the generic length-mismatch warning
+        rather than the extra-names raise. The warning reaches the ``rf-detr`` logger only: a second ``warnings.warn``
+        used to repeat it with a stacklevel that pointed inside Lightning's hook dispatcher instead of the caller's own
+        code.
         """
-        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["cat", "dog", "bird"]))
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=class_names))
 
         # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
         # handler only sees its records while propagation is re-enabled.
@@ -1531,9 +1546,28 @@ class TestClassNamesMatchDataset:
             self._fit_setup(dm)
 
         assert any(
-            "class_names has 3 entries but the dataset has 2 classes" in record.getMessage()
+            f"class_names has {len(class_names)} entries but the dataset has 2 classes" in record.getMessage()
             for record in caplog.records
         )
+
+    def test_empty_dataset_categories_short_circuits(self, tmp_path: Path) -> None:
+        """An explicit class_names passes silently when the dataset itself carries no categories.
+
+        ``_check_class_names_match_dataset``'s ``not dataset_class_names`` short-circuit (module_data.py) was
+        otherwise untested: a dataset with no COCO categories resolves ``class_names`` to ``[]``, which must skip
+        the comparison outright rather than raise or warn on the explicit list.
+        """
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["cat", "dog"]))
+        datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
+        for dataset in datasets.values():
+            dataset.coco.cats = {}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
+                dm.setup("fit")
+
+        assert dm.class_names == []
 
     def test_same_length_permutation_warns(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
