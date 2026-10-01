@@ -273,8 +273,8 @@ def test_adapter_matches_torchmetrics_on_nontrivial_multiclass_multiimage_data()
 class TestHoistedDetectionScores:
     """Prediction COCO datasets built with per-image score conversion instead of TorchMetrics' per-annotation read.
 
-    Pinned to ``faster_coco_eval``: box-only evaluation on the default hotcoco backend loads detections from an array
-    instead of building annotation dicts, so the hoist these tests describe only runs here and on the mask-only path.
+    Pinned to ``faster_coco_eval``: box-only evaluation on hotcoco and ufcoco loads detections from an array instead of
+    building annotation dicts, so the hoist these tests describe only runs here and on the mask-only path.
     """
 
     predictions = [
@@ -1682,12 +1682,17 @@ class TestUfcocoArraysMatchPycocotools:
                 torch.testing.assert_close(observed[key], expected[key], rtol=0, atol=0, equal_nan=True)
 
             coco_preds, coco_target, prediction_dataset = actual._coco_datasets(actual._observed_classes())
-            assert prediction_dataset is not None
-            oracle_gt, oracle_dt = pycocotools_coco(), pycocotools_coco()
+            oracle_gt = pycocotools_coco()
             oracle_gt.dataset = copy.deepcopy(coco_target.dataset)
-            oracle_dt.dataset = copy.deepcopy(prediction_dataset)
             oracle_gt.createIndex()
-            oracle_dt.createIndex()
+            if prediction_dataset is None:
+                # Box-only state loads detections from one array; pycocotools loads the same array.
+                assert tuple(actual.iou_type) == ("bbox",)
+                oracle_dt = oracle_gt.loadRes(actual._detection_results_array())
+            else:
+                oracle_dt = pycocotools_coco()
+                oracle_dt.dataset = copy.deepcopy(prediction_dataset)
+                oracle_dt.createIndex()
             for kind in actual.iou_type:
                 if len(actual.iou_type) > 1:
                     for dataset in (prediction_dataset, oracle_dt.dataset):
@@ -1706,6 +1711,31 @@ class TestUfcocoArraysMatchPycocotools:
                     assert np.asarray(evaluator.eval[key]).tobytes() == np.asarray(oracle.eval[key]).tobytes()
             reference.reset()
             actual.reset()
+
+
+@pytest.mark.parametrize(
+    ("backend", "iou_type", "from_array"),
+    [
+        ("ufcoco", "bbox", True),
+        ("hotcoco", "bbox", True),
+        ("faster_coco_eval", "bbox", False),
+        ("ufcoco", "segm", False),
+        pytest.param("ufcoco", ("bbox", "segm"), False, id="ufcoco-both"),
+    ],
+)
+def test_box_only_predictions_load_from_one_array(backend: str, iou_type: Any, from_array: bool) -> None:
+    """Box-only hotcoco and ufcoco state must reach ``loadRes`` as one array, never as one dict per detection.
+
+    faster-coco-eval's own ``loadRes`` is slower than the dict path, and an array carries no segmentation, so both keep
+    building the prediction dataset.
+    """
+    _require_backend(backend)
+    predictions, targets = _metric_inputs()
+    metric = OnePassCocoMeanAveragePrecision(backend=backend, iou_type=iou_type)
+    metric.update(copy.deepcopy(predictions), copy.deepcopy(targets))
+    metric.merge_distributed_state()
+    _, _, prediction_dataset = metric._coco_datasets(metric._observed_classes())
+    assert (prediction_dataset is None) is from_array
 
 
 def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
