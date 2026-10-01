@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -25,60 +24,157 @@ from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError
 from rfdetr.datasets.webdataset.load import WebDatasetDetection, build_webdataset_loader
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
 from rfdetr.utilities.box_ops import box_xyxy_to_cxcywh
+from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import PackedTargets, make_collate_fn
 
 logger = get_logger()
 
 
+def _extra_names_above_a_class(names: list[str], dataset_names: list[str]) -> list[str]:
+    """Return the entries of *names* that push the dataset's own names out of their label positions.
+
+    A shift needs *dataset_names* to appear in *names* in order with at least one other entry above one of them —
+    the shape a ``class_names`` read from every category of a Roboflow COCO export has, where each unannotated
+    grouping category sits above the classes it groups and moves every one of them down a slot. Extra entries below
+    the last dataset name leave every position intact, so they are not returned: that list is longer than the label
+    space, not shifted against it.
+
+    Args:
+        names: Explicit ``class_names``.
+        dataset_names: Label-indexed names read from the dataset.
+
+    Returns:
+        The extra entries above the dataset's names, in order. Empty when *dataset_names* is not an ordered
+        subsequence of *names*, or when nothing sits above it.
+
+    Examples:
+        >>> _extra_names_above_a_class(["animals", "cat", "dog"], ["cat", "dog"])
+        ['animals']
+        >>> _extra_names_above_a_class(["person", "vehicle", "car"], ["person", "car"])
+        ['vehicle']
+
+        A trailing extra name shifts nothing, and neither does a list that reorders or renames instead:
+
+        >>> _extra_names_above_a_class(["cat", "dog", "bird"], ["cat", "dog"])
+        []
+        >>> _extra_names_above_a_class(["cat", "bird"], ["cat", "dog"])
+        []
+    """
+    extra_names: list[str] = []
+    matched = 0
+    for name in names:
+        if matched == len(dataset_names):
+            # Every dataset name has found its position; whatever is left only lengthens the list.
+            break
+        if name == dataset_names[matched]:
+            matched += 1
+        else:
+            extra_names.append(name)
+    if matched < len(dataset_names):
+        return []
+    return extra_names
+
+
 def _check_class_names_match_dataset(
-    class_names: Sequence[str] | None, dataset_class_names: Sequence[str] | None
+    class_names: Sequence[str] | None,
+    dataset_class_names: Sequence[str] | None,
+    *,
+    labels_remapped: bool,
 ) -> None:
     """Fail fast when ``TrainConfig.class_names`` cannot line up with the dataset's labels.
 
     Explicit ``class_names`` name the model's classes by position, in checkpoints and in ``predict()`` output. A list
-    that is the dataset's names with one extra name in front is what a Roboflow COCO export gives when every entry of
-    its ``categories`` list is read: the export's top-level category (``"animals"`` over ``"cat"``, ``"dog"``) comes
-    first, but it has no annotations and is not part of the label space (#609), so every name would be off by one.
-    That case raises. Any other difference in length warns, and a list of the same length is a rename and passes.
-    When the dataset's names have empty slots, its labels follow raw category ids or keep a background slot (keypoint
-    models), where ``class_names`` follow their own conventions, so there is nothing reliable to compare.
+    that holds the dataset's names in order with extra entries above them is what a Roboflow COCO export gives when
+    every entry of its ``categories`` list is read: a grouping category (``"animals"`` over ``"cat"``, ``"dog"``) has
+    no annotations and is not part of the label space (#609), so every class below it is off by one. Such an export
+    may group anywhere in the list and more than once — :func:`~rfdetr.datasets.coco.filter_parent_categories` drops
+    every unannotated parent it finds, not just a leading one — so any number of extra entries above a class raises,
+    naming each. A difference in length that shifts nothing warns instead. A list of the same length is a rename and
+    passes, unless it is the dataset's own names reordered — that warns too, because a reorder labels every moved
+    class as the one that took its place, and only the caller can say whether renaming one class to another's name
+    was the intent.
+
+    Only a dataset that remaps its category ids to contiguous label indices is compared at all — a Roboflow COCO
+    export (:func:`~rfdetr.datasets.coco.build_roboflow_from_coco`) or a webdataset packed with
+    ``category_ids="remap"``. A raw-id dataset (``dataset_file="coco"`` or ``"o365"``, a ``"raw"``-packed webdataset)
+    labels every object by its source category id, so the names read from it are ordered by that id rather than
+    indexed by label, and positions do not line up: the ``class_names`` that is correct there carries a placeholder
+    for every unused id — a leading one for the id ``0`` no COCO export uses — which is indistinguishable from the
+    Roboflow shift above. Comparing the two would reject a correct list and name the wrong remediation.
+
+    A remapped dataset that reserves label ``0`` as an unnamed background slot (keypoint models) is compared like any
+    other: the slot makes the two lists differ in length, which warns. An empty name used to skip the comparison
+    outright, which disabled it for every dataset carrying a category literally named ``""`` — and filtering the empty
+    entries out instead would renumber the very positions being checked.
 
     Args:
         class_names: ``TrainConfig.class_names``, or ``None`` when not set.
         dataset_class_names: Label-indexed names read from the dataset, or ``None`` when unknown.
+        labels_remapped: Whether the dataset assigns labels by remapping category ids to contiguous indices, which
+            is what makes *dataset_class_names* indexed by label. ``False`` skips the comparison entirely.
 
     Raises:
-        ValueError: If ``class_names`` is the dataset's names with one extra name in front.
+        ValueError: If ``class_names`` holds the dataset's names in order with one or more extra entries above them.
 
     Examples:
-        >>> _check_class_names_match_dataset(["cat", "dog"], ["cat", "dog"])
-        >>> _check_class_names_match_dataset(["Katze", "Hund"], ["cat", "dog"])
-        >>> _check_class_names_match_dataset(["person"], ["", "person"])
-        >>> _check_class_names_match_dataset(["animals", "cat", "dog"], ["cat", "dog"])  # doctest: +ELLIPSIS
+        >>> _check_class_names_match_dataset(["cat", "dog"], ["cat", "dog"], labels_remapped=True)
+        >>> _check_class_names_match_dataset(["Katze", "Hund"], ["cat", "dog"], labels_remapped=True)
+
+        Raw category ids, where the correct list carries a placeholder for the unused id ``0``:
+
+        >>> _check_class_names_match_dataset(["", "cat", "dog"], ["cat", "dog"], labels_remapped=False)
+
+        >>> names, dataset_names = ["animals", "cat", "dog"], ["cat", "dog"]
+        >>> _check_class_names_match_dataset(names, dataset_names, labels_remapped=True)  # doctest: +ELLIPSIS
         Traceback (most recent call last):
         ...
         ValueError: class_names has 3 entries but the dataset has 2 classes ['cat', 'dog']. ...
+
+        A parent listed between two classes shifts the ones below it just the same:
+
+        >>> names, dataset_names = ["person", "vehicle", "car"], ["person", "car"]
+        >>> _check_class_names_match_dataset(names, dataset_names, labels_remapped=True)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: ... The extra entries — 'vehicle' — are not classes the dataset annotates, ...
     """
-    if class_names is None or not dataset_class_names:
+    if class_names is None or not dataset_class_names or not labels_remapped:
         return
     names, dataset_names = list(class_names), list(dataset_class_names)
-    if len(names) == len(dataset_names) or "" in dataset_names:
+    if sorted(names) == sorted(dataset_names) and names != dataset_names:
+        # Same names, different order: the length check below cannot see this, and it is the one mismatch that
+        # gives every moved class the name of the class that took its place.
+        message = (
+            f"class_names {names} holds the dataset's own names in a different order ({dataset_names}). Predictions "
+            "and checkpoints name classes by their position in class_names, so every moved class is labelled as the "
+            "one now standing in its place. Leave class_names unset to take the dataset's order, unless this order "
+            "is a deliberate renaming of one class to another's name."
+        )
+    elif len(names) == len(dataset_names):
         return
-    if names[1:] == dataset_names:
+    elif extra_names := _extra_names_above_a_class(names, dataset_names):
+        listed = ", ".join(repr(name) for name in extra_names)
+        shift = "one" if len(extra_names) == 1 else str(len(extra_names))
         raise ValueError(
             f"class_names has {len(names)} entries but the dataset has {len(dataset_names)} classes {dataset_names}. "
-            f"The extra first name, {names[0]!r}, looks like the top-level category of a Roboflow COCO export, which "
-            "has no annotations and is not one of the model's classes, so every class name would be shifted by one. "
-            f"Pass class_names={dataset_names!r}, or leave class_names unset to use the dataset's names."
+            f"The extra entries — {listed} — are not classes the dataset annotates, the way a Roboflow COCO export "
+            "lists a top-level category above the classes it groups, so every class name below them would be shifted "
+            f"by {shift}. Pass class_names={dataset_names!r}, or leave class_names unset to use the dataset's names."
         )
-    message = (
-        f"class_names has {len(names)} entries but the dataset has {len(dataset_names)} classes {dataset_names}. "
-        "Predictions and checkpoints name classes by their position in class_names, so the names may not match the "
-        "dataset's labels."
-    )
-    logger.warning(message)
-    warnings.warn(message, UserWarning, stacklevel=3)
+    else:
+        message = (
+            f"class_names has {len(names)} entries but the dataset has {len(dataset_names)} classes {dataset_names}. "
+            "Predictions and checkpoints name classes by their position in class_names, so the names may not match "
+            "the dataset's labels."
+        )
+    # ``setup("fit")`` is a per-rank hook, and the dataset-grid render in ``RFDETR.train`` calls it before
+    # ``trainer.fit()`` initializes ``torch.distributed``, where ``get_rank()`` reports 0 in every process.
+    # :func:`~rfdetr.utilities.distributed.is_main_process` answers the first case from the real global rank and
+    # ``_is_launcher_main_process`` the second from the launcher's environment, so a run emits this once rather
+    # than once per rank.
+    if is_main_process() and _is_launcher_main_process():
+        logger.warning(message)
 
 
 _MIN_TRAIN_BATCHES = 5
@@ -342,7 +438,10 @@ class RFDETRDataModule(LightningDataModule):
                 self._dataset_train = build_dataset("train", ns, resolution)
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
-            _check_class_names_match_dataset(self.train_config.class_names, self.class_names)
+            dataset_class_names, labels_remapped = self._dataset_label_space()
+            _check_class_names_match_dataset(
+                self.train_config.class_names, dataset_class_names, labels_remapped=labels_remapped
+            )
             # Build Kornia pipeline (once); use _kornia_setup_done so fallback paths
             # (pipeline stays None) do not re-run on repeated setup("fit") calls.
             if not self._kornia_setup_done:
@@ -958,6 +1057,20 @@ class RFDETRDataModule(LightningDataModule):
         Returns:
             Sorted list of class name strings, or ``None``.
         """
+        return self._dataset_label_space()[0]
+
+    def _dataset_label_space(self) -> tuple[list[str] | None, bool]:
+        """Return the dataset's class names together with whether its labels are remapped category ids.
+
+        Both answers come from the same dataset — the first of train, val and test that carries category information —
+        because they are only meaningful together: the names are indexed by label when the dataset remaps its category
+        ids to contiguous indices (a Roboflow COCO export, or a webdataset packed with ``category_ids="remap"``), and
+        ordered by category id when it does not. :func:`_check_class_names_match_dataset` compares positions, so it
+        needs to know which of the two it was handed.
+
+        Returns:
+            The class names of that dataset, or ``None`` when none exposes any, and whether its labels are remapped.
+        """
         for dataset in (self._dataset_train, self._dataset_val, self._dataset_test):
             if dataset is None:
                 continue
@@ -966,7 +1079,7 @@ class RFDETRDataModule(LightningDataModule):
             if isinstance(dataset, WebDatasetDetection):
                 own_names = dataset.class_names
                 if own_names:
-                    return own_names
+                    return own_names, dataset.index.category_ids == "remap"
             coco = getattr(dataset, "coco", None)
             if coco is not None and hasattr(coco, "cats"):
                 label2cat = getattr(dataset, "label2cat", None)
@@ -979,9 +1092,11 @@ class RFDETRDataModule(LightningDataModule):
                         category = coco.cats.get(category_id)
                         if category is not None:
                             names[label] = category["name"]
-                    return names
-                return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())]
-        return None
+                    # A label2cat mapping is what remapping produces: the label is the index, the category id the value.
+                    return names, True
+                # No mapping — CocoDetection left labels as the raw category ids, so these names follow those ids.
+                return [coco.cats[k]["name"] for k in sorted(coco.cats.keys())], False
+        return None, False
 
     def transfer_batch_to_device(
         self, batch: tuple[Any, Any], device: torch.device, dataloader_idx: int
