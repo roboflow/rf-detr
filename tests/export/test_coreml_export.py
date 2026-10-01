@@ -23,7 +23,7 @@ import os
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NamedTuple
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -592,32 +592,18 @@ class TestExportFormatParameter:
 # ---------------------------------------------------------------------------
 
 
-class _CoreMLE2EVariant(NamedTuple):
-    """One e2e export: the model class, its output labels, and whether ``coreml_neural_engine`` rewrites the graph.
-
-    Examples:
-        >>> _CoreMLE2EVariant("RFDETRNano", ("boxes", "logits")).neural_engine
-        False
-    """
-
-    model_cls_name: str
-    output_labels: tuple[str, ...]
-    neural_engine: bool = False
-
-
-# All variants share the same fixture setup shape (export once, reuse for the mlpackage-written / structured-parity /
-# supervision-image checks below), so the fixture and its consuming tests are parametrized over them instead of
-# duplicated per variant. The `neural_engine` variants hold the rewritten graph to the same eager reference.
+# (model class name, expected output labels, coreml_neural_engine) — all share the same fixture setup shape (export
+# once, reuse for the mlpackage-written / structured-parity / supervision-image checks below), so the fixture and its
+# consuming tests are parametrized over this triple instead of duplicated per variant. The `coreml_neural_engine` rows
+# hold the rewritten graph to the same eager reference.
 _COREML_E2E_VARIANTS = [
-    pytest.param(_CoreMLE2EVariant("RFDETRNano", ("boxes", "logits")), id="detection"),
-    pytest.param(_CoreMLE2EVariant("RFDETRSegNano", ("boxes", "logits", "masks")), id="segmentation"),
-    pytest.param(_CoreMLE2EVariant("RFDETRNano", ("boxes", "logits"), True), id="detection-neural_engine"),
-    pytest.param(
-        _CoreMLE2EVariant("RFDETRSegNano", ("boxes", "logits", "masks"), True), id="segmentation-neural_engine"
-    ),
+    pytest.param(("RFDETRNano", ("boxes", "logits"), False), id="detection"),
+    pytest.param(("RFDETRSegNano", ("boxes", "logits", "masks"), False), id="segmentation"),
+    pytest.param(("RFDETRNano", ("boxes", "logits"), True), id="detection-neural_engine"),
+    pytest.param(("RFDETRSegNano", ("boxes", "logits", "masks"), True), id="segmentation-neural_engine"),
     # Keypoints are preview-only and therefore XLarge at resolution 576 — several times the work of the
     # two Nano variants, which is why this variant is the slow one in the `e2e_coreml` job.
-    pytest.param(_CoreMLE2EVariant("RFDETRKeypointPreview", ("boxes", "logits", "keypoints")), id="keypoint"),
+    pytest.param(("RFDETRKeypointPreview", ("boxes", "logits", "keypoints"), False), id="keypoint"),
 ]
 
 # Raw-tensor parity on a two-stage detector is only well defined when the encoder's `torch.topk` ranking has
@@ -720,7 +706,7 @@ def people_walking_image_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture(scope="module", params=_COREML_E2E_VARIANTS)
 def coreml_export(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> tuple[_CoreMLE2EVariant, Any, torch.Tensor, Path, tuple[str, ...]]:
+) -> tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]]:
     """Export RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview to a ``.mlpackage`` once per variant for e2e tests.
 
     Exports ``_COREML_E2E_NUM_QUERIES`` queries so the two-stage ranking is well separated (see the module-level
@@ -732,22 +718,23 @@ def coreml_export(
         Skipped: a pytest fixture, and a real ``coremltools`` conversion, so it cannot run standalone.
 
         >>> variant, model, example, mlpackage_path, output_labels = coreml_export  # doctest: +SKIP
-        >>> variant.model_cls_name, example.shape[0], mlpackage_path.suffix, output_labels  # doctest: +SKIP
-        ('RFDETRNano', 1, '.mlpackage', ('boxes', 'logits'))
+        >>> variant, example.shape[0], mlpackage_path.suffix  # doctest: +SKIP
+        (('RFDETRNano', ('boxes', 'logits'), False), 1, '.mlpackage')
     """
-    variant = request.param
-    out_dir = tmp_path_factory.mktemp(f"coreml_{variant.model_cls_name.lower()}")
+    model_cls_name, output_labels, neural_engine = request.param
+    model_cls = getattr(rfdetr, model_cls_name)
+    out_dir = tmp_path_factory.mktemp(f"coreml_{model_cls_name.lower()}")
     seed_all(_COREML_EXPORT_SEED)
-    detector = getattr(rfdetr, variant.model_cls_name)(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
+    detector = model_cls(pretrain_weights=None, num_queries=_COREML_E2E_NUM_QUERIES)
     mlpackage_path = detector.export(
-        output_dir=str(out_dir), format="coreml", coreml_neural_engine=variant.neural_engine, verbose=False
+        output_dir=str(out_dir), format="coreml", coreml_neural_engine=neural_engine, verbose=False
     )
 
     model = detector.model.model.to("cpu").eval()
     model.export()
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
-    return variant, model, example, Path(mlpackage_path), variant.output_labels
+    return request.param, model, example, Path(mlpackage_path), output_labels
 
 
 @pytest.fixture(scope="module")
@@ -770,7 +757,7 @@ def coreml_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
 
 @pytest.fixture(scope="module")
 def coreml_default_queries_export(
-    coreml_export: tuple[_CoreMLE2EVariant, Any, torch.Tensor, Path, tuple[str, ...]],
+    coreml_export: tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]],
     tmp_path_factory: pytest.TempPathFactory,
 ) -> tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]:
     """Export each e2e variant with its shipped query count, which ``coreml_export`` trades for a separated ranking.
@@ -789,12 +776,12 @@ def coreml_default_queries_export(
         >>> mlpackage_path != few_queries_path, example.shape[0], output_labels  # doctest: +SKIP
         (True, 1, ('boxes', 'logits'))
     """
-    variant, _, _, few_queries_path, output_labels = coreml_export
-    out_dir = tmp_path_factory.mktemp(f"coreml_default_queries_{variant.model_cls_name.lower()}")
+    (model_cls_name, _, neural_engine), _, _, few_queries_path, output_labels = coreml_export
+    out_dir = tmp_path_factory.mktemp(f"coreml_default_queries_{model_cls_name.lower()}")
     seed_all(_COREML_EXPORT_SEED)
-    detector = getattr(rfdetr, variant.model_cls_name)(pretrain_weights=None)
+    detector = getattr(rfdetr, model_cls_name)(pretrain_weights=None)
     mlpackage_path = detector.export(
-        output_dir=str(out_dir), format="coreml", coreml_neural_engine=variant.neural_engine, verbose=False
+        output_dir=str(out_dir), format="coreml", coreml_neural_engine=neural_engine, verbose=False
     )
     model = detector.model.model.to("cpu").eval()
     model.export()
@@ -852,7 +839,7 @@ class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
     def test_mlpackage_written(
-        self, coreml_export: tuple[_CoreMLE2EVariant, Any, torch.Tensor, Path, tuple[str, ...]]
+        self, coreml_export: tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]]
     ) -> None:
         """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision."""
         _, _, _, mlpackage_path, _ = coreml_export
@@ -863,7 +850,7 @@ class TestCoreMLEndToEnd:
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
 
     def test_outputs_match_pytorch_structured(
-        self, coreml_export: tuple[_CoreMLE2EVariant, Any, torch.Tensor, Path, tuple[str, ...]]
+        self, coreml_export: tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]]
     ) -> None:
         """CoreML output matches eager on structured (gradient+checkerboard) input."""
         _, model, example, mlpackage_path, output_labels = coreml_export
@@ -881,7 +868,7 @@ class TestCoreMLEndToEnd:
 
     def test_outputs_match_pytorch_supervision_image(
         self,
-        coreml_export: tuple[_CoreMLE2EVariant, Any, torch.Tensor, Path, tuple[str, ...]],
+        coreml_export: tuple[tuple[str, tuple[str, ...], bool], Any, torch.Tensor, Path, tuple[str, ...]],
         people_walking_image_path: Path,
     ) -> None:
         """CoreML output matches eager on ``ImageAssets.PEOPLE_WALKING``."""
