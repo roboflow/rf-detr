@@ -218,7 +218,7 @@ class TestTFLiteRuntimeAdapter:
 
 
 class TestTensorRTRuntimeAdapter:
-    """Check the existing TensorRT wrapper's buffer ownership."""
+    """Check shared TensorRT execution without the deprecated facade."""
 
     def test_engine_waits_for_prepared_cuda_input(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A stream-free engine call cannot read input before its torch stream finishes."""
@@ -235,7 +235,9 @@ class TestTensorRTRuntimeAdapter:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.cuda, "current_stream", lambda device: stream)
         monkeypatch.setattr(torch.Tensor, "to", lambda self, **kwargs: self)
-        monkeypatch.setattr("rfdetr.export._tensorrt.inference.TRTInference", lambda *args, **kwargs: session)
+        monkeypatch.setattr("rfdetr.export._tensorrt.inference._load_tensorrt_session", lambda *args, **kwargs: session)
+        monkeypatch.setattr("rfdetr.export._tensorrt.inference._run_tensorrt_session", lambda state, blob: state(blob))
+        monkeypatch.delattr("rfdetr.export._tensorrt.inference.TRTInference")
         metadata = _metadata(
             format="tensorrt",
             task="detect",
@@ -261,7 +263,9 @@ class TestTensorRTRuntimeAdapter:
         session.engine_device = torch.device("cpu")
         session.side_effect = lambda _: {"dets": boxes, "labels": logits}
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-        monkeypatch.setattr("rfdetr.export._tensorrt.inference.TRTInference", lambda *args, **kwargs: session)
+        monkeypatch.setattr("rfdetr.export._tensorrt.inference._load_tensorrt_session", lambda *args, **kwargs: session)
+        monkeypatch.setattr("rfdetr.export._tensorrt.inference._run_tensorrt_session", lambda state, blob: state(blob))
+        monkeypatch.delattr("rfdetr.export._tensorrt.inference.TRTInference")
         metadata = _metadata(
             format="tensorrt",
             task="detect",
@@ -326,10 +330,10 @@ class TestCoreAIRuntimeAdapter:
 
 
 class TestOpenVINORuntimeAdapter:
-    """Check the existing OpenVINO wrapper's positional interface."""
+    """Check shared OpenVINO execution without the deprecated facade."""
 
     def test_cpu_run_maps_positional_outputs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """The OpenVINO wrapper returns a tuple in metadata order."""
+        """Shared OpenVINO execution returns a tuple in metadata order."""
         path = tmp_path / "model.xml"
         path.write_text("<net/>")
         session = Mock()
@@ -341,7 +345,11 @@ class TestOpenVINORuntimeAdapter:
         session.output_layers = ["dets", "labels"]
         core = Mock(available_devices=["CPU"])
         monkeypatch.setitem(sys.modules, "openvino", SimpleNamespace(Core=lambda: core))
-        monkeypatch.setattr("rfdetr.export._openvino.inference.OpenVINOInference", lambda *args, **kwargs: session)
+        monkeypatch.setattr("rfdetr.export._openvino.inference._load_openvino_session", lambda *args, **kwargs: session)
+        monkeypatch.setattr(
+            "rfdetr.export._openvino.inference._infer_openvino", lambda state, array: state.infer(array)
+        )
+        monkeypatch.delattr("rfdetr.export._openvino.inference.OpenVINOInference")
         metadata = _metadata(
             format="openvino",
             task="detect",

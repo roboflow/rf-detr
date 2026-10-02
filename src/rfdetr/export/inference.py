@@ -22,7 +22,8 @@ profiling helpers) are implementation detail that may change without notice, eve
 here.
 
 Use :class:`rfdetr.inference.RFDETRInference` for image inputs and Supervision predictions across native models and
-export formats. This module provides raw OpenVINO session access for advanced calls.
+export formats. The TensorRT and OpenVINO classes are deprecated and will be removed in a future release. They remain
+available for compatibility and warn when constructed.
 """
 
 from __future__ import annotations

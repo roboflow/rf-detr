@@ -30,9 +30,6 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr._prediction import (
     PredictionContext,
     _resolve_patch_size,
-    _tensor_to_source_array as _tensor_to_source_array,
-    _uint8_chw_to_float as _uint8_chw_to_float,
-    _uint8_image_to_chw_view as _uint8_image_to_chw_view,
     _validate_shape_dims,
 )
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
@@ -2773,7 +2770,14 @@ class RFDETR:
                 num_windows``, or if ``patch_size`` is not a positive integer.
         """
         return _prediction.predict(
-            self._prediction_context(), images, threshold, shape, patch_size, include_source_image, antialias=antialias, **kwargs
+            self._prediction_context(),
+            images,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias=antialias,
+            **kwargs,
         )
 
     def deploy_to_roboflow(

@@ -19,7 +19,7 @@ import supervision as sv
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-from rfdetr import RFDETRNano, RFDETRSegNano, _prediction
+from rfdetr import RFDETRInference, RFDETRNano, RFDETRSegNano, _prediction
 from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from tests._online import is_online
@@ -1149,7 +1149,7 @@ class TestPredictNegativeStrideNumpy:
         view = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)[:, :, ::-1]
 
         with patch(
-            "rfdetr._prediction._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view
+            "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
         ) as converter_spy:
             detections = model.predict(view)
 
@@ -1169,7 +1169,7 @@ class TestPredictNegativeStrideNumpy:
 
         with (
             patch(
-                "rfdetr._prediction._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view
+                "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
             ) as converter_spy,
             patch("rfdetr._prediction.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
         ):
@@ -1526,6 +1526,7 @@ class TestPredictResizeMatchesTrainingInterpolation:
     ``antialias=True`` opts in for checkpoints trained with antialiased resizing.
     """
 
+    @pytest.mark.parametrize("use_facade", [False, True])
     @pytest.mark.parametrize(
         ("predict_kwargs", "expected_antialias"),
         [
@@ -1534,9 +1535,12 @@ class TestPredictResizeMatchesTrainingInterpolation:
             pytest.param({"antialias": True}, True, id="opt-in"),
         ],
     )
-    def test_predict_resize_antialias_flag(self, predict_kwargs: dict[str, bool], expected_antialias: bool) -> None:
+    def test_predict_resize_antialias_flag(
+        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool
+    ) -> None:
         """``predict()`` passes the requested ``antialias`` flag to ``F.resize``; the default is ``False``."""
-        model = _DummyRFDETR()
+        native_model = _DummyRFDETR()
+        model = RFDETRInference(native_model) if use_facade else native_model
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
         with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:

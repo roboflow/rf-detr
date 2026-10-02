@@ -30,7 +30,12 @@ from rfdetr.export._benchmark import BenchmarkResult as BenchmarkResult
 from rfdetr.export._benchmark import MemoryResult as MemoryResult
 from rfdetr.export._benchmark import measure_latency as measure_latency
 from rfdetr.export._benchmark import measure_memory as measure_memory
-from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
+from rfdetr.export._tensorrt.inference import (
+    TimeProfiler,
+    _load_tensorrt_session,
+    _run_tensorrt_session,
+    _TensorRTSession,
+)
 from rfdetr.utilities.logger import get_logger
 
 # The public surface is the timing API only; the LW-DETR CLI helpers below stay importable by name but are not exported.
@@ -225,7 +230,7 @@ def infer_onnx(
 
 
 def infer_engine(
-    model: "TRTInference",
+    model: "_TensorRTSession",
     coco_evaluator: Any,
     time_profile: "TimeProfiler",
     prefix: str,
@@ -256,7 +261,7 @@ def infer_engine(
         time_profile.reset()
         with time_profile:
             for _ in range(repeats):
-                outputs = model({"input": samples})
+                outputs = _run_tensorrt_session(model, {"input": samples})
 
         time_list.append(time_profile.total / repeats)
         orig_target_sizes = torch.stack([orig_target_sizes], dim=0).to(device)
@@ -330,7 +335,7 @@ def main(
         )
         infer_onnx(sess, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     elif path.endswith((".trt", ".engine")):
-        model = TRTInference(path, sync_mode=True, device=f"cuda:{device}")
+        model = _load_tensorrt_session(path, sync_mode=True, device=f"cuda:{device}")
         infer_engine(model, coco_evaluator, time_profile, prefix, img_list, device=f"cuda:{device}", repeats=repeats)
     else:
         raise NotImplementedError('Only model file names ending with ".onnx", ".trt", or ".engine" are supported.')

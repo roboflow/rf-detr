@@ -233,7 +233,7 @@ Add `myformat = [...]` under `[project.optional-dependencies]` in `pyproject.tom
 
 ### 6. Document the format
 
-Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to the user-facing export docs ([Overview](index.md), [Export Basics](basics.md), [Advanced Export](advanced.md)) — installation extra, a basic example, output files, and an `RFDETRInference` prediction snippet. Keep raw tensor examples clearly marked as advanced. Existing ONNX and TFLite NumPy reference helpers remain useful for dependency-light numerical checks and share raw execution with their adapters. TensorRT and OpenVINO raw classes remain supported interfaces and are used by their adapters. CoreML and Core AI loaders use their vendor APIs directly.
+Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to the user-facing export docs ([Overview](index.md), [Export Basics](basics.md), [Advanced Export](advanced.md)) — installation extra, a basic example, output files, and an `RFDETRInference` prediction snippet. Keep raw tensor examples clearly marked as advanced. Existing ONNX and TFLite NumPy reference helpers remain useful for dependency-light numerical checks and share raw execution with their adapters. TensorRT and OpenVINO session loading and execution live in shared module-level functions. Their deprecated classes delegate to these functions for compatibility. Adapters call the functions directly, so removing the classes needs no runtime changes. CoreML and Core AI loaders use their vendor APIs directly.
 
 ### 7. Test it
 

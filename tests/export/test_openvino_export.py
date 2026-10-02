@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import types
+import warnings
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -244,8 +246,8 @@ class TestOpenVINOInferenceMissingDependency:
 class TestOpenVINOInferenceInputValidation:
     """``OpenVINOInference.infer()``'s dtype/contiguity boundary check (no real ``openvino`` needed).
 
-    The check runs before ``self.infer_request`` is touched, so these tests construct an instance via ``__new__``
-    (skipping ``__init__``'s real OpenVINO runtime setup) and call ``infer()`` directly.
+    These tests construct a compatibility facade via ``__new__`` and provide a minimal session, without a real OpenVINO
+    install.
     """
 
     @staticmethod
@@ -257,7 +259,11 @@ class TestOpenVINOInferenceInputValidation:
             >>> hasattr(inference, "infer")
             True
         """
-        return OpenVINOInference.__new__(OpenVINOInference)
+        from rfdetr.export._openvino.inference import _OpenVINOSession
+
+        inference = OpenVINOInference.__new__(OpenVINOInference)
+        inference._session = _OpenVINOSession(None, None, threading.Lock(), None, [])
+        return inference
 
     def test_rejects_float64_input(self) -> None:
         """A ``float64`` array must raise ``ValueError`` instead of silently doubling the buffer size."""
@@ -585,6 +591,69 @@ class TestOpenVINOInferenceDeviceAndCache:
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             OpenVINOInference(xml_path)
         core.set_property.assert_not_called()
+
+
+class TestOpenVINOInferenceDeprecation:
+    """The old session facade delegates to shared functions and warns about its replacement."""
+
+    def test_legacy_facade_warns_and_runs_inference(self, tmp_path: Path) -> None:
+        """The compatibility class warns at the caller and still returns owned output arrays."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        output = np.array([[1.0, 2.0]], dtype=np.float32)
+        infer_request = mock.MagicMock()
+        infer_request.get_output_tensor.return_value.data = output
+        core.compile_model.return_value.create_infer_request.return_value = infer_request
+
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            with pytest.warns(DeprecationWarning, match=r"RFDETRInference\(.*\)\.predict") as caught:
+                inference = OpenVINOInference(xml_path)
+            result = inference.infer(np.zeros((1, 3, 8, 8), dtype=np.float32))
+
+        assert caught[0].filename == __file__
+        assert len(result) == 1
+        assert np.array_equal(result[0], output)
+        assert not np.shares_memory(result[0], output)
+
+    def test_public_predictor_is_warning_free(self, tmp_path: Path) -> None:
+        """The unified runtime loader uses shared functions without constructing the deprecated facade."""
+        from types import SimpleNamespace
+
+        from rfdetr import RFDETRInference
+        from rfdetr.export._runtime.metadata import ExportMetadata
+
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        fake_ov.Type = mock.Mock(f32="f32-type")
+        core.available_devices = ["CPU"]
+        core.compile_model.return_value.outputs = [object(), object()]
+        core.compile_model.return_value.input.return_value.partial_shape = [
+            SimpleNamespace(is_static=False) for _ in range(4)
+        ]
+        metadata = ExportMetadata(
+            format="openvino",
+            task="detect",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+            means=[0.485, 0.456, 0.406],
+            stds=[0.229, 0.224, 0.225],
+            class_names=["object"],
+            num_classes=1,
+            num_select=1,
+            trace_alpha=0.2,
+            patch_size=14,
+            num_windows=1,
+        )
+
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                predictor = RFDETRInference(xml_path, metadata=metadata.model_dump(), device="cpu")
+
+        assert not [warning for warning in caught if issubclass(warning.category, DeprecationWarning)]
+        assert predictor.runtime_info["backend"] == "openvino"
 
 
 class TestModelWrapper:

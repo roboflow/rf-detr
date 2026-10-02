@@ -18,6 +18,7 @@ import importlib.util
 import re
 import sys
 import types
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,8 @@ from tests.export.conftest import (
 tensorrt_only = pytest.mark.skipif(
     not (_IS_TENSORRT_AVAILABLE and _IS_POLYGRAPHY_AVAILABLE), reason="tensorrt/polygraphy not installed"
 )
+
+
 fp16_caster_only = pytest.mark.skipif(not _IS_FP16_CASTER_AVAILABLE, reason="onnx/onnxconverter-common not installed")
 
 if _IS_FP16_CASTER_AVAILABLE:
@@ -505,6 +508,63 @@ def _model_with_a_preexisting_fp16_name() -> "onnx.ModelProto":
         [helper.make_tensor_value_info("output", onnx.TensorProto.FLOAT, [1, 4])],
     )
     return _opset17_model(graph)
+
+
+class TestTRTInferenceDeprecation:
+    """The legacy TensorRT facade remains usable during its deprecation period."""
+
+    def test_constructor_warns_and_delegates_to_shared_loader(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Construction warns while preserving the caller's arguments and returned runtime state."""
+        calls: list[tuple[str, str, bool, bool]] = []
+        state = types.SimpleNamespace(engine_path="model.trt", device="cuda:1", sync_mode=True)
+        outputs = {"dets": torch.empty((1, 1, 4))}
+
+        def load(path: str, device: str, sync_mode: bool, verbose: bool) -> object:
+            """Capture loader arguments and return a ready session stand-in.
+
+            Examples:
+                Requires the enclosing test's captured list and session stand-in.
+                >>> load("model.trt", "cuda:1", True, True)  # doctest: +SKIP
+            """
+            calls.append((path, device, sync_mode, verbose))
+            return state
+
+        monkeypatch.setattr(tensorrt_inference, "_load_tensorrt_session", load)
+        monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", lambda session, blob: outputs)
+
+        with pytest.warns(DeprecationWarning, match="RFDETRInference") as recorded:
+            facade = tensorrt_inference.TRTInference("model.trt", "cuda:1", sync_mode=True, verbose=True)
+
+        assert recorded[0].filename.endswith("test_tensorrt_export.py")
+        assert calls == [("model.trt", "cuda:1", True, True)]
+        assert facade._runtime_state is state
+        assert facade.engine_path == "model.trt"
+        assert facade.device == "cuda:1"
+        assert facade({}) is outputs
+
+    def test_resolved_engine_device_remains_read_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The compatibility facade cannot retarget an engine after its CUDA buffers are allocated."""
+        state = types.SimpleNamespace(engine_device=torch.device("cuda:1"))
+        monkeypatch.setattr(tensorrt_inference, "_load_tensorrt_session", lambda *args, **kwargs: state)
+        with pytest.warns(DeprecationWarning, match="RFDETRInference"):
+            facade = tensorrt_inference.TRTInference("model.trt")
+
+        with pytest.raises(AttributeError):
+            facade.engine_device = torch.device("cuda:0")
+
+        assert facade.engine_device == torch.device("cuda:1")
+
+    def test_shared_run_function_dispatches_without_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The shared runtime entry point executes directly without constructing the deprecated facade."""
+        state = types.SimpleNamespace(sync_mode=True)
+        outputs = {"dets": torch.empty((1, 1, 4))}
+        monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", lambda session, blob: outputs)
+
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            assert tensorrt_inference._run_tensorrt_session(state, {}) is outputs
+
+        assert not recorded
 
 
 class TestBuildEngineDryRun:
@@ -2215,11 +2275,11 @@ class TestTensorRTEndToEnd:
             model.predict(warm_image, threshold=0.0, include_source_image=False)
         release = torch.cuda.Stream(device="cuda:0")
         gate = torch.cuda.Event()
-        run_sync = tensorrt_inference.TRTInference.run_sync
+        run_sync = tensorrt_inference._run_tensorrt_sync
         engine_input_ready: list[bool] = []
 
         def monitored_run(
-            self: tensorrt_inference.TRTInference, blob: Mapping[str, torch.Tensor]
+            self: tensorrt_inference._TensorRTSession, blob: Mapping[str, torch.Tensor]
         ) -> dict[str, torch.Tensor]:
             """Record whether input preparation finished before TensorRT executes.
 
@@ -2230,7 +2290,7 @@ class TestTensorRTEndToEnd:
             engine_input_ready.append(producer.query())
             return run_sync(self, blob)
 
-        monkeypatch.setattr(tensorrt_inference.TRTInference, "run_sync", monitored_run)
+        monkeypatch.setattr(tensorrt_inference, "_run_tensorrt_sync", monitored_run)
         with torch.cuda.stream(release):
             torch.cuda._sleep(1_000_000_000)
             gate.record()
