@@ -550,6 +550,37 @@ class TestRFDETRTrainPTLAbsorption:
             result = RFDETR.train(mock_self)
         assert result is None
 
+    def test_shifted_class_names_raise_before_fit(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """A class_names read from every category of a Roboflow export stops the run before it leaves any trace.
+
+        The datamodule's ``setup("fit")`` hook rejects the same list, but PTL's ``_call_setup_hook`` starts each
+        configured logger's experiment before calling that hook, so waiting for it leaves an orphan crashed wandb/MLflow
+        run behind — and the start-of-run ``training_config.json`` has already recorded the list.
+        """
+        annotations = tmp_path / "ds" / "train"
+        annotations.mkdir(parents=True)
+        (annotations / "_annotations.coco.json").write_text(
+            json.dumps(
+                {
+                    "categories": [
+                        {"id": 1, "name": "animals", "supercategory": "none"},
+                        {"id": 2, "name": "cat", "supercategory": "animals"},
+                        {"id": 3, "name": "dog", "supercategory": "animals"},
+                    ],
+                    "annotations": [{"category_id": 2}, {"category_id": 3}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        mock_self = _make_rfdetr_self(tmp_path, dataset_file="roboflow", class_names=["animals", "cat", "dog"])
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match="'animals'"):
+            RFDETR.train(mock_self)
+
+        mock_bt.return_value.fit.assert_not_called()
+        assert not (Path(mock_self.get_train_config().output_dir) / "training_config.json").exists()
+
     def test_save_dataset_grids_true_calls_grid_saver(self, tmp_path, patch_lit):
         """save_dataset_grids=True triggers DatasetGridSaver.save_grid() for train and val."""
         mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
@@ -621,6 +652,31 @@ class TestRFDETRTrainPTLAbsorption:
             RFDETR.train(mock_self)
 
         mock_saver_cls.assert_not_called()
+
+    def test_dataset_setup_failure_aborts_instead_of_becoming_a_grid_warning(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """A ``setup("fit")`` failure propagates as itself rather than as a failed grid render.
+
+        Building the datasets is fatal to ``trainer.fit()`` regardless, so catching it here used to report the real
+        cause — an unusable dataset, or a rejected ``class_names`` — as "failed to save dataset grids", then let
+        ``fit()`` raise the same thing again.
+        """
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        _dmcls.return_value.setup.side_effect = ValueError("dataset is unusable")
+
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+            pytest.raises(ValueError, match="dataset is unusable"),
+        ):
+            RFDETR.train(mock_self)
+
+        mock_bt.return_value.fit.assert_not_called()
 
     def test_save_dataset_grids_failure_does_not_abort_training(self, tmp_path, patch_lit):
         """A save_grid() failure must not abort training — trainer.fit() must still be called."""

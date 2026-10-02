@@ -1253,6 +1253,33 @@ class RFDETR:
         # process until trainer.fit() initializes torch.distributed; several ranks would otherwise write this one
         # path at once, where a torn write can truncate a previous run's good copy. Same guard as the dataset-grid
         # block below.
+        # Reject a class_names that setup("fit") would reject inside trainer.fit(), before anything records or acts on
+        # it: the write below would save the rejected list, and PTL's _call_setup_hook starts every configured
+        # logger's experiment (wandb.init(), an MLflow run) before it calls datamodule setup, leaving an orphan
+        # crashed run behind. Runs on every rank, so none is left hanging in fit()'s first collective; keypoint mode
+        # is skipped for the reason the read below is -- the slot layout needs a built dataset.
+        if (
+            getattr(config, "class_names", None) is not None
+            and dataset_dir
+            and not self.model_config.use_grouppose_keypoints
+        ):
+            from rfdetr.training.module_data import _check_class_names_match_dataset
+
+            if not hasattr(self, "_coco_categories_cache"):
+                self._coco_categories_cache = {}
+            try:
+                dataset_class_names, labels_remapped = RFDETR._dataset_label_space_on_disk(
+                    dataset_dir,
+                    config.dataset_file,
+                    coco_categories=RFDETR._memoized_coco_categories(self._coco_categories_cache, dataset_dir),
+                )
+            except (FileNotFoundError, ValueError, KeyError, OSError) as exc:
+                # Best-effort, like the read below: an unreadable layout fails with a better message inside fit().
+                logger.debug("Could not read class names from dataset '%s': %s", dataset_dir, exc)
+                dataset_class_names, labels_remapped = None, False
+            # Outside the except above: the ValueError this raises is the verdict, not a failed read.
+            _check_class_names_match_dataset(config.class_names, dataset_class_names, labels_remapped=labels_remapped)
+
         if _is_launcher_main_process():
             pre_fit_class_names = getattr(config, "class_names", None)
             # Keypoint mode stays null: the readers below return the detection basis (e.g. ['person']), but the
@@ -1301,10 +1328,13 @@ class RFDETR:
         # process per node through on multi-node runs and every process through under srun, which sets neither
         # LOCAL_RANK nor NODE_RANK.
         if config.save_dataset_grids and _is_launcher_main_process():
+            # Outside the try: building the datasets is fatal to trainer.fit() below whatever happens here, so
+            # catching its failure only relabels the real cause as a grid-save warning and then reports it twice.
+            # The import stays inside, where a missing visualization dependency keeps costing only the grids.
+            datamodule.setup("fit")
             try:
                 from rfdetr.datasets.save_grids import DatasetGridSaver
 
-                datamodule.setup("fit")
                 grids_output_dir = Path(config.output_dir) / "dataset_grids"
                 DatasetGridSaver(datamodule.train_dataloader(), grids_output_dir, dataset_type="train").save_grid()
                 DatasetGridSaver(datamodule.val_dataloader(), grids_output_dir, dataset_type="val").save_grid()
@@ -2258,6 +2288,34 @@ class RFDETR:
         cache.clear()
         cache[key] = categories
         return categories
+
+    @staticmethod
+    def _dataset_label_space_on_disk(
+        dataset_dir: str, dataset_file: str, *, coco_categories: list[dict[str, Any]] | None = None
+    ) -> tuple[list[str] | None, bool]:
+        """Read the dataset's class names and whether its labels are remapped category ids, without building it.
+
+        :meth:`RFDETRDataModule._dataset_label_space` answers the same question from a built dataset; :meth:`train`
+        has to answer it before one exists.
+
+        Args:
+            dataset_dir: Path to the dataset root directory.
+            dataset_file: ``TrainConfig.dataset_file``, which picks the builder and so the label convention: only
+                ``"roboflow"`` reaches :func:`~rfdetr.datasets.coco.build_roboflow_from_coco`, the one COCO builder
+                passing ``remap_category_ids=True``; ``"coco"`` and ``"o365"`` keep the source ids.
+            coco_categories: An already-parsed :meth:`_filtered_coco_categories` result for *dataset_dir* (see
+                :meth:`_memoized_coco_categories`); ``None`` reads the annotation file here.
+
+        Returns:
+            The class names, or ``None`` for a layout neither reader understands, and whether labels are remapped. A
+            YOLO layout returns ``(None, False)``: its ids are already 0-based, so nothing there can shift.
+        """
+        if is_valid_coco_dataset(dataset_dir):
+            return RFDETR._load_classes(dataset_dir, coco_categories=coco_categories), dataset_file == "roboflow"
+        if (Path(dataset_dir) / index_name("train")).exists():
+            train_index = read_shard_index(dataset_dir, "train")
+            return train_index.class_names(), train_index.category_ids == "remap"
+        return None, False
 
     @staticmethod
     def _load_classes(dataset_dir: str, *, coco_categories: list[dict[str, Any]] | None = None) -> list[str]:
