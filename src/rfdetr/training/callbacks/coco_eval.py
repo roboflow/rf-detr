@@ -196,8 +196,8 @@ class COCOEvalCallback(Callback):
             forward pass, so both models are evaluated from independent predictions.
         eval_backend: COCO evaluation backend, mirroring :attr:`~rfdetr.config.TrainConfig.eval_backend`.
             ``"vernier"`` is the default and computes fastest, ``"faster_coco_eval"`` is the previous
-            evaluator and ``"ufcoco"`` selects ultrafast-pycocotools; all four ship with ``rfdetr[train]`` and return
-            identical metrics.
+            evaluator, ``"ufcoco"`` selects ultrafast-pycocotools and ``"hotcoco_streaming"`` matches each batch as
+            it arrives; all of them ship with ``rfdetr[train]`` and return identical metrics.
             Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
             positional callers keep binding the arguments they always did.
     """
@@ -220,6 +220,7 @@ class COCOEvalCallback(Callback):
         self._eval_interval = max(1, int(eval_interval))
         self._log_per_class_metrics = bool(log_per_class_metrics)
         self._eval_backend = eval_backend
+        self._num_classes: int | None = None
         if eval_ema_only is not None:
             warnings.warn(
                 "COCOEvalCallback.eval_ema_only is deprecated; use eval_base_model to opt into base-model evaluation.",
@@ -290,6 +291,10 @@ class COCOEvalCallback(Callback):
             sync_on_compute=False,
         )
         kwargs["backend"] = self._eval_backend
+        # Only `hotcoco_streaming` reads it; unit shims may give a model_config without an integer class count.
+        num_classes = getattr(model_config, "num_classes", None)
+        self._num_classes = num_classes if isinstance(num_classes, int) else None
+        kwargs["num_classes"] = self._num_classes
         self.map_metric = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         self.map_metric_train = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
@@ -1139,6 +1144,7 @@ class COCOEvalCallback(Callback):
                 class_metrics=self._log_per_class_metrics,
                 max_detection_thresholds=[1, 10, self._max_dets],
                 backend=self._eval_backend,
+                num_classes=self._num_classes,
                 sync_on_compute=False,  # we merge state across ranks ourselves (see map_metric in setup)
             )
         else:
