@@ -14,12 +14,15 @@ and checks runtime parity — mirroring the CoreML and ExecuTorch export suites.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import re
 import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -1981,6 +1984,129 @@ class TestTensorRTEndToEnd:
             f"TensorRT outputs diverge from PyTorch: max abs diff {max(diffs)} "
             f"(dets={diffs[0]}, labels={diffs[1]}, bound={_TENSORRT_MAX_ABS_DIFF})"
         )
+
+    @pytest.fixture(
+        scope="class",
+        params=[
+            pytest.param((False, False), id="static-fp32"),
+            pytest.param((True, False), id="dynamic-fp32"),
+            pytest.param((False, True), id="static-fp16"),
+            pytest.param((True, True), id="dynamic-fp16"),
+        ],
+    )
+    def trt_sidecar_engine(self, request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Any:
+        """Export RFDETRNano to a TensorRT engine with ``trt_metadata=True`` and deserialize the engine it wrote.
+
+        Returns:
+            A namespace with the parsed ``sidecar``, the ``engine_path``, the deserialized ``engine`` (and the
+            ``runtime`` that must outlive it), the model's ``resolution``, and the ``dynamic_batch`` and ``fp16``
+            settings of this parameter.
+        """
+        import tensorrt as trt
+
+        from rfdetr import RFDETRNano
+
+        dynamic_batch, fp16 = request.param
+        torch.manual_seed(42)
+        out_dir = tmp_path_factory.mktemp("tensorrt_sidecar")
+        detector = RFDETRNano(pretrain_weights=None)
+        engine_path = detector.export(
+            output_dir=str(out_dir),
+            format="tensorrt",
+            fp16=fp16,
+            verbose=False,
+            trt_metadata=True,
+            dynamic_batch=dynamic_batch,
+            batch_size=2,
+            max_batch_size=4 if dynamic_batch else None,
+        )
+        runtime = trt.Runtime(trt.Logger(trt.Logger.ERROR))
+        engine = runtime.deserialize_cuda_engine(engine_path.read_bytes())
+        return types.SimpleNamespace(
+            sidecar=json.loads(engine_path.with_suffix(".json").read_text()),
+            engine_path=engine_path,
+            engine=engine,
+            runtime=runtime,
+            resolution=int(detector.model.resolution),
+            dynamic_batch=dynamic_batch,
+            fp16=fp16,
+        )
+
+    @staticmethod
+    def _tensor_names(engine: Any) -> tuple[list[str], list[str]]:
+        """Return the deserialized engine's input tensor names and output tensor names, in binding order.
+
+        Examples:
+            Needs a real engine on a GPU, so this is documentation only (not a doctest):
+
+            >>> TestTensorRTEndToEnd._tensor_names(engine)  # doctest: +SKIP
+            (['input'], ['dets', 'labels'])
+        """
+        import tensorrt as trt
+
+        modes = {name: engine.get_tensor_mode(name) for name in engine}
+        return (
+            [name for name, mode in modes.items() if mode == trt.TensorIOMode.INPUT],
+            [name for name, mode in modes.items() if mode == trt.TensorIOMode.OUTPUT],
+        )
+
+    def test_the_sidecar_input_is_the_engines_input(self, trt_sidecar_engine: Any) -> None:
+        """The input's name and the spatial size match what the engine expects (a static engine's shape, a dynamic one's
+        profile)."""
+        sidecar, engine = trt_sidecar_engine.sidecar, trt_sidecar_engine.engine
+        (engine_input,), _ = self._tensor_names(engine)
+
+        assert sidecar["input"]["name"] == engine_input
+        resolution = trt_sidecar_engine.resolution
+        assert (sidecar["input"]["height"], sidecar["input"]["width"]) == (resolution, resolution)
+        assert tuple(engine.get_tensor_shape(engine_input)[1:]) == (3, resolution, resolution)
+
+    def test_the_sidecar_outputs_are_the_engines_outputs_in_order_and_float32(self, trt_sidecar_engine: Any) -> None:
+        """Names and order match the engine's outputs, and every tensor is FP32, also for an FP16 build."""
+        import tensorrt as trt
+
+        engine = trt_sidecar_engine.engine
+        (engine_input,), engine_outputs = self._tensor_names(engine)
+
+        assert [output["name"] for output in trt_sidecar_engine.sidecar["outputs"]] == engine_outputs
+        assert {engine.get_tensor_dtype(name) for name in (engine_input, *engine_outputs)} == {trt.float32}
+
+    def test_the_sidecar_batch_is_the_engines_batch(self, trt_sidecar_engine: Any) -> None:
+        """A dynamic engine's min/opt/max equal its optimization profile; a static one's size is its batch axis."""
+        sidecar, engine = trt_sidecar_engine.sidecar, trt_sidecar_engine.engine
+        (engine_input,), _ = self._tensor_names(engine)
+
+        if trt_sidecar_engine.dynamic_batch:
+            profile = engine.get_tensor_profile_shape(engine_input, 0)
+            assert sidecar["batch"] == {"dynamic": True, "min": 1, "opt": 2, "max": 4}
+            assert [shape[0] for shape in profile] == [1, 2, 4]
+        else:
+            assert sidecar["batch"] == {"dynamic": False, "size": 2}
+            assert engine.get_tensor_shape(engine_input)[0] == 2
+
+    def test_the_sidecar_identifies_the_engine_file(self, trt_sidecar_engine: Any) -> None:
+        """The recorded size and SHA-256 are those of the ``.trt`` the export returned, so a consumer's check passes."""
+        engine_bytes = trt_sidecar_engine.engine_path.read_bytes()
+
+        assert trt_sidecar_engine.sidecar["engine"] == {
+            "size": len(engine_bytes),
+            "sha256": hashlib.sha256(engine_bytes).hexdigest(),
+        }
+
+    def test_the_sidecar_records_the_build_that_ran(self, trt_sidecar_engine: Any) -> None:
+        """The precision requested, the TensorRT version and the GPU the test itself sees.
+
+        The last two are read from the same sources the exporter reads, so they check the plumbing, not TensorRT. The
+        precision equals the request because a full TensorRT wheel never takes the lean-wheel fallback.
+        """
+        import tensorrt as trt
+
+        build = trt_sidecar_engine.sidecar["build"]
+        properties = torch.cuda.get_device_properties(torch.cuda.current_device())
+
+        assert build["precision"] == ("fp16" if trt_sidecar_engine.fp16 else "fp32")
+        assert build["tensorrt_version"] == trt.__version__
+        assert build["gpu"] == {"name": properties.name, "compute_capability": f"{properties.major}.{properties.minor}"}
 
     @pytest.fixture(scope="class")
     def trt_fp16_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
