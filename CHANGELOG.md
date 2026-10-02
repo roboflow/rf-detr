@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Removed `rfdetr.datasets.yolo.REQUIRED_DATA_SUBDIRS`. `is_valid_yolo_dataset` resolves split directories through the YAML-aware resolver, which derives the labels directory from the resolved images path, so the constant no longer described how any code finds a split's subdirectories. Nothing inside the package read it; an external importer should inline `["images", "labels"]`. ([#1570](https://github.com/roboflow/rf-detr/pull/1570))
 
+### Added
+
+- Public `rfdetr.export.inference` exposes `TRTInference`, `load_executorch_method`, `preprocess_to_nchw`, `decode_detections` and `DecodedDetections` next to `OpenVINOInference`; each resolves lazily, so importing the module does not require an optional runtime. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
+
+- Public `rfdetr.export.benchmark` exposes `measure_latency`, `measure_memory`, `BenchmarkResult` and `MemoryResult`, the helpers the per-hardware export cookbooks use. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
+
 ### Changed
 
 - YOLO split directories must stay inside the dataset root however they are reached. The containment rule applied only to paths declared in `data.yaml`, so a declared `train: images/train` pointing at mounted storage was refused while a `train/images` symlink to that same storage was read — the guard rejected by layout rather than by destination. Format detection and `is_valid_yolo_dataset` now refuse a conventional split directory resolving outside the root, and `build_roboflow_from_yolo` raises `ValueError` naming it. A dataset whose entire root is a symlink is unaffected, because containment resolves both sides; only an individual split escaping its own root is refused. ([#1570](https://github.com/roboflow/rf-detr/pull/1570))
@@ -32,6 +38,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     - a missing package for the chosen format: `onnx`, which TFLite and TensorRT need too; TensorFlow, tf-keras and `onnx2tf` for TFLite; `executorch`, `coremltools`, `coreai-torch`, `openvino` or `litert-torch`. The error names the `rfdetr[...]` extra that installs it. `format="onnx"` without `onnx` used to fail with torch's `Module onnx is not installed!` after the trace, and `format="tflite"` without `onnx2tf`, TensorFlow or tf-keras only after the whole ONNX export. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
 - `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
+
+- `OpenVINOInference` now defaults `inference_precision` to `"f32"`, so latency and accuracy no longer depend on the device's default compute precision. Pass `inference_precision=None` to restore the device-default speed. It also takes a new `config` argument, a mapping of further `compile_model` properties (e.g. `{"INFERENCE_NUM_THREADS": 4}`) applied after `inference_precision`. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
+
+- `format="tflite"` warns with a `UserWarning` when `calibration_data` is passed, replacing the INFO log: the argument is not consumed when building the generated `.tflite` models. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
+
+- `format="openvino", dynamic_batch=True` is still refused, but the message now explains that the converted IR already has a dynamic input shape, so one export runs at any batch size. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
 ### Fixed
 
