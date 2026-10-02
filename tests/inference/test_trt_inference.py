@@ -37,8 +37,9 @@ class TestTRTInference:
     def test_synchronize_sync_mode_does_not_require_stream(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """`synchronize()` should not access stream in sync mode."""
         inference = TRTInference.__new__(TRTInference)
-        inference.sync_mode = True
-        inference._engine_device = torch.device("cuda", 0)
+        inference._runtime_state = Mock(
+            spec=trt_inference._TensorRTSession, sync_mode=True, engine_device=torch.device("cuda", 0)
+        )
 
         mock_is_available = Mock(return_value=True)
         mock_cuda_sync = Mock()
@@ -53,8 +54,7 @@ class TestTRTInference:
     def test_synchronize_async_mode_uses_stream_sync(self, monkeypatch) -> None:
         """`synchronize()` should use stream synchronization in async mode."""
         inference = TRTInference.__new__(TRTInference)
-        inference.sync_mode = False
-        inference.stream = Mock()
+        inference._runtime_state = Mock(spec=trt_inference._TensorRTSession, sync_mode=False, stream=Mock())
 
         mock_cuda_sync = Mock()
         monkeypatch.setattr("torch.cuda.synchronize", mock_cuda_sync)
@@ -72,9 +72,12 @@ class TestTRTInference:
         switched -- so an engine on ``cuda:1`` would be reported finished while its work is still running.
         """
         inference = TRTInference.__new__(TRTInference)
-        inference.sync_mode = sync_mode
-        inference.stream = None
-        inference._engine_device = torch.device("cuda", 1)
+        inference._runtime_state = Mock(
+            spec=trt_inference._TensorRTSession,
+            sync_mode=sync_mode,
+            stream=None,
+            engine_device=torch.device("cuda", 1),
+        )
         monkeypatch.setattr("torch.cuda.is_available", Mock(return_value=True))
         mock_cuda_sync = Mock()
         monkeypatch.setattr("torch.cuda.synchronize", mock_cuda_sync)
@@ -298,18 +301,30 @@ def _runtime_around(
         >>> runtime.input_names, runtime.output_names, runtime.bindings["input"].shape
         (['input'], ['dets'], (4, 3, 8, 8))
     """
+    session = trt_inference._TensorRTSession(
+        engine_path="fake.trt",
+        device="cpu",
+        engine_device=torch.device("cpu"),
+        sync_mode=sync_mode,
+        logger=None,
+        engine=engine,
+        context=_FakeContext(engine) if context is None else context,
+        bindings=OrderedDict(),
+        bindings_addr=OrderedDict(),
+        input_names=[],
+        output_names=[],
+        _declared_shapes={},
+        _input_dtypes={},
+        stream=None if sync_mode else Mock(handle=7),
+        time_profile=TimeProfiler(device="cpu"),
+    )
+    session.bindings = trt_inference._allocate_tensorrt_bindings(session, engine, session.context, device="cpu")
+    session.bindings_addr = OrderedDict((name, binding.ptr) for name, binding in session.bindings.items())
+    session.input_names = trt_inference._get_tensorrt_input_names(session)
+    session.output_names = trt_inference._get_tensorrt_output_names(session)
+    trt_inference._prime_tensorrt_context(session)
     runtime = TRTInference.__new__(TRTInference)
-    runtime.engine = engine
-    runtime.context = _FakeContext(engine) if context is None else context
-    runtime.sync_mode = sync_mode
-    runtime.device = "cpu"
-    runtime._engine_device = torch.device("cpu")
-    runtime.stream = None if sync_mode else Mock(handle=7)
-    runtime.bindings = runtime.get_bindings(engine, runtime.context, device="cpu")
-    runtime.bindings_addr = OrderedDict((n, v.ptr) for n, v in runtime.bindings.items())
-    runtime.input_names = runtime.get_input_names()
-    runtime.output_names = runtime.get_output_names()
-    runtime._prime_context()
+    runtime._runtime_state = session
     return runtime
 
 
@@ -596,7 +611,7 @@ class TestTRTInferenceDynamicBatch:
         engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}, profile_max=4)
         runtime = _runtime_around(engine)
         # ``meta`` stands in for a device other than the CPU, which is also torch's default device.
-        runtime._engine_device = torch.device("meta")
+        runtime._runtime_state.engine_device = torch.device("meta")
 
         blob = runtime.get_dummy_input(batch_size=2)
 
@@ -666,7 +681,7 @@ class TestTRTInferenceInputValidation:
         attributes the checks read; the device is checked first.
         """
         runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS))
-        runtime._engine_device = torch.device(engine_device)
+        runtime._runtime_state.engine_device = torch.device(engine_device)
         stand_in = SimpleNamespace(
             device=torch.device(input_device),
             dtype=torch.float32,
@@ -944,7 +959,7 @@ class TestTRTInferenceDevice:
         """
         engine = _FakeEngine(_STATIC_ENGINE_TENSORS)
         runtime = _runtime_around(engine)
-        runtime._engine_device = torch.device("meta")
+        runtime._runtime_state.engine_device = torch.device("meta")
 
         bindings = runtime.get_bindings(engine, _FakeContext(engine))
 
@@ -1008,14 +1023,15 @@ class TestBenchmarkMain:
     def test_trt_benchmark_uses_requested_cuda_device(self, monkeypatch: pytest.MonkeyPatch, device: int) -> None:
         """The TensorRT branch hands the requested device to the runtime, the input pipeline and the latency timer."""
         monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
-        runtime_class = Mock()
-        monkeypatch.setattr(benchmark, "TRTInference", runtime_class)
+        load_session = Mock()
+        monkeypatch.setattr(benchmark, "_load_tensorrt_session", load_session)
+        monkeypatch.delattr(trt_inference, "TRTInference")
         infer_engine = Mock()
         monkeypatch.setattr(benchmark, "infer_engine", infer_engine)
 
         benchmark.main("model.trt", device=device, disable_eval=True)
 
-        runtime_class.assert_called_once_with("model.trt", sync_mode=True, device=f"cuda:{device}")
+        load_session.assert_called_once_with("model.trt", sync_mode=True, device=f"cuda:{device}")
         assert infer_engine.call_args.kwargs["device"] == f"cuda:{device}"
         assert infer_engine.call_args.args[2].device == torch.device(f"cuda:{device}")
 

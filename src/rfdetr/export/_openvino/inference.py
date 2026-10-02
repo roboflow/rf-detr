@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import re
 import threading
+import warnings
+from _thread import LockType
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,31 +26,73 @@ from rfdetr.utilities.logger import get_logger
 logger = get_logger()
 
 
+@dataclass
+class _OpenVINOSession:
+    """Hold OpenVINO objects shared by the unified and compatibility APIs."""
+
+    compiled_model: Any
+    infer_request: Any
+    infer_lock: LockType
+    input_layer: Any
+    output_layers: list[Any]
+
+
+def _load_openvino_session(
+    model_path: str | Path,
+    device: str = "AUTO",
+    cache_dir: str | None = None,
+    inference_precision: str | None = None,
+) -> _OpenVINOSession:
+    """Load and compile an OpenVINO IR model for the requested device."""
+    _check_openvino_available()
+    import openvino as ov
+
+    model_path = Path(model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+
+    core = ov.Core()
+    if cache_dir is not None:
+        # Set before compilation so OpenVINO can reuse compiled kernels across process starts.
+        core.set_property({"CACHE_DIR": cache_dir})
+    model = core.read_model(model_path)
+    if inference_precision is None:
+        compiled_model = core.compile_model(model, device)
+    elif inference_precision == "f32":
+        compiled_model = core.compile_model(model, device, {"INFERENCE_PRECISION_HINT": ov.Type.f32})
+    else:
+        raise ValueError(f"Unsupported OpenVINO inference precision: {inference_precision!r}.")
+    infer_request = compiled_model.create_infer_request()
+    input_layer = compiled_model.input(0)
+    output_layers = [compiled_model.output(index) for index in range(len(compiled_model.outputs))]
+
+    logger.info(f"Loaded OpenVINO model from {model_path}")
+    logger.info(f"Input shape: {input_layer.partial_shape}")
+    logger.info(f"Number of outputs: {len(output_layers)}")
+    return _OpenVINOSession(compiled_model, infer_request, threading.Lock(), input_layer, output_layers)
+
+
+def _infer_openvino(session: _OpenVINOSession, input_data: NDArray[Any]) -> tuple[NDArray[Any], ...]:
+    """Run one validated batch and copy outputs from OpenVINO's reusable buffers."""
+    if input_data.dtype != np.float32 or not input_data.flags["C_CONTIGUOUS"]:
+        raise ValueError(
+            f"infer() requires a C-contiguous float32 array, got dtype={input_data.dtype} "
+            f"contiguous={input_data.flags['C_CONTIGUOUS']}. Construct mean/std with "
+            "dtype=np.float32 and finish preprocessing with np.ascontiguousarray(...)."
+        )
+
+    with session.infer_lock:
+        session.infer_request.infer({session.input_layer: input_data})
+        return tuple(
+            np.copy(session.infer_request.get_output_tensor(index).data) for index in range(len(session.output_layers))
+        )
+
+
 class OpenVINOInference:
-    """Inference wrapper for OpenVINO IR models.
+    """Deprecated compatibility facade for raw OpenVINO inference.
 
-    Import it from its public path, :mod:`rfdetr.export.inference` — this module is private and its
-    location is not part of the public API.
-
-    Session-tier by design: it takes already-preprocessed NCHW tensors and returns the model's raw
-    output tensors. Decoding those into detections is the caller's job (see
-    :doc:`the export guide </exports/index>`).
-
-    A single instance is safe to call from multiple threads: ``infer()`` is guarded by an
-    internal lock, since OpenVINO's ``InferRequest.infer()`` is not thread-safe on a shared
-    request object (concurrent calls would silently corrupt each other's output buffers).
-    The lock serializes calls made through the same instance; for parallel throughput, create
-    one ``OpenVINOInference`` per worker thread instead.
-
-    Example:
-        .. code-block:: python
-
-            from rfdetr.export.inference import OpenVINOInference
-
-            model = OpenVINOInference("output/inference_model.xml")
-            # Prepare input image (NCHW format, ImageNet normalized)
-            outputs = model.infer(image_array)
-            boxes, labels = outputs
+    Use :class:`rfdetr.RFDETRInference` to load an artifact and call ``predict()`` for detections. This class will be
+    removed in a future release.
     """
 
     def __init__(
@@ -57,50 +102,20 @@ class OpenVINOInference:
         cache_dir: str | None = None,
         inference_precision: str | None = None,
     ) -> None:
-        """Initialize OpenVINO inference session.
-
-        Args:
-            model_path: Path to the OpenVINO IR model (.xml file).
-            device: Device the model is compiled for, e.g. ``"AUTO"``, ``"CPU"``, ``"GPU"`` or ``"NPU"``.
-            cache_dir: Directory holding the compiled-model cache. When set, OpenVINO reuses the
-                compiled kernels across process starts instead of recompiling the model every time.
-            inference_precision: Optional execution precision hint. Only ``"f32"`` is supported.
-
-        Raises:
-            ImportError: If OpenVINO is not installed.
-            FileNotFoundError: If the model file doesn't exist.
-        """
-        _check_openvino_available()
-        import openvino as ov
-
-        model_path = Path(model_path)
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-
-        # Initialize OpenVINO runtime
-        core = ov.Core()
-        if cache_dir is not None:
-            # Must be set before compilation so compiled kernels are reused across process starts.
-            core.set_property({"CACHE_DIR": cache_dir})
-        model = core.read_model(model_path)
-        if inference_precision is None:
-            self.compiled_model = core.compile_model(model, device)
-        elif inference_precision == "f32":
-            self.compiled_model = core.compile_model(model, device, {"INFERENCE_PRECISION_HINT": ov.Type.f32})
-        else:
-            raise ValueError(f"Unsupported OpenVINO inference precision: {inference_precision!r}.")
-        self.infer_request = self.compiled_model.create_infer_request()
-        # Guards infer_request.infer() + get_output_tensor(): both touch the same shared
-        # buffers, which are not safe for concurrent access from multiple threads.
-        self._infer_lock = threading.Lock()
-
-        # Get input/output info
-        self.input_layer = self.compiled_model.input(0)
-        self.output_layers = [self.compiled_model.output(i) for i in range(len(self.compiled_model.outputs))]
-
-        logger.info(f"Loaded OpenVINO model from {model_path}")
-        logger.info(f"Input shape: {self.input_layer.partial_shape}")
-        logger.info(f"Number of outputs: {len(self.output_layers)}")
+        """Initialize the deprecated facade with its previous constructor options."""
+        warnings.warn(
+            "OpenVINOInference is deprecated and will be removed in a future release. "
+            "Use RFDETRInference(model_path).predict(image) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        session = _load_openvino_session(model_path, device, cache_dir, inference_precision)
+        self._session = session
+        self.compiled_model = session.compiled_model
+        self.infer_request = session.infer_request
+        self._infer_lock = session.infer_lock
+        self.input_layer = session.input_layer
+        self.output_layers = session.output_layers
 
     def infer(self, input_data: NDArray[Any]) -> tuple[NDArray[Any], ...]:
         """Run inference on input data.
@@ -119,20 +134,7 @@ class OpenVINOInference:
                 accepts a mismatched buffer without erroring and converts to fp32 internally,
                 doubling the buffer size shipped across the runtime boundary on every call.
         """
-        if input_data.dtype != np.float32 or not input_data.flags["C_CONTIGUOUS"]:
-            raise ValueError(
-                f"infer() requires a C-contiguous float32 array, got dtype={input_data.dtype} "
-                f"contiguous={input_data.flags['C_CONTIGUOUS']}. Construct mean/std with "
-                "dtype=np.float32 and finish preprocessing with np.ascontiguousarray(...)."
-            )
-
-        with self._infer_lock:
-            # Run inference
-            self.infer_request.infer({self.input_layer: input_data})
-
-            # Copy outputs: `get_output_tensor(i).data` is a view onto the reused infer-request
-            # buffers, which the next `infer()` call overwrites in place.
-            return tuple(np.copy(self.infer_request.get_output_tensor(i).data) for i in range(len(self.output_layers)))
+        return _infer_openvino(self._session, input_data)
 
     def __call__(self, input_data: NDArray[Any]) -> tuple[NDArray[Any], ...]:
         """Alias for infer() to match typical model calling convention."""
@@ -140,7 +142,7 @@ class OpenVINOInference:
 
 
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> Any:
-    """Load an OpenVINO graph through its existing inference class."""
+    """Load an OpenVINO graph through the shared session functions."""
     if device == "auto":
         target = "AUTO"
     elif device.lower() in {"cpu", "gpu", "npu"} or re.fullmatch(r"(?:gpu|npu)\.[0-9]+", device.lower()):
@@ -161,7 +163,7 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
 
     from rfdetr.export._runtime.adapters import ExportRuntime, _input_array
 
-    session = OpenVINOInference(path, device=target, inference_precision="f32")
+    session = _load_openvino_session(path, device=target, inference_precision="f32")
     if metadata.input_dtype != "float32" or metadata.input_layout != "NCHW":
         raise ValueError("OpenVINO inference wrapper requires a float32 NCHW input.")
     shape = session.input_layer.partial_shape
@@ -177,6 +179,6 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
 
     def execute(batch: Any) -> tuple[NDArray[Any], ...]:
         """Run the session, which returns owned output arrays."""
-        return session.infer(_input_array(batch, metadata))
+        return _infer_openvino(session, _input_array(batch, metadata))
 
     return ExportRuntime("openvino", metadata, session, target, metadata.input_name, execute, borrowed_outputs=False)

@@ -206,7 +206,7 @@ class TestRuntimePolicies:
         ov_module = types.ModuleType("openvino")
         ov_module.Core = lambda: types.SimpleNamespace(available_devices=["CPU", "GPU.0"])
         monkeypatch.setitem(sys.modules, "openvino", ov_module)
-        monkeypatch.setattr("rfdetr.export._openvino.inference.OpenVINOInference", FakeSession)
+        monkeypatch.setattr("rfdetr.export._openvino.inference._load_openvino_session", FakeSession)
 
         gpu_runtime = load_runtime(artifact, contract, device="gpu")
         assert gpu_runtime.session.device == "GPU"
@@ -266,7 +266,7 @@ class TestRuntimePolicies:
         session.input_names = ["input"]
         session.bindings = {"input": types.SimpleNamespace(dtype=np.float32, shape=(1, 3, 8))}
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
-        monkeypatch.setattr("rfdetr.export._tensorrt.inference.TRTInference", lambda *args, **kwargs: session)
+        monkeypatch.setattr("rfdetr.export._tensorrt.inference._load_tensorrt_session", lambda *args, **kwargs: session)
 
         with pytest.raises(ValueError, match="input rank"):
             load_runtime(artifact, contract)

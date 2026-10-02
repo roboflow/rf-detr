@@ -59,7 +59,11 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 The engine must be compatible with the target GPU and TensorRT version. See [Predict with RFDETRInference](index.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, and batch behavior.
 
-The shared adapter uses `TRTInference` for raw engine execution. That raw class remains the low-level execution layer; it is not a second image-prediction API or deprecated path.
+!!! warning "TRTInference is deprecated"
+
+    Constructing `TRTInference` emits `DeprecationWarning`. Use `RFDETRInference(engine_path).predict(image)` for image inputs and Supervision results. The old class remains available for compatibility and will be removed in a future release.
+
+Both facades use the same session loading and execution functions. The shared adapter calls these functions directly and does not construct the deprecated class.
 
 ## Advanced: Convert an existing ONNX file with the Python API
 

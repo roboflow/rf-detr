@@ -12,7 +12,8 @@ tensors in and returning the model's raw output tensors. Turning those raw outpu
 :meth:`rfdetr.detr.RFDETR.predict`, not to be imported.
 
 Use :class:`rfdetr.inference.RFDETRInference` for image inputs and Supervision predictions across native models and
-export formats. This module provides raw OpenVINO session access for advanced calls.
+export formats. The OpenVINO wrapper in this module is deprecated and will be removed in a future release. It remains
+available for compatibility and warns when constructed.
 """
 
 from __future__ import annotations
