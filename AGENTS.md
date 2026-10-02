@@ -234,9 +234,15 @@ uv run twine check --strict dist/*
 
 **Prediction:**
 
-- `RFDETR.predict()` accepts RGB PIL images, NumPy arrays, normalized CHW tensors, image paths/URLs, path-like objects, directories, globs, video files, webcam indexes, and RTSP URLs. Directories and globs expand in sorted order over supported media; directory search is not recursive. Video and other expanded sources return a flat list by default, while one image returns a scalar result and list/tuple image batches use one forward pass.
-- `stream=True` returns a lazy generator with one `sv.Detections` or `sv.KeyPoints` result per image/frame. Close the generator on early exit; its capture closes on exhaustion, error, or `close()`. Webcam and RTSP sources require streaming. OpenCV capture converts BGR frames to RGB.
-- `include_source_image=True` stores the source image in `sv.Detections` metadata or `sv.KeyPoints` per-object data. Writable `uint8` NumPy inputs remain referenced, read-only `uint8` inputs are copied, and other NumPy data types are converted. `False` omits the source image.
+- Re-export public `PredictionInput` from `rfdetr` and `rfdetr.prediction`. Import OpenCV lazily. Preserve RGB inputs and copy arrays used for source-image outputs. Store source images in `sv.Detections` metadata or `sv.KeyPoints` per-object data.
+
+- Keep source parsing in `src/rfdetr/_prediction.py`, shared by `RFDETR.predict()` and `RFDETRInference.predict()`. Both facades delegate to it; runtime adapters never parse sources. Distinguish live sources by explicit schemes and media suffixes. Treat extensionless HTTP URLs as images. Reject screen capture inside `.streams` manifests with a clear error.
+
+- Preserve scalar still-image returns and image-list batching. Expanded finite inputs use bounded batches and flush the last partial batch. `.streams` predicts a batch in manifest order and stops when a known finite source ends. Live sources also support `stream=False`, so resolve live inputs before warning about accumulated results, including live entries in nested manifests.
+
+- Close source readers when iteration ends or callers close the generator. Network capture timeouts depend on OpenCV backend support. YouTube resolution and screen capture use the optional `rfdetr[stream]` extra.
+
+- Resolve native contexts inside each inference batch. Do not keep `torch.inference_mode()` active across generator yields. Export shape and batch limits apply to every batch, including the final partial batch and concurrent streams; never pad or silently split an incompatible batch.
 
 **Model Export:**
 
@@ -251,10 +257,10 @@ uv run twine check --strict dist/*
 **Inference:**
 
 - `RFDETRInference(source, *, device="auto", metadata=None)` is the shared prediction API. It accepts a live `RFDETR` model, native `.pth`/`.pt`/`.ckpt` checkpoints, or a full artifact from any registered export format. A live source is borrowed, not copied; each prediction sees its current training and optimization state. Omit `device` for a live source and configure the native model itself. A path source loads and owns its model or exported runtime.
-- Keep input handling, preprocessing, one-call/one-batch behavior, postprocessing, and Supervision results shared across native and exported prediction. Reject an incompatible batch or shape before runtime execution; do not split or pad it. Runtime adapters own format-specific input layout, dtype, output mapping, device policy, and buffer lifetime. Load optional runtime packages lazily, and reject an unavailable explicit device for a path source.
+- Keep input handling, preprocessing, postprocessing, and Supervision results shared across native and exported prediction. Eager image lists use one batch; expanded sources and streamed inputs use bounded batches. Reject an incompatible batch or shape before runtime execution; do not split or pad it. Runtime adapters own format-specific input layout, dtype, output mapping, device policy, and buffer lifetime. Load optional runtime packages lazily, and reject an unavailable explicit device for a path source.
 - Inference metadata records the artifact interface and task semantics. ONNX embeds versioned metadata; other formats use `<artifact-name>.rfdetr.json` beside the final artifact. Validate it against the actual interface; `metadata=` supplies missing semantics for older artifacts as a JSON path or mapping. Sidecar-backed loads hash the artifact to check for stale metadata. Intermediate ONNX files created by TensorRT and TFLite exports are conversion inputs without ONNX metadata. Do not treat user `notes` as inference metadata or infer task and background placement from tensor rank.
 - `.trt` and `.engine` identify TensorRT engines. Both TFLite routes use `.tflite`, but onnx2tf uses NHWC and LiteRT uses NCHW; use metadata to select the layout. LiteRT cannot export full keypoint models. Reject backbone-only artifacts.
-- `RFDETRInference` is the common image-prediction path. ONNX and TFLite keep private NumPy reference helpers for dependency-light numerical checks; these share raw runtime execution with their adapters. `TRTInference` and `OpenVINOInference` are deprecated compatibility facades. Their session loading and execution live in module-level functions shared with the adapters. Adapters never construct these facades. Removing them must not change runtime execution. CoreML and Core AI loaders use their vendor APIs directly. Raw examples remain useful for forward-only benchmarks.
+- `RFDETRInference` uses the common image and streaming prediction path. ONNX and TFLite keep private NumPy reference helpers for dependency-light numerical checks; these share raw runtime execution with their adapters. `TRTInference` and `OpenVINOInference` are deprecated compatibility facades. Their session loading and execution live in module-level functions shared with the adapters. Adapters never construct these facades. Removing them must not change runtime execution. CoreML and Core AI loaders use their vendor APIs directly. Raw examples remain useful for forward-only benchmarks.
 - `runtime_info` reports the selected runtime and device policy; a vendor policy does not always identify a physical device.
 
 **Model Selection (examples, docs, CI, tests, defaults):**

@@ -10,20 +10,20 @@ from __future__ import annotations
 __all__ = ["ModelContext", "RFDETRInference"]
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
-import numpy as np
 import torch
-from PIL import Image
 
-from rfdetr._prediction import PredictionContext, predict
+from rfdetr import _prediction
+from rfdetr._prediction import PredictionContext
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.prediction import PredictionInput
 
 if TYPE_CHECKING:
     from supervision import Detections, KeyPoints
@@ -118,44 +118,103 @@ class RFDETRInference:
             return {"backend": "pytorch", "device": str(self._native_model.model.device)}
         return dict(self._prediction_context().runtime_info)
 
-    @torch.inference_mode()
+    @overload
     def predict(
         self,
-        images: str
-        | Image.Image
-        | np.ndarray[Any, Any]
-        | torch.Tensor
-        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
+        images: PredictionInput,
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
         *,
         antialias: bool = False,
+        stream: Literal[True],
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
         **kwargs: Any,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
-        """Run prediction with the shared native and exported inference pipeline.
+    ) -> Generator[Detections | KeyPoints, None, None]: ...
+
+    @overload
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool = False,
+        stream: Literal[False] = False,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+        **kwargs: Any,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]: ...
+
+    @overload
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool = False,
+        stream: bool,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+        **kwargs: Any,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]: ...
+
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool = False,
+        stream: bool = False,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+        **kwargs: Any,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
+        """Predict images, video, and live sources through the shared prediction pipeline.
 
         Args:
-            images: One image or a batch of images accepted by RF-DETR prediction.
-            threshold: Minimum confidence score for a prediction.
-            shape: Optional input height and width.
-            patch_size: Optional patch size used for shape validation.
-            include_source_image: Include each source image in prediction metadata.
+            images: Any source accepted by :meth:`RFDETR.predict`.
+            threshold: Minimum confidence for a result.
+            shape: Input height and width; exports require their recorded shape.
+            patch_size: Backbone patch size for shape validation.
+            include_source_image: Store RGB source pixels in each result.
             antialias: Use antialiasing during image resize. Match the checkpoint training resize.
-            **kwargs: Additional options accepted by the shared prediction pipeline.
+            stream: Yield results lazily. Close the generator on early exit.
+            batch: Maximum finite-source batch size. Each batch must satisfy the runtime limits.
+                Fixed-batch exports also reject a short final batch. Use batch-one or dynamic exports for video.
+            vid_stride: Read every Nth video frame.
+            stream_buffer: Queue live frames instead of keeping the latest frame.
+            **kwargs: Additional shared prediction options.
 
         Returns:
-            A Supervision prediction object or a list of prediction objects.
+            A generator with stream enabled, otherwise a scalar image result or a list.
         """
-        return predict(
-            self._prediction_context(),
+        return _prediction.predict(
+            self._prediction_context,
             images,
-            threshold=threshold,
-            shape=shape,
-            patch_size=patch_size,
-            include_source_image=include_source_image,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
             antialias=antialias,
+            stream=stream,
+            batch=batch,
+            vid_stride=vid_stride,
+            stream_buffer=stream_buffer,
             **kwargs,
         )
 

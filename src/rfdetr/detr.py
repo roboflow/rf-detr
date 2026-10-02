@@ -14,16 +14,15 @@ import tempfile
 import threading
 import warnings
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from copy import copy, deepcopy
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Concatenate, Literal, ParamSpec, TypeVar, cast, overload
 from weakref import WeakKeyDictionary
 
 import numpy as np
 import torch
-from PIL import Image
 
 from rfdetr import _prediction
 from rfdetr._namespace import _namespace_from_configs
@@ -44,6 +43,7 @@ from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categorie
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
+from rfdetr.prediction import PredictionInput
 from rfdetr.utilities.class_names import class_id_to_name
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
@@ -2657,67 +2657,115 @@ class RFDETR:
             predictions = return_predictions
         return cast(dict[str, torch.Tensor], predictions)
 
-    @torch.inference_mode()
+    @overload
     def predict(
         self,
-        images: str
-        | Image.Image
-        | np.ndarray[Any, Any]
-        | torch.Tensor
-        | list[str | np.ndarray[Any, Any] | Image.Image | torch.Tensor],
+        images: PredictionInput,
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
         *,
         antialias: bool = False,
+        stream: Literal[True],
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
         **kwargs: Any,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
-        """Performs model inference on the input images.
+    ) -> Generator[Detections | KeyPoints, None, None]: ...
 
-        This method accepts a single image or a list of images in various formats (file path, image url, PIL Image,
-        NumPy array, or torch.Tensor). The images should be in RGB channel order. If a torch.Tensor is provided, it must
-        already be normalized to values in the [0, 1] range and have the shape (C, H, W).
+    @overload
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool = False,
+        stream: Literal[False] = False,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+        **kwargs: Any,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]: ...
+
+    @overload
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool = False,
+        stream: bool,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+        **kwargs: Any,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]: ...
+
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool = False,
+        stream: bool = False,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+        **kwargs: Any,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
+        """Run prediction on images, file collections, or video sources.
+
+        Image inputs use RGB channel order. Tensors accept CHW or BCHW shapes with values in ``[0, 1]``.
+        Video capture converts BGR frames to RGB. Directories and globs expand supported media files in sorted order.
+        Directory searches are not recursive. Use ``stream=True`` for bounded memory with live sources.
 
         Args:
             images:
-                A single image or a list of images to process. Images can be provided
-                as file paths, PIL Images, NumPy arrays, or torch.Tensors.
+                An image, directory, glob, video, webcam index, stream URL, manifest, or list/tuple of these.
+                Images can be paths, HTTP URLs, PIL images, NumPy arrays, or tensors. Paths accept ``os.PathLike``.
+                TXT/CSV manifests list sources; ``.streams`` files capture streams concurrently.
+                YouTube URLs and ``screen`` capture require the optional ``rfdetr[stream]`` dependencies.
             threshold:
                 The minimum confidence score needed to consider a detected bounding box valid.
             shape:
-                Optional ``(height, width)`` tuple to resize images to before inference. When provided, overrides the
-                model's default inference resolution. The tuple should match the resolution used when exporting the
-                model (typically a square shape). Both dimensions must be positive integers divisible by ``patch_size *
-                num_windows``. Defaults to ``(model.resolution, model.resolution)`` when not set.
+                Resize to ``(height, width)``; defaults to the model resolution. Both dimensions must be positive
+                integers divisible by ``patch_size * num_windows``. Use the model's export resolution when applicable.
             patch_size:
-                Backbone patch size used for shape divisibility validation. Defaults to ``model_config.patch_size``
-                (typically 14 for large models, 16 for smaller ones). Divisibility is checked against ``patch_size *
-                num_windows``.
+                Backbone patch size for shape validation. Defaults to ``model_config.patch_size``.
             include_source_image:
-                Whether to attach the original image to the returned prediction. Detection and segmentation outputs use
-                ``detections.metadata["source_image"]``. Keypoint outputs use per-object
-                ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level
-                metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
-                needed.
-            antialias:
-                Whether to use antialiasing during the inference resize. Match it to the resize the checkpoint was
-                trained with. Keep this ``False`` for checkpoints trained with the antialias-free Albumentations
-                pipeline, which is what the default CPU augmentation backend uses when ``rfdetr[augment]`` is
-                installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU
-                augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or
-                antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time
-                therefore decides which setting a default-trained checkpoint expects. Exported models and the
-                ``rfdetr.export`` runtime helpers always resize with ``antialias=False``, so results with
-                ``antialias=True`` will not match them unless the caller pre-resizes the image with antialiasing.
-                Defaults to ``False`` to preserve the existing inference behavior.
+                Attach uint8 RGB source pixels. Detections use ``metadata["source_image"]``; KeyPoints use
+                per-object ``data["source_image"]``. Defaults to true; disable to save memory and tensor CPU copies.
+                NumPy source images are copied; other inputs are converted.
+            antialias: Use antialiasing during image resize. Match the checkpoint training resize.
+            stream:
+                Yield results lazily; defaults to false. Errors occur during iteration.
+                Close on early exit to release captures. Results accumulate only if retained.
+            batch:
+                Maximum inference batch size for expanded sources and streamed images. Defaults to one.
+                The final batch can be smaller. Concurrent streams use one frame per source per batch.
+                Eager image-only lists and tuples retain their existing single-batch behavior.
+            vid_stride:
+                Read every Nth video frame. Must be a positive integer. Defaults to one.
+            stream_buffer:
+                Queue live frames in a bounded buffer when true. Otherwise, keep the latest frame.
+                Buffering can increase latency when inference is slower than capture. Defaults to false.
             **kwargs:
                 Additional keyword arguments.
 
         Returns:
-            A single or multiple Supervision prediction objects. Detection and segmentation models return
-            :class:`~supervision.Detections`. Keypoint models return :class:`~supervision.KeyPoints`, with keypoint
-            coordinates in ``xy``. Keypoint predictions preserve the detection-level fields produced by RF-DETR:
+            A generator with ``stream=True``; otherwise a scalar for one image or a flat list for collections.
+            Image-only lists/tuples use one forward pass. Detection and segmentation return
+            :class:`~supervision.Detections`; keypoints return :class:`~supervision.KeyPoints` with ``xy`` coordinates.
             ``key_points.detection_confidence`` is the per-object score used by ``threshold``. For keypoint models this
             is the postprocessed detection score and, by default, includes normalized keypoint uncertainty fusion
             controlled by ``model_config.postprocess_trace_alpha``. ``key_points.keypoint_confidence`` is separate: it
@@ -2764,19 +2812,23 @@ class RFDETR:
             transfer queued before an earlier validation failure raises.
 
         Raises:
-            ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
-                if either dimension does not support the ``__index__`` protocol (e.g. ``float``) or is a ``bool``, if
-                either dimension is zero or negative, if either dimension is not divisible by ``patch_size *
-                num_windows``, or if ``patch_size`` is not a positive integer.
+            ValueError: If shape dimensions are not positive non-boolean integers divisible by
+                ``patch_size * num_windows``, patch size is invalid, a capture cannot open, or camera, batch,
+                stride, or buffer options are invalid.
+            FileNotFoundError: If a local file is missing or a directory/glob contains no supported media.
         """
         return _prediction.predict(
-            self._prediction_context(),
+            self._prediction_context,
             images,
             threshold,
             shape,
             patch_size,
             include_source_image,
             antialias=antialias,
+            stream=stream,
+            batch=batch,
+            vid_stride=vid_stride,
+            stream_buffer=stream_buffer,
             **kwargs,
         )
 
