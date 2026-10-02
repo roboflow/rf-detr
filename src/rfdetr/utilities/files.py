@@ -50,6 +50,7 @@ def _mkstemp_default_mode(
 
     Raises:
         FileExistsError: If no unused file name was found.
+        OSError: If the file cannot be created (e.g. directory missing or not writable).
 
     Examples:
         >>> import tempfile
