@@ -64,7 +64,11 @@ def _reference(value: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
 
 
 class TestPixelRowGridSample:
-    """The pixel-row sampler computes the same values as ``F.grid_sample`` (bilinear, zeros, align_corners=False)."""
+    """The pixel-row sampler computes the same values as ``F.grid_sample`` (bilinear, zeros, align_corners=False).
+
+    The comparisons use the default float32 tolerances: the two sum the four corners in a different order, and on x86
+    ``F.grid_sample``'s vectorized kernel differs from the pixel-row result by up to about 5e-6 on these shapes.
+    """
 
     @pytest.mark.parametrize(
         ("batch", "channels", "height", "width"),
@@ -78,12 +82,12 @@ class TestPixelRowGridSample:
         self, batch: int, channels: int, height: int, width: int
     ) -> None:
         value, grid = _value_and_grid(batch, channels, height, width, points=300, spread=1.5)
-        torch.testing.assert_close(pixel_row_grid_sample(value, grid), _reference(value, grid), rtol=0, atol=1e-6)
+        torch.testing.assert_close(pixel_row_grid_sample(value, grid), _reference(value, grid))
 
     def test_matches_grid_sample_on_pixel_edges(self) -> None:
         value = torch.randn(1, 3, 4, 5, generator=torch.Generator().manual_seed(1))
         grid = _pixel_edge_grid(4, 5)
-        torch.testing.assert_close(pixel_row_grid_sample(value, grid), _reference(value, grid), rtol=0, atol=1e-6)
+        torch.testing.assert_close(pixel_row_grid_sample(value, grid), _reference(value, grid))
 
     @pytest.mark.parametrize(
         ("padding_mode", "align_corners"),
@@ -135,7 +139,7 @@ class TestPixelRowSampling:
         expected = _DeformableCore()(*inputs)
         with pixel_row_sampling():
             actual = _DeformableCore()(*inputs)
-        torch.testing.assert_close(actual, expected, rtol=0, atol=1e-6)
+        torch.testing.assert_close(actual, expected)
 
     def test_original_sampler_is_restored_after_the_context(self) -> None:
         original = deform_attention._bilinear_grid_sample
