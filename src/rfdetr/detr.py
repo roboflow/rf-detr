@@ -1920,6 +1920,7 @@ class RFDETR:
         soc: str | None = None,
         fp16: bool = True,
         max_batch_size: int | None = None,
+        trt_timing_cache: str | os.PathLike[str] | None = None,
         notes: object = None,
         coreml_precision: str | None = None,
         coreai_precision: str | None = None,
@@ -2052,6 +2053,17 @@ class RFDETR:
                 one optimization profile spanning batch ``1 .. max_batch_size`` and tuned for *batch_size*
                 (``batch_size <= max_batch_size``).  Ignored for every other format or combination; passing a
                 non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
+            trt_timing_cache: File in which TensorRT keeps the kernel timings it measures while building an engine, for
+                ``format="tensorrt"``.  A build loads the file when it exists and writes the merged timings back, so a
+                later build of the same architecture at the same precision and batch profile, on the same GPU and
+                TensorRT version, skips the search it already did.  The timings depend on the layers' shapes, not the
+                weights, so a re-export with new weights reuses them for every layer whose shape did not change.  A
+                cache made at another precision or for the dynamic-batch profile saved little in measurements.  A
+                relative path is relative to the working directory, not to *output_dir*.  A cache written by another
+                TensorRT major version, or an empty or damaged file, does not stop the build: TensorRT logs an error,
+                builds as if there were no cache, and the file gets this build's timings.  ``None`` (default) reads
+                and writes no file.  Ignored for every other format; passing a non-``None`` value there emits a
+                ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -2108,7 +2120,11 @@ class RFDETR:
                 ``format="tflite"``, is not one of their accepted values; if ``notes`` holds a non-finite float or a
                 circular reference, for a format that embeds it; or if ``format="tensorrt"`` with
                 ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+                Also raised for ``format="tensorrt"`` when ``trt_timing_cache`` is not a non-empty file path, ends in a
+                path separator, or is a directory.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
+            OSError: If ``format="tensorrt"`` and the directory or files of ``trt_timing_cache`` cannot be created or
+                written, or it is a symbolic link to a missing file.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, or ``format="litert"`` — those paths require a fixed
                 batch size; if ``format="litert"`` is combined with a ``quantization`` other than ``None`` /
@@ -2148,6 +2164,13 @@ class RFDETR:
             warnings.warn(
                 f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
                 f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if trt_timing_cache is not None and format != "tensorrt":
+            warnings.warn(
+                f"`trt_timing_cache` is only used for format='tensorrt' (got format={format!r}). "
+                "This argument is ignored.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -2194,6 +2217,7 @@ class RFDETR:
             max_images=max_images,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
+            trt_timing_cache=trt_timing_cache,
         )
         # Constructing the exporter validates the format's own settings (precision, quantization, notes, ...), then
         # warns about the ones it ignores.

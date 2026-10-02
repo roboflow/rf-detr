@@ -743,12 +743,19 @@ class TensorRTConfig(ExportConfig):
             from :meth:`rfdetr.detr.RFDETR.export`'s ``batch_size``, the same value the ONNX graph is traced at.
         max_batch_size: With ``dynamic_batch``, the largest batch the engine accepts; the profile spans
             ``1 .. max_batch_size``. Required when ``dynamic_batch`` is set, ignored otherwise.
+        timing_cache: File that keeps the timings TensorRT measured while choosing kernels. A build loads it when it
+            exists and writes the merged timings back, so the next build of layers with the same shapes (weights may
+            differ) at the same precision and batch profile, on the same GPU and TensorRT version, skips the search it
+            already did. A cache written by another TensorRT major version, or an empty or damaged file, does not stop
+            the build: TensorRT logs an error, builds as if there were no cache, and the file gets this build's
+            timings. ``None`` (the default) leaves TensorRT's own per-build cache in charge and touches no file.
     """
 
     opset_version: int = 17
     fp16: bool = True
     opt_batch_size: int = 1
     max_batch_size: int | None = None
+    timing_cache: str | os.PathLike[str] | None = None
 
     def onnx_stage(self) -> Any:
         """Return the configuration for the ONNX export this format builds from.
@@ -791,6 +798,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         "fp16": "fp16",
         "opt_batch_size": "batch_size",
         "max_batch_size": "max_batch_size",
+        "timing_cache": "trt_timing_cache",
     }
     format = "tensorrt"
     display_name = "TensorRT"
@@ -799,14 +807,16 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     pip_extra = "tensorrt"
 
     def _check_capabilities(self) -> None:
-        """Reject a dynamic-batch request whose optimization profile bounds are missing, non-integer, or inconsistent.
+        """Reject settings that cannot work, before any work on the model.
 
         Raises:
             ValueError: If ``dynamic_batch`` is set without ``max_batch_size``; with a ``batch_size`` or
                 ``max_batch_size`` that is not a plain ``int`` (``bool`` included, since ``bool`` is a
-                subclass of ``int``); or with ``max_batch_size < opt_batch_size`` or ``opt_batch_size < 1``.
+                subclass of ``int``); with ``max_batch_size < opt_batch_size`` or ``opt_batch_size < 1``; or with a
+                ``timing_cache`` that is not a non-empty file path or that ends in a path separator.
         """
         super()._check_capabilities()
+        self._check_timing_cache()
         if not self.config.dynamic_batch:
             return
         if self.config.max_batch_size is None:
@@ -826,6 +836,28 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 f"TensorRT dynamic_batch profile must satisfy 1 <= batch_size <= max_batch_size, got "
                 f"batch_size={self.config.opt_batch_size} and max_batch_size={self.config.max_batch_size}."
             )
+
+    def _check_timing_cache(self) -> None:
+        """Reject a ``timing_cache`` that cannot name a file, before the export pays for a forward pass.
+
+        Only the value is read here. Whether the location can be written needs the filesystem, so
+        :meth:`_prepare_timing_cache` finds that out later, still before the engine is built.
+
+        Raises:
+            ValueError: If ``timing_cache`` is set and is not a non-empty ``str`` or ``os.PathLike`` of one, or if it
+                ends in a path separator, which names a directory.
+        """
+        cache = self.config.timing_cache
+        if cache is None:
+            return
+        try:
+            path: str | bytes | None = os.fspath(cache)
+        except TypeError:
+            path = None
+        if not isinstance(path, str) or not path:
+            raise ValueError(f"trt_timing_cache must be a non-empty file path (str or os.PathLike), got {cache!r}.")
+        if not os.path.basename(path):
+            raise ValueError(f"trt_timing_cache must name a file, but {path!r} names a directory.")
 
     @classmethod
     def check_dependencies(cls) -> None:
@@ -852,12 +884,16 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
 
         Raises:
             ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, before the ONNX export runs.
+            ValueError: If ``timing_cache`` is a directory, before the ONNX export runs.
+            OSError: If ``timing_cache`` cannot be written, before the ONNX export runs.
         """
         from rfdetr.export._onnx.exporter import OnnxExporter
 
         # Exporter.__call__ has already run check_dependencies; this repeats its TensorRT half for a caller of _convert
         # itself, which would otherwise learn of a missing TensorRT only from build_engine, after the ONNX export.
         self._require_tensorrt()
+        # A cache location that cannot be written would only be found out after the engine is built.
+        self._prepare_timing_cache()
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
         # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
@@ -874,6 +910,10 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
 
         An ``fp16=True`` request never silently yields an FP32 engine on a strongly typed TensorRT; see
         :attr:`TensorRTConfig.fp16` for how each TensorRT generation is handled.
+
+        With a ``timing_cache`` the build loads the file when it exists and writes the merged timings back to it. Its
+        directory is created first, and a path that cannot hold the cache is refused before anything is built. It is
+        checked only when a build runs, so ``dry_run=True`` creates nothing.
 
         Args:
             onnx_path: Path to the source ``.onnx`` file. Its stem (typically the model variant name, e.g.
@@ -895,7 +935,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 cannot be cast to fp16 (already fp16, or explicitly quantized).
             ValueError: If the graph's batch axis disagrees with ``dynamic_batch``: a dynamic batch axis without
                 ``dynamic_batch`` (the engine would accept batch 1 only), or ``dynamic_batch`` on a graph that has
-                none.
+                none; or if ``timing_cache`` names a directory.
+            OSError: If ``timing_cache`` cannot be written.
 
         Examples:
             The build logs its progress, so this is documentation rather than a doctest:
@@ -914,6 +955,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             return engine_path
 
         self._require_tensorrt()
+        self._prepare_timing_cache()
 
         strategy, trt_version = self._fp16_strategy() if fp16 else (Fp16Strategy.BUILDER_FLAG, "unknown")
         if strategy is Fp16Strategy.UNAVAILABLE:
@@ -1048,7 +1090,10 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 # drops its own parameter before it can raise.
                 del parsed
                 raise
-            engine = engine_from_network(parsed, config=build_config)
+            cache_path = self._timing_cache_path()
+            # Only handed over when configured, so the default build calls Polygraphy exactly as it always did.
+            build_options = {} if cache_path is None else {"save_timing_cache": cache_path}
+            engine = engine_from_network(parsed, config=build_config, **build_options)
             save_engine(engine, path=engine_path)
 
         logger.info(f"Successfully built TensorRT engine: {engine_path}")
@@ -1077,12 +1122,72 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         # names them. This frame is one of those, and one scan of the input shapes is all it -- or the profile --
         # needs, so the parameter goes now rather than pinning TensorRT resources until the caller drops the error.
         del network
+        options = self._timing_cache_options()
         if self.config.dynamic_batch:
-            return CreateConfig(fp16=fp16, profiles=[self._batch_profile(onnx_path, dynamic_inputs)])
+            return CreateConfig(fp16=fp16, profiles=[self._batch_profile(onnx_path, dynamic_inputs)], **options)
         # The fp16 cast path refuses this from the ONNX file, before it writes anything; this is the last-resort
         # guard for the builds that never cast -- a weakly typed TensorRT, or an FP32 request.
         _reject_dynamic_graph_under_static_request(onnx_path, dynamic_inputs)
-        return CreateConfig(fp16=fp16)
+        return CreateConfig(fp16=fp16, **options)
+
+    def _timing_cache_path(self) -> str | None:
+        """Return the configured timing-cache file as a ``str`` with ``~`` expanded, or ``None`` when there is none."""
+        cache = self.config.timing_cache
+        return None if cache is None else os.path.expanduser(os.fspath(cache))
+
+    def _prepare_timing_cache(self) -> None:
+        """Make sure the timing cache can be written, before the export pays for an engine build.
+
+        Polygraphy saves the cache only after the engine is built, and it opens ``<file>.lock`` before it creates a
+        missing directory, so a bad location would cost the whole build and the engine with it. The directory is
+        created here, and the files Polygraphy will open (the cache when it exists, then the lock) are opened for
+        writing now, so an inaccessible location fails before the build, whatever the operating system and the user. A
+        symbolic link to a file that does not exist is refused: Polygraphy would create the file at the link's target,
+        and that cannot be checked without creating it.
+
+        Raises:
+            ValueError: If the configured path is a directory.
+            OSError: If the path is a symbolic link to a missing file, if its directory cannot be created, or if the
+                cache or its lock file cannot be opened for writing.
+        """
+        path = self._timing_cache_path()
+        if path is None:
+            return
+        if os.path.isdir(path):
+            raise ValueError(f"trt_timing_cache must name a file, but {path!r} is a directory.")
+        if os.path.islink(path) and not os.path.exists(path):
+            raise OSError(
+                f"trt_timing_cache {path!r} is a symbolic link to {os.readlink(path)!r}, which does not exist. Create "
+                "that file first, or pass the path it should have."
+            )
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            # The cache before the lock, so that refusing a read-only cache leaves no new lock file behind.
+            if os.path.isfile(path):
+                with open(path, "r+b"):
+                    pass
+            with open(f"{path}.lock", "ab"):
+                pass
+        except OSError as error:
+            raise OSError(f"trt_timing_cache {path!r} cannot be written: {error}") from error
+
+    def _timing_cache_options(self) -> dict[str, str]:
+        """Return the ``CreateConfig`` keyword that seeds the build with the timing cache, when there is one to load.
+
+        Empty without a configured cache, and also while the file does not exist yet: a first use is expected to
+        find nothing, and asking Polygraphy to load it would only make it warn about a missing cache.
+
+        Returns:
+            ``{"load_timing_cache": path}`` for an existing cache file, otherwise ``{}``.
+        """
+        path = self._timing_cache_path()
+        if path is None:
+            return {}
+        if not os.path.isfile(path):
+            logger.info(f"TensorRT timing cache {path} does not exist yet; this build creates it")
+            return {}
+        logger.info(f"Reusing the TensorRT timing cache {path}")
+        return {"load_timing_cache": path}
 
     def _batch_profile(self, onnx_path: str, dynamic_inputs: Mapping[str, tuple[int, ...]]) -> Any:
         """Build the batch optimization profile for every dynamic input.
