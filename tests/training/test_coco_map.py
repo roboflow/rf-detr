@@ -861,8 +861,8 @@ def test_alternative_backend_matches_faster_coco_eval_for_segmentation(backend: 
     """Mask metrics must match across backends, including the per-IoU-type area swap.
 
     Segmentation is where the backends diverge structurally. hotcoco returns a copy from its ``dataset`` getter, so the
-    ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs cannot reach its evaluator unless the prediction
-    dataset is rebuilt (hotcoco 1.0.1 fixed the earlier bytes-RLE constructor mismatch). ufcoco's RLE encoder rejects
+    ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs reaches its evaluator only through
+    ``COCO.update_anns`` (hotcoco 1.0.1 fixed the earlier bytes-RLE constructor mismatch). ufcoco's RLE encoder rejects
     the boolean masks TorchMetrics hands over, so the adapter converts them; a mask AP that silently collapses to 0.0 is
     what either mistake would look like.
     """
@@ -1766,6 +1766,24 @@ def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
     # Mask pass: only the true positive is "small", and its 25x25 prediction over a 20x20 target is IoU 0.64 —
     # matched at 3 of the 10 COCO thresholds.
     assert float(result["segm_map_small"]) == pytest.approx(0.3)
+
+
+def test_hotcoco_multi_iou_type_switches_areas_without_rebuilding_predictions() -> None:
+    """A bbox+segm run on hotcoco must index the prediction set once, not once per IoU type.
+
+    Before ``COCO.update_anns`` the only way to switch the active ``area`` on hotcoco was to build a new prediction
+    dataset per IoU type. The area-bucket test above proves the switch still reaches the evaluator; this one pins
+    that it no longer costs a rebuild: one ground-truth and one prediction dataset for the whole computation.
+    """
+    _require_backend("hotcoco")
+    predictions, targets = _straddling_disc_records()
+    metric = OnePassCocoMeanAveragePrecision(iou_type=("bbox", "segm"), backend="hotcoco", sync_on_compute=False)
+    metric.update(predictions, targets)
+
+    with patch.object(metric, "_build_coco", wraps=metric._build_coco) as build_coco:
+        metric.compute()
+
+    assert build_coco.call_count == 2
 
 
 def _straddling_disc_records() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

@@ -713,10 +713,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         Returns:
             The prediction and target datasets in the order ``_get_coco_datasets`` returns them, followed by the
             COCO-format dictionary the prediction dataset was built from, or ``None`` when it was loaded from a
-            detection array instead. That dictionary is returned rather than read back from the dataset because
-            hotcoco's ``dataset`` getter is a copy, so the ``area_bbox``/``area_segm`` switch a multi-IoU-type
-            evaluation performs would be discarded (hotcoco 0.5 also dropped those non-COCO keys outright; 1.0.0
-            preserves them, but a copy is still a copy); ``None`` is safe because the array path is taken only for
+            detection array instead. That dictionary is the source of the per-IoU-type ``area_bbox``/``area_segm``
+            values a multi-IoU-type evaluation switches between; reading it back from hotcoco's ``dataset`` getter
+            would copy the whole prediction set. ``None`` is safe because the array path is taken only for
             single-IoU-type evaluation, where no area switching happens.
 
         Raises:
@@ -775,12 +774,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         )
         if detection_boxes is not None:
             self._assign_detection_scores(prediction_dataset["annotations"])
-        # A multi-IoU-type evaluation on hotcoco rebuilds the prediction dataset for its first IoU type before
-        # reading it, so building one here too would index the whole prediction set an extra time per epoch and
-        # throw it away. `compute()` only touches the returned object after that rebuild.
-        rebuilt_per_iou_type = len(self.iou_type) > 1 and isinstance(backend, _HotCocoBackend)
-        coco_preds = None if rebuilt_per_iou_type else self._build_coco(prediction_dataset)
-        return coco_preds, coco_target, prediction_dataset
+        return self._build_coco(prediction_dataset), coco_target, prediction_dataset
 
     def _loads_detections_from_array(self, detection_boxes: list[Tensor] | None) -> bool:
         """Return whether predictions can be loaded from a detection array instead of built as annotation dicts.
@@ -903,15 +897,18 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             )
         for annotation in prediction_dataset["annotations"]:
             annotation["area"] = annotation[f"area_{iou_type}"]
-        if not isinstance(self._coco_backend, _HotCocoBackend):
-            # faster-coco-eval indexes the assigned dictionary itself, so the areas just written are already live.
-            return coco_preds
-        # hotcoco copies the dictionary into its own index at construction, so the areas just written are invisible
-        # to the existing dataset and the evaluator has to be handed a rebuilt one.
-        # TODO: drop the rebuild once hotcoco offers a supported way to edit an annotation field in place -- an
-        # explicit mutator, or a live `dataset` view. 1.0.0 preserves custom keys across the round-trip but
-        # still hands back a copy. The area-bucket regression test is what would prove the rebuild safe to drop.
-        return self._build_coco(prediction_dataset)
+        if isinstance(self._coco_backend, _HotCocoBackend):
+            # hotcoco copies the dictionary into its own index at construction, so the areas just written are
+            # invisible to it; `update_anns` edits that index in place. Its evaluator keeps the annotations it was
+            # built with, so this must run before `compute()` constructs the evaluator for this IoU type.
+            coco_preds.update_anns(
+                [
+                    {"id": annotation["id"], "area": annotation["area"]}
+                    for annotation in prediction_dataset["annotations"]
+                ]
+            )
+        # faster-coco-eval indexes the assigned dictionary itself, so the areas just written are already live there.
+        return coco_preds
 
     def _quiet_evaluation(self) -> contextlib.AbstractContextManager[Any]:
         """Return the standard-output suppression the active backend needs while evaluating.
