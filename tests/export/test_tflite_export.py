@@ -1264,7 +1264,10 @@ class TestGridSampleOnnxRewrite:
         with caplog.at_level(logging.WARNING, logger="rf-detr"):
             exporter._rewrite_gridsample(tmp_path / "model.onnx", tmp_path)
 
-        assert re.findall(r"Install with: pip install (\S+)", caplog.text) == ["onnx_graphsurgeon"]
+        # pytest>=9.1 also attaches caplog to the non-propagating "rf-detr" logger, so with propagation forced on above
+        # each record is captured twice, as the same object; dropping repeated objects keeps a warning logged twice.
+        messages = [record.getMessage() for record in dict.fromkeys(caplog.records)]
+        assert [re.findall(r"Install with: pip install (\S+)", m) for m in messages] == [["onnx_graphsurgeon"]]
 
     @onnx_gs_available
     def test_no_gridsample_nodes_after_rewrite(self, gridsample_onnx: Path, tmp_path: Path) -> None:
