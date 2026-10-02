@@ -25,6 +25,41 @@ logger = get_logger()
 #: vocabulary of ``openvino_precision`` at export time also works here.
 _PRECISION_ALIASES: dict[str, str] = {"float32": "f32", "float16": "f16"}
 
+#: Default of ``inference_precision``: ``"f32"`` on every device except the NPU, whose plugin does not support an f32
+#: precision hint, so there it leaves the plugin's own precision alone.
+_AUTO_PRECISION = "auto"
+
+
+def _resolve_precision_hint(inference_precision: str | None, device: str) -> str | None:
+    """Return the ``INFERENCE_PRECISION_HINT`` value to send for *device*, or ``None`` to send no hint.
+
+    Args:
+        inference_precision: The caller's ``inference_precision``: ``"auto"``, ``None`` or an explicit spelling.
+        device: OpenVINO device string, e.g. ``"CPU"`` or ``"AUTO:NPU,CPU"``.
+
+    Returns:
+        ``None`` for ``None``, and for ``"auto"`` on a device string naming the NPU; ``"f32"`` for ``"auto"``
+        elsewhere; an explicit value mapped through :data:`_PRECISION_ALIASES`, unchanged otherwise, so an unsupported
+        explicit hint still reaches OpenVINO and is rejected there.
+
+    Examples:
+        >>> _resolve_precision_hint("auto", "CPU")
+        'f32'
+        >>> _resolve_precision_hint("auto", "NPU") is None
+        True
+        >>> _resolve_precision_hint("auto", "AUTO:NPU,CPU") is None
+        True
+        >>> _resolve_precision_hint("float16", "NPU")
+        'f16'
+        >>> _resolve_precision_hint(None, "CPU") is None
+        True
+    """
+    if inference_precision == _AUTO_PRECISION:
+        return None if "NPU" in device.upper() else "f32"
+    if inference_precision is None:
+        return None
+    return _PRECISION_ALIASES.get(inference_precision, inference_precision)
+
 
 class OpenVINOInference:
     """Inference wrapper for OpenVINO IR models.
@@ -58,7 +93,7 @@ class OpenVINOInference:
         model_path: str | Path,
         device: str = "AUTO",
         cache_dir: str | None = None,
-        inference_precision: str | None = "f32",
+        inference_precision: str | None = _AUTO_PRECISION,
         config: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize OpenVINO inference session.
@@ -70,14 +105,15 @@ class OpenVINOInference:
                 compiled kernels across process starts instead of recompiling the model every time.
             inference_precision: OpenVINO ``INFERENCE_PRECISION_HINT``, the precision the device *computes*
                 in — independent of the IR's storage precision (``openvino_precision`` at export). Defaults
-                to ``"f32"``: OpenVINO's own CPU default is f16 on ARM and bf16 on x86 hosts with AMX or
-                AVX512-BF16, and at either precision RF-DETR's logits collapse (no detections clear a 0.5
-                threshold). ``None`` keeps the device default — faster where the hardware computes natively in
-                reduced precision (ARM CPU, Intel GPU/NPU), at that accuracy cost. Accepted spellings are
-                ``"f32"``, ``"f16"`` and ``"bf16"``, plus ``"float32"`` and ``"float16"`` as aliases of ``"f32"``
-                and ``"f16"`` (the vocabulary ``openvino_precision`` uses at export). Any other string is not
-                validated here: it is passed through unchanged and OpenVINO rejects it when compiling the model
-                (e.g. ``"fp32"``).
+                to ``"auto"``, i.e. ``"f32"`` on every device except the NPU, whose plugin does not support an
+                f32 hint and keeps its own precision. OpenVINO's own CPU default is f16 on ARM and bf16 on x86
+                hosts with AMX or AVX512-BF16, and at either precision RF-DETR's logits collapse (no detections
+                clear a 0.5 threshold). ``None`` sends no hint and keeps the device default — faster where the
+                hardware computes natively in reduced precision (ARM CPU, Intel GPU/NPU), at that accuracy cost.
+                Accepted spellings are ``"auto"``, ``"f32"``, ``"f16"`` and ``"bf16"``, plus ``"float32"`` and
+                ``"float16"`` as aliases of ``"f32"`` and ``"f16"`` (the vocabulary ``openvino_precision`` uses at
+                export). Any other string is not validated here: it is passed through unchanged and OpenVINO
+                rejects it when compiling the model (e.g. ``"fp32"``).
             config: Further compile properties for ``compile_model``, e.g. ``{"INFERENCE_NUM_THREADS": 4}``. Applied
                 after *inference_precision*, so an ``INFERENCE_PRECISION_HINT`` given here wins.
 
@@ -100,8 +136,9 @@ class OpenVINOInference:
             core.set_property({"CACHE_DIR": cache_dir})
         model = core.read_model(model_path)
         properties: dict[str, Any] = {}
-        if inference_precision is not None:
-            properties["INFERENCE_PRECISION_HINT"] = _PRECISION_ALIASES.get(inference_precision, inference_precision)
+        precision_hint = _resolve_precision_hint(inference_precision, device)
+        if precision_hint is not None:
+            properties["INFERENCE_PRECISION_HINT"] = precision_hint
         properties.update(config or {})
         self.compiled_model = core.compile_model(model, device, properties)
         self.infer_request = self.compiled_model.create_infer_request()

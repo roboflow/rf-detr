@@ -433,6 +433,35 @@ class TestOpenVINOInferenceDeviceAndCache:
         assert _compile_call(core) == ("GPU", {"INFERENCE_PRECISION_HINT": "f32"})
 
     @pytest.mark.parametrize(
+        ("device", "expected_properties"),
+        [
+            ("CPU", {"INFERENCE_PRECISION_HINT": "f32"}),
+            ("AUTO", {"INFERENCE_PRECISION_HINT": "f32"}),
+            ("NPU", {}),
+            ("AUTO:NPU,CPU", {}),
+        ],
+    )
+    def test_default_precision_skips_npu(
+        self, tmp_path: Path, device: str, expected_properties: dict[str, str]
+    ) -> None:
+        """The default f32 hint is not sent to a device string naming the NPU, whose plugin rejects it."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            OpenVINOInference(xml_path, device=device)
+        assert _compile_call(core) == (device, expected_properties)
+
+    def test_explicit_precision_is_sent_to_npu(self, tmp_path: Path) -> None:
+        """An explicit hint is never dropped for the NPU: it reaches OpenVINO, which accepts or rejects it."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            OpenVINOInference(xml_path, device="NPU", inference_precision="f32")
+        assert _compile_call(core) == ("NPU", {"INFERENCE_PRECISION_HINT": "f32"})
+
+    @pytest.mark.parametrize(
         ("inference_precision", "expected_properties"),
         [
             ("bf16", {"INFERENCE_PRECISION_HINT": "bf16"}),
