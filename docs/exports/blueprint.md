@@ -236,9 +236,10 @@ Most of those need no real model: build a throwaway `ExportGraph` around a `Magi
 TFLite and TensorRT do not convert from PyTorch. They run an ONNX export first and convert its output, which means they must hand the ONNX stage a configuration rather than re-deriving one:
 
 ```python
-def onnx_stage(self) -> Any:
-    from rfdetr.export._onnx.exporter import OnnxConfig
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 
+
+def onnx_stage(self) -> OnnxConfig:
     return OnnxConfig.derive(self, opset_version=self.opset_version)
 
 
@@ -247,7 +248,7 @@ def _convert(self, graph: ExportGraph) -> str:
     return self.build_engine(str(onnx_path))
 ```
 
-`OnnxConfig.derive` copies every shared setting, `notes` included, so the intermediate `.onnx` a two-stage export passes on is named and annotated exactly as a direct `format="onnx"` export would be. Composing the ONNX exporter is safe because the export-mode switch in `__call__` is idempotent.
+`OnnxConfig.derive` copies every shared setting, `notes` included, so the intermediate `.onnx` a two-stage export passes on is named and annotated exactly as a direct `format="onnx"` export would be. Composing the ONNX exporter is safe because the export-mode switch in `__call__` is idempotent, and importing it at module scope is safe because loading `rfdetr.export._onnx.exporter` imports no ONNX package — it imports `onnx` inside the methods that use it, so TFLite can still load TensorFlow first. `TestExportDependencyCheck` in `tests/export/test_export.py` pins that.
 
 ### Validating rather than copying a setting
 
