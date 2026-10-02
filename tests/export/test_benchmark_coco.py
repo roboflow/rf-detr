@@ -10,6 +10,7 @@ Everything runs on a tiny synthetic COCO file written to ``tmp_path``; no networ
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from unittest import mock
@@ -21,6 +22,7 @@ from PIL import Image
 
 from rfdetr.export._benchmark import (
     CocoValSubset,
+    _download,
     evaluate_coco_map,
     fetch_coco_val2017,
     select_coco_val_ids,
@@ -77,6 +79,40 @@ def _write_coco(root: Path) -> CocoValSubset:
     annotations_path = annotations_dir / "instances_val2017.json"
     annotations_path.write_text(json.dumps({"images": images, "annotations": annotations, "categories": categories}))
     return CocoValSubset(images_dir=images_dir, annotations_path=annotations_path, image_ids=(1, 2, 3))
+
+
+def _set_image_field(annotations_path: Path, image_id: int, key: str, value: str) -> None:
+    """Rewrite one field of one image record in a COCO annotation file, as a tampered download would.
+
+    Examples:
+        >>> import tempfile
+        >>> subset = _write_coco(Path(tempfile.mkdtemp()))
+        >>> _set_image_field(subset.annotations_path, 1, "file_name", "../evil.jpg")
+        >>> json.loads(subset.annotations_path.read_text())["images"][0]["file_name"]
+        '../evil.jpg'
+    """
+    data = json.loads(annotations_path.read_text())
+    next(image for image in data["images"] if image["id"] == image_id)[key] = value
+    annotations_path.write_text(json.dumps(data))
+
+
+class _FakeResponse(io.BytesIO):
+    """An ``urlopen`` response stand-in: a byte stream whose ``Content-Length`` may promise more than it holds.
+
+    Args:
+        body: Bytes the response actually delivers.
+        content_length: Size the ``Content-Length`` header announces.
+
+    Examples:
+        >>> response = _FakeResponse(b"abc", content_length=100)
+        >>> response.read(), response.headers["Content-Length"]
+        (b'abc', '100')
+    """
+
+    def __init__(self, body: bytes, content_length: int) -> None:
+        """Store *body* as the stream and announce *content_length* in the headers."""
+        super().__init__(body)
+        self.headers = {"Content-Length": str(content_length)}
 
 
 def _image_id(image: Image.Image) -> int:
@@ -152,7 +188,7 @@ class TestFetchCocoVal2017:
     """``fetch_coco_val2017`` downloads only the selected images that are not on disk yet."""
 
     def test_downloads_only_missing_images(self, tmp_path: Path) -> None:
-        """An image already on disk is not fetched again; a missing one is fetched from its ``coco_url``.
+        """An image already on disk is not fetched again; a missing one is fetched from the fixed val2017 URL.
 
         Cookbooks rerun this cell on every session, so a second run must not re-download the subset.
         """
@@ -164,6 +200,92 @@ class TestFetchCocoVal2017:
             "http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "val2017" / "000000000002.jpg"
         )
         assert subset.image_ids == (1, 2, 3)
+
+    @pytest.mark.parametrize("file_name", ["../evil.jpg", "/abs/evil.jpg", "..", pytest.param("", id="empty")])
+    def test_file_name_outside_images_dir_is_refused(self, tmp_path: Path, file_name: str) -> None:
+        """A ``file_name`` that is not a bare name inside ``val2017/`` raises before anything is downloaded.
+
+        The annotation file travels over plain HTTP, so its ``file_name`` is untrusted: a ``../`` component or an
+        absolute path would otherwise choose where the image is written. ``..`` and the empty name pass a basename-only
+        check, which is why the destination is also resolved against ``val2017/``.
+        """
+        subset = _write_coco(tmp_path)
+        _set_image_field(subset.annotations_path, 2, "file_name", file_name)
+        with mock.patch("rfdetr.export._benchmark._download") as download:
+            with pytest.raises(ValueError, match="Refusing COCO image file name"):
+                fetch_coco_val2017(tmp_path, n_images=None)
+        download.assert_not_called()
+
+    def test_image_url_ignores_the_annotation_coco_url(self, tmp_path: Path) -> None:
+        """Each image is fetched from the fixed val2017 host, never from the record's own ``coco_url``.
+
+        A tampered ``coco_url`` (``file://``, another host) would otherwise turn the fetch into a local-file copy or a
+        request to an attacker-chosen server.
+        """
+        subset = _write_coco(tmp_path)
+        _set_image_field(subset.annotations_path, 2, "coco_url", "file:///etc/passwd")
+        (tmp_path / "val2017" / "000000000002.jpg").unlink()
+        with mock.patch("rfdetr.export._benchmark._download") as download:
+            fetch_coco_val2017(tmp_path, n_images=None)
+        download.assert_called_once_with(
+            "http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "val2017" / "000000000002.jpg"
+        )
+
+    def test_missing_annotations_use_the_shared_zip_downloader(self, tmp_path: Path) -> None:
+        """Without ``instances_val2017.json`` the annotation archive goes through the shared retrying zip downloader.
+
+        That downloader rejects truncated archives, guards extraction against path traversal, and serializes concurrent
+        callers; ``is_complete`` lets a caller queued behind another process skip an archive that process just finished.
+        """
+        subset = _write_coco(tmp_path)
+        annotations = subset.annotations_path.read_text()
+        subset.annotations_path.unlink()
+        with mock.patch(
+            "rfdetr.datasets._develop._download_and_extract",
+            side_effect=lambda *args, **kwargs: subset.annotations_path.write_text(annotations),
+        ) as download_and_extract:
+            fetch_coco_val2017(tmp_path, n_images=None)
+        download_and_extract.assert_called_once_with(
+            "http://images.cocodataset.org/annotations/annotations_trainval2017.zip", tmp_path, is_complete=mock.ANY
+        )
+        assert download_and_extract.call_args.kwargs["is_complete"]() is True
+
+
+class TestDownload:
+    """``_download`` puts a file at its destination only once the whole body has arrived."""
+
+    def test_truncated_transfer_leaves_no_file(self, tmp_path: Path) -> None:
+        """A body shorter than ``Content-Length`` raises and leaves neither the image nor its ``.part`` behind.
+
+        ``fetch_coco_val2017`` treats any file at the destination as already downloaded, so a truncated image that
+        survived on disk would never be re-fetched; with nothing left behind, the next run fetches it again.
+        """
+        dest = tmp_path / "val2017" / "000000000002.jpg"
+        with mock.patch("rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"abc", content_length=100)):
+            with pytest.raises(OSError, match="Truncated download"):
+                _download("http://images.cocodataset.org/val2017/000000000002.jpg", dest)
+        assert list(dest.parent.iterdir()) == []
+
+    def test_stale_part_file_is_replaced_by_the_complete_image(self, tmp_path: Path) -> None:
+        """A ``.part`` left by a killed run is overwritten, and the complete body lands at the destination.
+
+        A process killed mid-transfer leaves only the ``.part`` sibling; the rerun must recover from it, not keep it.
+        """
+        dest = tmp_path / "000000000002.jpg"
+        (tmp_path / "000000000002.jpg.part").write_bytes(b"stale")
+        with mock.patch(
+            "rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"jpeg-bytes", content_length=10)
+        ):
+            _download("http://images.cocodataset.org/val2017/000000000002.jpg", dest)
+        assert [(path.name, path.read_bytes()) for path in tmp_path.iterdir()] == [("000000000002.jpg", b"jpeg-bytes")]
+
+    def test_request_carries_a_timeout(self, tmp_path: Path) -> None:
+        """Each request is opened with a socket timeout, so a stalled server fails the cell instead of hanging it."""
+        with mock.patch(
+            "rfdetr.export._benchmark.urlopen", return_value=_FakeResponse(b"jpeg-bytes", content_length=10)
+        ) as urlopen:
+            _download("http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "000000000002.jpg")
+        assert urlopen.call_args.kwargs["timeout"] > 0
 
 
 class TestEvaluateCocoMap:

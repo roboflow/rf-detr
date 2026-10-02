@@ -33,6 +33,9 @@ from rfdetr.export._benchmark import measure_memory as measure_memory
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
 from rfdetr.utilities.logger import get_logger
 
+# The public surface is the timing API only; the LW-DETR CLI helpers below stay importable by name but are not exported.
+__all__ = ["BenchmarkResult", "MemoryResult", "measure_latency", "measure_memory"]
+
 logger = get_logger()
 
 

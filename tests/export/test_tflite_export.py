@@ -266,6 +266,21 @@ class TestTFLiteCalibrationDataWarning:
             TFLiteExporter(TFLiteConfig(output_dir=tmp_path, quantization="int8"))
         assert not [w for w in caught if "calibration_data" in str(w.message)]
 
+    def test_configured_calibration_data_is_never_read(self, tmp_path: Path, mock_prepare_calib: Any) -> None:
+        """A configured ``calibration_data`` never reaches ``_prepare_calibration_data``; ``None`` is passed instead.
+
+        The value is documented as ignored, so it must not be read or validated either: forwarding it would turn a
+        missing path into a ``FileNotFoundError`` raised after the full forward pass and ONNX stage. Runs without
+        ``onnx2tf``, so the CPU job covers it.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            exporter = TFLiteExporter(TFLiteConfig(output_dir=tmp_path, calibration_data="/nonexistent/calib.npy"))
+
+        exporter._prepare_calibration(tmp_path / "model.onnx", tmp_path)
+
+        assert mock_prepare_calib.call_args[0][1] is None  # second positional arg
+
 
 @onnx2tf_available
 class TestExportTfliteConverter:
@@ -518,19 +533,6 @@ class TestExportTfliteConverter:
         result = _run_convert_onnx(onnx_model, tflite_output)
         assert isinstance(result, Path)
 
-    def test_calibration_data_forwarded_to_prepare(
-        self,
-        onnx_model: Path,
-        tflite_output: Path,
-        fake_onnx2tf: Any,
-        mock_prepare_calib: Any,
-    ) -> None:
-        """Verify that calibration_data is passed to _prepare_calibration_data."""
-        calib_path = "/some/calib.npy"
-        _run_convert_onnx(onnx_model, tflite_output, calibration_data=calib_path)
-        call_args = mock_prepare_calib.call_args
-        assert call_args[0][1] == calib_path  # second positional arg
-
     def test_max_images_forwarded_to_prepare(
         self,
         onnx_model: Path,
@@ -756,15 +758,27 @@ class TestExportFormatParameter:
             obj.export(format="banana", output_dir=str(self._tmp_path / "out"))
 
     def test_calibration_data_forwarded(self) -> None:
-        """Verify calibration_data kwarg reaches the TFLite conversion."""
+        """Verify calibration_data kwarg reaches the TFLite exporter's config, warning that it is ignored."""
         obj = self._make_rfdetr()
         calib = "/my/calib.npy"
-        obj.export(
-            format="tflite",
-            output_dir=str(self._tmp_path / "out"),
-            calibration_data=calib,
-        )
+        with pytest.warns(UserWarning, match=r"`calibration_data` has no effect on the exported \.tflite"):
+            obj.export(
+                format="tflite",
+                output_dir=str(self._tmp_path / "out"),
+                calibration_data=calib,
+            )
         assert self._exported_config().calibration_data == calib
+
+    def test_calibration_data_warning_points_at_the_export_call(self) -> None:
+        """The ignored-``calibration_data`` warning is attributed to the line calling ``RFDETR.export``.
+
+        A ``stacklevel`` off by one frame reports ``detr.py`` (or an exporter module) instead, which breaks
+        ``warnings.filterwarnings(..., module=...)`` filters and hides which notebook cell passed the argument.
+        """
+        obj = self._make_rfdetr()
+        with pytest.warns(UserWarning, match=r"`calibration_data` has no effect") as record:
+            obj.export(format="tflite", output_dir=str(self._tmp_path / "out"), calibration_data="/my/calib.npy")
+        assert [w.filename for w in record if "calibration_data" in str(w.message)] == [__file__]
 
     def test_max_images_forwarded(self) -> None:
         """Verify max_images kwarg reaches the TFLite conversion."""

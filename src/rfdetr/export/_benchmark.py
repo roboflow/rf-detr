@@ -19,15 +19,19 @@ Private module: no compatibility guarantee across versions. Formerly duplicated 
 from __future__ import annotations
 
 import gc
+import os
 import platform
+import shutil
 import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import quote
+from urllib.request import urlopen
 
 import numpy as np
 import supervision as sv
@@ -36,6 +40,7 @@ from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.export._runtime.decode import decode_detections
 
 if TYPE_CHECKING:
+    import torch
     from PIL import Image
 
 
@@ -68,21 +73,26 @@ def _mean_std(timings: list[float]) -> tuple[float, float]:
     return float(arr.mean()), float(arr.std())
 
 
-def _measure_cuda(fn: Callable[[], object], warmup: int, runs: int) -> tuple[float, float]:
-    """Time ``fn`` with CUDA events — captures device-side kernel execution, not Python overhead."""
+def _measure_cuda(fn: Callable[[], object], warmup: int, runs: int, device: torch.device) -> tuple[float, float]:
+    """Time ``fn`` with CUDA events on *device* — captures device-side kernel execution, not Python overhead.
+
+    Events are recorded on *device*'s current stream and every synchronize targets *device*, so ``"cuda:1"`` is timed on
+    GPU 1 even while another GPU is the process's current device.
+    """
     import torch
 
     for _ in range(warmup):
         fn()
-    torch.cuda.synchronize()
+    torch.cuda.synchronize(device)
+    stream = torch.cuda.current_stream(device)
     start = torch.cuda.Event(enable_timing=True)  # type: ignore[no-untyped-call]
     end = torch.cuda.Event(enable_timing=True)  # type: ignore[no-untyped-call]
     timings: list[float] = []
     for _ in range(runs):
-        start.record()
+        start.record(stream)
         fn()
-        end.record()
-        torch.cuda.synchronize()
+        end.record(stream)
+        torch.cuda.synchronize(device)
         timings.append(start.elapsed_time(end))
     return _mean_std(timings)
 
@@ -99,17 +109,47 @@ def _measure_wall_clock(fn: Callable[[], object], warmup: int, runs: int) -> tup
     return _mean_std(timings)
 
 
+def _cuda_device(device: str | torch.device) -> torch.device | None:
+    """Parse *device* and return it when it names a CUDA device, else ``None``.
+
+    Dispatch matches the parsed device type rather than the raw string, so ``"cuda:0"`` and ``torch.device("cuda", 1)``
+    take the CUDA path just like ``"cuda"`` does.
+
+    Args:
+        device: Device string or :class:`torch.device`.
+
+    Returns:
+        The parsed CUDA device, or ``None`` for any other device type.
+
+    Raises:
+        RuntimeError: If *device* is a string torch cannot parse as a device.
+
+    Examples:
+        >>> import torch
+        >>> _cuda_device("cuda:1")
+        device(type='cuda', index=1)
+        >>> _cuda_device(torch.device("cuda"))
+        device(type='cuda')
+        >>> _cuda_device("cpu") is None
+        True
+    """
+    import torch
+
+    parsed = torch.device(device)
+    return parsed if parsed.type == "cuda" else None
+
+
 def measure_latency(
     fn: Callable[[], object],
     *,
     label: str,
-    device: str = "cpu",
+    device: str | torch.device = "cpu",
     warmup: int = 20,
     runs: int = 100,
 ) -> BenchmarkResult:
     """Measure the latency of a zero-argument callable.
 
-    ``device="cuda"`` times with CUDA events; any other value times with ``time.perf_counter``. Pass
+    A CUDA device times with CUDA events on that device; any other device times with ``time.perf_counter``. Pass
     a thunk wrapping only the runtime's forward call to measure ``forward_ms``, or a thunk wrapping
     preprocess + forward + postprocess to measure ``end2end_ms`` — the caller chooses the scope by
     what it wraps, this function only times whatever it is given.
@@ -117,12 +157,18 @@ def measure_latency(
     Args:
         fn: Zero-argument callable to time.
         label: Name for the resulting :class:`BenchmarkResult` row, e.g. ``"TensorRT forward"``.
-        device: ``"cuda"`` selects the CUDA-event timer; any other value uses ``perf_counter``.
+        device: Device the callable runs on, as a string or :class:`torch.device`. Any CUDA device — ``"cuda"``,
+            ``"cuda:1"``, ``torch.device("cuda", 1)`` — selects the CUDA-event timer on that device; any other device
+            type (``"cpu"``, ``"mps"``, ...) uses ``perf_counter``.
         warmup: Untimed warm-up calls before measurement starts, to skip first-call JIT/lazy-init cost.
         runs: Timed calls used to compute the mean and standard deviation.
 
     Returns:
         A :class:`BenchmarkResult` with ``mean_ms``, ``std_ms``, and the derived ``fps``.
+
+    Raises:
+        ValueError: If ``warmup`` is negative or ``runs`` is not positive.
+        RuntimeError: If ``device`` is a string torch cannot parse as a device.
 
     Examples:
         >>> result = measure_latency(lambda: sum(range(1000)), label="sum", warmup=1, runs=3)
@@ -136,8 +182,11 @@ def measure_latency(
     if runs <= 0:
         raise ValueError("runs must be positive")
 
-    measure = _measure_cuda if device == "cuda" else _measure_wall_clock
-    mean_ms, std_ms = measure(fn, warmup, runs)
+    cuda_device = _cuda_device(device)
+    if cuda_device is None:
+        mean_ms, std_ms = _measure_wall_clock(fn, warmup, runs)
+    else:
+        mean_ms, std_ms = _measure_cuda(fn, warmup, runs, cuda_device)
     return BenchmarkResult(label, mean_ms, std_ms)
 
 
@@ -208,16 +257,27 @@ def _sampled_delta_mb(read_bytes_in_use: Callable[[], int]) -> Iterator[MemoryRe
 
 
 def _rss_delta_mb() -> Iterator[MemoryResult]:
-    """Measure host resident memory across a block via ``psutil``."""
-    import psutil  # type: ignore[import-untyped]
+    """Measure host resident memory across a block via ``psutil``.
+
+    Raises:
+        ImportError: If ``psutil`` is not installed, naming the extra that installs it.
+    """
+    # Local import: psutil is an optional dependency, needed only by the host-memory reader.
+    try:
+        import psutil  # type: ignore[import-untyped]
+    except ImportError as err:
+        raise ImportError(
+            "measure_memory() reads host memory with psutil, which is not installed. "
+            "Install it with `pip install 'rfdetr[visual]'`."
+        ) from err
 
     gc.collect()
     process = psutil.Process()
     yield from _sampled_delta_mb(lambda: int(process.memory_info().rss))
 
 
-def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
-    """Measure device memory in use across a block via ``torch.cuda.mem_get_info``.
+def _cuda_free_delta_mb(device: torch.device) -> Iterator[MemoryResult]:
+    """Measure memory in use on *device* across a block via ``torch.cuda.mem_get_info``.
 
     Device-wide, unlike ``torch.cuda.memory_allocated()`` — it also captures allocations made outside PyTorch's own
     caching allocator, such as ONNX Runtime's CUDA execution provider or a TensorRT engine's own ``cudaMalloc`` calls.
@@ -225,19 +285,19 @@ def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
     import torch
 
     def device_bytes_in_use() -> int:
-        torch.cuda.synchronize()
-        free, total = torch.cuda.mem_get_info()
+        torch.cuda.synchronize(device)
+        free, total = torch.cuda.mem_get_info(device)
         return int(total - free)
 
     yield from _sampled_delta_mb(device_bytes_in_use)
 
 
 @contextmanager
-def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
+def measure_memory(*, device: str | torch.device = "cpu") -> Iterator[MemoryResult]:
     """Measure the memory growth caused by the code inside a ``with`` block.
 
-    ``device="cuda"`` reads free-device-memory shrinkage via ``torch.cuda.mem_get_info()``; any
-    other value reads host resident-memory growth via ``psutil``. Bracket both the runtime's
+    A CUDA device reads that device's free-memory shrinkage via ``torch.cuda.mem_get_info()``; any
+    other device reads host resident-memory growth via ``psutil``. Bracket both the runtime's
     construction *and* its first inference call — several runtimes allocate lazily (an ONNX
     Runtime session grows its arena on first ``run``, an ExecuTorch CoreML program compiles on
     first ``execute``), so closing the block right after construction undercounts the real
@@ -249,10 +309,16 @@ def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
     few milliseconds, or one that never releases the GIL, can collect no samples at all.
 
     Args:
-        device: ``"cuda"`` selects the device-memory reader; any other value uses host RSS.
+        device: Device to measure, as a string or :class:`torch.device`. Any CUDA device — ``"cuda"``, ``"cuda:1"``,
+            ``torch.device("cuda", 1)`` — selects the device-memory reader for that device; any other device type
+            uses host RSS.
 
     Yields:
         A :class:`MemoryResult` filled in once the block exits.
+
+    Raises:
+        RuntimeError: If ``device`` is a string torch cannot parse as a device.
+        ImportError: On the host-memory path, if ``psutil`` is not installed (``pip install 'rfdetr[visual]'``).
 
     Note:
         Both figures are measurements, not guarantees, and neither is a per-runtime sandbox. In one
@@ -277,8 +343,8 @@ def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
         >>> isinstance(mem.delta_mb, float)
         True
     """
-    reader = _cuda_free_delta_mb if device == "cuda" else _rss_delta_mb
-    yield from reader()
+    cuda_device = _cuda_device(device)
+    yield from (_rss_delta_mb() if cuda_device is None else _cuda_free_delta_mb(cuda_device))
 
 
 def _fmt_ms(result: BenchmarkResult | None) -> str:
@@ -454,6 +520,10 @@ def visualize_detections(detections: sv.Detections, image: Image.Image, save_pat
 #: Annotation archive for COCO 2017; ``instances_val2017.json`` is the only member the accuracy helpers read.
 _COCO_ANNOTATIONS_URL = "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"
 _COCO_VAL_ANNOTATIONS_MEMBER = "annotations/instances_val2017.json"
+#: Fixed origin of the val2017 JPEGs; image URLs are built from it, never from an annotation record's ``coco_url``.
+_COCO_VAL2017_IMAGE_URL = "http://images.cocodataset.org/val2017/"
+#: Socket timeout of each image request, in seconds: a stalled connection fails instead of hanging the cell.
+_DOWNLOAD_TIMEOUT_S = 60.0
 #: Score floor for mAP: low enough to keep the whole precision-recall curve, as ``RFDETR.evaluate`` does.
 _COCO_EVAL_THRESHOLD = 0.001
 
@@ -488,12 +558,72 @@ class CocoMapResult:
     n_images: int
 
 
-def _download(url: str, dest: Path) -> None:
-    """Download *url* to *dest*, creating parent directories; a separate function so tests can replace it."""
-    import urllib.request
+def _download(url: str, dest: Path, timeout: float = _DOWNLOAD_TIMEOUT_S) -> None:
+    """Download *url* to *dest* only once the whole body has arrived; a separate function so tests can replace it.
 
+    The body is streamed into a ``.part`` sibling and moved onto *dest* with :func:`os.replace` after its size
+    matches ``Content-Length``. An interrupted, timed-out, or truncated transfer therefore never leaves a partial file
+    at *dest*, which the image cache would otherwise treat as finished on every later run.
+
+    Args:
+        url: Source URL.
+        dest: Final file path; parent directories are created.
+        timeout: Socket timeout in seconds, applied to the connection and to each read.
+
+    Raises:
+        OSError: If the request fails or times out (``urllib.error.URLError`` is an ``OSError``), or the body is
+            shorter than ``Content-Length``. The ``.part`` file is removed and *dest* is left untouched.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, dest)
+    part = dest.with_name(f"{dest.name}.part")
+    try:
+        with urlopen(url, timeout=timeout) as response, part.open("wb") as file:
+            shutil.copyfileobj(response, file)
+            expected = response.headers.get("Content-Length")
+        actual = part.stat().st_size
+        if expected is not None and expected.isdigit() and actual != int(expected):
+            raise OSError(f"Truncated download for {url!r}: got {actual} bytes, expected {expected}.")
+        os.replace(part, dest)
+    finally:
+        with suppress(FileNotFoundError):
+            part.unlink()
+
+
+def _coco_image_path(images_dir: Path, file_name: object) -> Path:
+    """Return where the COCO image *file_name* is stored, refusing any name that would leave *images_dir*.
+
+    The annotation file travels over plain HTTP, so its ``file_name`` values are untrusted. Only a bare file name
+    that resolves to a direct child of *images_dir* is accepted: nested and absolute paths fail the bare-name check,
+    and ``..`` or the empty name, which pass it, fail the resolved-parent check.
+
+    Args:
+        images_dir: Directory that holds the ``val2017`` JPEGs.
+        file_name: The annotation record's ``file_name`` value.
+
+    Returns:
+        ``images_dir / file_name``.
+
+    Raises:
+        ValueError: If *file_name* is not a string naming a file directly inside *images_dir*.
+
+    Examples:
+        >>> _coco_image_path(Path("val2017"), "000000000139.jpg").name
+        '000000000139.jpg'
+        >>> _coco_image_path(Path("val2017"), "../evil.jpg")
+        Traceback (most recent call last):
+        ...
+        ValueError: Refusing COCO image file name '../evil.jpg': it must name a file directly inside val2017.
+    """
+    images_dir_resolved = images_dir.resolve()
+    if (
+        not isinstance(file_name, str)
+        or Path(file_name).name != file_name
+        or (images_dir_resolved / file_name).resolve().parent != images_dir_resolved
+    ):
+        raise ValueError(
+            f"Refusing COCO image file name {file_name!r}: it must name a file directly inside {images_dir}."
+        )
+    return images_dir / file_name
 
 
 def select_coco_val_ids(annotations_path: Path, n_images: int | None = 500, seed: int = 0) -> list[int]:
@@ -528,8 +658,10 @@ def select_coco_val_ids(annotations_path: Path, n_images: int | None = 500, seed
 def fetch_coco_val2017(root: Path, n_images: int | None = 500, seed: int = 0) -> CocoValSubset:
     """Download the COCO val2017 annotations and the selected images into *root*, skipping files already present.
 
-    Only the images in the subset are fetched, one by one from their ``coco_url``, so a 500-image subset avoids
-    the full 780 MB image archive. The annotation file comes from the 241 MB annotation archive the first time.
+    Only the images in the subset are fetched, one by one from the fixed ``images.cocodataset.org/val2017/`` URL
+    (never from a record's ``coco_url``), so a 500-image subset avoids the full 780 MB image archive. The first run
+    downloads the 241 MB annotation archive and extracts all of it under ``root/annotations/``; the archive itself is
+    then deleted.
 
     Args:
         root: Directory that receives ``annotations/instances_val2017.json`` and ``val2017/``.
@@ -539,29 +671,33 @@ def fetch_coco_val2017(root: Path, n_images: int | None = 500, seed: int = 0) ->
     Returns:
         The subset, ready for :func:`evaluate_coco_map`.
 
+    Raises:
+        ValueError: If a selected record's ``file_name`` is not a bare name inside ``val2017/``; raised before any
+            image is downloaded.
+
     Examples:
         >>> fetch_coco_val2017.__name__
         'fetch_coco_val2017'
     """
     import json
-    import zipfile
     from concurrent.futures import ThreadPoolExecutor
 
     root = Path(root)
     annotations_path = root / _COCO_VAL_ANNOTATIONS_MEMBER
     if not annotations_path.exists():
-        archive = root / "annotations_trainval2017.zip"
-        if not archive.exists():
-            _download(_COCO_ANNOTATIONS_URL, archive)
-        with zipfile.ZipFile(archive) as zf:
-            zf.extract(_COCO_VAL_ANNOTATIONS_MEMBER, root)
+        # Imported here: ``rfdetr.datasets`` pulls in torch and torchvision, which this module otherwise keeps lazy.
+        from rfdetr.datasets._develop import _download_and_extract
+
+        _download_and_extract(_COCO_ANNOTATIONS_URL, root, is_complete=annotations_path.exists)
     image_ids = select_coco_val_ids(annotations_path, n_images, seed=seed)
     images_dir = root / "val2017"
     selected = set(image_ids)
     records = [image for image in json.loads(annotations_path.read_text())["images"] if image["id"] in selected]
-    missing = [record for record in records if not (images_dir / record["file_name"]).exists()]
+    # Validate every selected name up front, so one poisoned record stops the run before anything is written.
+    image_paths = [_coco_image_path(images_dir, record["file_name"]) for record in records]
+    missing = [path for path in image_paths if not path.exists()]
     with ThreadPoolExecutor(max_workers=16) as pool:
-        list(pool.map(lambda record: _download(record["coco_url"], images_dir / record["file_name"]), missing))
+        list(pool.map(lambda path: _download(_COCO_VAL2017_IMAGE_URL + quote(path.name), path), missing))
     return CocoValSubset(images_dir=images_dir, annotations_path=annotations_path, image_ids=tuple(image_ids))
 
 
