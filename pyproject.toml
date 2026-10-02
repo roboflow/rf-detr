@@ -48,6 +48,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+stream = [
+    "opencv-python>=4.8",              # Match the distribution used by supervision 0.29
+    "mss>=9",                         # Desktop capture
+    "yt-dlp>=2024.8.6",               # Resolve YouTube video streams
+]
 lora = [
     "peft",                            # LoRA backbone fine-tuning
 ]

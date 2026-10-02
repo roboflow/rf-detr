@@ -24,9 +24,15 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str) -> An
         import coremltools as ct
     except ImportError as exc:
         raise ImportError("CoreML inference requires coremltools.") from exc
-    units = {"auto": ct.ComputeUnit.ALL, "cpu": ct.ComputeUnit.CPU_ONLY}
+    units = {
+        "auto": ct.ComputeUnit.ALL,
+        "cpu": ct.ComputeUnit.CPU_ONLY,
+        "cpu_and_gpu": ct.ComputeUnit.CPU_AND_GPU,
+    }
     if device not in units:
-        raise ValueError("CoreML accepts auto or cpu. Its GPU and Neural Engine policies also permit CPU execution.")
+        raise ValueError(
+            "CoreML accepts auto, cpu, or cpu_and_gpu. Its GPU and Neural Engine policies also permit CPU execution."
+        )
     session = ct.models.MLModel(str(path), compute_units=units[device])
     spec = session.get_spec()
     (input_info,) = spec.description.input
