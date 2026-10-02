@@ -18,8 +18,7 @@ import supervision as sv
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 
-import rfdetr.detr as detr_module
-from rfdetr import RFDETRNano, RFDETRSegNano
+from rfdetr import RFDETRNano, RFDETRSegNano, _prediction
 from rfdetr.detr import RFDETR
 from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
 from tests._online import is_online
@@ -753,8 +752,8 @@ class TestPredictUint8Conversion:
         try:
             torch.set_default_dtype(dtype)
             expected = F.to_tensor(image)
-            actual = detr_module._uint8_chw_to_float(
-                detr_module._uint8_image_to_chw_view(image), torch.tensor(255, dtype=dtype)
+            actual = _prediction._uint8_chw_to_float(
+                _prediction._uint8_image_to_chw_view(image), torch.tensor(255, dtype=dtype)
             )
         finally:
             torch.set_default_dtype(previous_dtype)
@@ -777,7 +776,7 @@ class TestPredictUint8Conversion:
         model = _DummyRFDETR()
         to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
 
-        with patch("rfdetr.detr.F.to_tensor", to_tensor_spy):
+        with patch("rfdetr._prediction.F.to_tensor", to_tensor_spy):
             model.predict(image, include_source_image=include_source_image)
 
         to_tensor_spy.assert_not_called()
@@ -798,8 +797,10 @@ class TestPredictUint8Conversion:
         to_tensor_spy = MagicMock(side_effect=AssertionError("uint8 input unexpectedly used F.to_tensor"))
 
         with (
-            patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy,
-            patch("rfdetr.detr.F.to_tensor", to_tensor_spy),
+            patch(
+                "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
+            ) as converter_spy,
+            patch("rfdetr._prediction.F.to_tensor", to_tensor_spy),
         ):
             model.predict(image)
 
@@ -818,7 +819,7 @@ class TestPredictUint8Conversion:
         image = rng.integers(0, 256, size=(17, 29, 1), dtype=np.uint8)
 
         expected = F.to_tensor(image)
-        actual = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(image), torch.tensor(255.0))
+        actual = _prediction._uint8_chw_to_float(_prediction._uint8_image_to_chw_view(image), torch.tensor(255.0))
 
         assert actual.dtype == expected.dtype
         assert actual.shape == expected.shape
@@ -831,7 +832,9 @@ class TestPredictUint8Conversion:
         model = _DummyRFDETR()
         image = PIL.Image.new("RGB", (29, 17), color=(1, 127, 255))
 
-        with patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy:
+        with patch(
+            "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
+        ) as converter_spy:
             detections = model.predict(image)
 
         converter_spy.assert_called_once()
@@ -845,7 +848,9 @@ class TestPredictUint8Conversion:
         image.flags.writeable = False
 
         with (
-            patch("rfdetr.detr._uint8_image_to_chw_view", wraps=detr_module._uint8_image_to_chw_view) as converter_spy,
+            patch(
+                "rfdetr._prediction._uint8_image_to_chw_view", wraps=_prediction._uint8_image_to_chw_view
+            ) as converter_spy,
             pytest.warns(UserWarning, match="not writable"),
         ):
             detections = model.predict(image)
@@ -864,9 +869,9 @@ class TestPredictUint8Conversion:
         torchvision's host-side conversion.
         """
         image = np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=2)
-        chw = detr_module._uint8_image_to_chw_view(image)
+        chw = _prediction._uint8_image_to_chw_view(image)
 
-        assert detr_module._uint8_chw_to_float(chw, torch.tensor(255.0)).equal(F.to_tensor(image))
+        assert _prediction._uint8_chw_to_float(chw, torch.tensor(255.0)).equal(F.to_tensor(image))
 
     @pytest.mark.gpu
     def test_deferred_widening_is_bit_exact_on_real_cuda(self) -> None:
@@ -880,9 +885,9 @@ class TestPredictUint8Conversion:
         image = np.arange(256, dtype=np.uint8).reshape(16, 16, 1).repeat(3, axis=2)
         expected = F.to_tensor(image)
 
-        chw = detr_module._uint8_image_to_chw_view(image).pin_memory().to("cuda", non_blocking=True)
+        chw = _prediction._uint8_image_to_chw_view(image).pin_memory().to("cuda", non_blocking=True)
         scale = torch.tensor(255, device=chw.device, dtype=torch.get_default_dtype())
-        actual = detr_module._uint8_chw_to_float(chw, scale).cpu()
+        actual = _prediction._uint8_chw_to_float(chw, scale).cpu()
 
         assert actual.equal(expected)
 
@@ -896,8 +901,8 @@ class TestPredictUint8Conversion:
         dark = np.full((4, 5, 3), 51, dtype=np.uint8)
         bright = np.full((4, 5, 3), 255, dtype=np.uint8)
 
-        first = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(dark), scale)
-        second = detr_module._uint8_chw_to_float(detr_module._uint8_image_to_chw_view(bright), scale)
+        first = _prediction._uint8_chw_to_float(_prediction._uint8_image_to_chw_view(dark), scale)
+        second = _prediction._uint8_chw_to_float(_prediction._uint8_image_to_chw_view(bright), scale)
 
         assert first.equal(F.to_tensor(dark))
         assert second.equal(F.to_tensor(bright))
@@ -909,7 +914,7 @@ class TestPredictUint8Conversion:
         model.model.device = torch.device("cuda", 0)
         real_to = torch.Tensor.to
         real_tensor = torch.tensor
-        real_converter = detr_module._uint8_image_to_chw_view
+        real_converter = _prediction._uint8_image_to_chw_view
         chw_views: list[torch.Tensor] = []
         pinned_sources: list[torch.Tensor] = []
         pinned_tensors: list[torch.Tensor] = []
@@ -967,7 +972,7 @@ class TestPredictUint8Conversion:
             return real_tensor(data, **kwargs)
 
         with (
-            patch("rfdetr.detr._uint8_image_to_chw_view", converter_spy),
+            patch("rfdetr._prediction._uint8_image_to_chw_view", converter_spy),
             patch.object(torch.Tensor, "pin_memory", pin_memory_spy),
             patch.object(torch.Tensor, "to", to_spy),
             patch.object(torch, "tensor", tensor_spy),
@@ -990,7 +995,7 @@ class TestPredictUint8Conversion:
         model = _DummyRFDETR()
         image = np.full((17, 29, 3), 0.5, dtype=np.float32)
 
-        with patch("rfdetr.detr.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy:
+        with patch("rfdetr._prediction.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy:
             model.predict(image)
 
         to_tensor_spy.assert_called_once_with(image)
@@ -1001,7 +1006,7 @@ class TestPredictUint8Conversion:
         image = np.zeros((1, 3, 17, 29), dtype=np.uint8)
 
         with (
-            patch("rfdetr.detr.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
+            patch("rfdetr._prediction.F.to_tensor", wraps=F.to_tensor) as to_tensor_spy,
             pytest.raises(ValueError, match="2/3 dimensional"),
         ):
             model.predict(image)
@@ -1043,7 +1048,7 @@ class TestPredictPixelRangeValidation:
         # ``torchvision.normalize`` has its own unrelated ``std.any()`` guard, so replace it to isolate the image-range
         # scans exercised by this test.
         with (
-            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict(image, include_source_image=False)
@@ -1063,7 +1068,7 @@ class TestPredictPixelRangeValidation:
 
         monkeypatch.setattr(requests, "get", fake_get)
         with (
-            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict("https://example.com/image.png", include_source_image=False)
@@ -1084,7 +1089,7 @@ class TestPredictPixelRangeValidation:
         model = _DummyRFDETR()
 
         with (
-            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict(str(img_path), include_source_image=False)
@@ -1095,7 +1100,7 @@ class TestPredictPixelRangeValidation:
         image = PIL.Image.new("RGB", (8, 8), color=(255, 255, 255))
 
         with (
-            patch("rfdetr.detr.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
+            patch("rfdetr._prediction.F.normalize", return_value=torch.zeros(1, 3, 28, 28)),
             patch.object(torch.Tensor, "any", side_effect=AssertionError("unexpected range scan")),
         ):
             model.predict(image)
@@ -1239,7 +1244,7 @@ class TestPredictShape:
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
-        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+        with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
             model.predict(img)
 
         resize_size = list(mock_resize.call_args[0][1])
@@ -1254,7 +1259,7 @@ class TestPredictShape:
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
-        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+        with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
             model.predict(img, shape=(378, 672))
 
         resize_size = list(mock_resize.call_args[0][1])
@@ -1273,7 +1278,7 @@ class TestPredictShape:
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
-        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+        with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
             model.predict(img, shape=(56, 56))
 
         resize_size = list(mock_resize.call_args[0][1])
@@ -1300,7 +1305,7 @@ class TestPredictShape:
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
-        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+        with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
             model.predict(img, shape=int_shape)  # type: ignore[arg-type]
 
         resize_size = list(mock_resize.call_args[0][1])
@@ -1363,7 +1368,7 @@ class TestPredictResizeMatchesTrainingInterpolation:
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
-        with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
+        with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
             model.predict(img)
 
         assert mock_resize.call_args.kwargs.get("antialias") is False, (

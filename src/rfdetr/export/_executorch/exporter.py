@@ -61,6 +61,7 @@ import torch
 from torch import nn
 
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -570,3 +571,7 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         output_file = self._resolve_output_file(output_dir, backend, backbone_only=graph.backbone_only)
         program = self._lower(graph, backend, output_file)
         return self._write(program, output_file)
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Use ExecuTorch's positional method inputs and outputs."""
+        return positional_metadata(metadata)

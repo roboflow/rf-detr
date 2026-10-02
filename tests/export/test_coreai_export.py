@@ -496,6 +496,7 @@ class TestExportFormatParameter:
             mock.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)),
             mock.patch("rfdetr.export._coreai.exporter.CoreAIExporter._convert", return_value=aimodel) as convert,
             mock.patch("rfdetr.export._coreai.exporter.CoreAIExporter.check_dependencies"),
+            mock.patch("rfdetr.export.base.write_metadata"),
             mock.patch("rfdetr.export._onnx.exporter.OnnxExporter._convert") as onnx_convert,
         ):
             self._mock_convert = convert
@@ -517,12 +518,21 @@ class TestExportFormatParameter:
         obj.model.resolution = 560
         obj.model.device = "cpu"
         obj.model.model.to.return_value = obj.model.model
+        obj.model.args = None
+        obj.model.class_names = ["object"]
+        obj.model.postprocess.num_select = 100
+        obj.model.postprocess.trace_alpha = 0.2
+        obj.model.postprocess.upsample_masks_to_image_size = True
+        obj.means = [0.485, 0.456, 0.406]
+        obj.stds = [0.229, 0.224, 0.225]
         obj.model_config = mock.MagicMock()
         obj.model_config.segmentation_head = False
         obj.model_config.use_grouppose_keypoints = False
         obj.model_config.patch_size = 14
         obj.model_config.num_windows = 1
         obj.model_config.num_channels = 3
+        obj.model_config.num_classes = 1
+        obj.model_config.num_keypoints_per_class = []
         return obj
 
     def test_coreai_format_dispatches_to_coreai_exporter(self) -> None:
@@ -568,9 +578,11 @@ class TestFloat16KeypointWarning:
         """The warning skips the exporter's frames, so ``filterwarnings(module=...)`` matches the caller's module."""
         detector = TestExportFormatParameter._make_rfdetr()
         detector.model_config.use_grouppose_keypoints = True
+        detector.model_config.num_keypoints_per_class = [3]
         with (
             _mocked_coreai_stack(),
             mock.patch("rfdetr.export.prepare.make_infer_image", return_value=torch.zeros(1, 3, 560, 560)),
+            mock.patch("rfdetr.export.base.write_metadata"),
             pytest.warns(UserWarning, match="Neural Engine") as caught,
         ):
             detector.export(format="coreai", coreai_precision="float16", output_dir=str(tmp_path / "out"))

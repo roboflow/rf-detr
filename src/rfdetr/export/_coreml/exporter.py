@@ -43,6 +43,7 @@ import torch
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._runtime.metadata import ExportMetadata, positional_metadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -365,3 +366,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         if self.config.verbose:
             logger.info(f"Successfully exported CoreML model to: {output_file}")
         return output_file
+
+    def _metadata_for_artifact(self, metadata: ExportMetadata, path: Path) -> ExportMetadata:
+        """Use CoreML's ordered model outputs as the artifact interface."""
+        return positional_metadata(metadata)

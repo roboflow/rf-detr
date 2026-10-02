@@ -346,3 +346,16 @@ class TestExporterCapabilityChecks:
 
         with pytest.warns(UserWarning, match="Probe export is experimental and work-in-progress"):
             _ExperimentalProbe(ExportConfig(output_dir=Path("out")))
+
+
+class TestRuntimeLoaderRegistry:
+    """Every supported export format has a lazy inference loader."""
+
+    def test_runtime_formats_match_export_formats(self) -> None:
+        """Adding an exporter requires its runtime loader in the same registry."""
+        assert set(registry_module.RUNTIME_LOADERS) == set(REGISTRY)
+
+    @pytest.mark.parametrize("format", sorted(REGISTRY))
+    def test_registered_loader_resolves(self, format: str) -> None:
+        """A typo in a dotted loader path fails before users open an artifact."""
+        assert callable(registry_module.resolve_runtime_loader(format))

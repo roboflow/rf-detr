@@ -20,7 +20,7 @@ description: Overview of exporting RF-DETR models to ONNX, TensorRT, TFLite, Lit
 
 RF-DETR supports exporting models to ONNX, TFLite, LiteRT, ExecuTorch, native CoreML, Apple Core AI and OpenVINO IR formats, enabling deployment across a wide range of inference frameworks, edge devices, and hardware accelerators.
 
-This page covers the shared export API, parameters, output-file naming, and the `inference-models` deployment path. For detailed installation, examples, and inference code, see the format guides:
+This page covers the shared export API, parameters, output-file naming, and the common `RFDETRInference` prediction API. For detailed installation, export settings, and runtime-specific details, see the format guides:
 
 - [ONNX Inference](onnx.md) — run an exported ONNX model with ONNX Runtime.
 - [TensorRT](tensorrt.md) — build a `.trt` engine for NVIDIA GPUs, directly or from an existing ONNX file.
@@ -30,6 +30,40 @@ This page covers the shared export API, parameters, output-file naming, and the 
 - [ExecuTorch](executorch.md) — `.pte` binaries for XNNPACK, CoreML, and QNN backends.
 - [Native CoreML](coreml.md) — `.mlpackage` export for Xcode / Apple platforms.
 - [Core AI](coreai.md) — `.aimodel` export for iOS / iPadOS / macOS 27+.
+
+## Predict with RFDETRInference
+
+Use `RFDETRInference` to predict with a live native model, a native checkpoint, or any full export supported below. It uses the same image inputs and Supervision results as `RFDETR.predict()`.
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model.onnx")
+detections = model.predict("image.jpg", threshold=0.5)
+```
+
+Detection and segmentation return `supervision.Detections`. Keypoint models return `supervision.KeyPoints`. A path ending in `.pth`, `.pt`, or `.ckpt` loads a native checkpoint. To use an existing model instance, pass it directly:
+
+```python
+from rfdetr import RFDETRInference, RFDETRSmall
+
+native_model = RFDETRSmall()
+model = RFDETRInference(native_model)
+```
+
+This wraps the live model without copying its weights. Each prediction reads the model's current state, including changes from training or inference optimization. Do not pass `device` with a live model. Configure the native model's device when you create it. When you pass a path, the `RFDETRInference` instance loads and owns the native model or exported runtime.
+
+The public constructor supports ONNX, TensorRT (`.trt` and `.engine`), TFLite, LiteRT, ExecuTorch, OpenVINO, native CoreML, Core AI, and native `.pth`/`.pt`/`.ckpt` checkpoints. Install the runtime package for the format on the target system. LiteRT currently cannot export a full keypoint model. Backbone-only exports contain features rather than predictions and are not supported by this prediction API.
+
+Pass a list to `predict()` to return one result per image. Each call runs the list as one batch. A fixed-shape export must accept that batch size and input shape. If it does not, `predict()` raises before runtime execution. It does not split or pad the list.
+
+`runtime_info` reports the selected runtime and device policy. Some vendor runtimes choose a physical device after model load, so the policy might not identify one chip. An explicit device request must match the runtime and available hardware. For example, TensorRT requires CUDA. Core AI accepts `auto` or `cpu`; its GPU and Neural Engine options express a preference and cannot pin execution to that device.
+
+New exports include versioned inference metadata. ONNX stores it in the model. Other formats use an adjacent `<artifact-name>.rfdetr.json` file. For example, `model.trt` uses `model.trt.rfdetr.json`. Keep this file with the artifact. For an older export, pass a JSON path or mapping through `metadata=`. The metadata must supply missing task, class, output, and preprocessing semantics. The loader rejects missing or conflicting values. User-defined `notes` are separate from inference metadata.
+
+When loading an artifact with a sidecar, the constructor reads and hashes the artifact to check that the metadata still matches it. Reuse the loaded `RFDETRInference` instance across predictions. Intermediate ONNX files created while exporting TensorRT or TFLite are conversion inputs, not final artifacts, and do not receive ONNX metadata. To load one directly, pass the missing semantics through `metadata=`.
+
+The shared API prepares images and decodes results on the native model's device or the runtime adapter's tensor device. TensorRT keeps tensors on CUDA through decoding. The other exported adapters currently use CPU tensors for these stages. Runtime outputs belong to each call, so later calls cannot change earlier results. The format guides retain advanced raw-runtime examples and numerical-reference helpers for low-level access and forward-only benchmarks; `RFDETRInference` is the common prediction path. The benchmarks below measure the per-runtime cookbook pipelines.
 
 ## Measured Performance by Hardware
 
@@ -226,7 +260,7 @@ The format guides listed above cover installation, export examples, output files
 
 ## Run Inference with `inference-models`
 
-[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.
+[`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is a separate deployment option. It supports PyTorch, ONNX, and TensorRT with automatic backend selection and its own API.
 
 ### Installation
 
@@ -296,14 +330,14 @@ If you want to add a format, or you are reading the export code, see [Exporter B
 
 ## Using the Exported Model
 
-Once exported, you can use the ONNX model with various inference frameworks. See [ONNX Inference](onnx.md) for a complete example, or the format-specific pages for other runtimes.
+Use `RFDETRInference` for the common prediction path. Each format guide also shows how to call its runtime directly when you need low-level access or forward-only timing.
 
 ## Next Steps
 
 After exporting your model, you may want to:
 
 - [Deploy to Roboflow](../learn/deploy.md) for cloud-based inference and workflow integration
-- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) for multi-backend inference (PyTorch, ONNX, TensorRT) with automatic backend selection
+- Use [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) as a separate option for PyTorch, ONNX, or TensorRT inference
 - Deploy TFLite and LiteRT `.tflite` models on mobile/edge devices with the LiteRT runtime
 - Deploy ExecuTorch `.pte` models on mobile/edge devices with the ExecuTorch runtime
 - Integrate with edge deployment frameworks like ONNX Runtime or OpenVINO
