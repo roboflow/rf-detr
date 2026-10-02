@@ -12,7 +12,7 @@ import threading
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import Mock, call
 
 import numpy as np
@@ -26,7 +26,6 @@ from rfdetr.export._benchmark import (
     BenchmarkResult,
     _artifact_size_mb,
     _decode_batch,
-    _enable_notebook_inline_matplotlib,
     _measure_cuda,
     _result_row,
     _sampled_delta_mb,
@@ -34,6 +33,7 @@ from rfdetr.export._benchmark import (
     cpu_brand,
     measure_latency,
     measure_memory,
+    parity,
     visualize_detections,
 )
 
@@ -517,46 +517,6 @@ class TestCpuBrand:
         assert cpu_brand() == "unknown CPU brand"
 
 
-class TestEnableNotebookInlineMatplotlib:
-    """Check IPython detection and the inline-backend magics it enables.
-
-    Every case injects a synthetic ``IPython`` module into ``sys.modules`` instead of importing
-    or patching the real package: the real IPython, first-imported inside a torch-loaded
-    pytest-xdist worker on this platform, intermittently SIGABRTs at interpreter teardown with a
-    native ``recursive_mutex lock failed`` error — reproduced in isolation (~1 in 3 runs) and never
-    on unrelated tests in this file, so it is specific to that first real import, not a logic bug.
-    A fake module sidesteps the real import path entirely and is deterministic on every platform.
-    """
-
-    def test_noop_when_ipython_is_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Outside a notebook/IPython kernel, the ``ImportError`` path is a silent no-op."""
-        monkeypatch.setitem(sys.modules, "IPython", None)
-
-        _enable_notebook_inline_matplotlib()
-
-    def test_noop_when_ipython_installed_but_no_active_shell(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A plain Python process has IPython importable but no active shell, so ``get_ipython()`` returns ``None``."""
-        fake_ipython = ModuleType("IPython")
-        fake_ipython.get_ipython = Mock(return_value=None)  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "IPython", fake_ipython)
-
-        _enable_notebook_inline_matplotlib()
-
-    def test_enables_inline_backend_when_ipython_shell_is_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Inside an active IPython shell, both documented magics are invoked in order."""
-        shell = Mock()
-        fake_ipython = ModuleType("IPython")
-        fake_ipython.get_ipython = Mock(return_value=shell)  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "IPython", fake_ipython)
-
-        _enable_notebook_inline_matplotlib()
-
-        assert shell.run_line_magic.call_args_list == [
-            call("matplotlib", "inline"),
-            call("config", "InlineBackend.close_figures = True"),
-        ]
-
-
 class TestVisualizeDetections:
     """Check detection annotation, label sourcing, and optional saving."""
 
@@ -633,3 +593,26 @@ class TestVisualizeDetections:
 
         assert save_path.is_file()
         assert str(save_path) in capsys.readouterr().out
+
+
+class TestParity:
+    """Check the raw-output drift summary against a reference runtime."""
+
+    def test_reports_drift_over_confident_queries_only(self) -> None:
+        """A drifting low-score query is excluded; only the confident query's drift is reported."""
+        ref_logits = np.array([[3.0, -4.0], [-5.0, -6.0]])
+        ref_boxes = np.zeros((2, 4))
+        logits = ref_logits + np.array([[0.5, 0.5], [9.0, 9.0]])
+
+        summary = parity(ref_boxes, ref_logits, ref_boxes + 0.01, logits)
+
+        assert summary == "max|Δlogit| 0.5000, max|Δbox| 0.01000 over 1 confident queries"
+
+    def test_flattens_leading_batch_axis(self) -> None:
+        """A batch-1 ``(1, Q, D)`` input compares like the ``(Q, D)`` one."""
+        ref_logits = np.array([[[3.0, -4.0]]])
+        ref_boxes = np.zeros((1, 1, 4))
+
+        assert parity(ref_boxes, ref_logits, ref_boxes, ref_logits) == (
+            "max|Δlogit| 0.0000, max|Δbox| 0.00000 over 1 confident queries"
+        )

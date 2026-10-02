@@ -34,6 +34,7 @@ from urllib.parse import quote
 from urllib.request import urlopen
 
 import numpy as np
+import numpy.typing as npt
 import supervision as sv
 
 from rfdetr.assets.coco_classes import COCO_CLASSES
@@ -476,19 +477,6 @@ def cpu_brand() -> str:
     return probe.stdout.strip() or _UNKNOWN_CPU_BRAND
 
 
-def _enable_notebook_inline_matplotlib() -> None:
-    """Enable inline matplotlib figures when running in IPython; a no-op outside a notebook/IPython kernel."""
-    try:
-        from IPython import get_ipython
-    except ImportError:
-        return
-
-    ipython = get_ipython()
-    if ipython is not None:
-        ipython.run_line_magic("matplotlib", "inline")
-        ipython.run_line_magic("config", "InlineBackend.close_figures = True")
-
-
 def visualize_detections(detections: sv.Detections, image: Image.Image, save_path: Path | None = None) -> None:
     """Annotate *detections* on *image* and display it inline (and optionally save it) in a notebook.
 
@@ -515,6 +503,43 @@ def visualize_detections(detections: sv.Detections, image: Image.Image, save_pat
         annotated.save(save_path)
         print(f"Saved annotated image: {save_path}")
     sv.plot_image(annotated)
+
+
+def parity(
+    ref_boxes: npt.ArrayLike,
+    ref_logits: npt.ArrayLike,
+    boxes: npt.ArrayLike,
+    logits: npt.ArrayLike,
+    min_score: float = 0.3,
+) -> str:
+    """Largest raw-output drift from a reference runtime, over the queries the reference scores above *min_score*.
+
+    Inputs are flattened to ``(queries, last_dim)`` first, so a batch-1 ``(1, Q, D)`` array and a ``(Q, D)`` array
+    compare the same way. Only queries whose reference sigmoid score exceeds *min_score* count: low-score queries are
+    discarded by decoding anyway, and their raw logits drift far more without changing any detection.
+
+    Args:
+        ref_boxes: Reference-runtime boxes.
+        ref_logits: Reference-runtime class logits.
+        boxes: Boxes of the runtime under test.
+        logits: Class logits of the runtime under test.
+        min_score: Sigmoid-score floor selecting which reference queries are compared.
+
+    Returns:
+        A one-line summary of the largest logit and box drift and how many queries it covers.
+
+    Examples:
+        >>> ref_logits = np.array([[3.0, -4.0], [-5.0, -6.0]])
+        >>> ref_boxes = np.zeros((2, 4))
+        >>> parity(ref_boxes, ref_logits, ref_boxes + 0.01, ref_logits + 0.5)
+        'max|Δlogit| 0.5000, max|Δbox| 0.01000 over 1 confident queries'
+    """
+    arrays = [np.asarray(a, dtype=np.float32) for a in (ref_boxes, ref_logits, boxes, logits)]
+    ref_boxes, ref_logits, boxes, logits = (a.reshape(-1, a.shape[-1]) for a in arrays)
+    confident = 1.0 / (1.0 + np.exp(-ref_logits.max(axis=1))) > min_score
+    max_logit = float(np.abs(logits[confident] - ref_logits[confident]).max())
+    max_box = float(np.abs(boxes[confident] - ref_boxes[confident]).max())
+    return f"max|Δlogit| {max_logit:.4f}, max|Δbox| {max_box:.5f} over {int(confident.sum())} confident queries"
 
 
 #: Annotation archive for COCO 2017; ``instances_val2017.json`` is the only member the accuracy helpers read.
