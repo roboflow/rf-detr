@@ -191,7 +191,7 @@ def _module(compute_train_metrics: bool = False) -> MagicMock:
     """
     module = MagicMock(name="pl_module")
     module.device = "cpu"
-    module.model_config = SimpleNamespace(use_grouppose_keypoints=False)
+    module.model_config = SimpleNamespace(use_grouppose_keypoints=False, num_classes=2)
     module.train_config = SimpleNamespace(compute_train_metrics=compute_train_metrics)
     return module
 
@@ -601,7 +601,7 @@ def _pycocotools_stats(
 def test_callback_metrics_equal_pycocotools(tmp_path: Path, backend: str, segmentation: bool) -> None:
     """On a small COCO file with crowd regions, callback box and mask metrics equal pycocotools."""
     pytest.importorskip("pycocotools")
-    pytest.importorskip({"ufcoco": "ultrafast_pycocotools"}.get(backend, backend))
+    pytest.importorskip({"ufcoco": "ultrafast_pycocotools", "hotcoco_streaming": "hotcoco"}.get(backend, backend))
     dataset = _coco_dataset(tmp_path, _PARITY_ANNOTATIONS, images=3, include_masks=segmentation)
     grid = (_HEIGHT, _WIDTH) if segmentation else None
     results = [_prediction(boxes, scores, labels, mask_grid=grid) for boxes, scores, labels in _PARITY_DETECTIONS]

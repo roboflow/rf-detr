@@ -427,14 +427,15 @@ model.train(dataset_dir="path/to/dataset", scale_jitter=False)
 
 ## COCO Evaluation Backends
 
-RF-DETR computes validation and test mAP through a pluggable COCO evaluator, selected by `eval_backend`. Four backends ship with `rfdetr[train]` and return identical metrics — they differ only in how fast `compute()` runs, never in the numbers it reports:
+RF-DETR computes validation and test mAP through a pluggable COCO evaluator, selected by `eval_backend`. Five backends ship with `rfdetr[train]` and return identical metrics — they differ only in how fast `compute()` runs and when the matching happens, never in the numbers they report:
 
-| `eval_backend`        | Notes                                                                                                                                                                                                                                         |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"vernier"` (default) | [vernier](https://pypi.org/project/vernier/) — fastest measured backend, several times faster than `"faster_coco_eval"`. Requires a box on every annotation — an `iou_type` without `"bbox"` is rejected at construction, not at `compute()`. |
-| `"hotcoco"`           | [hotcoco](https://pypi.org/project/hotcoco/) — Rust evaluator, several times faster than `"faster_coco_eval"`.                                                                                                                                |
-| `"ufcoco"`            | [ultrafast-pycocotools](https://pypi.org/project/ultrafast-pycocotools/) — reproduces pycocotools' precision/recall/score arrays byte for byte, at Rust speed.                                                                                |
-| `"faster_coco_eval"`  | [faster-coco-eval](https://pypi.org/project/faster-coco-eval/) — the previous default evaluator. Slowest of the four; kept as the parity baseline the other three are tested against.                                                         |
+| `eval_backend`        | Notes                                                                                                                                                                                                                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"vernier"` (default) | [vernier](https://pypi.org/project/vernier/) — fastest measured backend, several times faster than `"faster_coco_eval"`. Requires a box on every annotation — an `iou_type` without `"bbox"` is rejected at construction, not at `compute()`.                                          |
+| `"hotcoco"`           | [hotcoco](https://pypi.org/project/hotcoco/) — Rust evaluator, several times faster than `"faster_coco_eval"`.                                                                                                                                                                         |
+| `"hotcoco_streaming"` | hotcoco's `StreamingEval`: matches each validation batch as it arrives, so the end-of-epoch step only accumulates and summarizes. Costs more CPU time in total for box-only runs and keeps the same memory. Single-process only; elsewhere it evaluates in one batch like `"hotcoco"`. |
+| `"ufcoco"`            | [ultrafast-pycocotools](https://pypi.org/project/ultrafast-pycocotools/) — reproduces pycocotools' precision/recall/score arrays byte for byte, at Rust speed.                                                                                                                         |
+| `"faster_coco_eval"`  | [faster-coco-eval](https://pypi.org/project/faster-coco-eval/) — the previous default evaluator. Slowest of them; kept as the parity baseline the others are tested against.                                                                                                           |
 
 ```python
 model.train(dataset_dir="path/to/dataset", eval_backend="hotcoco")
@@ -453,7 +454,7 @@ Every backend is one entry in a name → class registry, checked directly agains
     - Set the capability flags only where they differ from the shared defaults: `requires_bbox`, `unused_backend_methods`, `uses_coco_evaluator`.
     - Wrap the import in a small function built on `_import_optional_backend()` (see `_hotcoco()`/`_ufcoco()`/`_vernier()`) so a missing package raises an actionable `ImportError` naming the install extra, not a raw `ModuleNotFoundError`.
 3. **Register it** in `_BACKENDS`, keyed by the literal added in step 1.
-4. **Declare the dependency** in `pyproject.toml`'s `train` extra — all four existing backends ship there.
+4. **Declare the dependency** in `pyproject.toml`'s `train` extra — all existing backends ship there.
 5. **Extend the tests** in `tests/training/test_coco_map.py`: add the name to `_BACKEND_PACKAGES` (and to `_ALTERNATIVE_BACKENDS` unless it's a second `"faster_coco_eval"`-equivalent baseline rather than an alternative to compare against one). `test_backend_registry_matches_the_typed_eval_backend_names` then enforces that the registry and the literal stay in sync, and the existing `test_alternative_backend_matches_faster_coco_eval[_for_segmentation]` parity tests pick up the new backend automatically, requiring exact equality against `"faster_coco_eval"` for both box-only and box+mask evaluation.
 6. **Document it**: this table, the `eval_backend` rows in [Training Parameters](training-parameters.md), and `docs/reference/train_config.md`.
 

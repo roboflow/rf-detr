@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Removed `rfdetr.datasets.yolo.REQUIRED_DATA_SUBDIRS`. `is_valid_yolo_dataset` resolves split directories through the YAML-aware resolver, which derives the labels directory from the resolved images path, so the constant no longer described how any code finds a split's subdirectories. Nothing inside the package read it; an external importer should inline `["images", "labels"]`. ([#1570](https://github.com/roboflow/rf-detr/pull/1570))
 
+### Added
+
+- `TrainConfig.eval_backend="hotcoco_streaming"` matches each validation batch with hotcoco's `StreamingEval` as it arrives, so the end-of-epoch COCO evaluation only accumulates and summarizes. Metrics are bit-identical to `eval_backend="hotcoco"`. On an Apple M-series CPU with synthetic data, the end-of-epoch step dropped from 0.238 s to 0.025 s for 600,000 box detections and from 0.178 s to 0.005 s for a bbox+segm run of 20,000 detections. Total CPU time is higher for box-only runs (1.05 s vs 0.29 s) and about equal for bbox+segm (0.66 s vs 0.71 s), because matching moves into the validation step. Streaming applies to single-process runs whose labels fall within `[0, num_classes]`; under DDP, or after the metric is pickled mid-epoch, it evaluates in one batch as `"hotcoco"` does and logs why.
+
 ### Changed
 
 - The `hotcoco` evaluation backend requires hotcoco 1.1 (`hotcoco>=1.1.0,<1.2`, previously pinned to 1.0.1). A bbox+segm evaluation now switches prediction areas between IoU types with `COCO.update_anns` instead of rebuilding the prediction dataset per IoU type. On the same synthetic data, `compute()` took 0.185 s instead of 0.293 s for a bbox+segm run of 20,000 detections and 0.401 s instead of 0.874 s for 900,000 box detections; most of the box-only gain comes from hotcoco 1.1 itself.

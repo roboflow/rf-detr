@@ -937,22 +937,23 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
     assert recall_at(2) < recall_at(500)
 
 
-def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming"])
+def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str], backend: str) -> None:
     """Selecting hotcoco must not add backend chatter to a training run's console output.
 
     hotcoco 1.0.1 routes its COCO summary table through ``sys.stdout`` and raises configuration diagnostics as
     ``UserWarning``s, so both are reachable with ordinary Python-level redirection. Without suppression, the table would
     land on the console on every validation epoch of every run. ``test_hotcoco_evaluation_raises_no_warnings`` covers
-    the warning channel.
+    the warning channel. ``hotcoco_streaming`` matches in ``update()``, so the window covers it too.
     """
     pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
     metric = OnePassCocoMeanAveragePrecision(
-        backend="hotcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
+        backend=backend, max_detection_thresholds=[1, 10, 500], sync_on_compute=False, num_classes=90
     )
-    metric.update(predictions, targets)
     capfd.readouterr()
 
+    metric.update(predictions, targets)
     metric.compute()
 
     captured = capfd.readouterr()
@@ -960,24 +961,26 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) ->
     assert captured.err == ""
 
 
-def test_hotcoco_evaluation_raises_no_warnings() -> None:
+@pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming"])
+def test_hotcoco_evaluation_raises_no_warnings(backend: str) -> None:
     """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
 
     hotcoco 1.0.1 reports every evaluator parameter differing from the COCO defaults as a Python warning (and prints a
     summary table on ``sys.stdout``). RF-DETR overrides ``maxDets``, and torchmetrics keeps its thresholds in float32,
     so the IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three warnings per ``compute()``
     on a real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
-    channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run.
+    channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run. ``hotcoco_streaming`` matches
+    in ``update()``, so the window covers it too.
     """
     pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
     metric = OnePassCocoMeanAveragePrecision(
-        backend="hotcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
+        backend=backend, max_detection_thresholds=[1, 10, 500], sync_on_compute=False, num_classes=90
     )
-    metric.update(predictions, targets)
 
     with warnings.catch_warnings(record=True) as raised:
         warnings.simplefilter("always")
+        metric.update(predictions, targets)
         metric.compute()
 
     assert [str(warning.message) for warning in raised] == []
@@ -1938,3 +1941,116 @@ def test_autocast_dtypes_survive_the_round_trip_to_vernier(dtype: torch.dtype) -
         if key == "classes":
             continue
         assert torch.equal(result[key], reference[key]), key
+
+
+def _metric_fed_per_image(
+    backend: str,
+    predictions: list[dict[str, torch.Tensor]],
+    targets: list[dict[str, torch.Tensor]],
+    **kwargs: Any,
+) -> OnePassCocoMeanAveragePrecision:
+    """Return a metric that received one ``update()`` per image, as a validation loop of batch size 1 would.
+
+    Examples:
+        >>> predictions, targets = multiclass_detection_state()
+        >>> metric = _metric_fed_per_image("hotcoco", predictions, targets)
+        >>> len(metric.groundtruth_labels)
+        3
+    """
+    metric = OnePassCocoMeanAveragePrecision(backend=backend, sync_on_compute=False, **kwargs)
+    for prediction, target in zip(predictions, targets):
+        metric.update([prediction], [target])
+    return metric
+
+
+def _assert_same_metrics(actual: dict[str, torch.Tensor], expected: dict[str, torch.Tensor]) -> None:
+    """Assert two ``compute()`` results carry the same keys and bit-identical values.
+
+    Examples:
+        >>> _assert_same_metrics({"map": torch.tensor(0.5)}, {"map": torch.tensor(0.5)})
+    """
+    assert actual.keys() == expected.keys()
+    for key in actual:
+        assert torch.equal(actual[key].reshape(-1), expected[key].reshape(-1)), key
+
+
+class TestHotcocoStreaming:
+    """``hotcoco_streaming`` matches batches in ``update()`` and must report exactly what ``hotcoco`` reports."""
+
+    @pytest.mark.parametrize("iou_type", ["bbox", ("bbox", "segm")])
+    def test_streamed_metrics_equal_batch_hotcoco(self, iou_type: str | tuple[str, ...]) -> None:
+        """Per-image streaming reproduces the batch evaluation bit for bit, per-class vectors included.
+
+        The bbox+segm fixture straddles the small/medium boundary, so a detection area derived from the wrong geometry
+        would move AP between buckets; the bbox fixture holds a prediction-only class.
+        """
+        _require_backend("hotcoco")
+        records = multiclass_detection_state() if iou_type == "bbox" else _straddling_disc_records()
+        kwargs: dict[str, Any] = {"iou_type": iou_type, "class_metrics": True, "num_classes": 90}
+        streamed = _metric_fed_per_image("hotcoco_streaming", *records, **kwargs)
+        assert streamed._streams is not None
+
+        with patch.object(streamed, "_build_coco") as build_coco:
+            actual = streamed.compute()
+
+        build_coco.assert_not_called()
+        _assert_same_metrics(actual, _metric_fed_per_image("hotcoco", *records, **kwargs).compute())
+
+    @pytest.mark.parametrize("num_classes", [pytest.param(None, id="unknown"), pytest.param(10, id="too-few")])
+    def test_falls_back_to_batch_when_categories_do_not_cover_labels(self, num_classes: int | None) -> None:
+        """Without a category list covering every label (fixture labels reach 42), the batch path runs instead.
+
+        ``StreamingEval`` drops annotations of an undeclared category without an error, so streaming them would silently
+        lose class 42.
+        """
+        _require_backend("hotcoco")
+        records = multiclass_detection_state()
+        streamed = _metric_fed_per_image("hotcoco_streaming", *records, class_metrics=True, num_classes=num_classes)
+
+        assert streamed._streams is None
+        _assert_same_metrics(
+            streamed.compute(), _metric_fed_per_image("hotcoco", *records, class_metrics=True).compute()
+        )
+
+    @pytest.mark.parametrize(
+        "round_trip",
+        [
+            pytest.param(lambda metric: pickle.loads(pickle.dumps(metric)), id="pickle"),
+            pytest.param(copy.deepcopy, id="deepcopy"),
+        ],
+    )
+    def test_copying_mid_epoch_falls_back_to_batch(self, round_trip: Callable[[Any], Any]) -> None:
+        """A stream cannot be pickled, so a metric copied mid-epoch evaluates its whole state in one batch."""
+        _require_backend("hotcoco")
+        predictions, targets = multiclass_detection_state()
+        metric = _metric_fed_per_image("hotcoco_streaming", predictions[:2], targets[:2], num_classes=90)
+
+        restored = round_trip(metric)
+        restored.update(predictions[2:], targets[2:])
+
+        assert restored._streams is None
+        _assert_same_metrics(restored.compute(), _metric_fed_per_image("hotcoco", predictions, targets).compute())
+
+    def test_distributed_run_does_not_stream(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Under DDP each rank holds a shard that only ``merge_distributed_state()`` completes, so nothing streams."""
+        _require_backend("hotcoco")
+        monkeypatch.setattr("rfdetr.training.coco_map.is_dist_avail_and_initialized", lambda: True)
+        monkeypatch.setattr("rfdetr.training.coco_map.get_world_size", lambda: 2)
+
+        metric = _metric_fed_per_image("hotcoco_streaming", *multiclass_detection_state(), num_classes=90)
+
+        assert metric._streams is None
+
+    def test_reset_starts_a_fresh_stream(self) -> None:
+        """``compute()`` consumes the stream; the next epoch after ``reset()`` must stream again from image 0."""
+        _require_backend("hotcoco")
+        predictions, targets = multiclass_detection_state()
+        metric = _metric_fed_per_image("hotcoco_streaming", predictions, targets, num_classes=90)
+        metric.compute()
+
+        metric.reset()
+        for prediction, target in zip(predictions[:2], targets[:2]):
+            metric.update([prediction], [target])
+
+        assert metric._streamed_images == 2
+        _assert_same_metrics(metric.compute(), _metric_fed_per_image("hotcoco", predictions[:2], targets[:2]).compute())
