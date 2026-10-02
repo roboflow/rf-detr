@@ -27,7 +27,6 @@ import numpy as np
 import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
-import yaml
 from PIL import Image
 
 from rfdetr._namespace import _namespace_from_configs
@@ -41,7 +40,7 @@ from rfdetr.datasets._keypoint_schema import (
 )
 from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories, is_valid_coco_dataset
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
-from rfdetr.datasets.yolo import REQUIRED_YOLO_YAML_FILES, is_valid_yolo_dataset
+from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
@@ -2279,15 +2278,17 @@ class RFDETR:
                 coco_categories = RFDETR._filtered_coco_categories(dataset_dir)
             return [category["name"] for category in coco_categories]
 
-        yaml_path = RFDETR._yolo_data_file_path(dataset_dir) if is_valid_yolo_dataset(dataset_dir) else None
+        yaml_path = find_yolo_data_file(dataset_dir)
+        if yaml_path is not None and is_valid_yolo_dataset(dataset_dir):
+            return _extract_yolo_class_names(str(yaml_path))
         if yaml_path is not None:
-            with open(yaml_path) as f:
-                data = yaml.safe_load(f)
-            if "names" in data:
-                if isinstance(data["names"], dict):
-                    return [str(data["names"][i]) for i in sorted(data["names"].keys())]
-                return [str(name) for name in data["names"]]
-            raise ValueError(f"Found {yaml_path} but it does not contain 'names' field.")
+            # A data file that is present but whose splits do not resolve is a different
+            # problem from having none, and listing the names checked for implied the latter.
+            raise FileNotFoundError(
+                f"Could not find class names in {dataset_dir}. Found the YOLO data file {yaml_path}, but its"
+                " training and validation splits could not both be resolved, and class discovery needs both."
+                " Enable debug logging to see each declaration that was rejected.",
+            )
         raise FileNotFoundError(
             f"Could not find class names in {dataset_dir}."
             " Checked for COCO (train/_annotations.coco.json) and YOLO (data.yaml, data.yml) styles.",
@@ -2490,30 +2491,6 @@ class RFDETR:
         return annotation_path if annotation_path.exists() else None
 
     @staticmethod
-    def _yolo_data_file_path(dataset_dir: str) -> Path | None:
-        """Return the YOLO data file path when a dataset root has one.
-
-        Args:
-            dataset_dir: Path to the YOLO dataset root.
-
-        Returns:
-            Path to ``data.yaml`` or ``data.yml``, or ``None`` when neither exists.
-
-        Raises:
-            This helper does not raise.
-
-        Example:
-            >>> RFDETR._yolo_data_file_path("/missing") is None
-            True
-        """
-        root = Path(dataset_dir)
-        for filename in REQUIRED_YOLO_YAML_FILES:
-            data_file = root / filename
-            if data_file.exists():
-                return data_file
-        return None
-
-    @staticmethod
     def _flip_idx_to_pairs(flip_idx: list[int]) -> list[int]:
         """Convert Ultralytics ``flip_idx`` permutation metadata to flat swap pairs."""
         pairs: list[int] = []
@@ -2579,14 +2556,14 @@ class RFDETR:
                         source_kind = "Roboflow COCO"
                         inferred = infer_coco_keypoint_schema(annotation_path)
                     else:
-                        yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                        yolo_data_file = find_yolo_data_file(dataset_dir)
                         if yolo_data_file is None:
                             return
                         source_path = yolo_data_file
                         source_kind = "YOLO pose"
                         inferred = infer_yolo_keypoint_schema(yolo_data_file)
                 else:
-                    yolo_data_file = RFDETR._yolo_data_file_path(dataset_dir)
+                    yolo_data_file = find_yolo_data_file(dataset_dir)
                     if yolo_data_file is None:
                         return
                     source_path = yolo_data_file
