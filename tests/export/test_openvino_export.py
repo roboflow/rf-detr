@@ -21,10 +21,10 @@ The dependency-missing tests make ``openvino`` unimportable through ``sys.module
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 import types
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 from unittest import mock
 
@@ -216,42 +216,6 @@ class TestExportOpenvinoMissingDependency:
             OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path))(_export_graph())
 
 
-class TestPublicInferenceFacade:
-    """``rfdetr.export.inference`` — the public import path for session-tier inference wrappers.
-
-    ``OpenVINOInference`` is re-exported there through a module ``__getattr__`` so that importing the
-    facade never pulls in the optional ``openvino`` dependency. Both halves of that contract are
-    pinned here: the re-export resolves to the same class object, and the import stays lazy.
-    """
-
-    def test_reexports_the_private_class(self) -> None:
-        """The facade attribute must be the class defined in the private module, not a copy of it."""
-        from rfdetr.export import inference as public_inference
-
-        assert public_inference.OpenVINOInference is OpenVINOInference
-
-    def test_unknown_attribute_raises_attribute_error(self) -> None:
-        """A name outside ``__all__`` must raise ``AttributeError`` rather than import something unexpected."""
-        from rfdetr.export import inference as public_inference
-
-        with pytest.raises(AttributeError, match="NotARuntime"):
-            _ = public_inference.NotARuntime
-
-    def test_import_does_not_load_openvino(self) -> None:
-        """Importing the facade must leave ``openvino`` out of ``sys.modules``.
-
-        Runs in a fresh interpreter on purpose: other tests in this suite import ``openvino``, so an
-        in-process check would pass for the wrong reason.
-        """
-        result = subprocess.run(
-            [sys.executable, "-c", "import rfdetr.export.inference, sys; print('openvino' in sys.modules)"],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-        assert result.stdout.strip() == "False"
-
-
 class TestOpenVINOInferenceMissingDependency:
     """``OpenVINOInference.__init__``'s ``ImportError`` path.
 
@@ -435,6 +399,23 @@ def openvino_relu_xml(tmp_path: Path) -> Path:
     return xml_path
 
 
+def _compile_call(core: mock.MagicMock) -> tuple[str, dict[str, Any]]:
+    """Return the ``(device, properties)`` that *core*'s ``compile_model`` was last called with.
+
+    Reads the call by argument name, so a harmless switch between positional and keyword arguments does not break the
+    tests that pin the device and the compile properties.
+
+    Examples:
+        >>> core = mock.MagicMock()
+        >>> _ = core.compile_model("model", "CPU", {"A": 1})
+        >>> _compile_call(core)
+        ('CPU', {'A': 1})
+    """
+    args, kwargs = core.compile_model.call_args
+    bound = {**dict(zip(("model", "device_name", "config"), args)), **kwargs}
+    return bound["device_name"], bound.get("config", {})
+
+
 class TestOpenVINOInferenceDeviceAndCache:
     """``device``/``cache_dir`` forwarding in ``OpenVINOInference.__init__``, previously untested.
 
@@ -449,9 +430,7 @@ class TestOpenVINOInferenceDeviceAndCache:
         fake_ov, core = _stub_openvino_runtime_module()
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             OpenVINOInference(xml_path, device="GPU")
-        core.compile_model.assert_called_once_with(
-            core.read_model.return_value, "GPU", {"INFERENCE_PRECISION_HINT": "f32"}
-        )
+        assert _compile_call(core) == ("GPU", {"INFERENCE_PRECISION_HINT": "f32"})
 
     @pytest.mark.parametrize(
         ("inference_precision", "expected_properties"),
@@ -475,7 +454,7 @@ class TestOpenVINOInferenceDeviceAndCache:
         fake_ov, core = _stub_openvino_runtime_module()
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             OpenVINOInference(xml_path, inference_precision=inference_precision)
-        core.compile_model.assert_called_once_with(core.read_model.return_value, "AUTO", expected_properties)
+        assert _compile_call(core) == ("AUTO", expected_properties)
 
     def test_config_merged_over_precision_hint(self, tmp_path: Path) -> None:
         """Extra compile properties reach ``compile_model`` alongside the precision hint; on a clash ``config`` wins.
@@ -488,9 +467,38 @@ class TestOpenVINOInferenceDeviceAndCache:
         fake_ov, core = _stub_openvino_runtime_module()
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             OpenVINOInference(xml_path, config={"INFERENCE_NUM_THREADS": 4, "INFERENCE_PRECISION_HINT": "f16"})
-        core.compile_model.assert_called_once_with(
-            core.read_model.return_value, "AUTO", {"INFERENCE_PRECISION_HINT": "f16", "INFERENCE_NUM_THREADS": 4}
-        )
+        assert _compile_call(core) == ("AUTO", {"INFERENCE_PRECISION_HINT": "f16", "INFERENCE_NUM_THREADS": 4})
+
+    def test_unrecognised_precision_is_passed_through_for_openvino_to_reject(self, tmp_path: Path) -> None:
+        """A spelling outside the documented set (``"fp32"``) is not guessed at: OpenVINO rejects it at compile time."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            OpenVINOInference(xml_path, inference_precision="fp32")
+        assert _compile_call(core) == ("AUTO", {"INFERENCE_PRECISION_HINT": "fp32"})
+
+    def test_config_hint_applies_when_inference_precision_is_none(self, tmp_path: Path) -> None:
+        """With no ``inference_precision`` the hint in ``config`` is the only one sent."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            OpenVINOInference(xml_path, inference_precision=None, config={"INFERENCE_PRECISION_HINT": "bf16"})
+        assert _compile_call(core) == ("AUTO", {"INFERENCE_PRECISION_HINT": "bf16"})
+
+    def test_config_may_be_any_mapping_and_is_not_mutated(self, tmp_path: Path) -> None:
+        """A read-only mapping works as ``config``, and the caller's own dict is left as it was passed."""
+        xml_path = tmp_path / "m.xml"
+        xml_path.write_bytes(b"<xml/>")
+        fake_ov, core = _stub_openvino_runtime_module()
+        read_only = MappingProxyType({"INFERENCE_NUM_THREADS": 2})
+        caller_dict = {"INFERENCE_NUM_THREADS": 3}
+        with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
+            OpenVINOInference(xml_path, config=read_only)
+            OpenVINOInference(xml_path, config=caller_dict)
+        assert caller_dict == {"INFERENCE_NUM_THREADS": 3}
+        assert [call.args[2]["INFERENCE_NUM_THREADS"] for call in core.compile_model.call_args_list] == [2, 3]
 
     @pytest.mark.integration
     @pytest.mark.e2e_openvino

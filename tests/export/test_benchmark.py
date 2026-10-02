@@ -616,3 +616,12 @@ class TestParity:
         assert parity(ref_boxes, ref_logits, ref_boxes, ref_logits) == (
             "max|Δlogit| 0.0000, max|Δbox| 0.00000 over 1 confident queries"
         )
+
+    def test_reports_not_measured_when_no_reference_query_is_confident(self) -> None:
+        """An empty or low-confidence image gives a readable summary instead of a ``max()`` of an empty array."""
+        ref_logits = np.full((1, 3, 2), -9.0)
+        ref_boxes = np.zeros((1, 3, 4))
+
+        summary = parity(ref_boxes, ref_logits, ref_boxes, ref_logits)
+
+        assert summary == "no reference query scores above 0.3; drift not measured over 0 confident queries"

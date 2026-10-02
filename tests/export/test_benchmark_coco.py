@@ -96,6 +96,18 @@ def _set_image_field(annotations_path: Path, image_id: int, key: str, value: str
     annotations_path.write_text(json.dumps(data))
 
 
+def _write_ids_file(path: Path, n_images: int) -> Path:
+    """Write a minimal annotation file that lists *n_images* image IDs, ``1`` to *n_images*.
+
+    Examples:
+        >>> import tempfile
+        >>> json.loads(_write_ids_file(Path(tempfile.mkdtemp()) / "a.json", 2).read_text())
+        {'images': [{'id': 1}, {'id': 2}]}
+    """
+    path.write_text(json.dumps({"images": [{"id": image_id} for image_id in range(1, n_images + 1)]}))
+    return path
+
+
 class _FakeResponse(io.BytesIO):
     """An ``urlopen`` response stand-in: a byte stream whose ``Content-Length`` may promise more than it holds.
 
@@ -129,8 +141,8 @@ def _gt_detections(image: Image.Image) -> sv.Detections:
     """Return the ground-truth box of *image* as already-decoded detections.
 
     Examples:
-        >>> _gt_detections.__name__
-        '_gt_detections'
+        >>> _gt_detections(Image.new("RGB", (64, 64))).xyxy.tolist()
+        [[8.0, 8.0, 40.0, 32.0]]
     """
     (x, y, w, h), category_id = _GT_BOXES[_image_id(image)]
     return sv.Detections(
@@ -147,8 +159,9 @@ def _gt_raw_outputs(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
     the way an official sparse-ID COCO checkpoint does.
 
     Examples:
-        >>> _gt_raw_outputs.__name__
-        '_gt_raw_outputs'
+        >>> boxes, logits = _gt_raw_outputs(Image.new("RGB", (64, 64)))
+        >>> boxes.shape, logits.shape
+        ((1, 4, 4), (1, 4, 91))
     """
     (x, y, w, h), category_id = _GT_BOXES[_image_id(image)]
     width, height = image.size
@@ -167,10 +180,27 @@ class TestSelectCocoValIds:
 
         Cross-cookbook mAP comparisons only mean something when the evaluated images are the same everywhere.
         """
+        path = _write_ids_file(tmp_path / "instances.json", 50)
+        assert select_coco_val_ids(path, 10, seed=3) == select_coco_val_ids(path, 10, seed=3)
+
+    def test_different_seeds_select_different_subsets(self, tmp_path: Path) -> None:
+        """A different seed shuffles differently; without this a constant selector would pass the seed test above."""
+        path = _write_ids_file(tmp_path / "instances.json", 50)
+        assert select_coco_val_ids(path, 10, seed=0) != select_coco_val_ids(path, 10, seed=1)
+
+    def test_subset_has_requested_size_and_distinct_members_of_the_split(self, tmp_path: Path) -> None:
+        """The subset has exactly *n_images* IDs, none repeated, all from the split."""
+        path = _write_ids_file(tmp_path / "instances.json", 50)
+        ids = select_coco_val_ids(path, 10)
+        assert len(ids) == len(set(ids)) == 10
+        assert set(ids) <= set(range(1, 51))
+
+    @pytest.mark.parametrize("n_images", [0, -1])
+    def test_fewer_than_one_image_raises(self, tmp_path: Path, n_images: int) -> None:
+        """``0`` would score nothing and ``-1`` would silently select all but one image; both are refused."""
         subset = _write_coco(tmp_path)
-        assert select_coco_val_ids(subset.annotations_path, 2, seed=3) == select_coco_val_ids(
-            subset.annotations_path, 2, seed=3
-        )
+        with pytest.raises(ValueError, match="at least 1"):
+            select_coco_val_ids(subset.annotations_path, n_images)
 
     def test_none_selects_every_image_sorted(self, tmp_path: Path) -> None:
         """``n_images=None`` is the full split, in image-ID order, for the ``FULL_VAL`` path."""
@@ -200,6 +230,25 @@ class TestFetchCocoVal2017:
             "http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "val2017" / "000000000002.jpg"
         )
         assert subset.image_ids == (1, 2, 3)
+
+    def test_n_images_downloads_only_the_selected_subset(self, tmp_path: Path) -> None:
+        """With ``n_images`` set, only the selected images are fetched, not the whole split."""
+        subset = _write_coco(tmp_path)
+        for path in (tmp_path / "val2017").iterdir():
+            path.unlink()
+        with mock.patch("rfdetr.export._benchmark._download") as download:
+            fetched = fetch_coco_val2017(tmp_path, n_images=2)
+        assert len(fetched.image_ids) == download.call_count == 2
+        assert set(fetched.image_ids) <= set(subset.image_ids)
+
+    @pytest.mark.parametrize("n_images", [0, -1])
+    def test_fewer_than_one_image_raises_before_any_download(self, tmp_path: Path, n_images: int) -> None:
+        """An invalid ``n_images`` is refused up front, with nothing fetched."""
+        _write_coco(tmp_path)
+        with mock.patch("rfdetr.export._benchmark._download") as download:
+            with pytest.raises(ValueError, match="at least 1"):
+                fetch_coco_val2017(tmp_path, n_images=n_images)
+        download.assert_not_called()
 
     @pytest.mark.parametrize("file_name", ["../evil.jpg", "/abs/evil.jpg", "..", pytest.param("", id="empty")])
     def test_file_name_outside_images_dir_is_refused(self, tmp_path: Path, file_name: str) -> None:
@@ -294,7 +343,11 @@ class TestEvaluateCocoMap:
     def test_perfect_decoded_detections_score_one(self, tmp_path: Path) -> None:
         """Already-decoded detections that equal the ground truth reach mAP 1.0 (the PyTorch ``predict()`` path)."""
         result = evaluate_coco_map(_gt_detections, _write_coco(tmp_path), progress=False)
-        assert (result.map50_95, result.map50, result.n_images) == (1.0, 1.0, 3)
+        assert (result.map50_95, result.map50, result.n_images) == (
+            pytest.approx(1.0),
+            pytest.approx(1.0),
+            3,
+        )
 
     def test_perfect_raw_outputs_score_one(self, tmp_path: Path) -> None:
         """Raw ``dets``/``labels`` decode with sparse COCO IDs, so category 90 is kept and the score is 1.0.
@@ -303,9 +356,58 @@ class TestEvaluateCocoMap:
         image whose only object is category 90 would score zero.
         """
         result = evaluate_coco_map(_gt_raw_outputs, _write_coco(tmp_path), progress=False)
-        assert (result.map50_95, result.map50) == (1.0, 1.0)
+        assert (result.map50_95, result.map50) == (pytest.approx(1.0), pytest.approx(1.0))
+
+    def test_raw_outputs_without_a_batch_axis_are_accepted(self, tmp_path: Path) -> None:
+        """A runtime returning ``(queries, 4)`` / ``(queries, classes)`` arrays, with no batch axis, scores the same."""
+
+        def run(image: Image.Image) -> tuple[np.ndarray, np.ndarray]:
+            boxes, logits = _gt_raw_outputs(image)
+            return boxes[0], logits[0]
+
+        result = evaluate_coco_map(run, _write_coco(tmp_path), progress=False)
+        assert result.map50_95 == pytest.approx(1.0)
+
+    def test_background_class_id_is_forwarded_to_the_decoder(self, tmp_path: Path) -> None:
+        """``background_class_id=-1`` reaches the decoder, which then drops slot 90 and misses that image's object."""
+        result = evaluate_coco_map(_gt_raw_outputs, _write_coco(tmp_path), background_class_id=-1, progress=False)
+        assert result.map50 < 1.0
+
+    def test_detections_without_confidence_are_refused(self, tmp_path: Path) -> None:
+        """Decoded detections need ``confidence`` and ``class_id`` to be scored; missing ones are a clear error."""
+
+        def run(image: Image.Image) -> sv.Detections:
+            return sv.Detections(xyxy=np.array([[0.0, 0.0, 10.0, 10.0]], dtype=np.float32))
+
+        with pytest.raises(ValueError, match="confidence"):
+            evaluate_coco_map(run, _write_coco(tmp_path), progress=False)
+
+    def test_image_name_outside_images_dir_is_refused_before_the_runtime_runs(self, tmp_path: Path) -> None:
+        """A tampered annotation file, or a hand-built subset, cannot make the scorer open a file outside ``val2017/``.
+
+        ``fetch_coco_val2017`` validates names when it downloads, but ``evaluate_coco_map`` reads them again from the
+        annotation file, so it needs its own guard.
+        """
+        subset = _write_coco(tmp_path)
+        _set_image_field(subset.annotations_path, 1, "file_name", "../evil.jpg")
+        run = mock.Mock(side_effect=_gt_detections)
+        with pytest.raises(ValueError, match="Refusing COCO image file name"):
+            evaluate_coco_map(run, subset, progress=False)
+        run.assert_not_called()
+
+    def test_summary_is_not_printed(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """COCOeval's 12-line summary stays off the notebook; callers get the numbers from the result."""
+        evaluate_coco_map(_gt_detections, _write_coco(tmp_path), progress=False)
+        assert "Average Precision" not in capsys.readouterr().out
 
     def test_no_detections_score_zero(self, tmp_path: Path) -> None:
         """A runtime that returns nothing scores 0.0 instead of crashing on an empty result set."""
         result = evaluate_coco_map(lambda image: sv.Detections.empty(), _write_coco(tmp_path), progress=False)
         assert (result.map50_95, result.map50) == (0.0, 0.0)
+
+    def test_no_detections_log_a_warning(self, tmp_path: Path) -> None:
+        """An all-empty run reports 0.0 but says why: that is the symptom of collapsed reduced-precision logits."""
+        with mock.patch("rfdetr.export._benchmark.logger") as logger:
+            evaluate_coco_map(lambda image: sv.Detections.empty(), _write_coco(tmp_path), progress=False)
+        logger.warning.assert_called_once()
+        assert "no detections" in logger.warning.call_args.args[0]

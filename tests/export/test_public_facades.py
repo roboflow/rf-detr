@@ -21,6 +21,7 @@ import pytest
 
 from rfdetr.export import benchmark as public_benchmark
 from rfdetr.export import inference as public_inference
+from rfdetr.export.inference import _LAZY_EXPORTS
 
 #: Child-interpreter script: records (without blocking) every real import of an optional runtime, prints them as JSON.
 _RECORD_OPTIONAL_IMPORTS = """
@@ -65,12 +66,12 @@ class TestInferenceFacade:
     @pytest.mark.parametrize(
         ("name", "private_module"),
         [
-            pytest.param("DecodedDetections", "rfdetr.export._runtime.decode", id="decoded-detections"),
-            pytest.param("OpenVINOInference", "rfdetr.export._openvino.inference", id="openvino"),
-            pytest.param("TRTInference", "rfdetr.export._tensorrt.inference", id="tensorrt"),
-            pytest.param("decode_detections", "rfdetr.export._runtime.decode", id="decode"),
-            pytest.param("load_executorch_method", "rfdetr.export._executorch.inference", id="executorch"),
-            pytest.param("preprocess_to_nchw", "rfdetr.export._runtime.preprocess", id="preprocess"),
+            ("DecodedDetections", "rfdetr.export._runtime.decode"),
+            ("OpenVINOInference", "rfdetr.export._openvino.inference"),
+            ("TRTInference", "rfdetr.export._tensorrt.inference"),
+            ("decode_detections", "rfdetr.export._runtime.decode"),
+            ("load_executorch_method", "rfdetr.export._executorch.inference"),
+            ("preprocess_to_nchw", "rfdetr.export._runtime.preprocess"),
         ],
     )
     def test_name_is_the_private_object(self, name: str, private_module: str) -> None:
@@ -81,15 +82,14 @@ class TestInferenceFacade:
         assert getattr(public_inference, name) is getattr(importlib.import_module(private_module), name)
 
     def test_all_lists_every_public_name(self) -> None:
-        """``__all__`` names exactly the lazily resolved objects, so star-imports and docs see the same surface."""
-        assert public_inference.__all__ == [
-            "DecodedDetections",
-            "OpenVINOInference",
-            "TRTInference",
-            "decode_detections",
-            "load_executorch_method",
-            "preprocess_to_nchw",
-        ]
+        """``__all__`` names exactly the lazily resolved objects, and ``dir()`` shows them for tab completion."""
+        assert set(public_inference.__all__) == set(_LAZY_EXPORTS)
+        assert set(public_inference.__all__) <= set(dir(public_inference))
+
+    def test_unknown_attribute_raises_attribute_error(self) -> None:
+        """A name outside ``__all__`` raises ``AttributeError`` rather than importing something unexpected."""
+        with pytest.raises(AttributeError, match="NotARuntime"):
+            _ = public_inference.NotARuntime
 
     def test_import_attempts_no_optional_runtime_import(self) -> None:
         """Importing the facade and resolving its runtime-free names never even tries to import an optional runtime.
