@@ -2918,8 +2918,15 @@ class RFDETR:
                 if isinstance(img, np.ndarray) and any(stride < 0 for stride in img.strides):
                     # ``torch.from_numpy``, used by both conversions below, rejects negative strides, e.g. the
                     # ``frame[:, :, ::-1]`` BGR-to-RGB view. Copy only these, so contiguous, positive-step and
-                    # broadcast views stay zero-copy. A uint8 ``source_array`` already is such a copy.
-                    img = source_array if uint8_array and source_array is not None else np.ascontiguousarray(img)
+                    # broadcast views stay zero-copy.
+                    if uint8_array and source_array is not None:
+                        # ``np.array(img)`` above already made a positive-stride copy, so reuse it. The model input
+                        # then shares storage with ``source_image``, as the PIL path below does.
+                        img = source_array
+                    else:
+                        # ``.copy()``, not ``np.ascontiguousarray``: NumPy ignores the stride of a length-1 axis when
+                        # it flags an array C-contiguous, so ``ascontiguousarray`` would hand back the same view.
+                        img = img.copy()
                 # PIL conversion above guarantees an 8-bit RGB image, and both conversion paths below
                 # scale PIL and uint8 NumPy storage into [0, 1]. Their range cannot fail the checks below.
                 range_known_valid = pil_image or uint8_array
