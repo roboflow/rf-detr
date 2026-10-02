@@ -259,6 +259,35 @@ jobs:
           print("tensorrt import OK")
         shell: python
 
+      - name: 📦 Install the TensorRT lean runtime
+        timeout-minutes: 5
+        # trt_version_compatible=True builds against TensorRT's lean runtime, a separate wheel the [tensorrt] extra does
+        # not install. Match the installed TensorRT's CUDA suffix and release; the lean wheel may add a .post suffix.
+        run: |
+          import importlib.metadata
+          import re
+          import subprocess
+
+          names = {dist.metadata["Name"] or "" for dist in importlib.metadata.distributions()}
+          libs = sorted(name for name in names if re.fullmatch(r"tensorrt[-_]cu\d+[-_]libs", name))
+          assert len(libs) == 1, f"expected one tensorrt-cu*-libs distribution, found {libs}"
+          suffix = re.fullmatch(r"tensorrt[-_](cu\d+)[-_]libs", libs[0]).group(1)
+          release = re.match(r"\d+(\.\d+)*", importlib.metadata.version(libs[0])).group()
+          spec = f"tensorrt-lean-{suffix}-libs=={release}.*"
+          print(f"installing {spec}")
+          subprocess.run(["uv", "pip", "install", spec], check=True)
+        shell: python
+
+      - name: 🔎 Verify the lean runtime loads
+        # Same guard as the tensorrt import above: without the lean runtime the version-compatible parity tests skip
+        # (false green) instead of failing red.
+        run: |
+          from rfdetr.export._tensorrt.exporter import TensorRTConfig, TensorRTExporter
+
+          TensorRTExporter(TensorRTConfig(version_compatible=True)).check_environment()
+          print("lean runtime OK")
+        shell: python
+
       - name: 🔗 Expose CUDA runtime (libcudart.so) to the loader
         # The engine build succeeds, but polygraphy's TrtRunner separately dlopen's the *unversioned*
         # `libcudart.so` for CUDA stream management. The GPU wheels ship it only as `libcudart.so.12`
