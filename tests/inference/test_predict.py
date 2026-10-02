@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 import io
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1082,6 +1083,59 @@ class TestPredictNegativeStrideNumpy:
                 expected_detections.metadata["source_image"],
                 err_msg="source_image must hold the flipped pixels",
             )
+
+    @pytest.mark.parametrize("include_source_image", [True, False])
+    @pytest.mark.parametrize("dtype", [pytest.param(np.uint8, id="uint8"), pytest.param(np.float32, id="float32")])
+    @pytest.mark.parametrize(
+        ("shape", "flip"),
+        [
+            pytest.param((17, 29, 3), lambda image: image[::-1], id="rows"),
+            pytest.param((17, 29, 3), lambda image: image[:, ::-1], id="columns"),
+            pytest.param((17, 29, 3), lambda image: image[..., ::-1], id="channels"),
+            pytest.param((17, 29, 3), lambda image: image[::-1, ::-1, ::-1], id="all-axes"),
+            pytest.param((17, 29, 3), lambda image: image[::-2, ::2], id="mixed-step"),
+            # NumPy flags a length-1 axis as contiguous whatever its stride, so ``np.ascontiguousarray`` leaves these.
+            pytest.param((1, 29, 3), lambda image: image[::-1], id="size-one-rows"),
+            pytest.param((17, 1, 3), lambda image: image[:, ::-1], id="size-one-columns"),
+        ],
+    )
+    def test_flipped_view_matches_its_copy_for_every_axis(
+        self,
+        dtype: type[np.generic],
+        include_source_image: bool,
+        shape: tuple[int, int, int],
+        flip: Callable[[np.ndarray[Any, Any]], np.ndarray[Any, Any]],
+    ) -> None:
+        """Flipping any axis, including a length-1 one, reaches the model as exactly its contiguous copy."""
+        pixels = np.random.default_rng(20261002).integers(0, 256, size=shape, dtype=np.uint8)
+        image = pixels if dtype is np.uint8 else (pixels / 255).astype(dtype)
+        view = flip(image)
+        assert any(stride < 0 for stride in view.strides), f"test setup: expected a negative stride, got {view.strides}"
+        model = _DummyRFDETR()
+
+        expected, expected_detections = self._predict_batch(model, view.copy(), include_source_image)
+        actual, actual_detections = self._predict_batch(model, view, include_source_image)
+
+        assert torch.equal(actual, expected), "flipped view must reach the model exactly like its contiguous copy"
+        if include_source_image:
+            np.testing.assert_array_equal(
+                actual_detections.metadata["source_image"],
+                expected_detections.metadata["source_image"],
+                err_msg="source_image must hold the flipped pixels",
+            )
+
+    def test_source_image_of_a_flipped_view_is_an_independent_contiguous_copy(self) -> None:
+        """``source_image`` holds the flipped pixels in its own C-contiguous storage, not a view of the caller's
+        array."""
+        pixels = np.random.default_rng(20261002).integers(0, 256, size=(17, 29, 3), dtype=np.uint8)
+        view = pixels[:, :, ::-1]
+
+        _, detections = self._predict_batch(_DummyRFDETR(), view, include_source_image=True)
+
+        source_image = detections.metadata["source_image"]
+        assert source_image.flags.c_contiguous
+        np.testing.assert_array_equal(source_image, view)
+        assert not np.shares_memory(source_image, pixels)
 
     def test_uint8_view_converts_the_retained_source_image(self) -> None:
         """``source_image`` is already a positive-stride copy of a uint8 view, so conversion reuses it instead of
