@@ -3,14 +3,16 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""File download and MD5 validation helpers."""
+"""File download and MD5 validation helpers, plus the temp-file helpers behind atomic, umask-honouring writes."""
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import os
 import secrets
+import stat
 import tempfile
 
 import requests
@@ -22,13 +24,21 @@ logger = get_logger()
 DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 30.0
 
 
-def _mkstemp_default_mode(directory: str | os.PathLike[str], prefix: str = "tmp", suffix: str = "") -> tuple[int, str]:
+def _mkstemp_default_mode(
+    directory: str | os.PathLike[str], *, prefix: str = "tmp", suffix: str = ""
+) -> tuple[int, str]:
     """Create and open a new temporary file whose permissions follow the process umask.
 
-    A drop-in for :func:`tempfile.mkstemp` for files that are renamed into place with :func:`os.replace`.
-    ``mkstemp`` creates its file readable and writable by the owner only (``0o600``), and the rename keeps that mode,
-    so the final file would be unreadable to every other user, unlike the same file written with :func:`open`. This
-    creates the file with mode ``0o666`` and lets the OS apply the umask, exactly as :func:`open` does.
+    A :func:`tempfile.mkstemp`-like helper for files that are renamed into place with :func:`os.replace`. ``mkstemp``
+    creates its file readable and writable by the owner only (``0o600``), and the rename keeps that mode, so the final
+    file would be unreadable to every other user, unlike the same file written with :func:`open`. This creates the file
+    with mode ``0o666`` and lets the OS apply the umask, exactly as :func:`open` does when it creates a file.
+    :func:`open` on an existing file keeps that file's mode instead, so callers replacing one move the temp file into
+    place with :func:`_replace_keeping_mode`.
+
+    It is not a drop-in replacement: ``directory`` is required, ``prefix`` and ``suffix`` are keyword-only, and it
+    neither raises the ``tempfile.mkstemp`` audit event nor retries on the ``PermissionError`` Windows reports for a
+    name taken by a directory.
 
     Args:
         directory: Directory to create the file in.
@@ -57,7 +67,45 @@ def _mkstemp_default_mode(directory: str | os.PathLike[str], prefix: str = "tmp"
             return os.open(path, flags, 0o666), path
         except FileExistsError:
             continue
-    raise FileExistsError(f"No usable temporary file name found in {directory!r}.")
+    raise FileExistsError(errno.EEXIST, "No usable temporary file name found", os.fspath(directory))
+
+
+def _replace_keeping_mode(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+    """Move ``source`` over ``destination`` with :func:`os.replace`, keeping the permission bits ``destination`` had.
+
+    Rewriting an existing file with :func:`open` keeps its mode, but a rename puts the new file's own mode in its place,
+    so an owner-only ``0o600`` destination would come out with the temp file's umask-derived mode, e.g. ``0o644``. When
+    ``destination`` exists, its mode is copied onto ``source`` first; when it does not, ``source`` keeps the mode it was
+    created with. Skipped on Windows, where the permission bits are only a read-only flag and there is no umask.
+
+    Args:
+        source: The fully written temporary file, in the same directory as ``destination``.
+        destination: Path to replace.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     destination = os.path.join(directory, "config.json")
+        ...     with open(destination, "w") as handle:
+        ...         _ = handle.write("old")
+        ...     os.chmod(destination, 0o600)
+        ...     fd, source = _mkstemp_default_mode(directory)
+        ...     with os.fdopen(fd, "w") as handle:
+        ...         _ = handle.write("new")
+        ...     _replace_keeping_mode(source, destination)
+        ...     with open(destination) as handle:
+        ...         content = handle.read()
+        ...     content, os.name == "nt" or stat.S_IMODE(os.stat(destination).st_mode) == 0o600
+        ('new', True)
+    """
+    if os.name != "nt":
+        try:
+            mode = stat.S_IMODE(os.stat(destination).st_mode)
+        except FileNotFoundError:
+            pass  # New file: keep the umask-derived mode the temp file was created with.
+        else:
+            os.chmod(source, mode)
+    os.replace(source, destination)
 
 
 def _compute_file_md5(filepath: str) -> str:

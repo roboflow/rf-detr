@@ -2089,6 +2089,26 @@ class TestSaveTrainingConfig:
             os.umask(previous_umask)
         assert stat.S_IMODE((output_dir / "training_config.json").stat().st_mode) == 0o644
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.parametrize("mode", [0o600, 0o640], ids=oct)
+    def test_rewritten_training_config_json_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:
+        """Rewriting training_config.json keeps the earlier copy's permission bits, as ``open()`` would."""
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config_path = output_dir / "training_config.json"
+        config_path.write_text("{}")
+        config_path.chmod(mode)
+        previous_umask = os.umask(0o022)
+        try:
+            _save_training_config(
+                _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
+            )
+        finally:
+            os.umask(previous_umask)
+        # The content check guards against a swallowed write failure leaving the old file, and its mode, untouched.
+        rewritten = _read_training_config(str(config_path))
+        assert (rewritten["class_names"], stat.S_IMODE(config_path.stat().st_mode)) == (["cat"], mode)
+
     def test_torn_write_keeps_prior_training_config_intact(self, tmp_path: Path) -> None:
         """A write that fails partway through must not corrupt the previously saved good copy.
 

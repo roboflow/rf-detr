@@ -10,6 +10,7 @@ import os
 import stat
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -516,8 +517,8 @@ class TestStripCheckpoint:
         assert result["rfdetr_version"] == "override"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
-    def test_strip_keeps_the_mode_torch_save_gave_the_file(self, tmp_path: Path) -> None:
-        """The stripped checkpoint stays readable by others instead of taking the rewrite's ``0o600`` temp mode."""
+    def test_strip_checkpoint_mode_follows_umask(self, tmp_path: Path) -> None:
+        """A checkpoint saved and stripped under one umask ends with that umask's mode, not a ``0o600`` temp mode."""
         previous_umask = os.umask(0o022)
         try:
             ckpt_path = self._make_minimal_ckpt(tmp_path)
@@ -525,3 +526,26 @@ class TestStripCheckpoint:
         finally:
             os.umask(previous_umask)
         assert stat.S_IMODE(ckpt_path.stat().st_mode) == 0o644
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.parametrize("mode", [0o600, 0o640], ids=oct)
+    def test_strip_checkpoint_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:
+        """Stripping keeps the checkpoint's own permission bits instead of widening them to the umask's ``0o644``."""
+        previous_umask = os.umask(0o022)
+        try:
+            ckpt_path = self._make_minimal_ckpt(tmp_path)
+            ckpt_path.chmod(mode)
+            strip_checkpoint(ckpt_path)
+        finally:
+            os.umask(previous_umask)
+        assert stat.S_IMODE(ckpt_path.stat().st_mode) == mode
+
+    def test_strip_checkpoint_cleanup_failure_does_not_mask_save_error(self, tmp_path: Path) -> None:
+        """A temp file that cannot be removed after a failed save must not hide the save's own error."""
+        ckpt_path = self._make_minimal_ckpt(tmp_path)
+        with (
+            patch("torch.save", side_effect=RuntimeError("save failed")),
+            patch("rfdetr.utilities.state_dict.os.remove", side_effect=PermissionError("temp file locked")),
+            pytest.raises(RuntimeError, match="save failed"),
+        ):
+            strip_checkpoint(ckpt_path)
