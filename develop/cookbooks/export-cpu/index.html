@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-30T17:28:15">
+  <meta property="article:modified_time" content="2026-10-02T23:46:04">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-30T17:28:15",
+    "dateModified": "2026-10-02T23:46:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2691,6 +2691,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="2. Setup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notebook-display-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notebook display helpers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cpu-thread-count" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CPU thread count
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2866,10 +2894,21 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-results" class="md-nav__link">
+  <a href="#8-coco-val2017-accuracy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Results
+        8. COCO val2017 accuracy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Results
       
     </span>
   </a>
@@ -3668,9 +3707,11 @@ provider, and OpenVINO IR.</p>
 <a href="https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/registry.py"><code>src/rfdetr/export/registry.py</code></a>
 for which formats can hold one artifact across batch sizes and which cannot: ONNX bakes a
 <em>dynamic</em> batch axis (<code>supports_dynamic_batch=True</code>), so one <code>.onnx</code> file serves both rows below;
-OpenVINO bakes a <em>fixed</em> batch shape into its IR graph, so it needs one exported artifact per
-batch size (<code>dynamic_batch_reason</code>: "the IR graph bakes a fixed input shape"). PyTorch needs no
-export step and trivially takes either batch as a <code>(N, C, H, W)</code> tensor.</p>
+OpenVINO's converted IR already has a dynamic input shape (<code>[?,?,?,?]</code>) — a batch-1 IR runs batch
+4 with identical outputs — so it needs no separate dynamic-batch mode either. This notebook still
+exports one OpenVINO IR per batch size only to mirror the per-batch artifacts the other cookbooks'
+fixed-shape formats need. PyTorch needs no export step and trivially takes either batch as a
+<code>(N, C, H, W)</code> tensor.</p>
 <blockquote>
 <p><strong>Not covered here</strong>: NVIDIA GPU deployment (see the <a href="../export-cuda/">CUDA cookbook</a>),
 mobile/edge formats — TFLite, LiteRT, ExecuTorch's XNNPACK backend (see the
@@ -3699,7 +3740,10 @@ at all, let alone without checking precision, batch size, and scope.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to pick up the newest export fixes. No CUDA-specific packages needed.</p>
+<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to test the latest performance work; the newest release (1.11.1) does not yet
+ship the public <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports.
+Once a release does, swap <code>develop</code> for <code>release/latest</code> in the install URL.
+No CUDA-specific packages needed.</p>
 </div>
 </div>
 </div>
@@ -3722,9 +3766,9 @@ at all, let alone without checking precision, batch size, and scope.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" psutil supervision pandas</div>
+<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" psutil supervision pandas faster-coco-eval</div>
 </div>
 </div>
 </div>
@@ -3740,19 +3784,11 @@ at all, let alone without checking precision, batch size, and scope.</p>
 <h2 id="2-setup">2. Setup<a class="anchor-link" href="#2-setup">¶</a></h2><p><code>WARMUP_RUNS</code> discards the first N inferences; <code>MEASURE_RUNS</code> then collects the steady-state
 timing distribution. <code>BATCH_SIZES</code> is the batch matrix every format section below measures —
 <code>(1, 4)</code>, not a single number, so each format contributes two rows to the final results table.
-No CUDA guard needed — every format in this notebook runs on CPU.</p>
-<p>Every format section below shares a handful of small helpers that used to be copy-pasted into
-each per-hardware cookbook separately; they now live once, privately, in <code>rfdetr.export._benchmark</code>:
-<code>_artifact_size_mb</code> reports an export artifact's size on disk (a single file, or the total of a
-directory bundle — needed for OpenVINO's <code>.xml</code> + <code>.bin</code> pair), <code>visualize_detections</code> annotates
-and displays a <code>supervision.Detections</code> on the sample image, <code>_tile_batch</code> stacks the one sample
-image's preprocessed tensor into a <code>(batch, C, H, W)</code> array (all <code>batch</code> copies are the same
-image — this notebook measures throughput at a larger batch dimension, not batch diversity), and
-<code>_decode_batch</code> runs <code>decode_detections</code> over every image in a batched raw-output pair so an
-<code>end2end</code> timing at batch 4 includes all four images' postprocessing, not just the first.
-<code>measure_memory</code> measures the host resident-memory growth of constructing a runtime and running
-its first inference call. <code>cpu_brand</code> reads the host CPU's brand string for the Host cell below,
-reporting a placeholder instead of raising on any host without macOS's <code>sysctl</code>.</p>
+No CUDA guard needed — every format in this notebook runs on CPU. <code>measure_latency</code> and
+<code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module; <code>measure_memory</code> measures
+the host resident-memory growth of constructing a runtime and running its first inference call.
+<code>preprocess_to_nchw</code> and <code>decode_detections</code> come from <code>rfdetr.export.inference</code> — the same
+preprocessing and decoding <code>predict()</code> runs, so a runtime fed through them is comparable to it.</p>
 </div>
 </div>
 </div>
@@ -3775,24 +3811,27 @@ reporting a placeholder instead of raising on any host without macOS's <code>sys
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">platform</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">BenchmarkResult</span><span class="p">,</span>
     <span class="n">_artifact_size_mb</span><span class="p">,</span>
     <span class="n">_decode_batch</span><span class="p">,</span>
-    <span class="n">_enable_notebook_inline_matplotlib</span><span class="p">,</span>
     <span class="n">_result_row</span><span class="p">,</span>
     <span class="n">_tile_batch</span><span class="p">,</span>
     <span class="n">cpu_brand</span><span class="p">,</span>
-    <span class="n">measure_latency</span><span class="p">,</span>
-    <span class="n">measure_memory</span><span class="p">,</span>
+    <span class="n">parity</span><span class="p">,</span>
     <span class="n">visualize_detections</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkResult</span><span class="p">,</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenVINOInference</span><span class="p">,</span> <span class="n">decode_detections</span><span class="p">,</span> <span class="n">preprocess_to_nchw</span>
 
 <span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"export_cpu"</span><span class="p">)</span>
 <span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -3800,36 +3839,127 @@ reporting a placeholder instead of raising on any host without macOS's <code>sys
 <span class="n">WARMUP_RUNS</span> <span class="o">=</span> <span class="mi">15</span>
 <span class="n">MEASURE_RUNS</span> <span class="o">=</span> <span class="mi">50</span>
 <span class="n">BATCH_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
-
-<span class="n">_enable_notebook_inline_matplotlib</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">from pathlib import Path
+<div class="clipboard-copy-txt" id="cell-2">import os
+import platform
+from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 import supervision as sv
+import torch
 from PIL import Image
 
 from rfdetr.export._benchmark import (
-    BenchmarkResult,
     _artifact_size_mb,
     _decode_batch,
-    _enable_notebook_inline_matplotlib,
     _result_row,
     _tile_batch,
     cpu_brand,
-    measure_latency,
-    measure_memory,
+    parity,
     visualize_detections,
 )
+from rfdetr.export.benchmark import BenchmarkResult, measure_latency, measure_memory
+from rfdetr.export.inference import OpenVINOInference, decode_detections, preprocess_to_nchw
 
 EXPORT_DIR = Path("export_cpu")
 EXPORT_DIR.mkdir(exist_ok=True)
 CONFIDENCE_THRESHOLD = 0.5
 WARMUP_RUNS = 15
 MEASURE_RUNS = 50
-BATCH_SIZES = (1, 4)
-
-_enable_notebook_inline_matplotlib()</div>
+BATCH_SIZES = (1, 4)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=54231127">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="notebook-display-helpers">Notebook display helpers<a class="anchor-link" href="#notebook-display-helpers">¶</a></h3><p><code>_artifact_size_mb</code>, <code>_decode_batch</code>, <code>_result_row</code>, <code>_tile_batch</code>, <code>cpu_brand</code>, <code>parity</code>, <code>visualize_detections</code> come from the private <code>rfdetr.export._benchmark</code> module, next to the COCO mAP helpers
+used later. They size artifacts, format the results table, draw detections and compare raw outputs; none of
+them changes what a runtime computes.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4c1f53dd">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># Inline figures keep every plot in the notebook; closing them after display stops figures piling up in memory.</span>
+<span class="o">%</span><span class="n">matplotlib</span> <span class="n">inline</span>
+<span class="o">%</span><span class="n">config</span> <span class="n">InlineBackend</span><span class="o">.</span><span class="n">close_figures</span> <span class="o">=</span> <span class="kc">True</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-3"># Inline figures keep every plot in the notebook; closing them after display stops figures piling up in memory.
+%matplotlib inline
+%config InlineBackend.close_figures = True</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5fbd639a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="cpu-thread-count">CPU thread count<a class="anchor-link" href="#cpu-thread-count">¶</a></h3><p>Every CPU runtime picks its own default thread pool — ONNX Runtime defaults to the number of
+physical cores, PyTorch uses its own heuristic, and a TFLite/LiteRT interpreter (in the mobile
+cookbook) uses just one thread — so rows measured at each runtime's default compare thread pools,
+not formats. Pinning one value, <code>CPU_THREADS</code>, for every runtime below makes the comparison about
+the format. <code>CPU_THREADS</code> is <code>os.cpu_count()</code>, which counts logical cores: on a hyper-threaded x86
+host that is twice the physical count, so the pin is a deliberate choice for comparability, not
+any runtime's tuned default. It is applied to PyTorch here, to ONNX Runtime
+via <code>SessionOptions.intra_op_num_threads</code>, and to OpenVINO via its <code>INFERENCE_NUM_THREADS</code> compile
+property; each runtime's effective value is printed right after it is created.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=bd32743e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">CPU_THREADS</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="ow">or</span> <span class="mi">1</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">set_num_threads</span><span class="p">(</span><span class="n">CPU_THREADS</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-4">CPU_THREADS = os.cpu_count() or 1
+torch.set_num_threads(CPU_THREADS)</div>
 </div>
 </div>
 </div>
@@ -3857,7 +3987,7 @@ all change what these numbers mean on a different machine.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3868,21 +3998,19 @@ all change what these numbers mean on a different machine.</p>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">importlib.metadata</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">platform</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Machine: </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">cpu_brand</span><span class="p">()</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OS: </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">system</span><span class="p">()</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">release</span><span class="p">()</span><span class="si">}</span><span class="s2"> (macOS </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">mac_ver</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="s1">'n/a'</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Cores: </span><span class="si">{</span><span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span><span class="si">}</span><span class="s2"> logical"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CPU threads: </span><span class="si">{</span><span class="n">CPU_THREADS</span><span class="si">}</span><span class="s2"> pinned (PyTorch effective: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">get_num_threads</span><span class="p">()</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rfdetr: </span><span class="si">{</span><span class="n">importlib</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="s1">'rfdetr'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">import importlib.metadata
-import os
-import platform
+<div class="clipboard-copy-txt" id="cell-5">import importlib.metadata
 
 print(f"Machine: {platform.machine()}  ({cpu_brand()})")
 print(f"OS: {platform.system()} {platform.release()} (macOS {platform.mac_ver()[0] or 'n/a'})")
 print(f"Cores: {os.cpu_count()} logical")
+print(f"CPU threads: {CPU_THREADS} pinned (PyTorch effective: {torch.get_num_threads()})")
 print(f"rfdetr: {importlib.metadata.version('rfdetr')}")</div>
 </div>
 </div>
@@ -3896,7 +4024,7 @@ print(f"rfdetr: {importlib.metadata.version('rfdetr')}")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="4-sample-image">4. Sample image<a class="anchor-link" href="#4-sample-image">¶</a></h2><p>A single street scene with several COCO classes (dog, bicycle, car) is enough to verify
+<h2 id="4-sample-image">4. Sample image<a class="anchor-link" href="#4-sample-image">¶</a></h2><p>A single street scene with several COCO classes is enough to verify
 detections. The image is downloaded once and reused for every format below.</p>
 </div>
 </div>
@@ -3910,7 +4038,7 @@ detections. The image is downloaded once and reused for every format below.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3930,7 +4058,7 @@ detections. The image is downloaded once and reused for every format below.</p>
 <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">IMAGE_PATH</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Sample image: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">import urllib.request
+<div class="clipboard-copy-txt" id="cell-6">import urllib.request
 
 IMAGE_URL = "https://media.roboflow.com/notebooks/examples/dog.jpeg"
 IMAGE_PATH = EXPORT_DIR / "sample.jpg"
@@ -3974,7 +4102,7 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3993,7 +4121,7 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">from rfdetr import RFDETRSmall
+<div class="clipboard-copy-txt" id="cell-7">from rfdetr import RFDETRSmall
 
 with measure_memory() as mem:
     model = RFDETRSmall(device="cpu")
@@ -4031,7 +4159,7 @@ cell above already paid.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4059,7 +4187,7 @@ cell above already paid.</p>
     <span class="n">pytorch_eager_results</span><span class="p">[</span><span class="n">_batch</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">_result</span><span class="p">,</span> <span class="n">_memory_mb</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_result</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_result</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_result</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   +</span><span class="si">{</span><span class="n">_memory_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">pytorch_eager_results: dict[int, tuple[BenchmarkResult, float]] = {}
+<div class="clipboard-copy-txt" id="cell-8">pytorch_eager_results: dict[int, tuple[BenchmarkResult, float]] = {}
 for _batch in BATCH_SIZES:
     if _batch == 1:
         _memory_mb = pytorch_eager_memory_mb
@@ -4107,7 +4235,7 @@ the export calls below trace the original (uncompiled) module.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4134,7 +4262,7 @@ the export calls below trace the original (uncompiled) module.</p>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_result</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_result</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_result</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   +</span><span class="si">{</span><span class="n">_memory_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span><span class="p">)</span>
 <span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">pytorch_jit_results: dict[int, tuple[BenchmarkResult, float]] = {}
+<div class="clipboard-copy-txt" id="cell-9">pytorch_jit_results: dict[int, tuple[BenchmarkResult, float]] = {}
 for _batch in BATCH_SIZES:
     with measure_memory() as mem:
         model.inference(batch_size=_batch)
@@ -4169,8 +4297,8 @@ through whichever of those runtimes fits the target machine, CPU or GPU, without
 See the <a href="https://rfdetr.roboflow.com/exports/onnx/">ONNX export docs</a>.</p>
 <h3 id="export">Export<a class="anchor-link" href="#export">¶</a></h3><p><code>model.export()</code> defaults to ONNX. <code>dynamic_batch=True</code> bakes a dynamic batch axis into the graph
 (<code>registry.py</code> marks ONNX <code>supports_dynamic_batch=True</code>) — one exported <code>.onnx</code> file serves every
-batch size in <code>BATCH_SIZES</code> below; only OpenVINO in this notebook needs a separate export per
-batch.</p>
+batch size in <code>BATCH_SIZES</code> below; OpenVINO in this notebook is exported once per batch only to
+mirror the other cookbooks, not because its IR needs it.</p>
 </div>
 </div>
 </div>
@@ -4183,7 +4311,7 @@ batch.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4197,7 +4325,7 @@ batch.</p>
 <span class="n">onnx_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX model (dynamic batch): </span><span class="si">{</span><span class="n">onnx_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">onnx_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">onnx_path = model.export(output_dir=str(EXPORT_DIR), dynamic_batch=True)
+<div class="clipboard-copy-txt" id="cell-10">onnx_path = model.export(output_dir=str(EXPORT_DIR), dynamic_batch=True)
 onnx_size_mb = _artifact_size_mb(onnx_path)
 print(f"ONNX model (dynamic batch): {onnx_path}  ({onnx_size_mb:.1f} MB)")</div>
 </div>
@@ -4212,8 +4340,146 @@ print(f"ONNX model (dynamic batch): {onnx_path}  ({onnx_size_mb:.1f} MB)")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p><code>_create_onnx_session</code> (the same session-construction helper <code>RFDETR.predict()</code>'s reference
-decoder uses internally) is pinned to <code>CPUExecutionProvider</code>.</p>
+<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p>A plain <code>onnxruntime.InferenceSession</code>, pinned to <code>CPUExecutionProvider</code>. Its session options
+pin the intra-op thread pool to <code>CPU_THREADS</code> and stop idle pool threads from busy-spinning
+between calls — spinning only changes how idle threads wait, not computed values, but it contends
+for CPU with the preprocessing and decoding that run between <code>session.run</code> calls.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=b01e1ffd">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">onnx_options</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">SessionOptions</span><span class="p">()</span>
+<span class="n">onnx_options</span><span class="o">.</span><span class="n">intra_op_num_threads</span> <span class="o">=</span> <span class="n">CPU_THREADS</span>
+<span class="n">onnx_options</span><span class="o">.</span><span class="n">add_session_config_entry</span><span class="p">(</span><span class="s2">"session.intra_op.allow_spinning"</span><span class="p">,</span> <span class="s2">"0"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-11">onnx_options = ort.SessionOptions()
+onnx_options.intra_op_num_threads = CPU_THREADS
+onnx_options.add_session_config_entry("session.intra_op.allow_spinning", "0")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d8319162">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Session construction and the first call share one <code>measure_memory</code> window, the same scope every
+other format's memory number uses. The raw batch-1 outputs kept here are this notebook's fp32
+reference for the <code>parity</code> check on every OpenVINO runtime below.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a0fed523">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">onnx_session</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">),</span> <span class="n">sess_options</span><span class="o">=</span><span class="n">onnx_options</span><span class="p">,</span> <span class="n">providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CPUExecutionProvider"</span><span class="p">])</span>
+    <span class="n">_onnx_input_name</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">onnx_raw</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+        <span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="n">_onnx_input_name</span><span class="p">:</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)}</span>
+    <span class="p">)</span>
+<span class="n">onnx_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX Runtime intra-op threads: </span><span class="si">{</span><span class="n">onnx_session</span><span class="o">.</span><span class="n">get_session_options</span><span class="p">()</span><span class="o">.</span><span class="n">intra_op_num_threads</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-12">with measure_memory() as mem:
+    onnx_session = ort.InferenceSession(str(onnx_path), sess_options=onnx_options, providers=["CPUExecutionProvider"])
+    _onnx_input_name = onnx_session.get_inputs()[0].name
+    _, _onnx_channels, _onnx_height, _onnx_width = onnx_session.get_inputs()[0].shape
+    onnx_raw = onnx_session.run(
+        None, {_onnx_input_name: preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels)}
+    )
+onnx_memory_mb = mem.delta_mb
+print(f"ONNX Runtime intra-op threads: {onnx_session.get_session_options().intra_op_num_threads}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4e59206d">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># Match outputs by name ("dets" = boxes, "labels" = logits) so the code is robust to output reordering.</span>
+<span class="n">_onnx_output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
+<span class="n">_onnx_boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
+<span class="n">_onnx_logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
+<span class="n">onnx_boxes</span><span class="p">,</span> <span class="n">onnx_logits</span> <span class="o">=</span> <span class="n">onnx_raw</span><span class="p">[</span><span class="n">_onnx_boxes_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span> <span class="n">onnx_raw</span><span class="p">[</span><span class="n">_onnx_logits_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">onnx_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">onnx_boxes</span><span class="p">,</span> <span class="n">onnx_logits</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="n">onnx_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
+    <span class="n">xyxy</span><span class="o">=</span><span class="n">onnx_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">onnx_decoded</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span> <span class="n">class_id</span><span class="o">=</span><span class="n">onnx_decoded</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="c1"># ONNX is the fp32 reference itself, so no parity line here; PyTorch `predict()` above returns</span>
+<span class="c1"># decoded `sv.Detections`, not raw `dets`/`labels` arrays, so it is not parity-checked either.</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-13"># Match outputs by name ("dets" = boxes, "labels" = logits) so the code is robust to output reordering.
+_onnx_output_names = [out.name for out in onnx_session.get_outputs()]
+_onnx_boxes_idx = next(i for i, name in enumerate(_onnx_output_names) if "dets" in name)
+_onnx_logits_idx = next(i for i, name in enumerate(_onnx_output_names) if "labels" in name)
+onnx_boxes, onnx_logits = onnx_raw[_onnx_boxes_idx][0], onnx_raw[_onnx_logits_idx][0]
+onnx_decoded = decode_detections(onnx_boxes, onnx_logits, image.size, threshold=CONFIDENCE_THRESHOLD)
+onnx_detections = sv.Detections(
+    xyxy=onnx_decoded.xyxy, confidence=onnx_decoded.confidence, class_id=onnx_decoded.class_id.astype(int)
+)
+print(f"ONNX (CPU): {len(onnx_detections)} detections above {CONFIDENCE_THRESHOLD}")
+# ONNX is the fp32 reference itself, so no parity line here; PyTorch `predict()` above returns
+# decoded `sv.Detections`, not raw `dets`/`labels` arrays, so it is not parity-checked either.</div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -4226,7 +4492,7 @@ decoder uses internally) is pinned to <code>CPUExecutionProvider</code>.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4236,23 +4502,9 @@ decoder uses internally) is pinned to <code>CPUExecutionProvider</code>.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._onnx.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">_create_onnx_session</span><span class="p">,</span> <span class="n">_run_inference</span>
-
-<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">onnx_session</span> <span class="o">=</span> <span class="n">_create_onnx_session</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">,</span> <span class="n">providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CPUExecutionProvider"</span><span class="p">])</span>
-    <span class="n">onnx_detections</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_run_inference</span><span class="p">(</span><span class="n">onnx_session</span><span class="p">,</span> <span class="n">IMAGE_PATH</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
-<span class="n">onnx_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="n">visualize_detections</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_onnx.jpg"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">visualize_detections</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_onnx.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
-
-with measure_memory() as mem:
-    onnx_session = _create_onnx_session(onnx_path, providers=["CPUExecutionProvider"])
-    onnx_detections, _ = _run_inference(onnx_session, IMAGE_PATH, threshold=CONFIDENCE_THRESHOLD)
-onnx_memory_mb = mem.delta_mb
-print(f"ONNX (CPU): {len(onnx_detections)} detections above {CONFIDENCE_THRESHOLD}")
-visualize_detections(onnx_detections, image, EXPORT_DIR / "annotated_onnx.jpg")</div>
+<div class="clipboard-copy-txt" id="cell-14">visualize_detections(onnx_detections, image, EXPORT_DIR / "annotated_onnx.jpg")</div>
 </div>
 </div>
 </div>
@@ -4283,7 +4535,7 @@ larger-batch call, not a second construction.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4293,17 +4545,7 @@ larger-batch call, not a second construction.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._runtime.decode</span><span class="w"> </span><span class="kn">import</span> <span class="n">decode_detections</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._runtime.preprocess</span><span class="w"> </span><span class="kn">import</span> <span class="n">preprocess_to_nchw</span>
-
-<span class="n">_onnx_input_name</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
-<span class="n">_</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
-<span class="n">_onnx_output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
-<span class="n">_onnx_boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
-<span class="n">_onnx_logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_onnx_single_input</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_onnx_single_input</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)</span>
 
 
@@ -4342,17 +4584,7 @@ larger-batch call, not a second construction.</p>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;28</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;28</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">from rfdetr.export._runtime.decode import decode_detections
-from rfdetr.export._runtime.preprocess import preprocess_to_nchw
-
-_onnx_input_name = onnx_session.get_inputs()[0].name
-_, _onnx_channels, _onnx_height, _onnx_width = onnx_session.get_inputs()[0].shape
-_onnx_output_names = [out.name for out in onnx_session.get_outputs()]
-_onnx_boxes_idx = next(i for i, name in enumerate(_onnx_output_names) if "dets" in name)
-_onnx_logits_idx = next(i for i, name in enumerate(_onnx_output_names) if "labels" in name)
-
-
-def _onnx_single_input() -&gt; np.ndarray:
+<div class="clipboard-copy-txt" id="cell-15">def _onnx_single_input() -&gt; np.ndarray:
     return preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels)
 
 
@@ -4410,9 +4642,10 @@ exported IR, which matters if the deployment box has no NVIDIA GPU at all. See t
 <h3 id="export">Export<a class="anchor-link" href="#export">¶</a></h3><p><code>openvino_precision="float32"</code> overrides OpenVINO's default FP16 weight compression — this
 keeps the IR at full precision for tight parity with the fp32 ONNX/PyTorch baseline above; drop
 it for a smaller, faster file if you don't need that parity (execution precision still depends
-on the compiled device regardless of this setting). <code>registry.py</code> marks OpenVINO
-<code>supports_dynamic_batch=False</code> — the IR graph bakes a fixed input shape — so unlike ONNX above,
-each batch size needs its own export; <code>batch_size=b</code> bakes that batch into the traced graph.</p>
+on the compiled device regardless of this setting). The converted IR has a dynamic input shape
+(<code>[?,?,?,?]</code>), and a batch-1 IR runs batch 4 with identical outputs, so one export would serve both
+rows; this loop still exports one IR per batch size (<code>batch_size=b</code> only sets the dummy input it is
+traced with) to mirror the per-batch artifacts the other cookbooks' fixed-shape formats need.</p>
 </div>
 </div>
 </div>
@@ -4425,7 +4658,7 @@ each batch size needs its own export; <code>batch_size=b</code> bakes that batch
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4447,7 +4680,7 @@ each batch size needs its own export; <code>batch_size=b</code> bakes that batch
     <span class="n">_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">_path</span><span class="p">,</span> <span class="n">_path</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">".bin"</span><span class="p">))</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO IR (fp32, b=</span><span class="si">{</span><span class="n">_batch</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB, .xml + .bin)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">openvino_fp32_paths: dict[int, Path] = {}
+<div class="clipboard-copy-txt" id="cell-16">openvino_fp32_paths: dict[int, Path] = {}
 for _batch in BATCH_SIZES:
     _path = model.export(
         format="openvino",
@@ -4476,6 +4709,86 @@ output tensors, decoded here with the same <code>decode_detections</code> helper
 <code>np.ascontiguousarray</code> is applied defensively since <code>infer()</code> raises <code>ValueError</code> otherwise.
 Correctness is checked at batch 1 only — the batch-4 rows below reuse the same artifact-building
 and decoding path, just timed rather than inspected image-by-image.</p>
+<p><code>config={"INFERENCE_NUM_THREADS": CPU_THREADS}</code> pins OpenVINO's thread pool to the same count as
+every other runtime here. <code>OpenVINOInference</code> computes in f32 by default
+(<code>inference_precision="f32"</code>). Earlier <code>rfdetr</code> versions compiled at the device's default
+precision instead — f16 on ARM, likely bf16 on x86 CPUs with AMX — which collapsed RF-DETR's
+logits (0 detections against 3 on this sample). The effective precision hint is printed below,
+with the <code>parity</code> drift against the fp32 ONNX reference.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=967a5279">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">ov_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span>
+        <span class="n">openvino_fp32_paths</span><span class="p">[</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">"INFERENCE_NUM_THREADS"</span><span class="p">:</span> <span class="n">CPU_THREADS</span><span class="p">}</span>
+    <span class="p">)</span>
+    <span class="n">ov_input</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">_onnx_single_input</span><span class="p">())</span>
+    <span class="n">ov_boxes</span><span class="p">,</span> <span class="n">ov_logits</span> <span class="o">=</span> <span class="n">ov_model</span><span class="p">(</span><span class="n">ov_input</span><span class="p">)</span>
+<span class="n">openvino_memory_mb</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO INFERENCE_PRECISION_HINT: </span><span class="si">{</span><span class="n">ov_model</span><span class="o">.</span><span class="n">compiled_model</span><span class="o">.</span><span class="n">get_property</span><span class="p">(</span><span class="s1">'INFERENCE_PRECISION_HINT'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO INFERENCE_NUM_THREADS: </span><span class="si">{</span><span class="n">ov_model</span><span class="o">.</span><span class="n">compiled_model</span><span class="o">.</span><span class="n">get_property</span><span class="p">(</span><span class="s1">'INFERENCE_NUM_THREADS'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-17">with measure_memory() as mem:
+    ov_model = OpenVINOInference(
+        openvino_fp32_paths[BATCH_SIZES[0]], device="CPU", config={"INFERENCE_NUM_THREADS": CPU_THREADS}
+    )
+    ov_input = np.ascontiguousarray(_onnx_single_input())
+    ov_boxes, ov_logits = ov_model(ov_input)
+openvino_memory_mb = {BATCH_SIZES[0]: mem.delta_mb}
+print(f"OpenVINO INFERENCE_PRECISION_HINT: {ov_model.compiled_model.get_property('INFERENCE_PRECISION_HINT')}")
+print(f"OpenVINO INFERENCE_NUM_THREADS: {ov_model.compiled_model.get_property('INFERENCE_NUM_THREADS')}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a94e332e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">ov_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">ov_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ov_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO fp32 vs ONNX fp32: </span><span class="si">{</span><span class="n">parity</span><span class="p">(</span><span class="n">onnx_boxes</span><span class="p">,</span><span class="w"> </span><span class="n">onnx_logits</span><span class="p">,</span><span class="w"> </span><span class="n">ov_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="n">ov_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-18">ov_decoded = decode_detections(ov_boxes[0], ov_logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
+print(f"OpenVINO (CPU): {len(ov_decoded.xyxy)} detections above {CONFIDENCE_THRESHOLD}")
+print(f"OpenVINO fp32 vs ONNX fp32: {parity(onnx_boxes, onnx_logits, ov_boxes[0], ov_logits[0])}")</div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -4488,7 +4801,7 @@ and decoding path, just timed rather than inspected image-by-image.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4498,32 +4811,12 @@ and decoding path, just timed rather than inspected image-by-image.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenVINOInference</span>
-
-<span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">ov_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span><span class="n">openvino_fp32_paths</span><span class="p">[</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">)</span>
-    <span class="n">ov_input</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">_onnx_single_input</span><span class="p">())</span>
-    <span class="n">ov_boxes</span><span class="p">,</span> <span class="n">ov_logits</span> <span class="o">=</span> <span class="n">ov_model</span><span class="p">(</span><span class="n">ov_input</span><span class="p">)</span>
-<span class="n">openvino_memory_mb</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
-<span class="n">ov_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">ov_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ov_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-
-<span class="n">ov_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">ov_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
     <span class="n">xyxy</span><span class="o">=</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span> <span class="n">class_id</span><span class="o">=</span><span class="n">ov_decoded</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 <span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">ov_sv_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_openvino.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">from rfdetr.export.inference import OpenVINOInference
-
-with measure_memory() as mem:
-    ov_model = OpenVINOInference(openvino_fp32_paths[BATCH_SIZES[0]], device="CPU")
-    ov_input = np.ascontiguousarray(_onnx_single_input())
-    ov_boxes, ov_logits = ov_model(ov_input)
-openvino_memory_mb = {BATCH_SIZES[0]: mem.delta_mb}
-ov_decoded = decode_detections(ov_boxes[0], ov_logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
-print(f"OpenVINO (CPU): {len(ov_decoded.xyxy)} detections above {CONFIDENCE_THRESHOLD}")
-
-ov_sv_detections = sv.Detections(
+<div class="clipboard-copy-txt" id="cell-19">ov_sv_detections = sv.Detections(
     xyxy=ov_decoded.xyxy, confidence=ov_decoded.confidence, class_id=ov_decoded.class_id.astype(int)
 )
 visualize_detections(ov_sv_detections, image, EXPORT_DIR / "annotated_openvino.jpg")</div>
@@ -4554,7 +4847,7 @@ session arena-growth number above).</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4578,7 +4871,9 @@ session arena-growth number above).</p>
 <span class="k">for</span> <span class="n">_batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">_batch</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">openvino_fp32_models</span><span class="p">:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-            <span class="n">_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span><span class="n">openvino_fp32_paths</span><span class="p">[</span><span class="n">_batch</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">)</span>
+            <span class="n">_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span>
+                <span class="n">openvino_fp32_paths</span><span class="p">[</span><span class="n">_batch</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">"INFERENCE_NUM_THREADS"</span><span class="p">:</span> <span class="n">CPU_THREADS</span><span class="p">}</span>
+            <span class="p">)</span>
             <span class="n">_input</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">_tile_batch</span><span class="p">(</span><span class="n">_onnx_single_input</span><span class="p">(),</span> <span class="n">_batch</span><span class="p">))</span>
             <span class="n">_model</span><span class="p">(</span><span class="n">_input</span><span class="p">)</span>
         <span class="n">openvino_memory_mb</span><span class="p">[</span><span class="n">_batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
@@ -4603,7 +4898,7 @@ session arena-growth number above).</p>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;28</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;28</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-13">def _make_ov_end2end(ov: OpenVINOInference, batch: int):
+<div class="clipboard-copy-txt" id="cell-20">def _make_ov_end2end(ov: OpenVINOInference, batch: int):
     def _run() -&gt; None:
         inp = np.ascontiguousarray(_tile_batch(_onnx_single_input(), batch))
         boxes, logits = ov(inp)
@@ -4617,7 +4912,9 @@ openvino_fp32_results: dict[int, tuple[BenchmarkResult, BenchmarkResult]] = {}
 for _batch in BATCH_SIZES:
     if _batch not in openvino_fp32_models:
         with measure_memory() as mem:
-            _model = OpenVINOInference(openvino_fp32_paths[_batch], device="CPU")
+            _model = OpenVINOInference(
+                openvino_fp32_paths[_batch], device="CPU", config={"INFERENCE_NUM_THREADS": CPU_THREADS}
+            )
             _input = np.ascontiguousarray(_tile_batch(_onnx_single_input(), _batch))
             _model(_input)
         openvino_memory_mb[_batch] = mem.delta_mb
@@ -4656,8 +4953,9 @@ for _batch in BATCH_SIZES:
 <h3 id="openvino-fp16-default">OpenVINO (fp16, default)<a class="anchor-link" href="#openvino-fp16-default">¶</a></h3><p>Dropping <code>openvino_precision</code> (or passing <code>"float16"</code> explicitly) restores OpenVINO's own
 default FP16 weight compression — a smaller IR on disk and less memory traffic per inference,
 at the cost of the numeric parity the <code>float32</code> row above trades for. Execution precision still
-depends on the compiled device, not just this setting (see the export docs linked above). Same
-fixed-batch constraint as the fp32 IR above: one export per batch size.</p>
+depends on the compiled device, not just this setting (see the export docs linked above).
+<code>OpenVINOInference</code> still computes in f32 here — only the stored weights are fp16. One export per
+batch size, as for the fp32 IR above, to mirror the other cookbooks — not because the IR needs it.</p>
 </div>
 </div>
 </div>
@@ -4670,7 +4968,7 @@ fixed-batch constraint as the fp32 IR above: one export per batch size.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4692,7 +4990,7 @@ fixed-batch constraint as the fp32 IR above: one export per batch size.</p>
     <span class="n">_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">_path</span><span class="p">,</span> <span class="n">_path</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">".bin"</span><span class="p">))</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO IR (fp16, b=</span><span class="si">{</span><span class="n">_batch</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB, .xml + .bin)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-14">openvino_fp16_paths: dict[int, Path] = {}
+<div class="clipboard-copy-txt" id="cell-21">openvino_fp16_paths: dict[int, Path] = {}
 for _batch in BATCH_SIZES:
     _path = model.export(
         format="openvino",
@@ -4709,7 +5007,7 @@ for _batch in BATCH_SIZES:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=836afa72">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=765ae947">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -4717,7 +5015,7 @@ for _batch in BATCH_SIZES:
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-22">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4728,27 +5026,81 @@ for _batch in BATCH_SIZES:
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">ov_fp16_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span><span class="n">openvino_fp16_paths</span><span class="p">[</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">)</span>
+    <span class="n">ov_fp16_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span>
+        <span class="n">openvino_fp16_paths</span><span class="p">[</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">"INFERENCE_NUM_THREADS"</span><span class="p">:</span> <span class="n">CPU_THREADS</span><span class="p">}</span>
+    <span class="p">)</span>
     <span class="n">ov_fp16_input</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">_onnx_single_input</span><span class="p">())</span>
     <span class="n">ov_fp16_boxes</span><span class="p">,</span> <span class="n">ov_fp16_logits</span> <span class="o">=</span> <span class="n">ov_fp16_model</span><span class="p">(</span><span class="n">ov_fp16_input</span><span class="p">)</span>
 <span class="n">openvino_fp16_memory_mb</span> <span class="o">=</span> <span class="p">{</span><span class="n">BATCH_SIZES</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span><span class="p">}</span>
-<span class="n">ov_fp16_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">ov_fp16_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ov_fp16_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-22">with measure_memory() as mem:
+    ov_fp16_model = OpenVINOInference(
+        openvino_fp16_paths[BATCH_SIZES[0]], device="CPU", config={"INFERENCE_NUM_THREADS": CPU_THREADS}
+    )
+    ov_fp16_input = np.ascontiguousarray(_onnx_single_input())
+    ov_fp16_boxes, ov_fp16_logits = ov_fp16_model(ov_fp16_input)
+openvino_fp16_memory_mb = {BATCH_SIZES[0]: mem.delta_mb}</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d7e82035">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-23">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">ov_fp16_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">ov_fp16_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ov_fp16_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO fp16 (CPU): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-
-<span class="n">ov_fp16_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"OpenVINO fp16 IR vs ONNX fp32: </span><span class="si">{</span><span class="n">parity</span><span class="p">(</span><span class="n">onnx_boxes</span><span class="p">,</span><span class="w"> </span><span class="n">onnx_logits</span><span class="p">,</span><span class="w"> </span><span class="n">ov_fp16_boxes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="n">ov_fp16_logits</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-23">ov_fp16_decoded = decode_detections(ov_fp16_boxes[0], ov_fp16_logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
+print(f"OpenVINO fp16 (CPU): {len(ov_fp16_decoded.xyxy)} detections above {CONFIDENCE_THRESHOLD}")
+print(f"OpenVINO fp16 IR vs ONNX fp32: {parity(onnx_boxes, onnx_logits, ov_fp16_boxes[0], ov_fp16_logits[0])}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=836afa72">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-24">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">ov_fp16_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
     <span class="n">xyxy</span><span class="o">=</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span> <span class="n">class_id</span><span class="o">=</span><span class="n">ov_fp16_decoded</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
 <span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">ov_fp16_sv_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_openvino_fp16.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-15">with measure_memory() as mem:
-    ov_fp16_model = OpenVINOInference(openvino_fp16_paths[BATCH_SIZES[0]], device="CPU")
-    ov_fp16_input = np.ascontiguousarray(_onnx_single_input())
-    ov_fp16_boxes, ov_fp16_logits = ov_fp16_model(ov_fp16_input)
-openvino_fp16_memory_mb = {BATCH_SIZES[0]: mem.delta_mb}
-ov_fp16_decoded = decode_detections(ov_fp16_boxes[0], ov_fp16_logits[0], image.size, threshold=CONFIDENCE_THRESHOLD)
-print(f"OpenVINO fp16 (CPU): {len(ov_fp16_decoded.xyxy)} detections above {CONFIDENCE_THRESHOLD}")
-
-ov_fp16_sv_detections = sv.Detections(
+<div class="clipboard-copy-txt" id="cell-24">ov_fp16_sv_detections = sv.Detections(
     xyxy=ov_fp16_decoded.xyxy, confidence=ov_fp16_decoded.confidence, class_id=ov_fp16_decoded.class_id.astype(int)
 )
 visualize_detections(ov_fp16_sv_detections, image, EXPORT_DIR / "annotated_openvino_fp16.jpg")</div>
@@ -4766,7 +5118,7 @@ visualize_detections(ov_fp16_sv_detections, image, EXPORT_DIR / "annotated_openv
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-25">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4781,7 +5133,9 @@ visualize_detections(ov_fp16_sv_detections, image, EXPORT_DIR / "annotated_openv
 <span class="k">for</span> <span class="n">_batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">_batch</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">openvino_fp16_models</span><span class="p">:</span>
         <span class="k">with</span> <span class="n">measure_memory</span><span class="p">()</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-            <span class="n">_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span><span class="n">openvino_fp16_paths</span><span class="p">[</span><span class="n">_batch</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">)</span>
+            <span class="n">_model</span> <span class="o">=</span> <span class="n">OpenVINOInference</span><span class="p">(</span>
+                <span class="n">openvino_fp16_paths</span><span class="p">[</span><span class="n">_batch</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"CPU"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="p">{</span><span class="s2">"INFERENCE_NUM_THREADS"</span><span class="p">:</span> <span class="n">CPU_THREADS</span><span class="p">}</span>
+            <span class="p">)</span>
             <span class="n">_input</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">_tile_batch</span><span class="p">(</span><span class="n">_onnx_single_input</span><span class="p">(),</span> <span class="n">_batch</span><span class="p">))</span>
             <span class="n">_model</span><span class="p">(</span><span class="n">_input</span><span class="p">)</span>
         <span class="n">openvino_fp16_memory_mb</span><span class="p">[</span><span class="n">_batch</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
@@ -4808,12 +5162,14 @@ visualize_detections(ov_fp16_sv_detections, image, EXPORT_DIR / "annotated_openv
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;28</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_forward</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;28</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_end2end</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">openvino_fp16_models: dict[int, OpenVINOInference] = {BATCH_SIZES[0]: ov_fp16_model}
+<div class="clipboard-copy-txt" id="cell-25">openvino_fp16_models: dict[int, OpenVINOInference] = {BATCH_SIZES[0]: ov_fp16_model}
 openvino_fp16_results: dict[int, tuple[BenchmarkResult, BenchmarkResult]] = {}
 for _batch in BATCH_SIZES:
     if _batch not in openvino_fp16_models:
         with measure_memory() as mem:
-            _model = OpenVINOInference(openvino_fp16_paths[_batch], device="CPU")
+            _model = OpenVINOInference(
+                openvino_fp16_paths[_batch], device="CPU", config={"INFERENCE_NUM_THREADS": CPU_THREADS}
+            )
             _input = np.ascontiguousarray(_tile_batch(_onnx_single_input(), _batch))
             _model(_input)
         openvino_fp16_memory_mb[_batch] = mem.delta_mb
@@ -4851,7 +5207,530 @@ for _batch in BATCH_SIZES:
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="8-results">8. Results<a class="anchor-link" href="#8-results">¶</a></h2><p>Measured on this machine — see the Host cell's output above for the exact CPU/OS/<code>rfdetr</code>
+<h2 id="8-coco-val2017-accuracy">8. COCO val2017 accuracy<a class="anchor-link" href="#8-coco-val2017-accuracy">¶</a></h2><p>A latency number on its own can hide a precision collapse. Earlier <code>rfdetr</code> versions compiled
+OpenVINO at the device's default f16 precision, which returned 0 detections while the timing still
+looked normal. So each batch-1 row below also gets a box mAP, measured on the same exported
+artifact at the same precision as its latency row: the batch-1 fp32 and fp16 OpenVINO IRs and the
+dynamic-batch <code>.onnx</code> file.</p>
+<p>By default this runs on a <strong>500-image seeded subset</strong> of COCO val2017, so the result is not the
+full-val2017 number on the <a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a>.
+Set <code>FULL_VAL = True</code> to score all 5000 images. Each row costs roughly its batch-1 <code>end2end</code>
+latency times the number of images. On the shared x86 vCPU that is ~360 ms × 500 ≈ 3 min per row,
+or ~15 min for all five rows (~30 min per row with <code>FULL_VAL</code>).</p>
+<p>Raw <code>dets</code>/<code>labels</code> outputs are decoded with <code>background_class_id=None</code>. The official COCO
+checkpoints use sparse COCO category IDs, so every logit slot is a real class, including slot 90.
+The decoder's own default (<code>-1</code>, last slot) would drop category 90.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=1cc07793">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-26">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">N_EVAL</span> <span class="o">=</span> <span class="mi">500</span>
+<span class="n">FULL_VAL</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="n">COCO_SEED</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-26">N_EVAL = 500
+FULL_VAL = False
+COCO_SEED = 0
+COCO_ROOT = Path("coco")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=aba14393">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p><code>fetch_coco_val2017</code> and <code>evaluate_coco_map</code> come from the private <code>rfdetr.export._benchmark</code>
+module. This is the one deliberate exception to this notebook's public-API-only rule: the helpers
+exist only to score these cookbooks and are not a supported API. The fetch downloads the 241 MB
+annotation archive once, then only the selected images, and skips files already on disk.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4b371236">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-27">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">evaluate_coco_map</span><span class="p">,</span> <span class="n">fetch_coco_val2017</span>
+
+<span class="n">coco_subset</span> <span class="o">=</span> <span class="n">fetch_coco_val2017</span><span class="p">(</span><span class="n">COCO_ROOT</span><span class="p">,</span> <span class="n">n_images</span><span class="o">=</span><span class="kc">None</span> <span class="k">if</span> <span class="n">FULL_VAL</span> <span class="k">else</span> <span class="n">N_EVAL</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">COCO_SEED</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"COCO val2017 images to score: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">image_ids</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-27">from rfdetr.export._benchmark import evaluate_coco_map, fetch_coco_val2017
+
+coco_subset = fetch_coco_val2017(COCO_ROOT, n_images=None if FULL_VAL else N_EVAL, seed=COCO_SEED)
+print(f"COCO val2017 images to score: {len(coco_subset.image_ids)}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d8e38906">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Each adapter wraps one runtime so it takes a single RGB PIL image (batch 1) and returns what that
+runtime produces. PyTorch <code>predict()</code> returns decoded <code>sv.Detections</code> whose <code>class_id</code> values are
+COCO category IDs for the pretrained checkpoint, at a 0.001 score floor so the whole
+precision-recall curve is kept. ONNX and OpenVINO return raw <code>(dets, labels)</code> arrays, built with
+the same preprocessing as their Inference cells above, but taking the image as an argument instead
+of reading the global sample <code>image</code>. The OpenVINO adapter takes the compiled model as an argument
+because the fp32 and fp16 IRs share it.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=78e63e78">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-28">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_pytorch_predict_run</span><span class="p">(</span><span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.001</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_onnx_run</span><span class="p">(</span><span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="n">_onnx_input_name</span><span class="p">:</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)})</span>
+    <span class="k">return</span> <span class="n">raw</span><span class="p">[</span><span class="n">_onnx_boxes_idx</span><span class="p">],</span> <span class="n">raw</span><span class="p">[</span><span class="n">_onnx_logits_idx</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_openvino_run</span><span class="p">(</span><span class="n">ov</span><span class="p">:</span> <span class="n">OpenVINOInference</span><span class="p">,</span> <span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">ov</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)))</span>
+
+
+<span class="n">map_results</span> <span class="o">=</span> <span class="p">{}</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-28">def _pytorch_predict_run(img: Image.Image) -&gt; sv.Detections:
+    return model.predict(img, threshold=0.001)
+
+
+def _onnx_run(img: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+    raw = onnx_session.run(None, {_onnx_input_name: preprocess_to_nchw(img, _onnx_height, _onnx_width, _onnx_channels)})
+    return raw[_onnx_boxes_idx], raw[_onnx_logits_idx]
+
+
+def _openvino_run(ov: OpenVINOInference, img: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+    return ov(np.ascontiguousarray(preprocess_to_nchw(img, _onnx_height, _onnx_width, _onnx_channels)))
+
+
+map_results = {}</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c25a5666">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>PyTorch <code>predict()</code>, eager fp32. Section 5 reverted <code>model</code> to eager mode after the JIT benchmark.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=9ab84217">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-29">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch predict() eager, fp32"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_pytorch_predict_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-29">map_results["PyTorch predict() eager, fp32"] = evaluate_coco_map(_pytorch_predict_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=93c89d57">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>PyTorch <code>inference()</code>, JIT fp32. The TorchScript module is traced for batch 1, the same setting as
+the batch-1 latency row, and the next cell scores it through <code>predict()</code>.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=df7dd56c">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-30">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-30">model.inference(batch_size=1)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=d06de928">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-31">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch inference() JIT, fp32"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_pytorch_predict_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-31">map_results["PyTorch inference() JIT, fp32"] = evaluate_coco_map(_pytorch_predict_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1a981dc4">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Revert to eager mode, so <code>model</code> is again the unoptimized baseline, as Section 5 left it.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=65fad3b1">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-32">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-32">model.remove_optimized_model()</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e24c533b">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>ONNX on the CPU execution provider. This uses the same session and <code>.onnx</code> file as the latency
+rows.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c2941eb1">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-33">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"ONNX CPU EP"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_onnx_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-33">map_results["ONNX CPU EP"] = evaluate_coco_map(_onnx_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9a0cd158">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>OpenVINO fp32 IR: the batch-1 IR and the same <code>OpenVINOInference</code> instance (<code>ov_model</code>, f32
+execution) as its latency row.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=617d7fd4">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-34">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"OpenVINO fp32 IR, CPU"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">img</span><span class="p">:</span> <span class="n">_openvino_run</span><span class="p">(</span><span class="n">ov_model</span><span class="p">,</span> <span class="n">img</span><span class="p">),</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-34">map_results["OpenVINO fp32 IR, CPU"] = evaluate_coco_map(lambda img: _openvino_run(ov_model, img), coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=82cca1e1">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>OpenVINO fp16 IR (default compression): the batch-1 IR and the same instance (<code>ov_fp16_model</code>)
+as its latency row. Only the stored weights are fp16, so a large drop from the fp32 IR row would
+point at the weight compression itself.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=62f5799f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-35">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"OpenVINO fp16 IR (default), CPU"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">img</span><span class="p">:</span> <span class="n">_openvino_run</span><span class="p">(</span><span class="n">ov_fp16_model</span><span class="p">,</span> <span class="n">img</span><span class="p">),</span> <span class="n">coco_subset</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-35">map_results["OpenVINO fp16 IR (default), CPU"] = evaluate_coco_map(
+    lambda img: _openvino_run(ov_fp16_model, img), coco_subset
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f5f64c03">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>One row per scored runtime. Read <code>mAP@50:95 [%]</code> alongside the batch-1 latency row for the same
+format and config. A row far below the PyTorch eager baseline points to a precision or export
+problem, not a faster model.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c755048e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-36">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">IPython.display</span><span class="w"> </span><span class="kn">import</span> <span class="n">display</span>
+
+<span class="n">_map_rows</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="s2">"PyTorch predict()"</span><span class="p">,</span> <span class="s2">"eager, fp32"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch predict() eager, fp32"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"PyTorch inference()"</span><span class="p">,</span> <span class="s2">"JIT, fp32"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch inference() JIT, fp32"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="s2">"CPU EP"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"ONNX CPU EP"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"OpenVINO"</span><span class="p">,</span> <span class="s2">"fp32 IR, CPU"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"OpenVINO fp32 IR, CPU"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"OpenVINO"</span><span class="p">,</span> <span class="s2">"fp16 IR (default), CPU"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"OpenVINO fp16 IR (default), CPU"</span><span class="p">]),</span>
+<span class="p">]</span>
+<span class="n">display</span><span class="p">(</span>
+    <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">"Format"</span><span class="p">:</span> <span class="n">format_label</span><span class="p">,</span>
+                <span class="s2">"Config"</span><span class="p">:</span> <span class="n">config</span><span class="p">,</span>
+                <span class="s2">"mAP@50:95 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">map50_95</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="s2">"mAP@50 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">map50</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="s2">"Images"</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">n_images</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="k">for</span> <span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">_map_rows</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-36">import pandas as pd
+from IPython.display import display
+
+_map_rows = [
+    ("PyTorch predict()", "eager, fp32", map_results["PyTorch predict() eager, fp32"]),
+    ("PyTorch inference()", "JIT, fp32", map_results["PyTorch inference() JIT, fp32"]),
+    ("ONNX", "CPU EP", map_results["ONNX CPU EP"]),
+    ("OpenVINO", "fp32 IR, CPU", map_results["OpenVINO fp32 IR, CPU"]),
+    ("OpenVINO", "fp16 IR (default), CPU", map_results["OpenVINO fp16 IR (default), CPU"]),
+]
+display(
+    pd.DataFrame(
+        [
+            {
+                "Format": format_label,
+                "Config": config,
+                "mAP@50:95 [%]": round(100 * result.map50_95, 1),
+                "mAP@50 [%]": round(100 * result.map50, 1),
+                "Images": result.n_images,
+            }
+            for format_label, config, result in _map_rows
+        ]
+    )
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3c08f94e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="9-results">9. Results<a class="anchor-link" href="#9-results">¶</a></h2><p>Measured on this machine — see the Host cell's output above for the exact CPU/OS/<code>rfdetr</code>
 string. <code>RFDETRSmall</code>, 15 warmup + 50 timed runs per row, batches 1 and 4. <code>Config</code> is the
 precision/backend used for that row; <code>—</code> marks a scope this format doesn't have (PyTorch's
 <code>predict()</code> has no forward-only path). <code>forward [ms]</code> / <code>end2end [ms]</code> are <strong>per-call latency for
@@ -4869,6 +5748,14 @@ both batch sizes.</p>
 this note describes, but the published table below predates it — that row's <code>Memory [MB]</code> cell
 is therefore marked <code>n/a (pending rerun)</code> rather than carrying the pre-fix <code>0.0</code>, and needs a
 rerun on the documented Colab host to regenerate a real number.</p>
+</blockquote>
+<blockquote>
+<p><strong>Note</strong>: every row below needs a rerun. The OpenVINO rows were measured before
+<code>OpenVINOInference</code> computed in f32 by default — they ran at the device's default precision,
+which collapses RF-DETR's logits on f16/bf16-default CPUs — so the OpenVINO latencies and the
+fp16-vs-fp32 comparison under the table may not hold. All rows were also measured at each
+runtime's own default thread count, before this notebook pinned PyTorch, ONNX Runtime and
+OpenVINO to one shared <code>CPU_THREADS</code> value.</p>
 </blockquote>
 <table>
 <thead>
@@ -4975,15 +5862,20 @@ rerun on the documented Colab host to regenerate a real number.</p>
 </tr>
 </tbody>
 </table>
+<p><strong><code>mAP@50:95 [%]</code></strong> (COCO val2017, batch 1, per format and precision): not measured yet. Run the
+<a href="#coco-val2017-accuracy">COCO val2017 accuracy</a> section above. Its summary table holds the
+numbers, which are not yet copied here.</p>
 <p>Measured on a shared Colab vCPU, 15 warmup + 50 timed runs per row. Every format lands within
 noise of every other one at both batch sizes — std devs of 15–20% of the mean swallow whatever
 real gap exists between PyTorch eager, ONNX, and OpenVINO fp32 on this CPU; none of them separates
 from the others by more than roughly one standard deviation, the same shared-vCPU noise floor the
 <a href="https://rfdetr.roboflow.com/latest/exports/#measured-performance-by-hardware">export overview page</a> already calls out for this
-cookbook. OpenVINO's fp16 IR is the one row that reads as a real, not just noisy, difference —
-<strong>slower</strong> than fp32 at both batches (399.62 vs 357.47 ms at batch 1; 1433.26 vs 1362.64 ms at
-batch 4) — this CPU has no native fp16 kernels, so "fp16" here means emulation, not speedup; see
-the CUDA cookbook for the contrast where fp16 <em>is</em> a decisive win on tensor cores.</p>
+cookbook. OpenVINO's fp16 IR reads as <strong>slower</strong> than fp32 at both batches (399.62 vs 357.47 ms at
+batch 1; 1433.26 vs 1362.64 ms at batch 4), but those rows predate the f32 default (see the note
+above) and the host's CPU flags were not recorded, so neither the size of that gap nor its cause
+is established until the rerun. The expected mechanism is that a CPU without native fp16 kernels
+upconverts, so fp16 storage saves disk and bandwidth, not arithmetic; see the CUDA cookbook for
+the contrast where fp16 <em>is</em> a decisive win on tensor cores.</p>
 <p>Batch 4 does not get 4× the batch-1 latency: PyTorch <code>predict()</code> goes 377.34 → 1365.23 ms (3.62×
 for 4× the images), so FPS still climbs slightly (2.7 → 2.9) — some fixed per-call overhead
 amortizes across the larger batch, it just does not amortize much on a CPU with no batched-kernel
@@ -5004,7 +5896,7 @@ incremental growth the way ONNX's rows are.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-37">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5038,7 +5930,7 @@ incremental growth the way ONNX's rows are.</p>
 <span class="n">display</span><span class="p">(</span><span class="n">summary</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs per row, batches </span><span class="si">{</span><span class="n">BATCH_SIZES</span><span class="si">}</span><span class="s2">, CPU."</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-17">import pandas as pd
+<div class="clipboard-copy-txt" id="cell-37">import pandas as pd
 from IPython.display import display
 
 _rows = []
@@ -5115,7 +6007,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 17:28:15 UTC">2026-09-30 17:28:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 2, 2026 23:46:04 UTC">2026-10-02 23:46:04</span>
   </span>
 
     

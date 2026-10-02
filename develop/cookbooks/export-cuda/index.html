@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-30T17:28:15">
+  <meta property="article:modified_time" content="2026-10-02T23:46:04">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-30T17:28:15",
+    "dateModified": "2026-10-02T23:46:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2691,6 +2691,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="2. Setup and GPU check">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notebook-display-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notebook display helpers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2860,10 +2877,21 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-results" class="md-nav__link">
+  <a href="#7-coco-val2017-accuracy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        7. Results
+        7. COCO val2017 accuracy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Results
       
     </span>
   </a>
@@ -3679,7 +3707,7 @@ run on a CPU-only or Apple Silicon runtime.</p>
 artifact for raw TensorRT deployment, locked to this GPU + TensorRT version. <code>inference-models</code>
 builds and manages its <strong>own</strong> engine internally, so it does not load that file — it is the
 easier, portable inference path, benchmarked first below. The <code>.trt</code> file itself is then loaded
-and timed too, via <code>rfdetr.export._tensorrt.inference.TRTInference</code> — a reference runtime the
+and timed too, via <code>rfdetr.export.inference.TRTInference</code> — a reference runtime the
 package ships for parity testing, not a recommended production path (see its section below) —
 so both TensorRT artifacts get a number, not just the one <code>inference-models</code> builds internally.
 It is exported once with <code>dynamic_batch=True, max_batch_size=8</code> so the same engine serves every
@@ -3694,7 +3722,7 @@ milliseconds against the architecture headline on the
 model only, batch 1) or the number on
 <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a> (L4,
 Roboflow Inference, model only) without checking hardware, precision, batch size, and scope
-match. See <a href="#7-results">Section 7</a> for where this notebook's own TensorRT number disagrees with
+match. See <a href="#8-results">Section 8</a> for where this notebook's own TensorRT number disagrees with
 Roboflow's model page.</p>
 </blockquote>
 </div>
@@ -3707,7 +3735,10 @@ Roboflow's model page.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to pick up the newest export fixes. Colab ships mutually inconsistent
+<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to test the latest performance work; the newest release (1.11.1) does not yet
+ship the public <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports.
+Once a release does, swap <code>develop</code> for <code>release/latest</code> in the install URL.
+Colab ships mutually inconsistent
 preinstalled packages that otherwise crash <code>import rfdetr</code>, so two are aligned: <code>torchaudio</code> is
 uninstalled (RF-DETR never uses it, but <code>transformers</code> imports it when present and a
 <code>torch</code>/<code>torchaudio</code> CUDA-version mismatch then errors), and <code>pillow</code> is force-reinstalled to a
@@ -3744,13 +3775,13 @@ loaded until a restart.</p>
 </clipboard-copy>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">onnxruntime</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span>
-<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="s2">"inference-models[trt10]"</span> <span class="n">supervision</span> <span class="n">pandas</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="s2">"inference-models[trt10]"</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span> <span class="o">--</span><span class="n">extra</span><span class="o">-</span><span class="n">index</span><span class="o">-</span><span class="n">url</span> <span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">aiinfra</span><span class="o">.</span><span class="n">pkgs</span><span class="o">.</span><span class="n">visualstudio</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">PublicPackages</span><span class="o">/</span><span class="n">_packaging</span><span class="o">/</span><span class="n">onnxruntime</span><span class="o">-</span><span class="n">cuda</span><span class="o">-</span><span class="mi">12</span><span class="o">/</span><span class="n">pypi</span><span class="o">/</span><span class="n">simple</span><span class="o">/</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="s2">"pillow==11.3.0"</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">torchaudio</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-1">!pip uninstall -q -y onnxruntime onnxruntime-gpu
-!pip install -q "rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" "inference-models[trt10]" supervision pandas
+!pip install -q "rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" "inference-models[trt10]" supervision pandas faster-coco-eval
 !pip install -q --force-reinstall --no-deps onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 !pip install -q --force-reinstall --no-deps "pillow==11.3.0"
 !pip uninstall -q -y torchaudio</div>
@@ -3771,17 +3802,12 @@ loaded until a restart.</p>
 <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch
 matrix every format section below measures — <code>(1, 4, 8)</code>, not a single number, so each format
 contributes three rows to the final results table.</p>
-<p>Every format section below shares a handful of small helpers that used to be copy-pasted into
-each per-hardware cookbook separately; they now live once, privately, in <code>rfdetr.export._benchmark</code>
-(and <code>_decode_batch</code> in particular in <code>rfdetr.export._runtime.decode</code>'s companion): <code>_artifact_size_mb</code>
-reports an export artifact's size on disk, <code>visualize_detections</code> annotates and displays a
-<code>supervision.Detections</code> on the sample image, <code>_tile_batch</code> stacks the one sample image's
-preprocessed tensor into a <code>(batch, C, H, W)</code> array (all <code>batch</code> copies are the same image — this
-notebook measures throughput at a larger batch dimension, not batch diversity), <code>_decode_batch</code>
-runs <code>decode_detections</code> over every image in a batched raw-output pair, and <code>measure_memory</code>
-measures device-memory growth via <code>torch.cuda.mem_get_info()</code> — device-wide, so it also captures
-ONNX Runtime's CUDA execution provider and TensorRT's own <code>cudaMalloc</code> calls, not just PyTorch's
-own caching allocator.</p>
+<p><code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module;
+<code>measure_memory(device="cuda")</code> measures device-memory growth via <code>torch.cuda.mem_get_info()</code> —
+device-wide, so it also captures ONNX Runtime's CUDA execution provider and TensorRT's own
+<code>cudaMalloc</code> calls, not just PyTorch's own caching allocator. <code>preprocess_to_nchw</code> and
+<code>decode_detections</code> come from <code>rfdetr.export.inference</code> — the same preprocessing and decoding
+<code>predict()</code> runs, so a runtime fed through them is comparable to it.</p>
 </div>
 </div>
 </div>
@@ -3807,21 +3833,21 @@ own caching allocator.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">supervision</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sv</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">BenchmarkResult</span><span class="p">,</span>
     <span class="n">_artifact_size_mb</span><span class="p">,</span>
     <span class="n">_decode_batch</span><span class="p">,</span>
-    <span class="n">_enable_notebook_inline_matplotlib</span><span class="p">,</span>
     <span class="n">_result_row</span><span class="p">,</span>
     <span class="n">_tile_batch</span><span class="p">,</span>
-    <span class="n">measure_latency</span><span class="p">,</span>
-    <span class="n">measure_memory</span><span class="p">,</span>
+    <span class="n">parity</span><span class="p">,</span>
     <span class="n">visualize_detections</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkResult</span><span class="p">,</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">decode_detections</span><span class="p">,</span> <span class="n">preprocess_to_nchw</span>
 
 <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This notebook requires a CUDA GPU; none is available."</span><span class="p">)</span>
@@ -3833,27 +3859,25 @@ own caching allocator.</p>
 <span class="n">WARMUP_RUNS</span> <span class="o">=</span> <span class="mi">20</span>
 <span class="n">MEASURE_RUNS</span> <span class="o">=</span> <span class="mi">100</span>
 <span class="n">BATCH_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
-
-<span class="n">_enable_notebook_inline_matplotlib</span><span class="p">()</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-2">from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 import supervision as sv
 import torch
 from PIL import Image
 
 from rfdetr.export._benchmark import (
-    BenchmarkResult,
     _artifact_size_mb,
     _decode_batch,
-    _enable_notebook_inline_matplotlib,
     _result_row,
     _tile_batch,
-    measure_latency,
-    measure_memory,
+    parity,
     visualize_detections,
 )
+from rfdetr.export.benchmark import BenchmarkResult, measure_latency, measure_memory
+from rfdetr.export.inference import decode_detections, preprocess_to_nchw
 
 if not torch.cuda.is_available():
     raise RuntimeError("This notebook requires a CUDA GPU; none is available.")
@@ -3864,9 +3888,7 @@ EXPORT_DIR.mkdir(exist_ok=True)
 CONFIDENCE_THRESHOLD = 0.5
 WARMUP_RUNS = 20
 MEASURE_RUNS = 100
-BATCH_SIZES = (1, 4, 8)
-
-_enable_notebook_inline_matplotlib()</div>
+BATCH_SIZES = (1, 4, 8)</div>
 </div>
 </div>
 </div>
@@ -3879,7 +3901,51 @@ _enable_notebook_inline_matplotlib()</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="3-sample-image">3. Sample image<a class="anchor-link" href="#3-sample-image">¶</a></h2><p>A single street scene with several COCO classes (dog, bicycle, car) is enough to verify
+<h3 id="notebook-display-helpers">Notebook display helpers<a class="anchor-link" href="#notebook-display-helpers">¶</a></h3><p><code>_artifact_size_mb</code>, <code>_decode_batch</code>, <code>_result_row</code>, <code>_tile_batch</code>, <code>parity</code>, <code>visualize_detections</code> come from the private <code>rfdetr.export._benchmark</code> module, next to the COCO mAP helpers
+used later. They size artifacts, format the results table, draw detections and compare raw outputs; none of
+them changes what a runtime computes. It compares query by query, so a reduced-precision engine that reorders its top-scoring queries shows up as a large drift, not a silent pass.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=41cb8761">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># Inline figures keep every plot in the notebook; closing them after display stops figures piling up in memory.</span>
+<span class="o">%</span><span class="n">matplotlib</span> <span class="n">inline</span>
+<span class="o">%</span><span class="n">config</span> <span class="n">InlineBackend</span><span class="o">.</span><span class="n">close_figures</span> <span class="o">=</span> <span class="kc">True</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-3"># Inline figures keep every plot in the notebook; closing them after display stops figures piling up in memory.
+%matplotlib inline
+%config InlineBackend.close_figures = True</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=d930ad74">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="3-sample-image">3. Sample image<a class="anchor-link" href="#3-sample-image">¶</a></h2><p>A single street scene with several COCO classes is enough to verify
 detections. The image is downloaded once and reused for every format below.</p>
 </div>
 </div>
@@ -3893,7 +3959,7 @@ detections. The image is downloaded once and reused for every format below.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-3">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3913,7 +3979,7 @@ detections. The image is downloaded once and reused for every format below.</p>
 <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">IMAGE_PATH</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Sample image: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">import urllib.request
+<div class="clipboard-copy-txt" id="cell-4">import urllib.request
 
 IMAGE_URL = "https://media.roboflow.com/notebooks/examples/dog.jpeg"
 IMAGE_PATH = EXPORT_DIR / "sample.jpg"
@@ -3957,7 +4023,7 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4014,7 +4080,7 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
         <span class="sa">f</span><span class="s2">"   +</span><span class="si">{</span><span class="n">pytorch_fp16_jit_memory_mb</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
     <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">from functools import partial
+<div class="clipboard-copy-txt" id="cell-5">from functools import partial
 
 from rfdetr import RFDETRSmall
 
@@ -4092,7 +4158,7 @@ TensorRT engine build. See the <a href="https://rfdetr.roboflow.com/exports/onnx
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4106,7 +4172,7 @@ TensorRT engine build. See the <a href="https://rfdetr.roboflow.com/exports/onnx
 <span class="n">onnx_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX model: </span><span class="si">{</span><span class="n">onnx_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">onnx_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">onnx_path = model.export(output_dir=str(EXPORT_DIR), dynamic_batch=True)
+<div class="clipboard-copy-txt" id="cell-6">onnx_path = model.export(output_dir=str(EXPORT_DIR), dynamic_batch=True)
 onnx_size_mb = _artifact_size_mb(onnx_path)
 print(f"ONNX model: {onnx_path}  ({onnx_size_mb:.1f} MB)")</div>
 </div>
@@ -4121,9 +4187,153 @@ print(f"ONNX model: {onnx_path}  ({onnx_size_mb:.1f} MB)")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p><code>_create_onnx_session</code> (the same session-construction helper <code>RFDETR.predict()</code>'s reference
-decoder uses internally) is asked for <code>CUDAExecutionProvider</code> with a <code>CPUExecutionProvider</code>
-fallback; it raises if the CUDA provider silently fails to activate.</p>
+<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p>A plain <code>onnxruntime.InferenceSession</code>, asked for <code>CUDAExecutionProvider</code> with a
+<code>CPUExecutionProvider</code> fallback; the cell raises if the CUDA provider silently fails to activate.
+Its session options stop idle CPU-side pool threads from busy-spinning between calls — spinning
+only changes how idle threads wait, not computed values, but it contends for CPU with the
+preprocessing and decoding that run between <code>session.run</code> calls.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=95ae3fa8">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">onnx_options</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">SessionOptions</span><span class="p">()</span>
+<span class="n">onnx_options</span><span class="o">.</span><span class="n">add_session_config_entry</span><span class="p">(</span><span class="s2">"session.intra_op.allow_spinning"</span><span class="p">,</span> <span class="s2">"0"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-7">onnx_options = ort.SessionOptions()
+onnx_options.add_session_config_entry("session.intra_op.allow_spinning", "0")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=59629102">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Session construction and the first call share one <code>measure_memory</code> window, the same scope every
+other format's memory number uses. The raw batch-1 outputs kept here are this notebook's fp32
+reference for the <code>parity</code> check on the raw <code>.trt</code> engine below.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cda61232">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+    <span class="n">onnx_session</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span>
+        <span class="nb">str</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">),</span> <span class="n">sess_options</span><span class="o">=</span><span class="n">onnx_options</span><span class="p">,</span> <span class="n">providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CUDAExecutionProvider"</span><span class="p">,</span> <span class="s2">"CPUExecutionProvider"</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">active_provider</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_providers</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">active_provider</span> <span class="o">!=</span> <span class="s2">"CUDAExecutionProvider"</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CUDAExecutionProvider not active (got </span><span class="si">{</span><span class="n">active_provider</span><span class="si">!r}</span><span class="s2">) — see the install cell above."</span><span class="p">)</span>
+    <span class="n">_onnx_input_name</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">onnx_raw</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+        <span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="n">_onnx_input_name</span><span class="p">:</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)}</span>
+    <span class="p">)</span>
+<span class="n">onnx_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-8">with measure_memory(device="cuda") as mem:
+    onnx_session = ort.InferenceSession(
+        str(onnx_path), sess_options=onnx_options, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+    )
+    active_provider = onnx_session.get_providers()[0]
+    if active_provider != "CUDAExecutionProvider":
+        raise RuntimeError(f"CUDAExecutionProvider not active (got {active_provider!r}) — see the install cell above.")
+    _onnx_input_name = onnx_session.get_inputs()[0].name
+    _, _onnx_channels, _onnx_height, _onnx_width = onnx_session.get_inputs()[0].shape
+    onnx_raw = onnx_session.run(
+        None, {_onnx_input_name: preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels)}
+    )
+onnx_memory_mb = mem.delta_mb</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cb6f1963">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># Match outputs by name ("dets" = boxes, "labels" = logits) so the code is robust to output reordering.</span>
+<span class="n">_onnx_output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
+<span class="n">_onnx_boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
+<span class="n">_onnx_logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
+<span class="n">onnx_boxes</span><span class="p">,</span> <span class="n">onnx_logits</span> <span class="o">=</span> <span class="n">onnx_raw</span><span class="p">[</span><span class="n">_onnx_boxes_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">],</span> <span class="n">onnx_raw</span><span class="p">[</span><span class="n">_onnx_logits_idx</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">onnx_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">onnx_boxes</span><span class="p">,</span> <span class="n">onnx_logits</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="n">onnx_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
+    <span class="n">xyxy</span><span class="o">=</span><span class="n">onnx_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">onnx_decoded</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span> <span class="n">class_id</span><span class="o">=</span><span class="n">onnx_decoded</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX (CUDA): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="c1"># ONNX is the fp32 reference itself, so no parity line here; PyTorch `predict()` above returns</span>
+<span class="c1"># decoded `sv.Detections`, not raw `dets`/`labels` arrays, so it is not parity-checked either.</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-9"># Match outputs by name ("dets" = boxes, "labels" = logits) so the code is robust to output reordering.
+_onnx_output_names = [out.name for out in onnx_session.get_outputs()]
+_onnx_boxes_idx = next(i for i, name in enumerate(_onnx_output_names) if "dets" in name)
+_onnx_logits_idx = next(i for i, name in enumerate(_onnx_output_names) if "labels" in name)
+onnx_boxes, onnx_logits = onnx_raw[_onnx_boxes_idx][0], onnx_raw[_onnx_logits_idx][0]
+onnx_decoded = decode_detections(onnx_boxes, onnx_logits, image.size, threshold=CONFIDENCE_THRESHOLD)
+onnx_detections = sv.Detections(
+    xyxy=onnx_decoded.xyxy, confidence=onnx_decoded.confidence, class_id=onnx_decoded.class_id.astype(int)
+)
+print(f"ONNX (CUDA): {len(onnx_detections)} detections above {CONFIDENCE_THRESHOLD}")
+# ONNX is the fp32 reference itself, so no parity line here; PyTorch `predict()` above returns
+# decoded `sv.Detections`, not raw `dets`/`labels` arrays, so it is not parity-checked either.</div>
+</div>
+</div>
 </div>
 </div>
 </div>
@@ -4136,7 +4346,7 @@ fallback; it raises if the CUDA provider silently fails to activate.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4146,29 +4356,9 @@ fallback; it raises if the CUDA provider silently fails to activate.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._onnx.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">_create_onnx_session</span><span class="p">,</span> <span class="n">_run_inference</span>
-
-<span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
-    <span class="n">onnx_session</span> <span class="o">=</span> <span class="n">_create_onnx_session</span><span class="p">(</span><span class="n">onnx_path</span><span class="p">,</span> <span class="n">providers</span><span class="o">=</span><span class="p">[</span><span class="s2">"CUDAExecutionProvider"</span><span class="p">,</span> <span class="s2">"CPUExecutionProvider"</span><span class="p">])</span>
-    <span class="n">active_provider</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_providers</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="k">if</span> <span class="n">active_provider</span> <span class="o">!=</span> <span class="s2">"CUDAExecutionProvider"</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CUDAExecutionProvider not active (got </span><span class="si">{</span><span class="n">active_provider</span><span class="si">!r}</span><span class="s2">) — see the install cell above."</span><span class="p">)</span>
-    <span class="n">onnx_detections</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_run_inference</span><span class="p">(</span><span class="n">onnx_session</span><span class="p">,</span> <span class="n">IMAGE_PATH</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
-<span class="n">onnx_memory_mb</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ONNX (CUDA): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="n">visualize_detections</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_onnx.jpg"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">visualize_detections</span><span class="p">(</span><span class="n">onnx_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_onnx.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
-
-with measure_memory(device="cuda") as mem:
-    onnx_session = _create_onnx_session(onnx_path, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-    active_provider = onnx_session.get_providers()[0]
-    if active_provider != "CUDAExecutionProvider":
-        raise RuntimeError(f"CUDAExecutionProvider not active (got {active_provider!r}) — see the install cell above.")
-    onnx_detections, _ = _run_inference(onnx_session, IMAGE_PATH, threshold=CONFIDENCE_THRESHOLD)
-onnx_memory_mb = mem.delta_mb
-print(f"ONNX (CUDA): {len(onnx_detections)} detections above {CONFIDENCE_THRESHOLD}")
-visualize_detections(onnx_detections, image, EXPORT_DIR / "annotated_onnx.jpg")</div>
+<div class="clipboard-copy-txt" id="cell-10">visualize_detections(onnx_detections, image, EXPORT_DIR / "annotated_onnx.jpg")</div>
 </div>
 </div>
 </div>
@@ -4201,7 +4391,7 @@ construction.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4211,17 +4401,7 @@ construction.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._runtime.decode</span><span class="w"> </span><span class="kn">import</span> <span class="n">decode_detections</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._runtime.preprocess</span><span class="w"> </span><span class="kn">import</span> <span class="n">preprocess_to_nchw</span>
-
-<span class="n">_onnx_input_name</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
-<span class="n">_</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span>
-<span class="n">_onnx_output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">out</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()]</span>
-<span class="n">_onnx_boxes_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
-<span class="n">_onnx_logits_idx</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_onnx_output_names</span><span class="p">)</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">)</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">_onnx_single_input</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_onnx_single_input</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)</span>
 
 
@@ -4261,17 +4441,7 @@ construction.</p>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  forward  </span><span class="si">{</span><span class="n">fwd</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">fwd</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  end2end  </span><span class="si">{</span><span class="n">e2e</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">e2e</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">e2e</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">from rfdetr.export._runtime.decode import decode_detections
-from rfdetr.export._runtime.preprocess import preprocess_to_nchw
-
-_onnx_input_name = onnx_session.get_inputs()[0].name
-_, _onnx_channels, _onnx_height, _onnx_width = onnx_session.get_inputs()[0].shape
-_onnx_output_names = [out.name for out in onnx_session.get_outputs()]
-_onnx_boxes_idx = next(i for i, name in enumerate(_onnx_output_names) if "dets" in name)
-_onnx_logits_idx = next(i for i, name in enumerate(_onnx_output_names) if "labels" in name)
-
-
-def _onnx_single_input() -&gt; np.ndarray:
+<div class="clipboard-copy-txt" id="cell-11">def _onnx_single_input() -&gt; np.ndarray:
     return preprocess_to_nchw(image, _onnx_height, _onnx_width, _onnx_channels)
 
 
@@ -4341,7 +4511,7 @@ on the same GPU family you plan to deploy to. See the
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4355,7 +4525,7 @@ on the same GPU family you plan to deploy to. See the
 <span class="n">trt_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">trt_engine_path</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT engine: </span><span class="si">{</span><span class="n">trt_engine_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">trt_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">trt_engine_path = model.export(format="trt", output_dir=str(EXPORT_DIR))
+<div class="clipboard-copy-txt" id="cell-12">trt_engine_path = model.export(format="trt", output_dir=str(EXPORT_DIR))
 trt_size_mb = _artifact_size_mb(trt_engine_path)
 print(f"TensorRT engine: {trt_engine_path}  ({trt_size_mb:.1f} MB)")</div>
 </div>
@@ -4393,7 +4563,7 @@ notebook can verify, only measure.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4413,9 +4583,10 @@ notebook can verify, only measure.</p>
 <span class="n">trt_detections</span> <span class="o">=</span> <span class="n">trt_predictions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span>
 <span class="n">trt_detections</span> <span class="o">=</span> <span class="n">trt_detections</span><span class="p">[</span><span class="n">trt_detections</span><span class="o">.</span><span class="n">confidence</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">trt_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="c1"># No parity line: `inference-models` returns decoded predictions, not raw `dets`/`labels` arrays.</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">trt_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_tensorrt.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">from inference_models import AutoModel, BackendType
+<div class="clipboard-copy-txt" id="cell-13">from inference_models import AutoModel, BackendType
 
 with measure_memory(device="cuda") as mem:
     trt_model = AutoModel.from_pretrained("rfdetr-small", backend=BackendType.TRT, verbose=True)
@@ -4425,6 +4596,7 @@ trt_memory_mb: dict[int, float] = {BATCH_SIZES[0]: mem.delta_mb}
 trt_detections = trt_predictions[0].to_supervision()
 trt_detections = trt_detections[trt_detections.confidence &gt; CONFIDENCE_THRESHOLD]
 print(f"TensorRT: {len(trt_detections)} detections above {CONFIDENCE_THRESHOLD}")
+# No parity line: `inference-models` returns decoded predictions, not raw `dets`/`labels` arrays.
 visualize_detections(trt_detections, image, EXPORT_DIR / "annotated_tensorrt.jpg")</div>
 </div>
 </div>
@@ -4454,7 +4626,7 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4481,7 +4653,7 @@ only an end-to-end number is reported here — the same limitation as the PyTorc
     <span class="n">r</span> <span class="o">=</span> <span class="n">trt_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">trt_end2end_results: dict[int, BenchmarkResult] = {}
+<div class="clipboard-copy-txt" id="cell-14">trt_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
     images_batch = [np.array(image)] * batch
     if batch != BATCH_SIZES[0]:
@@ -4523,7 +4695,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4543,6 +4715,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
 <span class="n">trt_fp32_detections</span> <span class="o">=</span> <span class="n">trt_fp32_predictions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span>
 <span class="n">trt_fp32_detections</span> <span class="o">=</span> <span class="n">trt_fp32_detections</span><span class="p">[</span><span class="n">trt_fp32_detections</span><span class="o">.</span><span class="n">confidence</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT fp32: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">trt_fp32_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="c1"># No parity line: `inference-models` returns decoded predictions, not raw `dets`/`labels` arrays.</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">trt_fp32_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_tensorrt_fp32.jpg"</span><span class="p">)</span>
 
 <span class="n">trt_fp32_end2end_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">BenchmarkResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
@@ -4562,7 +4735,7 @@ numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU
     <span class="n">r</span> <span class="o">=</span> <span class="n">trt_fp32_end2end_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">with measure_memory(device="cuda") as mem:
+<div class="clipboard-copy-txt" id="cell-15">with measure_memory(device="cuda") as mem:
     trt_fp32_model = AutoModel.from_pretrained(
         "rfdetr-small", backend=BackendType.TRT, quantization="fp32", verbose=True
     )
@@ -4572,6 +4745,7 @@ trt_fp32_memory_mb: dict[int, float] = {BATCH_SIZES[0]: mem.delta_mb}
 trt_fp32_detections = trt_fp32_predictions[0].to_supervision()
 trt_fp32_detections = trt_fp32_detections[trt_fp32_detections.confidence &gt; CONFIDENCE_THRESHOLD]
 print(f"TensorRT fp32: {len(trt_fp32_detections)} detections above {CONFIDENCE_THRESHOLD}")
+# No parity line: `inference-models` returns decoded predictions, not raw `dets`/`labels` arrays.
 visualize_detections(trt_fp32_detections, image, EXPORT_DIR / "annotated_tensorrt_fp32.jpg")
 
 trt_fp32_end2end_results: dict[int, BenchmarkResult] = {}
@@ -4603,7 +4777,7 @@ for batch in BATCH_SIZES:
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="tensorrt-raw-trt-engine-trtinference">TensorRT (raw <code>.trt</code> engine, <code>TRTInference</code>)<a class="anchor-link" href="#tensorrt-raw-trt-engine-trtinference">¶</a></h3><p>The rows above never touch the <code>.trt</code> file <code>model.export(format="trt")</code> wrote — this section
-loads that file directly, with <code>rfdetr.export._tensorrt.inference.TRTInference</code>, the package's own
+loads that file directly, with <code>rfdetr.export.inference.TRTInference</code>, the package's own
 reference runtime for a raw engine. It exists for export/parity testing, not as a recommended
 production path — <code>inference-models</code> above is that path — but it is the only way to time the <code>.trt</code>
 artifact itself rather than a separately-built managed engine. <code>sync_mode=True</code> avoids the
@@ -4629,7 +4803,7 @@ be timed as part of the engine.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4645,7 +4819,7 @@ be timed as part of the engine.</p>
 <span class="n">trt_raw_engine_size_mb</span> <span class="o">=</span> <span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">trt_raw_engine_path</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT engine (dynamic batch 1-</span><span class="si">{</span><span class="nb">max</span><span class="p">(</span><span class="n">BATCH_SIZES</span><span class="p">)</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">trt_raw_engine_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">trt_raw_engine_size_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">trt_raw_engine_path = model.export(
+<div class="clipboard-copy-txt" id="cell-16">trt_raw_engine_path = model.export(
     format="trt", dynamic_batch=True, max_batch_size=max(BATCH_SIZES), output_dir=str(EXPORT_DIR)
 )
 trt_raw_engine_size_mb = _artifact_size_mb(trt_raw_engine_path)
@@ -4664,7 +4838,7 @@ print(f"TensorRT engine (dynamic batch 1-{max(BATCH_SIZES)}): {trt_raw_engine_pa
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4674,7 +4848,7 @@ print(f"TensorRT engine (dynamic batch 1-{max(BATCH_SIZES)}): {trt_raw_engine_pa
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">TRTInference</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">TRTInference</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_trt_raw_preprocess</span><span class="p">(</span><span class="n">batch</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
@@ -4693,7 +4867,7 @@ print(f"TensorRT engine (dynamic batch 1-{max(BATCH_SIZES)}): {trt_raw_engine_pa
 
     <span class="k">return</span> <span class="n">_run</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-13">from rfdetr.export._tensorrt.inference import TRTInference
+<div class="clipboard-copy-txt" id="cell-17">from rfdetr.export.inference import TRTInference
 
 
 def _trt_raw_preprocess(batch: int) -&gt; torch.Tensor:
@@ -4741,7 +4915,7 @@ runtime <em>outside</em> this window would read back ~0 MB, since its first call
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4774,9 +4948,10 @@ runtime <em>outside</em> this window would read back ~0 MB, since its first call
     <span class="n">class_id</span><span class="o">=</span><span class="n">trt_raw_decoded</span><span class="o">.</span><span class="n">class_id</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">),</span>
 <span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT (raw engine): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">trt_raw_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT fp16 engine vs ONNX fp32: </span><span class="si">{</span><span class="n">parity</span><span class="p">(</span><span class="n">onnx_boxes</span><span class="p">,</span><span class="w"> </span><span class="n">onnx_logits</span><span class="p">,</span><span class="w"> </span><span class="n">trt_raw_boxes</span><span class="p">,</span><span class="w"> </span><span class="n">trt_raw_logits</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">trt_raw_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"annotated_tensorrt_raw.jpg"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-14">with measure_memory(device="cuda") as mem:
+<div class="clipboard-copy-txt" id="cell-18">with measure_memory(device="cuda") as mem:
     trt_raw_runtime = TRTInference(trt_raw_engine_path, device="cuda", sync_mode=True)
 
     _trt_raw_input_name = trt_raw_runtime.input_names[0]
@@ -4799,6 +4974,7 @@ trt_raw_detections = sv.Detections(
     class_id=trt_raw_decoded.class_id.astype(int),
 )
 print(f"TensorRT (raw engine): {len(trt_raw_detections)} detections above {CONFIDENCE_THRESHOLD}")
+print(f"TensorRT fp16 engine vs ONNX fp32: {parity(onnx_boxes, onnx_logits, trt_raw_boxes, trt_raw_logits)}")
 visualize_detections(trt_raw_detections, image, EXPORT_DIR / "annotated_tensorrt_raw.jpg")</div>
 </div>
 </div>
@@ -4828,7 +5004,7 @@ convention as ONNX and the managed engine above.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4864,7 +5040,7 @@ convention as ONNX and the managed engine above.</p>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  forward  </span><span class="si">{</span><span class="n">fwd</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">fwd</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  end2end  </span><span class="si">{</span><span class="n">e2e</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">e2e</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">e2e</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-15">trt_raw_forward_results: dict[int, BenchmarkResult] = {}
+<div class="clipboard-copy-txt" id="cell-19">trt_raw_forward_results: dict[int, BenchmarkResult] = {}
 trt_raw_end2end_results: dict[int, BenchmarkResult] = {}
 for batch in BATCH_SIZES:
     trt_raw_input = {_trt_raw_input_name: _trt_raw_preprocess(batch)}
@@ -4901,7 +5077,504 @@ for batch in BATCH_SIZES:
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="7-results">7. Results<a class="anchor-link" href="#7-results">¶</a></h2><p>Measured on an <strong>NVIDIA L4</strong> (compute capability 8.9, 22 GB), Colab GPU runtime, rfdetr v1.11.0,
+<h2 id="7-coco-val2017-accuracy">7. COCO val2017 accuracy<a class="anchor-link" href="#7-coco-val2017-accuracy">¶</a></h2><p>A latency number on its own can hide a precision collapse. On the CPU, OpenVINO once compiled
+RF-DETR at the device's default f16 precision and returned 0 detections, and the timing still
+looked normal. So each batch-1 row below also gets a box mAP, measured on the same exported
+artifact at the same precision as its latency row. The <code>.trt</code> engine is scored, not a rebuilt one.</p>
+<p>By default this runs on a <strong>500-image seeded subset</strong> of COCO val2017, so the result is not the
+full-val2017 number on the <a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a>.
+Set <code>FULL_VAL = True</code> to score all 5000 images. Each row costs roughly its batch-1 <code>end2end</code>
+latency times the number of images. On the L4 that is ~20 ms × 500 ≈ 10 s for the slowest row
+(PyTorch <code>predict()</code> fp32), plus JPEG decoding.</p>
+<p>Raw <code>dets</code>/<code>labels</code> outputs are decoded with <code>background_class_id=None</code>. The official COCO
+checkpoints use sparse COCO category IDs, so every logit slot is a real class, including slot 90.
+The decoder's own default (<code>-1</code>, last slot) would drop category 90.</p>
+<p>The two <code>inference-models</code> managed-engine rows are skipped. Their <code>to_supervision()</code> output is
+already decoded, and no cell above shows that its <code>class_id</code> values are COCO category IDs (the
+label names in <code>visualize_detections</code> come from <code>.data["class_name"]</code>, not from <code>class_id</code>), so
+they cannot be scored against COCO ground truth without that check.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=94a5175a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">N_EVAL</span> <span class="o">=</span> <span class="mi">500</span>
+<span class="n">FULL_VAL</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="n">COCO_SEED</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-20">N_EVAL = 500
+FULL_VAL = False
+COCO_SEED = 0
+COCO_ROOT = Path("coco")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1978987f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p><code>fetch_coco_val2017</code> and <code>evaluate_coco_map</code> come from the private <code>rfdetr.export._benchmark</code>
+module. This is the one deliberate exception to this notebook's public-API-only rule: the helpers
+exist only to score these cookbooks and are not a supported API. The fetch downloads the 241 MB
+annotation archive once, then only the selected images, and skips files already on disk.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7f37abaf">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">evaluate_coco_map</span><span class="p">,</span> <span class="n">fetch_coco_val2017</span>
+
+<span class="n">coco_subset</span> <span class="o">=</span> <span class="n">fetch_coco_val2017</span><span class="p">(</span><span class="n">COCO_ROOT</span><span class="p">,</span> <span class="n">n_images</span><span class="o">=</span><span class="kc">None</span> <span class="k">if</span> <span class="n">FULL_VAL</span> <span class="k">else</span> <span class="n">N_EVAL</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">COCO_SEED</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"COCO val2017 images to score: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">image_ids</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-21">from rfdetr.export._benchmark import evaluate_coco_map, fetch_coco_val2017
+
+coco_subset = fetch_coco_val2017(COCO_ROOT, n_images=None if FULL_VAL else N_EVAL, seed=COCO_SEED)
+print(f"COCO val2017 images to score: {len(coco_subset.image_ids)}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=af5c6665">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Each adapter wraps one runtime so it takes a single RGB PIL image (batch 1) and returns what that
+runtime produces. PyTorch <code>predict()</code> returns decoded <code>sv.Detections</code> whose <code>class_id</code> values are
+COCO category IDs for the pretrained checkpoint, at a 0.001 score floor so the whole
+precision-recall curve is kept. ONNX and the raw <code>.trt</code> engine return raw <code>(dets, labels)</code> arrays,
+built with the same preprocessing as their Inference cells above, but taking the image as an
+argument instead of reading the global sample <code>image</code>.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=c04eed0e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-22">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_pytorch_predict_run</span><span class="p">(</span><span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.001</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_onnx_run</span><span class="p">(</span><span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">onnx_session</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="n">_onnx_input_name</span><span class="p">:</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">_onnx_height</span><span class="p">,</span> <span class="n">_onnx_width</span><span class="p">,</span> <span class="n">_onnx_channels</span><span class="p">)})</span>
+    <span class="k">return</span> <span class="n">raw</span><span class="p">[</span><span class="n">_onnx_boxes_idx</span><span class="p">],</span> <span class="n">raw</span><span class="p">[</span><span class="n">_onnx_logits_idx</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_trt_raw_run</span><span class="p">(</span><span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+    <span class="n">single</span> <span class="o">=</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">_trt_raw_height</span><span class="p">,</span> <span class="n">_trt_raw_width</span><span class="p">,</span> <span class="n">_trt_raw_channels</span><span class="p">)</span>
+    <span class="n">blob</span> <span class="o">=</span> <span class="p">{</span><span class="n">_trt_raw_input_name</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">single</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">_trt_raw_input_dtype</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()}</span>
+    <span class="n">outputs</span> <span class="o">=</span> <span class="n">trt_raw_runtime</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span>
+    <span class="n">boxes</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">_trt_raw_boxes_name</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+    <span class="n">logits</span> <span class="o">=</span> <span class="n">outputs</span><span class="p">[</span><span class="n">_trt_raw_logits_name</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">boxes</span><span class="p">,</span> <span class="n">logits</span>
+
+
+<span class="n">map_results</span> <span class="o">=</span> <span class="p">{}</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-22">def _pytorch_predict_run(img: Image.Image) -&gt; sv.Detections:
+    return model.predict(img, threshold=0.001)
+
+
+def _onnx_run(img: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+    raw = onnx_session.run(None, {_onnx_input_name: preprocess_to_nchw(img, _onnx_height, _onnx_width, _onnx_channels)})
+    return raw[_onnx_boxes_idx], raw[_onnx_logits_idx]
+
+
+def _trt_raw_run(img: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+    single = preprocess_to_nchw(img, _trt_raw_height, _trt_raw_width, _trt_raw_channels)
+    blob = {_trt_raw_input_name: torch.from_numpy(single).to(device="cuda", dtype=_trt_raw_input_dtype).contiguous()}
+    outputs = trt_raw_runtime(blob)
+    boxes = outputs[_trt_raw_boxes_name].detach().float().cpu().numpy()
+    logits = outputs[_trt_raw_logits_name].detach().float().cpu().numpy()
+    return boxes, logits
+
+
+map_results = {}</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=106b5149">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>PyTorch <code>predict()</code>, fp32. Section 4 reverted <code>model</code> to eager mode, so this is the fp32 baseline.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=acf64ca4">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-23">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch predict() fp32"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_pytorch_predict_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-23">map_results["PyTorch predict() fp32"] = evaluate_coco_map(_pytorch_predict_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f6dc7127">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>PyTorch <code>inference()</code>, fp16+JIT. The fp16 TorchScript module is compiled for batch 1, the same
+setting as the batch-1 latency row, and the next cell scores it through <code>predict()</code>.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7d2232bf">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-24">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-24">model.inference(dtype=torch.float16, batch_size=1)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4147c509">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-25">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch inference() fp16+JIT"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_pytorch_predict_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-25">map_results["PyTorch inference() fp16+JIT"] = evaluate_coco_map(_pytorch_predict_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=494cebf2">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Revert to eager mode, so <code>model</code> is again the unoptimized fp32 baseline, as Section 4 left it.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=66217ae1">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-26">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-26">model.remove_optimized_model()</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=506f672f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>ONNX on the CUDA execution provider. This uses the same session and <code>.onnx</code> file as the latency
+rows.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f671873b">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-27">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"ONNX CUDA EP"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_onnx_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-27">map_results["ONNX CUDA EP"] = evaluate_coco_map(_onnx_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=c1bea300">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>The raw <code>.trt</code> fp16 engine through <code>TRTInference</code>, the same dynamic-batch engine and runtime as its
+latency rows, fed one image at a time.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3fdcf0af">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-28">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"TensorRT (raw .trt engine) TRTInference, fp16"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_trt_raw_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-28">map_results["TensorRT (raw .trt engine) TRTInference, fp16"] = evaluate_coco_map(_trt_raw_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=e36c7dd7">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>One row per scored runtime. Read <code>mAP@50:95 [%]</code> alongside the batch-1 latency row for the same
+format and config. A row far below the PyTorch fp32 baseline points to a precision or export
+problem, not a faster model.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ebcd3f5b">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-29">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">IPython.display</span><span class="w"> </span><span class="kn">import</span> <span class="n">display</span>
+
+<span class="n">_map_rows</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="s2">"PyTorch predict()"</span><span class="p">,</span> <span class="s2">"fp32"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch predict() fp32"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"PyTorch inference()"</span><span class="p">,</span> <span class="s2">"fp16+JIT"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"PyTorch inference() fp16+JIT"</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s2">"ONNX"</span><span class="p">,</span> <span class="s2">"CUDA EP"</span><span class="p">,</span> <span class="n">map_results</span><span class="p">[</span><span class="s2">"ONNX CUDA EP"</span><span class="p">]),</span>
+    <span class="p">(</span>
+        <span class="s2">"TensorRT (raw .trt engine)"</span><span class="p">,</span>
+        <span class="s2">"TRTInference, fp16"</span><span class="p">,</span>
+        <span class="n">map_results</span><span class="p">[</span><span class="s2">"TensorRT (raw .trt engine) TRTInference, fp16"</span><span class="p">],</span>
+    <span class="p">),</span>
+<span class="p">]</span>
+<span class="n">display</span><span class="p">(</span>
+    <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">"Format"</span><span class="p">:</span> <span class="n">format_label</span><span class="p">,</span>
+                <span class="s2">"Config"</span><span class="p">:</span> <span class="n">config</span><span class="p">,</span>
+                <span class="s2">"mAP@50:95 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">map50_95</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="s2">"mAP@50 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">map50</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="s2">"Images"</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">n_images</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="k">for</span> <span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">_map_rows</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-29">import pandas as pd
+from IPython.display import display
+
+_map_rows = [
+    ("PyTorch predict()", "fp32", map_results["PyTorch predict() fp32"]),
+    ("PyTorch inference()", "fp16+JIT", map_results["PyTorch inference() fp16+JIT"]),
+    ("ONNX", "CUDA EP", map_results["ONNX CUDA EP"]),
+    (
+        "TensorRT (raw .trt engine)",
+        "TRTInference, fp16",
+        map_results["TensorRT (raw .trt engine) TRTInference, fp16"],
+    ),
+]
+display(
+    pd.DataFrame(
+        [
+            {
+                "Format": format_label,
+                "Config": config,
+                "mAP@50:95 [%]": round(100 * result.map50_95, 1),
+                "mAP@50 [%]": round(100 * result.map50, 1),
+                "Images": result.n_images,
+            }
+            for format_label, config, result in _map_rows
+        ]
+    )
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=886355b0">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="8-results">8. Results<a class="anchor-link" href="#8-results">¶</a></h2><p>Measured on an <strong>NVIDIA L4</strong> (compute capability 8.9, 22 GB), Colab GPU runtime, rfdetr v1.11.0,
 batches 1/4/8, 20 warmup + 100 timed runs per row, <code>RFDETRSmall</code>. Numbers vary by GPU model,
 TensorRT version, and driver — rerun the cells below to get yours. <code>Config</code> is the precision/EP
 used for that row; <code>—</code> marks a scope this format doesn't have. <code>forward [ms]</code> / <code>end2end [ms]</code> are
@@ -5089,6 +5762,9 @@ CUDA execution provider and TensorRT's own allocations, not just PyTorch's cachi
 </tr>
 </tbody>
 </table>
+<p><strong><code>mAP@50:95 [%]</code></strong> (COCO val2017, batch 1, per format and precision): not measured yet. Run the
+<a href="#coco-val2017-accuracy">COCO val2017 accuracy</a> section above. Its summary table holds the
+numbers, which are not yet copied here.</p>
 <p>Measured on an NVIDIA L4, Colab GPU runtime, 100 timed + 20 warmup runs per row. <strong>Every
 batch-4/8 TensorRT row reads <code>0.0 MB</code>, on both the managed engine and the raw engine, and this is
 expected, not a bug</strong>: the raw engine is exported <code>dynamic_batch=True, max_batch_size=8</code>, so
@@ -5107,17 +5783,20 @@ absolute terms as batch grows (64.11/76.97 ms at batch 8) — the ~6–13 ms of 
 pre/postprocessing does not scale with batch the way the GPU-side forward pass does, so it becomes
 a smaller fraction of the total at larger batches.</p>
 <blockquote>
-<p><strong>Open gap: this TensorRT number vs Roboflow's product page.</strong>
+<p><strong>Open gap: these numbers vs Roboflow's product page.</strong>
 <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>
 reports <strong>8.3 ms</strong> for <code>rfdetr-small</code> TensorRT FP16 on an L4 through Roboflow Inference, batch 1,
 scoped to the model only (pre/postprocessing excluded). The raw-engine <strong><code>forward</code></strong> row at
 batch 1 is the scope-matched comparator (both model-only, no pre/postprocessing), and it reads
 <strong>2.16 ms</strong> — a quarter of the 8.3 ms figure, not close to it. The managed-engine row is
 <strong>3.41 ms</strong> end-to-end (pre/postprocessing included) — also under the model-only figure it
-should logically exceed, which scope alone does not explain. This has <strong>not</strong> been rerun side by
-side on one L4 with the same image, TensorRT version, and a logged <code>inference-models</code> version —
-until that happens, treat all of these numbers (8.3 ms, 3.41 ms, 2.16 ms) as unreconciled rather
-than picking one to publish.</p>
+should logically exceed, which scope alone does not explain. ONNX shows the same direction: the
+same page reports <strong>12.9 ms</strong> for ONNX (model only, batch 1, L4), while this notebook's ONNX
+<strong><code>forward</code></strong> row at batch 1 reads <strong>7.35 ms</strong> — 1.75× lower, against 3.8× for TensorRT. Ratios
+that differ by runtime argue against one fixed harness overhead. This has <strong>not</strong> been rerun side
+by side on one L4 with the same image, TensorRT version, and a logged <code>inference-models</code> version —
+until that happens, treat all of these numbers (8.3 ms, 12.9 ms, 3.41 ms, 2.16 ms, 7.35 ms) as
+unreconciled rather than picking one to publish.</p>
 </blockquote>
 </div>
 </div>
@@ -5131,7 +5810,7 @@ than picking one to publish.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-30">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5196,7 +5875,7 @@ than picking one to publish.</p>
     <span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs per row, batches </span><span class="si">{</span><span class="n">BATCH_SIZES</span><span class="si">}</span><span class="s2">, GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-16">import pandas as pd
+<div class="clipboard-copy-txt" id="cell-30">import pandas as pd
 from IPython.display import display
 
 _rows = []
@@ -5301,7 +5980,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 17:28:15 UTC">2026-09-30 17:28:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 2, 2026 23:46:04 UTC">2026-10-02 23:46:04</span>
   </span>
 
     

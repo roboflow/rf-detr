@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-30T17:28:15">
+  <meta property="article:modified_time" content="2026-10-02T23:46:04">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-30T17:28:15",
+    "dateModified": "2026-10-02T23:46:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2691,6 +2691,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="2. Setup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notebook-display-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notebook display helpers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2839,10 +2856,21 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-results" class="md-nav__link">
+  <a href="#8-coco-val2017-accuracy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Results
+        8. COCO val2017 accuracy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Results
       
     </span>
   </a>
@@ -3680,7 +3708,10 @@ Silicon run at all, let alone without checking precision, batch size, and scope.
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to pick up the newest export fixes. <code>coremltools</code> (pulled in by
+<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to test the latest performance work; the newest release (1.11.1) does not yet
+ship the public <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports.
+Once a release does, swap <code>develop</code> for <code>release/latest</code> in the install URL.
+<code>coremltools</code> (pulled in by
 <code>[coreml]</code>) also satisfies ExecuTorch's CoreML backend, which needs it but does not declare it as
 a dependency of <code>[executorch]</code>.</p>
 </div>
@@ -3736,16 +3767,16 @@ assert (3, 11) &lt;= sys.version_info[:2] &lt; (3, 14), "Install and run this co
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[coreml,coreai,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[coreml,coreai,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">!pip install -q "rfdetr[coreml,coreai,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" psutil supervision pandas</div>
+<div class="clipboard-copy-txt" id="cell-2">!pip install -q "rfdetr[coreml,coreai,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" psutil supervision pandas faster-coco-eval</div>
 </div>
 </div>
 </div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9eea928f">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3f87362e">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3755,25 +3786,15 @@ assert (3, 11) &lt;= sys.version_info[:2] &lt; (3, 14), "Install and run this co
 <code>predict()</code>'s postprocessing always ends by moving results to the CPU (<code>Detections</code> is numpy, not
 a device tensor), which forces a full MPS stream sync — so timing <code>predict()</code> with a plain
 wall-clock is already correct, the same way <code>.cpu()</code> forces a CUDA sync.</p>
-<p>Several small helpers are shared by every format section below and every other per-hardware
-cookbook; they now live once, privately, in <code>rfdetr.export._benchmark</code>, instead of being
-copy-pasted per cookbook: <code>_artifact_size_mb</code> reports an export artifact's size on disk (a single
-file, or the total of a directory bundle — needed for CoreML's <code>.mlpackage</code> and Core AI's
-<code>.aimodel</code>, both directories), <code>visualize_detections</code> annotates and displays a
-<code>supervision.Detections</code> on the sample image, <code>_fmt_ms</code>/<code>_result_row</code> build the summary table's
-rows, and <code>measure_memory</code> measures the host resident-memory growth of constructing a runtime and
-running its first inference call.</p>
-<p>Alongside those, <code>BATCH_SIZES = (1, 4, 8)</code> is the batch matrix every format below is benchmarked
-at, <code>results</code> accumulates one row per (format, config, batch) triple for the summary table in
-§8, and three batching helpers build the repeated-sample-image input each format needs:
-<code>_batched_pixel_values</code> (numpy NCHW, for CoreML/Core AI), <code>_batched_pixel_tensor</code> (torch NCHW,
-for ExecuTorch), and <code>_batched_target_sizes</code> (repeats the sample image's <code>(height, width)</code> once
-per batch element, for <code>post_process</code>).</p>
+<p>The measurement helpers come from the public <code>rfdetr.export.benchmark</code> module, shared with every
+other per-hardware cookbook: <code>measure_latency</code> times a callable after warmup, and <code>measure_memory</code>
+measures the host resident-memory growth of constructing a runtime and running its first
+inference call.</p>
 </div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0c4a633a">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=89526bd0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -3801,16 +3822,114 @@ per batch element, for <code>post_process</code>).</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">BenchmarkResult</span><span class="p">,</span>
     <span class="n">_artifact_size_mb</span><span class="p">,</span>
-    <span class="n">_enable_notebook_inline_matplotlib</span><span class="p">,</span>
     <span class="n">_result_row</span><span class="p">,</span>
-    <span class="n">measure_latency</span><span class="p">,</span>
-    <span class="n">measure_memory</span><span class="p">,</span>
+    <span class="n">parity</span><span class="p">,</span>
     <span class="n">visualize_detections</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkResult</span><span class="p">,</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-3">import platform
+from functools import partial
+from pathlib import Path
 
-<span class="k">if</span> <span class="n">platform</span><span class="o">.</span><span class="n">system</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"Darwin"</span> <span class="ow">or</span> <span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"arm64"</span><span class="p">:</span>
+import numpy as np
+import supervision as sv
+import torch
+from PIL import Image
+
+from rfdetr.export._benchmark import (
+    _artifact_size_mb,
+    _result_row,
+    parity,
+    visualize_detections,
+)
+from rfdetr.export.benchmark import BenchmarkResult, measure_latency, measure_memory</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3020a852">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="notebook-display-helpers">Notebook display helpers<a class="anchor-link" href="#notebook-display-helpers">¶</a></h3><p><code>_artifact_size_mb</code>, <code>_result_row</code>, <code>parity</code>, <code>visualize_detections</code> come from the private <code>rfdetr.export._benchmark</code> module, next to the COCO mAP helpers
+used later. They size artifacts, format the results table, draw detections and compare raw outputs; none of
+them changes what a runtime computes.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=cb48930d">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="c1"># Inline figures keep every plot in the notebook; closing them after display stops figures piling up in memory.</span>
+<span class="o">%</span><span class="n">matplotlib</span> <span class="n">inline</span>
+<span class="o">%</span><span class="n">config</span> <span class="n">InlineBackend</span><span class="o">.</span><span class="n">close_figures</span> <span class="o">=</span> <span class="kc">True</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-4"># Inline figures keep every plot in the notebook; closing them after display stops figures piling up in memory.
+%matplotlib inline
+%config InlineBackend.close_figures = True</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9eea928f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p><code>BATCH_SIZES = (1, 4, 8)</code> is the batch matrix every format below is benchmarked
+at, <code>results</code> accumulates one row per (format, config, batch) triple for the summary table in
+§9, and three batching helpers build the repeated-sample-image input each format needs:
+<code>_batched_pixel_values</code> (numpy NCHW, for CoreML/Core AI), <code>_batched_pixel_tensor</code> (torch NCHW,
+for ExecuTorch), and <code>_batched_target_sizes</code> (repeats the sample image's <code>(height, width)</code> once
+per batch element, for <code>post_process</code>).</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0c4a633a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">if</span> <span class="n">platform</span><span class="o">.</span><span class="n">system</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"Darwin"</span> <span class="ow">or</span> <span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span> <span class="o">!=</span> <span class="s2">"arm64"</span><span class="p">:</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This notebook requires Apple Silicon (macOS, arm64); none is available here."</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"macOS </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">mac_ver</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">machine</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
@@ -3825,7 +3944,7 @@ per batch element, for <code>post_process</code>).</p>
 <span class="n">BATCH_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
 
 <span class="c1">#: One row per (format, config, batch) benchmark, appended to as each section below runs; turned</span>
-<span class="c1">#: into the summary table and DataFrame in §8.</span>
+<span class="c1">#: into the summary table and DataFrame in §9.</span>
 <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
 
 
@@ -3848,30 +3967,8 @@ per batch element, for <code>post_process</code>).</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">_batched_target_sizes</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">,</span> <span class="n">batch</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Repeat the sample image's ``(height, width)`` once per batch element, for ``post_process``."""</span>
     <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span><span class="p">]]</span> <span class="o">*</span> <span class="n">batch</span><span class="p">)</span>
-
-
-<span class="n">_enable_notebook_inline_matplotlib</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-3">import platform
-from functools import partial
-from pathlib import Path
-
-import numpy as np
-import supervision as sv
-import torch
-from PIL import Image
-
-from rfdetr.export._benchmark import (
-    BenchmarkResult,
-    _artifact_size_mb,
-    _enable_notebook_inline_matplotlib,
-    _result_row,
-    measure_latency,
-    measure_memory,
-    visualize_detections,
-)
-
-if platform.system() != "Darwin" or platform.machine() != "arm64":
+<div class="clipboard-copy-txt" id="cell-5">if platform.system() != "Darwin" or platform.machine() != "arm64":
     raise RuntimeError("This notebook requires Apple Silicon (macOS, arm64); none is available here.")
 print(f"macOS {platform.mac_ver()[0]}, {platform.machine()}")
 
@@ -3886,7 +3983,7 @@ MEASURE_RUNS = 30
 BATCH_SIZES = (1, 4, 8)
 
 #: One row per (format, config, batch) benchmark, appended to as each section below runs; turned
-#: into the summary table and DataFrame in §8.
+#: into the summary table and DataFrame in §9.
 results: list[dict] = []
 
 
@@ -3908,10 +4005,7 @@ def _batched_pixel_tensor(transform, image: Image.Image, batch: int) -&gt; torch
 
 def _batched_target_sizes(image: Image.Image, batch: int) -&gt; torch.Tensor:
     """Repeat the sample image's ``(height, width)`` once per batch element, for ``post_process``."""
-    return torch.tensor([[image.height, image.width]] * batch)
-
-
-_enable_notebook_inline_matplotlib()</div>
+    return torch.tensor([[image.height, image.width]] * batch)</div>
 </div>
 </div>
 </div>
@@ -3924,8 +4018,7 @@ _enable_notebook_inline_matplotlib()</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="3-sample-image">3. Sample image<a class="anchor-link" href="#3-sample-image">¶</a></h2><p>A single street scene with several COCO classes (dog, person, backpack, car) is enough to verify
-detections. The image is downloaded once and reused for every format below.</p>
+<h2 id="3-sample-image">3. Sample image<a class="anchor-link" href="#3-sample-image">¶</a></h2><p>A single street scene with several COCO classes is enough to verify detections. The image is downloaded once and reused for every format below.</p>
 </div>
 </div>
 </div>
@@ -3938,7 +4031,7 @@ detections. The image is downloaded once and reused for every format below.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-4">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -3958,7 +4051,7 @@ detections. The image is downloaded once and reused for every format below.</p>
 <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">IMAGE_PATH</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Sample image: </span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-4">import urllib.request
+<div class="clipboard-copy-txt" id="cell-6">import urllib.request
 
 IMAGE_URL = "https://media.roboflow.com/notebooks/examples/dog.jpeg"
 IMAGE_PATH = EXPORT_DIR / "sample.jpg"
@@ -3996,7 +4089,7 @@ feeds it <code>batch</code> copies of the same sample image rather than exportin
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-5">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4015,7 +4108,7 @@ feeds it <code>batch</code> copies of the same sample image rather than exportin
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch baseline (</span><span class="si">{</span><span class="n">PYTORCH_DEVICE</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">visualize_detections</span><span class="p">(</span><span class="n">baseline_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-5">from rfdetr import RFDETRSmall
+<div class="clipboard-copy-txt" id="cell-7">from rfdetr import RFDETRSmall
 
 with measure_memory() as mem:
     model = RFDETRSmall(device=PYTORCH_DEVICE)
@@ -4050,7 +4143,7 @@ every batch row in the summary table.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-6">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4079,7 +4172,7 @@ every batch row in the summary table.</p>
         <span class="p">)</span>
     <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">for batch in BATCH_SIZES:
+<div class="clipboard-copy-txt" id="cell-8">for batch in BATCH_SIZES:
     images_batch = [image] * batch
     pytorch_baseline = measure_latency(
         partial(model.predict, images_batch),
@@ -4127,7 +4220,7 @@ afterward so <code>model</code> stays reusable for the export calls that follow.
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-7">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4167,7 +4260,7 @@ afterward so <code>model</code> stays reusable for the export calls that follow.
     <span class="p">)</span>
 <span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">for batch in BATCH_SIZES:
+<div class="clipboard-copy-txt" id="cell-9">for batch in BATCH_SIZES:
     images_batch = [image] * batch
     with measure_memory() as mem:
         model.inference(dtype=torch.float16, batch_size=batch)
@@ -4222,6 +4315,14 @@ the <code>.mlpackage</code> spec — they are <strong>not</strong> renamed to <c
 name and output order from <code>mlmodel.get_spec().description</code> instead of hardcoding them, then
 match outputs <strong>by position</strong> (<code>dets, labels</code> for detection). The correctness check and
 visualization only run once, at batch 1.</p>
+<p>CoreML fp32 is also this notebook's <strong>parity reference</strong>: it is the first fp32 runtime here whose
+outputs are the raw <code>dets</code>/<code>labels</code> arrays (PyTorch <code>predict()</code> returns post-processed
+detections, so it has no parity line). Every later Apple runtime prints <code>parity(...)</code> at batch 1 —
+the largest logit and box difference from these batch-1 CoreML fp32 outputs over the queries
+CoreML scores above 0.3. Queries are compared by position, so a large difference in an fp16 row
+can be a near-tied <code>topk</code> rank swap (see the CoreML fp16 note below) rather than numeric drift
+alone. Each runtime also prints the compute units it was asked to use; the <code>.mlpackage</code> is loaded
+with coremltools' default, <code>ComputeUnit.ALL</code>.</p>
 </div>
 </div>
 </div>
@@ -4234,7 +4335,7 @@ visualization only run once, at batch 1.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-8">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4285,6 +4386,8 @@ visualization only run once, at batch 1.</p>
     <span class="n">coreml_result</span> <span class="o">=</span> <span class="n">post_process</span><span class="p">({</span><span class="s2">"dets"</span><span class="p">:</span> <span class="n">coreml_dets</span><span class="p">,</span> <span class="s2">"labels"</span><span class="p">:</span> <span class="n">coreml_labels</span><span class="p">},</span> <span class="n">target_sizes</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">coreml_keep</span> <span class="o">=</span> <span class="n">coreml_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">reference_dets</span><span class="p">,</span> <span class="n">reference_logits</span> <span class="o">=</span> <span class="n">coreml_dets</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">coreml_labels</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CoreML compute units: </span><span class="si">{</span><span class="n">coreml_model</span><span class="o">.</span><span class="n">compute_unit</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CoreML: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">coreml_keep</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
         <span class="n">coreml_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
             <span class="n">xyxy</span><span class="o">=</span><span class="n">coreml_result</span><span class="p">[</span><span class="s2">"boxes"</span><span class="p">][</span><span class="n">coreml_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
@@ -4320,7 +4423,7 @@ visualization only run once, at batch 1.</p>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
     <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_result_row</span><span class="p">(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="s2">"fp32 (default)"</span><span class="p">,</span> <span class="n">coreml_forward</span><span class="p">,</span> <span class="n">coreml_end2end</span><span class="p">,</span> <span class="n">coreml_memory_mb</span><span class="p">))</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">import coremltools as ct
+<div class="clipboard-copy-txt" id="cell-10">import coremltools as ct
 
 from rfdetr.export.benchmark import infer_transforms, post_process
 
@@ -4361,6 +4464,8 @@ for batch in BATCH_SIZES:
     coreml_result = post_process({"dets": coreml_dets, "labels": coreml_labels}, target_sizes)[0]
     coreml_keep = coreml_result["scores"] &gt; CONFIDENCE_THRESHOLD
     if batch == 1:
+        reference_dets, reference_logits = coreml_dets.numpy(), coreml_labels.numpy()
+        print(f"CoreML compute units: {coreml_model.compute_unit.name}")
         print(f"CoreML: {int(coreml_keep.sum())} detections above {CONFIDENCE_THRESHOLD}")
         coreml_sv_detections = sv.Detections(
             xyxy=coreml_result["boxes"][coreml_keep].numpy(),
@@ -4423,7 +4528,7 @@ different detection set) becomes more likely than in the fp32 row above.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-9">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4463,7 +4568,11 @@ different detection set) becomes more likely than in the fp32 row above.</p>
     <span class="n">coreml_fp16_result</span> <span class="o">=</span> <span class="n">post_process</span><span class="p">({</span><span class="s2">"dets"</span><span class="p">:</span> <span class="n">coreml_fp16_dets</span><span class="p">,</span> <span class="s2">"labels"</span><span class="p">:</span> <span class="n">coreml_fp16_labels</span><span class="p">},</span> <span class="n">target_sizes</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">coreml_fp16_keep</span> <span class="o">=</span> <span class="n">coreml_fp16_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CoreML fp16 compute units: </span><span class="si">{</span><span class="n">coreml_fp16_model</span><span class="o">.</span><span class="n">compute_unit</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"CoreML fp16: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">coreml_fp16_keep</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"CoreML fp16 vs CoreML fp32: </span><span class="si">{</span><span class="n">parity</span><span class="p">(</span><span class="n">reference_dets</span><span class="p">,</span><span class="w"> </span><span class="n">reference_logits</span><span class="p">,</span><span class="w"> </span><span class="n">coreml_fp16_dets</span><span class="p">,</span><span class="w"> </span><span class="n">coreml_fp16_labels</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
         <span class="n">coreml_fp16_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
             <span class="n">xyxy</span><span class="o">=</span><span class="n">coreml_fp16_result</span><span class="p">[</span><span class="s2">"boxes"</span><span class="p">][</span><span class="n">coreml_fp16_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
             <span class="n">confidence</span><span class="o">=</span><span class="n">coreml_fp16_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">][</span><span class="n">coreml_fp16_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
@@ -4500,7 +4609,7 @@ different detection set) becomes more likely than in the fp32 row above.</p>
         <span class="n">_result_row</span><span class="p">(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">,</span> <span class="n">coreml_fp16_forward</span><span class="p">,</span> <span class="n">coreml_fp16_end2end</span><span class="p">,</span> <span class="n">coreml_fp16_memory_mb</span><span class="p">)</span>
     <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">for batch in BATCH_SIZES:
+<div class="clipboard-copy-txt" id="cell-11">for batch in BATCH_SIZES:
     coreml_fp16_path = model.export(
         format="coreml",
         coreml_precision="float16",
@@ -4530,7 +4639,11 @@ different detection set) becomes more likely than in the fp32 row above.</p>
     coreml_fp16_result = post_process({"dets": coreml_fp16_dets, "labels": coreml_fp16_labels}, target_sizes)[0]
     coreml_fp16_keep = coreml_fp16_result["scores"] &gt; CONFIDENCE_THRESHOLD
     if batch == 1:
+        print(f"CoreML fp16 compute units: {coreml_fp16_model.compute_unit.name}")
         print(f"CoreML fp16: {int(coreml_fp16_keep.sum())} detections above {CONFIDENCE_THRESHOLD}")
+        print(
+            f"CoreML fp16 vs CoreML fp32: {parity(reference_dets, reference_logits, coreml_fp16_dets, coreml_fp16_labels)}"
+        )
         coreml_fp16_sv_detections = sv.Detections(
             xyxy=coreml_fp16_result["boxes"][coreml_fp16_keep].numpy(),
             confidence=coreml_fp16_result["scores"][coreml_fp16_keep].numpy(),
@@ -4590,6 +4703,9 @@ returns is a plain synchronous call — only <em>calling</em> that function (<co
 coroutine. The notebook awaits that call directly in its correctness and benchmark cells, which
 keeps inference compatible with Jupyter's running event loop. The <code>.aimodel</code> also bakes a fixed
 batch shape into the asset — the loop below exports one per batch size.</p>
+<p>Every asset is loaded with <code>SpecializationOptions.default()</code>, printed once below: it lists the
+compute units the runtime is <em>allowed</em> to use and sets no preferred one, so the CPU/GPU/Neural
+Engine choice is the runtime's own, made at load time.</p>
 </div>
 </div>
 </div>
@@ -4602,7 +4718,7 @@ batch shape into the asset — the loop below exports one per batch size.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-10">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4643,9 +4759,12 @@ batch shape into the asset — the loop below exports one per batch size.</p>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">coreai.runtime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">coreai_rt</span>
 
+<span class="n">COREAI_OPTIONS</span> <span class="o">=</span> <span class="n">coreai_rt</span><span class="o">.</span><span class="n">SpecializationOptions</span><span class="o">.</span><span class="n">default</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Core AI compute units as loaded:</span><span class="se">\n</span><span class="si">{</span><span class="n">COREAI_OPTIONS</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_load_coreai</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
-    <span class="n">loaded</span> <span class="o">=</span> <span class="k">await</span> <span class="n">coreai_rt</span><span class="o">.</span><span class="n">AIModel</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">coreai_rt</span><span class="o">.</span><span class="n">SpecializationOptions</span><span class="o">.</span><span class="n">default</span><span class="p">())</span>
+    <span class="n">loaded</span> <span class="o">=</span> <span class="k">await</span> <span class="n">coreai_rt</span><span class="o">.</span><span class="n">AIModel</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">COREAI_OPTIONS</span><span class="p">)</span>
     <span class="n">fn</span> <span class="o">=</span> <span class="n">loaded</span><span class="o">.</span><span class="n">load_function</span><span class="p">(</span><span class="s2">"main"</span><span class="p">)</span>  <span class="c1"># synchronous — only AIModel.load and InferenceFunction.__call__ are async</span>
     <span class="k">return</span> <span class="n">loaded</span><span class="p">,</span> <span class="n">fn</span>
 
@@ -4684,6 +4803,7 @@ batch shape into the asset — the loop below exports one per batch size.</p>
     <span class="n">coreai_keep</span> <span class="o">=</span> <span class="n">coreai_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Core AI: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">coreai_keep</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Core AI vs CoreML fp32: </span><span class="si">{</span><span class="n">parity</span><span class="p">(</span><span class="n">reference_dets</span><span class="p">,</span><span class="w"> </span><span class="n">reference_logits</span><span class="p">,</span><span class="w"> </span><span class="n">coreai_dets</span><span class="p">,</span><span class="w"> </span><span class="n">coreai_labels</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
         <span class="n">coreai_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
             <span class="n">xyxy</span><span class="o">=</span><span class="n">coreai_result</span><span class="p">[</span><span class="s2">"boxes"</span><span class="p">][</span><span class="n">coreai_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
             <span class="n">confidence</span><span class="o">=</span><span class="n">coreai_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">][</span><span class="n">coreai_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
@@ -4707,7 +4827,7 @@ batch shape into the asset — the loop below exports one per batch size.</p>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="si">:</span><span class="s2">&lt;32</span><span class="si">}</span><span class="s2">  </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
     <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_result_row</span><span class="p">(</span><span class="s2">"Core AI"</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="s2">"fp32 (default)"</span><span class="p">,</span> <span class="n">coreai_forward</span><span class="p">,</span> <span class="n">coreai_end2end</span><span class="p">,</span> <span class="n">coreai_memory_mb</span><span class="p">))</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">import time
+<div class="clipboard-copy-txt" id="cell-12">import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -4738,9 +4858,12 @@ async def _measure_async_latency(
 
 import coreai.runtime as coreai_rt
 
+COREAI_OPTIONS = coreai_rt.SpecializationOptions.default()
+print(f"Core AI compute units as loaded:\n{COREAI_OPTIONS}")
+
 
 async def _load_coreai(path: Path) -&gt; tuple[Any, Any]:
-    loaded = await coreai_rt.AIModel.load(str(path), coreai_rt.SpecializationOptions.default())
+    loaded = await coreai_rt.AIModel.load(str(path), COREAI_OPTIONS)
     fn = loaded.load_function("main")  # synchronous — only AIModel.load and InferenceFunction.__call__ are async
     return loaded, fn
 
@@ -4779,6 +4902,7 @@ for batch in BATCH_SIZES:
     coreai_keep = coreai_result["scores"] &gt; CONFIDENCE_THRESHOLD
     if batch == 1:
         print(f"Core AI: {int(coreai_keep.sum())} detections above {CONFIDENCE_THRESHOLD}")
+        print(f"Core AI vs CoreML fp32: {parity(reference_dets, reference_logits, coreai_dets, coreai_labels)}")
         coreai_sv_detections = sv.Detections(
             xyxy=coreai_result["boxes"][coreai_keep].numpy(),
             confidence=coreai_result["scores"][coreai_keep].numpy(),
@@ -4831,7 +4955,7 @@ the graph actually runs in fp16.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-11">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -4869,6 +4993,10 @@ the graph actually runs in fp16.</p>
     <span class="n">coreai_fp16_keep</span> <span class="o">=</span> <span class="n">coreai_fp16_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Core AI fp16: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">coreai_fp16_keep</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">coreai_fp16_parity</span> <span class="o">=</span> <span class="n">parity</span><span class="p">(</span>
+            <span class="n">reference_dets</span><span class="p">,</span> <span class="n">reference_logits</span><span class="p">,</span> <span class="n">coreai_fp16_outputs</span><span class="p">[</span><span class="s2">"dets"</span><span class="p">],</span> <span class="n">coreai_fp16_outputs</span><span class="p">[</span><span class="s2">"labels"</span><span class="p">]</span>
+        <span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Core AI fp16 vs CoreML fp32: </span><span class="si">{</span><span class="n">coreai_fp16_parity</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
         <span class="n">coreai_fp16_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
             <span class="n">xyxy</span><span class="o">=</span><span class="n">coreai_fp16_result</span><span class="p">[</span><span class="s2">"boxes"</span><span class="p">][</span><span class="n">coreai_fp16_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
             <span class="n">confidence</span><span class="o">=</span><span class="n">coreai_fp16_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">][</span><span class="n">coreai_fp16_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
@@ -4894,7 +5022,7 @@ the graph actually runs in fp16.</p>
         <span class="n">_result_row</span><span class="p">(</span><span class="s2">"Core AI"</span><span class="p">,</span> <span class="n">batch</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">,</span> <span class="n">coreai_fp16_forward</span><span class="p">,</span> <span class="n">coreai_fp16_end2end</span><span class="p">,</span> <span class="n">coreai_fp16_memory_mb</span><span class="p">)</span>
     <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-11">for batch in BATCH_SIZES:
+<div class="clipboard-copy-txt" id="cell-13">for batch in BATCH_SIZES:
     coreai_fp16_path = model.export(
         format="coreai",
         coreai_precision="float16",
@@ -4922,6 +5050,10 @@ the graph actually runs in fp16.</p>
     coreai_fp16_keep = coreai_fp16_result["scores"] &gt; CONFIDENCE_THRESHOLD
     if batch == 1:
         print(f"Core AI fp16: {int(coreai_fp16_keep.sum())} detections above {CONFIDENCE_THRESHOLD}")
+        coreai_fp16_parity = parity(
+            reference_dets, reference_logits, coreai_fp16_outputs["dets"], coreai_fp16_outputs["labels"]
+        )
+        print(f"Core AI fp16 vs CoreML fp32: {coreai_fp16_parity}")
         coreai_fp16_sv_detections = sv.Detections(
             xyxy=coreai_fp16_result["boxes"][coreai_fp16_keep].numpy(),
             confidence=coreai_fp16_result["scores"][coreai_fp16_keep].numpy(),
@@ -4971,7 +5103,7 @@ native CoreML — it produces a <code>.pte</code> for the ExecuTorch runtime, di
 ExecuTorch also bakes a fixed batch shape into the <code>.pte</code> (<code>ExecuTorchExporter.dynamic_batch_reason</code>)
 — one export per batch size below.</p>
 <blockquote>
-<p><strong>The input tensor must be contiguous</strong> — see the <a href="../export-mobile/#7-executorch-xnnpack-backend">mobile cookbook</a>
+<p><strong>The input tensor must be contiguous</strong> — see the <a href="../export-mobile/#15-executorch-xnnpack-backend">mobile cookbook</a>
 for why; <code>_batched_pixel_tensor</code> already returns one via <code>torchvision</code>'s transform plus an
 explicit <code>.contiguous()</code>.</p>
 </blockquote>
@@ -4987,7 +5119,10 @@ mobile cookbook's XNNPACK build, where feeding the same tensor to <code>execute(
 CoreML-backend <code>.pte</code> here took 35 repeated uncloned <code>execute()</code> calls per row in the run that
 produced the Results table below.</p>
 </blockquote>
-<p><code>load_executorch_method</code> (from <code>rfdetr.export._executorch.inference</code>, shared with the mobile
+<p>rfdetr passes ExecuTorch's CoreML partitioner no compile specs, so the backend resolves compute
+units to its own default when lowering, and the Python <code>Runtime</code> takes no compute-unit option at
+load; the cell below prints that default (<code>CoreMLBackend.compute_unit_from_compile_specs([])</code>).</p>
+<p><code>load_executorch_method</code> (from the public <code>rfdetr.export.inference</code>, shared with the mobile
 cookbook's XNNPACK section) checks that ExecuTorch's runtime actually loads against the installed
 <code>torch</code> before attempting <code>Method.execute</code> — a torch/executorch ABI mismatch then raises a clear
 <code>ImportError</code> here instead of the opaque <code>RuntimeError: tensor does not have a device</code> a raw
@@ -5004,7 +5139,7 @@ cookbook's XNNPACK section) checks that ExecuTorch's runtime actually loads agai
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-12">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-14">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5014,7 +5149,11 @@ cookbook's XNNPACK section) checks that ExecuTorch's runtime actually loads agai
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._executorch.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_executorch_method</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">executorch.backends.apple.coreml.compiler</span><span class="w"> </span><span class="kn">import</span> <span class="n">CoreMLBackend</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_executorch_method</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ExecuTorch (CoreML) compute units: </span><span class="si">{</span><span class="n">CoreMLBackend</span><span class="o">.</span><span class="n">compute_unit_from_compile_specs</span><span class="p">([])</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_executorch_forward_call</span><span class="p">(</span><span class="n">method</span><span class="p">,</span> <span class="n">pixel_values</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
@@ -5050,6 +5189,8 @@ cookbook's XNNPACK section) checks that ExecuTorch's runtime actually loads agai
     <span class="n">executorch_keep</span> <span class="o">=</span> <span class="n">executorch_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">CONFIDENCE_THRESHOLD</span>
     <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ExecuTorch (CoreML): </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">executorch_keep</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">executorch_parity</span> <span class="o">=</span> <span class="n">parity</span><span class="p">(</span><span class="n">reference_dets</span><span class="p">,</span> <span class="n">reference_logits</span><span class="p">,</span> <span class="n">executorch_dets</span><span class="p">,</span> <span class="n">executorch_labels</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"ExecuTorch (CoreML) vs CoreML fp32: </span><span class="si">{</span><span class="n">executorch_parity</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
         <span class="n">executorch_sv_detections</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">(</span>
             <span class="n">xyxy</span><span class="o">=</span><span class="n">executorch_result</span><span class="p">[</span><span class="s2">"boxes"</span><span class="p">][</span><span class="n">executorch_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
             <span class="n">confidence</span><span class="o">=</span><span class="n">executorch_result</span><span class="p">[</span><span class="s2">"scores"</span><span class="p">][</span><span class="n">executorch_keep</span><span class="p">]</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
@@ -5081,7 +5222,11 @@ cookbook's XNNPACK section) checks that ExecuTorch's runtime actually loads agai
         <span class="p">)</span>
     <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">from rfdetr.export._executorch.inference import load_executorch_method
+<div class="clipboard-copy-txt" id="cell-14">from executorch.backends.apple.coreml.compiler import CoreMLBackend
+
+from rfdetr.export.inference import load_executorch_method
+
+print(f"ExecuTorch (CoreML) compute units: {CoreMLBackend.compute_unit_from_compile_specs([]).name}")
 
 
 def _executorch_forward_call(method, pixel_values: torch.Tensor) -&gt; tuple[torch.Tensor, torch.Tensor]:
@@ -5117,6 +5262,8 @@ for batch in BATCH_SIZES:
     executorch_keep = executorch_result["scores"] &gt; CONFIDENCE_THRESHOLD
     if batch == 1:
         print(f"ExecuTorch (CoreML): {int(executorch_keep.sum())} detections above {CONFIDENCE_THRESHOLD}")
+        executorch_parity = parity(reference_dets, reference_logits, executorch_dets, executorch_labels)
+        print(f"ExecuTorch (CoreML) vs CoreML fp32: {executorch_parity}")
         executorch_sv_detections = sv.Detections(
             xyxy=executorch_result["boxes"][executorch_keep].numpy(),
             confidence=executorch_result["scores"][executorch_keep].numpy(),
@@ -5159,7 +5306,639 @@ for batch in BATCH_SIZES:
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="8-results">8. Results<a class="anchor-link" href="#8-results">¶</a></h2><p>Measured on an Apple M4 Max (arm64), macOS 27.0, rfdetr v1.11.0, batches 1/4/8, 5 warmup + 30
+<h2 id="8-coco-val2017-accuracy">8. COCO val2017 accuracy<a class="anchor-link" href="#8-coco-val2017-accuracy">¶</a></h2><p>Latency alone hides a precision collapse: an export can run at a normal speed and still return
+nothing useful (the OpenVINO f16 execution bug gave 0 detections). So every batch-1 row of the
+Results table below also gets a box mAP, measured on the <strong>same exported file at the same
+precision</strong> that row timed — the batch-1 <code>.mlpackage</code>, <code>.aimodel</code>, and <code>.pte</code> the loops above
+wrote, and the PyTorch model in the same mode.</p>
+<p>This is a <strong>500-image seeded subset</strong> of COCO val2017, so it is not the full-val2017 number on the
+<a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a>; set <code>FULL_VAL = True</code> to
+score all 5000 images. Each row costs roughly its batch-1 end2end latency × the image count — about
+6–12 s per row on the M4 Max at 500 images, ten times that with <code>FULL_VAL</code>. The first run downloads
+the 241 MB annotation archive once, plus only the selected images.</p>
+<p>Raw outputs are decoded with <code>background_class_id=None</code> (the evaluator's default). The official COCO
+checkpoints use sparse COCO category IDs that fill every logit slot, including category 90, so the
+decoder's usual habit of dropping the last slot as background would delete a real class.</p>
+<p><code>fetch_coco_val2017</code> and <code>evaluate_coco_map</code> come from the private <code>rfdetr.export._benchmark</code>
+module — an intentional exception to this notebook's public-API-only rule.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=13da94e6">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-15">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">CocoMapResult</span><span class="p">,</span> <span class="n">evaluate_coco_map</span><span class="p">,</span> <span class="n">fetch_coco_val2017</span>
+
+<span class="n">N_EVAL</span> <span class="o">=</span> <span class="mi">500</span>
+<span class="n">FULL_VAL</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="n">COCO_SEED</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">)</span>
+<span class="n">COCO_SCORE_FLOOR</span> <span class="o">=</span> <span class="mf">0.001</span>  <span class="c1"># the evaluator's own floor for raw outputs; keeps the whole precision-recall curve</span>
+
+<span class="c1">#: One entry per batch-1 Results row, keyed by that row's (Format, Config) and filled in the table's row order.</span>
+<span class="n">map_results</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="n">CocoMapResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-15">from rfdetr.export._benchmark import CocoMapResult, evaluate_coco_map, fetch_coco_val2017
+
+N_EVAL = 500
+FULL_VAL = False
+COCO_SEED = 0
+COCO_ROOT = Path("coco")
+COCO_SCORE_FLOOR = 0.001  # the evaluator's own floor for raw outputs; keeps the whole precision-recall curve
+
+#: One entry per batch-1 Results row, keyed by that row's (Format, Config) and filled in the table's row order.
+map_results: dict[tuple[str, str], CocoMapResult] = {}</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3a47d561">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>The annotations and the selected images land in <code>COCO_ROOT</code>; files already on disk are skipped, so
+rerunning this cell after the first download costs nothing.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=07739615">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-16">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">coco_subset</span> <span class="o">=</span> <span class="n">fetch_coco_val2017</span><span class="p">(</span><span class="n">COCO_ROOT</span><span class="p">,</span> <span class="n">n_images</span><span class="o">=</span><span class="kc">None</span> <span class="k">if</span> <span class="n">FULL_VAL</span> <span class="k">else</span> <span class="n">N_EVAL</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">COCO_SEED</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"COCO val2017: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">image_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> images in </span><span class="si">{</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">images_dir</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-16">coco_subset = fetch_coco_val2017(COCO_ROOT, n_images=None if FULL_VAL else N_EVAL, seed=COCO_SEED)
+print(f"COCO val2017: {len(coco_subset.image_ids)} images in {coco_subset.images_dir}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=83986b06">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Each adapter wraps one batch-1 runtime as <code>run(image) -&gt; outputs</code> for <code>evaluate_coco_map</code>, building
+its input exactly as that runtime's correctness check above does. The export loops left their
+variables pointing at the batch-8 artifacts, so <code>_batch1_artifact</code> recovers the batch-1 one from the
+output directory the loop wrote it into (and fails unless exactly one is there) — nothing is
+re-exported.</p>
+<ul>
+<li><strong>PyTorch</strong> returns <code>predict()</code>'s already-decoded <code>Detections</code>; for a pretrained COCO checkpoint
+their class IDs are COCO category IDs, which is what the evaluator scores.</li>
+<li><strong>CoreML</strong> reads the input name and the first two outputs from the spec, as §5 does.</li>
+<li><strong>ExecuTorch</strong> builds a fresh input tensor per image, so the export-mode forward's in-place input
+mutation never carries over to the next call.</li>
+<li><strong>Core AI</strong>'s inference call is a coroutine, while <code>evaluate_coco_map</code> calls its adapter
+synchronously. <code>_evaluate_coreai</code> therefore runs the evaluator in a worker thread and submits each
+inference back to the notebook's own event loop — the loop the asset was loaded on — so the Core
+AI call itself runs exactly as in §6.</li>
+</ul>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a850fb85">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-17">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_batch1_artifact</span><span class="p">(</span><span class="n">directory</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">pattern</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Return the single batch-1 artifact an export loop above wrote into *directory*."""</span>
+    <span class="p">(</span><span class="n">path</span><span class="p">,)</span> <span class="o">=</span> <span class="n">directory</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">path</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_pytorch_run</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sv</span><span class="o">.</span><span class="n">Detections</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""``predict()`` on one image at the evaluator's score floor, in whatever mode ``model`` is in."""</span>
+    <span class="k">return</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">COCO_SCORE_FLOOR</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_coreml_run</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""Load one batch-1 ``.mlpackage`` and return a single-image adapter for it."""</span>
+    <span class="n">mlmodel</span> <span class="o">=</span> <span class="n">ct</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">MLModel</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+    <span class="n">spec</span> <span class="o">=</span> <span class="n">mlmodel</span><span class="o">.</span><span class="n">get_spec</span><span class="p">()</span>
+    <span class="n">input_name</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">description</span><span class="o">.</span><span class="n">input</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
+    <span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">spec</span><span class="o">.</span><span class="n">description</span><span class="o">.</span><span class="n">output</span><span class="p">][:</span><span class="mi">2</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+        <span class="n">prediction</span> <span class="o">=</span> <span class="n">mlmodel</span><span class="o">.</span><span class="n">predict</span><span class="p">({</span><span class="n">input_name</span><span class="p">:</span> <span class="n">_batched_pixel_values</span><span class="p">(</span><span class="n">apple_transform</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="mi">1</span><span class="p">)})</span>
+        <span class="n">dets</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">prediction</span><span class="p">[</span><span class="n">name</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">dets</span><span class="p">,</span> <span class="n">labels</span>
+
+    <span class="k">return</span> <span class="n">run</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_executorch_run</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""Load one batch-1 ExecuTorch (CoreML) ``.pte`` and return a single-image adapter for it."""</span>
+    <span class="n">method</span> <span class="o">=</span> <span class="n">load_executorch_method</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+        <span class="n">dets</span><span class="p">,</span> <span class="n">labels</span> <span class="o">=</span> <span class="n">method</span><span class="o">.</span><span class="n">execute</span><span class="p">([</span><span class="n">_batched_pixel_tensor</span><span class="p">(</span><span class="n">apple_transform</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="mi">1</span><span class="p">)])</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">dets</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">labels</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">run</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_evaluate_coreai</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">in_dtype</span><span class="p">:</span> <span class="nb">type</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CocoMapResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Load one batch-1 ``.aimodel`` and score it, keeping every inference on the notebook's event loop."""</span>
+    <span class="n">loop</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">get_running_loop</span><span class="p">()</span>
+    <span class="n">coreai_model</span><span class="p">,</span> <span class="n">fn</span> <span class="o">=</span> <span class="k">await</span> <span class="n">_load_coreai</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>  <span class="c1"># coreai_model stays referenced until scoring ends</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+        <span class="n">pixel_values</span> <span class="o">=</span> <span class="n">_batched_pixel_values</span><span class="p">(</span><span class="n">apple_transform</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">in_dtype</span><span class="p">)</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="n">_coreai_forward_call</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">pixel_values</span><span class="p">),</span> <span class="n">loop</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">outputs</span><span class="p">[</span><span class="s2">"dets"</span><span class="p">],</span> <span class="n">outputs</span><span class="p">[</span><span class="s2">"labels"</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="k">await</span> <span class="n">loop</span><span class="o">.</span><span class="n">run_in_executor</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">evaluate_coco_map</span><span class="p">,</span> <span class="n">run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-17">import asyncio
+
+
+def _batch1_artifact(directory: Path, pattern: str) -&gt; Path:
+    """Return the single batch-1 artifact an export loop above wrote into *directory*."""
+    (path,) = directory.glob(pattern)
+    return path
+
+
+def _pytorch_run(image: Image.Image) -&gt; sv.Detections:
+    """``predict()`` on one image at the evaluator's score floor, in whatever mode ``model`` is in."""
+    return model.predict(image, threshold=COCO_SCORE_FLOOR)
+
+
+def _coreml_run(path: Path) -&gt; Callable[[Image.Image], tuple[np.ndarray, np.ndarray]]:
+    """Load one batch-1 ``.mlpackage`` and return a single-image adapter for it."""
+    mlmodel = ct.models.MLModel(str(path))
+    spec = mlmodel.get_spec()
+    input_name = spec.description.input[0].name
+    output_names = [o.name for o in spec.description.output][:2]
+
+    def run(image: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+        prediction = mlmodel.predict({input_name: _batched_pixel_values(apple_transform, image, 1)})
+        dets, labels = (np.asarray(prediction[name], dtype=np.float32) for name in output_names)
+        return dets, labels
+
+    return run
+
+
+def _executorch_run(path: Path) -&gt; Callable[[Image.Image], tuple[np.ndarray, np.ndarray]]:
+    """Load one batch-1 ExecuTorch (CoreML) ``.pte`` and return a single-image adapter for it."""
+    method = load_executorch_method(path)
+
+    def run(image: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+        dets, labels = method.execute([_batched_pixel_tensor(apple_transform, image, 1)])
+        return np.asarray(dets, dtype=np.float32), np.asarray(labels, dtype=np.float32)
+
+    return run
+
+
+async def _evaluate_coreai(path: Path, in_dtype: type) -&gt; CocoMapResult:
+    """Load one batch-1 ``.aimodel`` and score it, keeping every inference on the notebook's event loop."""
+    loop = asyncio.get_running_loop()
+    coreai_model, fn = await _load_coreai(path)  # coreai_model stays referenced until scoring ends
+
+    def run(image: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+        pixel_values = _batched_pixel_values(apple_transform, image, 1).astype(in_dtype)
+        outputs = asyncio.run_coroutine_threadsafe(_coreai_forward_call(fn, pixel_values), loop).result()
+        return outputs["dets"], outputs["labels"]
+
+    return await loop.run_in_executor(None, evaluate_coco_map, run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=be0741db">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>PyTorch <code>predict()</code> on MPS in fp32 — the eager reference every exported row is compared against.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f965d98b">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-18">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch predict()"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">PYTORCH_DEVICE</span><span class="si">}</span><span class="s2">, fp32"</span><span class="p">)]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_pytorch_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-18">map_results[("PyTorch predict()", f"{PYTORCH_DEVICE}, fp32")] = evaluate_coco_map(_pytorch_run, coco_subset)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0b73c56e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>PyTorch fp16+JIT at batch 1, the same <code>inference()</code> call as its latency row, reverted afterward so
+<code>model</code> is back in eager mode.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7e41b862">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-19">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">map_results</span><span class="p">[(</span><span class="s2">"PyTorch inference()"</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">PYTORCH_DEVICE</span><span class="si">}</span><span class="s2">, fp16+JIT"</span><span class="p">)]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span><span class="n">_pytorch_run</span><span class="p">,</span> <span class="n">coco_subset</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-19">model.inference(dtype=torch.float16, batch_size=1)
+map_results[("PyTorch inference()", f"{PYTORCH_DEVICE}, fp16+JIT")] = evaluate_coco_map(_pytorch_run, coco_subset)
+model.remove_optimized_model()</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a209e266">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>CoreML fp32 — the default export, and this notebook's parity reference.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=ff76b5b8">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-20">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="s2">"fp32 (default)"</span><span class="p">)]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+    <span class="n">_coreml_run</span><span class="p">(</span><span class="n">_batch1_artifact</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"coreml_b1"</span><span class="p">,</span> <span class="s2">"*.mlpackage"</span><span class="p">)),</span> <span class="n">coco_subset</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-20">map_results[("CoreML", "fp32 (default)")] = evaluate_coco_map(
+    _coreml_run(_batch1_artifact(EXPORT_DIR / "coreml_b1", "*.mlpackage")), coco_subset
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=bfa40748">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>CoreML fp16 — where a near-tied <code>topk</code> rank swap (see §5) would show up as lost accuracy rather than
+only as a parity line.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e7497b0a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-21">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"CoreML"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">)]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+    <span class="n">_coreml_run</span><span class="p">(</span><span class="n">_batch1_artifact</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"coreml_fp16_b1"</span><span class="p">,</span> <span class="s2">"*.mlpackage"</span><span class="p">)),</span> <span class="n">coco_subset</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-21">map_results[("CoreML", "fp16")] = evaluate_coco_map(
+    _coreml_run(_batch1_artifact(EXPORT_DIR / "coreml_fp16_b1", "*.mlpackage")), coco_subset
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=2b3db268">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Core AI fp32 — its float32 input and outputs go through unchanged.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=f66047de">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-22">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"Core AI"</span><span class="p">,</span> <span class="s2">"fp32 (default)"</span><span class="p">)]</span> <span class="o">=</span> <span class="k">await</span> <span class="n">_evaluate_coreai</span><span class="p">(</span>
+    <span class="n">_batch1_artifact</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"coreai_b1"</span><span class="p">,</span> <span class="s2">"*.aimodel"</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-22">map_results[("Core AI", "fp32 (default)")] = await _evaluate_coreai(
+    _batch1_artifact(EXPORT_DIR / "coreai_b1", "*.aimodel"), np.float32
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=cd616b0e">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>Core AI fp16 — the asset takes float16 input, so the adapter casts it, as §6 does; its outputs come
+back cast to float32 by <code>_coreai_forward_call</code>.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7be0b29d">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-23">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"Core AI"</span><span class="p">,</span> <span class="s2">"fp16"</span><span class="p">)]</span> <span class="o">=</span> <span class="k">await</span> <span class="n">_evaluate_coreai</span><span class="p">(</span>
+    <span class="n">_batch1_artifact</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"coreai_fp16_b1"</span><span class="p">,</span> <span class="s2">"*.aimodel"</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float16</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-23">map_results[("Core AI", "fp16")] = await _evaluate_coreai(
+    _batch1_artifact(EXPORT_DIR / "coreai_fp16_b1", "*.aimodel"), np.float16
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=7829a324">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>ExecuTorch with the CoreML backend — fp16 on the Neural Engine, the only precision this path has.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=06fbfbc8">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-24">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[(</span><span class="s2">"ExecuTorch"</span><span class="p">,</span> <span class="s2">"CoreML backend, fp16"</span><span class="p">)]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+    <span class="n">_executorch_run</span><span class="p">(</span><span class="n">_batch1_artifact</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"executorch_b1"</span><span class="p">,</span> <span class="s2">"*.pte"</span><span class="p">)),</span> <span class="n">coco_subset</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-24">map_results[("ExecuTorch", "CoreML backend, fp16")] = evaluate_coco_map(
+    _executorch_run(_batch1_artifact(EXPORT_DIR / "executorch_b1", "*.pte")), coco_subset
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9801bdf3">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>One row per batch-1 Results row, with the same <code>Format</code> and <code>Config</code> labels, so the two tables join
+on them.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=aaeb3cbb">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-25">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">IPython.display</span><span class="w"> </span><span class="kn">import</span> <span class="n">display</span>
+
+<span class="n">display</span><span class="p">(</span>
+    <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">"Format"</span><span class="p">:</span> <span class="n">format_label</span><span class="p">,</span>
+                <span class="s2">"Config"</span><span class="p">:</span> <span class="n">config</span><span class="p">,</span>
+                <span class="s2">"mAP@50:95 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">map50_95</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="s2">"mAP@50 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">result</span><span class="o">.</span><span class="n">map50</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+                <span class="s2">"Images"</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">n_images</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="k">for</span> <span class="p">(</span><span class="n">format_label</span><span class="p">,</span> <span class="n">config</span><span class="p">),</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">map_results</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-25">import pandas as pd
+from IPython.display import display
+
+display(
+    pd.DataFrame(
+        [
+            {
+                "Format": format_label,
+                "Config": config,
+                "mAP@50:95 [%]": round(100 * result.map50_95, 1),
+                "mAP@50 [%]": round(100 * result.map50, 1),
+                "Images": result.n_images,
+            }
+            for (format_label, config), result in map_results.items()
+        ]
+    )
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=139e4e70">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="9-results">9. Results<a class="anchor-link" href="#9-results">¶</a></h2><blockquote>
+<p><strong><code>mAP@50:95 [%]</code></strong> — not measured yet: run §8 (COCO val2017 accuracy) to get it for every batch-1
+row below, from the same artifact and precision as that row's latency.</p>
+</blockquote>
+<p>Measured on an Apple M4 Max (arm64), macOS 27.0, rfdetr v1.11.0, batches 1/4/8, 5 warmup + 30
 timed runs per (format, config, batch), <code>RFDETRSmall</code>. Numbers vary by Apple Silicon generation —
 rerun the cells above to get yours. <code>Config</code> is the precision/backend used for that row; <code>—</code>
 marks a scope this format doesn't have (PyTorch's <code>predict()</code> has no forward-only path). <code>FPS</code>
@@ -5168,6 +5947,11 @@ is images/second at that row's batch size (<code>batch × (1000 / end2end_ms)</c
 inference call; for <code>predict()</code> this is measured once (the eager model is not rebuilt per batch)
 and repeated across that config's three rows, but <code>inference(dtype=torch.float16, batch_size=N)</code>
 recompiles per batch (see below), so it is measured per row like every fixed-batch export format.</p>
+<p>Chip and compute units: Apple M4 Max. PyTorch ran on the GPU via MPS; CoreML <code>.mlpackage</code>s were
+loaded with <code>ComputeUnit.ALL</code>; Core AI with <code>SpecializationOptions.default()</code> (CPU, GPU, and
+Neural Engine allowed, no preferred unit — the runtime chose at load time); ExecuTorch's CoreML
+delegate with its default <code>ComputeUnit.ALL</code> (no compile specs passed). None of these settings
+pins which unit actually ran a given layer.</p>
 <table>
 <thead>
 <tr>
@@ -5416,7 +6200,7 @@ rerun on an idle machine for tighter comparisons.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-13">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-26">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -5436,7 +6220,7 @@ rerun on an idle machine for tighter comparisons.</p>
     <span class="sa">f</span><span class="s2">"macOS </span><span class="si">{</span><span class="n">platform</span><span class="o">.</span><span class="n">mac_ver</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">."</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-13">import pandas as pd
+<div class="clipboard-copy-txt" id="cell-26">import pandas as pd
 from IPython.display import display
 
 summary = pd.DataFrame(results)
@@ -5502,7 +6286,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 17:28:15 UTC">2026-09-30 17:28:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 2, 2026 23:46:04 UTC">2026-10-02 23:46:04</span>
   </span>
 
     

@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-30T17:28:15">
+  <meta property="article:modified_time" content="2026-10-02T23:46:04">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-30T17:28:15",
+    "dateModified": "2026-10-02T23:46:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3235,7 +3235,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><a href="../cookbooks/export-cuda/">CUDA</a></td>
 </tr>
 <tr>
-<td>Apple M-series (ANE/GPU)</td>
+<td>Apple M4 Max (40-core GPU)</td>
 <td>CoreML fp32 (default)</td>
 <td>11.57 ± 0.28</td>
 <td>86.5</td>
@@ -3243,24 +3243,26 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><a href="../cookbooks/export-apple/">Apple</a></td>
 </tr>
 <tr>
-<td>x86 CPU (4 cores)</td>
-<td>OpenVINO fp32 IR</td>
-<td>357.47 ± 56.88</td>
-<td>2.8</td>
+<td>x86 CPU (shared Colab vCPU)</td>
+<td>No clear winner: ONNX, OpenVINO and PyTorch overlap within noise</td>
+<td>357–377</td>
+<td>2.7–2.8</td>
 <td>377.34 ms / 2.7 FPS</td>
 <td><a href="../cookbooks/export-cpu/">CPU</a></td>
 </tr>
 <tr>
-<td>ARM CPU (edge proxy)</td>
-<td>ExecuTorch XNNPACK, fp32</td>
-<td>80.74 ± 1.90</td>
-<td>12.4</td>
+<td>Apple M4 Max CPU (12P + 4E cores)</td>
+<td>No clear winner yet: LiteRT ran on one thread, pending a rerun</td>
+<td>—</td>
+<td>—</td>
 <td>54.54 ms / 18.3 FPS</td>
 <td><a href="../cookbooks/export-mobile/">Mobile</a></td>
 </tr>
 </tbody>
 </table>
-<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30), and each row was measured on different hardware, so compare <em>within</em> a row's hardware class, never across rows. The x86 CPU figures come from a shared Colab vCPU where run-to-run noise is 15–20% of the mean — on that machine no CPU format separates from the others by more than one standard deviation. <strong>Two L4 rows, on purpose</strong>: the first goes through <code>inference-models</code>, a separate package that selects and loads its own prebuilt TensorRT engine; the second times the <code>.trt</code> file <code>model.export(format="trt")</code> itself writes, loaded directly with <code>rfdetr</code>'s own <code>TRTInference</code> reference runtime — no extra package beyond <code>rfdetr[tensorrt]</code>. Both are real end-to-end numbers on the same L4 — see the <a href="../cookbooks/export-cuda/#6-tensorrt">CUDA cookbook</a> for the full table and the open gap against Roboflow's own product-page number.</p>
+<p>All numbers are batch 1, <code>RFDETRSmall</code>, rfdetr v1.11.0. Warmup and timed-run counts differ per cookbook (GPU uses 20 + 100, CPU 15 + 50, Apple and mobile 5 + 30). The rows come from three machines: a Colab L4 GPU host, a shared Colab x86 vCPU, and one Apple M4 Max (16-core CPU: 12 performance + 4 efficiency, 40-core GPU) that ran both the Apple row and the arm64 CPU row. Compare <em>within</em> a row, never across rows. On the shared x86 vCPU the gap between formats is about one run-to-run standard deviation, and a shared vCPU drifts between sessions, so that row is not a ranking. All of its rows were measured before the cookbook pinned one shared <code>CPU_THREADS</code> value, and its OpenVINO figures also before <code>OpenVINOInference</code> computed in float32 (see the <a href="openvino/#openvino-inference-example">OpenVINO guide</a>), so every x86 row is pending a rerun. The arm64 CPU row stands in for a phone or edge CPU only approximately: it is a laptop chip, and a phone's own delegate (NNAPI, QNN, Core ML) is not exercised. <strong>Two L4 rows, on purpose</strong>: the first goes through <code>inference-models</code>, a separate package that selects and loads its own prebuilt TensorRT engine; the second times the <code>.trt</code> file <code>model.export(format="trt")</code> itself writes, loaded directly with <code>rfdetr</code>'s own <code>TRTInference</code> reference runtime — no extra package beyond <code>rfdetr[tensorrt]</code>. Both are real end-to-end numbers on the same L4 — see the <a href="../cookbooks/export-cuda/#6-tensorrt">CUDA cookbook</a> for the full table and the open gap against Roboflow's own product-page number.</p>
+<p><code>Memory [MB]</code> in the cookbooks is comparable only within one cookbook: the CUDA cookbook measures device memory, the CPU, Apple and mobile cookbooks measure host resident memory (RSS).</p>
+<p>Each cookbook also scores every exported model and precision at batch 1 on the same seeded 500-image COCO val2017 subset (box mAP@50:95 and mAP@50), so a precision setting that loses accuracy shows up next to its latency. The subset is chosen for run time, so these are not the full-val2017 numbers on the <a href="../learn/benchmarks/">Benchmarks page</a>; set <code>FULL_VAL = True</code> in a cookbook to score all 5000 images.</p>
 <div class="admonition note">
 <p class="admonition-title">Which latency number is this?</p>
 <p>RF-DETR latency appears on three different pages, and they are three different measurements:</p>
@@ -3269,15 +3271,15 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>Deployed product</strong> (L4, Roboflow Inference, model only, batch 1) — what a Roboflow Inference user gets. See <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>.</li>
 <li><strong>Export cookbooks</strong> (this page and below) — end-to-end and forward-only timings for every export format, on one machine per cookbook. Their value is <strong>ratios within one machine</strong>, not absolute milliseconds to set against the other two pages.</li>
 </ul>
-<p>Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The L4 TensorRT figures on this page and on Roboflow's model page do not currently agree — see the <a href="../cookbooks/export-cuda/#7-results">CUDA cookbook's Results section</a> for the open gap.</p>
+<p>Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. Even matched for scope (model only, batch 1, L4), the CUDA cookbook's forward times are lower than Roboflow's model page for both runtimes: ONNX 7.35 vs 12.9 ms and TensorRT 2.16 vs 8.3 ms. The two harnesses have not been run side by side yet, so treat both as unreconciled — see the <a href="../cookbooks/export-cuda/#8-results">CUDA cookbook's Results section</a>.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">fp16 pays off only where the silicon implements it</p>
 <p>Reduced precision is not a portable speedup, and the cookbooks measure this directly:</p>
 <ul>
-<li><strong>GPU — large win.</strong> On an L4, TensorRT's auto-selected precision is 1.62× faster than the same engine forced to fp32 (4.91 vs 7.96 ms), and PyTorch <code>inference(dtype=torch.float16)</code> nearly halves the eager fp32 baseline (11.30 vs 19.88 ms).</li>
-<li><strong>CPU — no win.</strong> OpenVINO's default FP16 IR came out <em>slower</em> than explicit <code>float32</code> (354.55 vs 311.92 ms) despite halving the file, and TFLite fp16 matched fp32 exactly (780.86 vs 780.74 ms). A CPU without native fp16 kernels upconverts and computes in fp32, so fp16 saves disk and bandwidth, not arithmetic. On CPU the lever is <strong>INT8</strong>: dynamic-range quantization was ~2.5× faster than fp32 TFLite (319.61 vs 780.74 ms), at the cost of one dropped detection on the sample image.</li>
-<li><strong>Apple — runtime-dependent.</strong> Core AI fp16 beat its fp32 default (11.45 vs 12.54 ms), while CoreML fp16 came out <em>slower</em> than its fp32 default (20.05 vs 11.62 ms) on the same chip. Both results reproduced across runs. Measure per runtime, not per platform.</li>
+<li><strong>GPU — large win.</strong> On an L4, TensorRT's auto-selected precision is 1.94× faster than the same engine forced to fp32 (3.41 vs 6.62 ms end-to-end, batch 1), and PyTorch <code>inference(dtype=torch.float16)</code> cuts the eager fp32 baseline from 19.88 to 11.37 ms.</li>
+<li><strong>CPU — no measured win.</strong> A CPU without native fp16 kernels upconverts and computes in fp32, so fp16 storage (an fp16 OpenVINO IR or <code>.tflite</code>) saves disk and bandwidth, not arithmetic. The cookbooks' CPU fp16 and INT8 timings are pending a rerun: the OpenVINO rows ran at OpenVINO's own default execution precision, which is half precision on CPUs with native bf16 or f16 support (the Colab host's CPU flags were not recorded), and the TFLite rows ran through <code>tf.lite.Interpreter</code> at its default thread count (the same fp32 <code>.tflite</code> runs in 119 ms on one thread and 59 ms on eight through <code>ai_edge_litert</code> on the M4 Max, against 785 ms in the cookbook).</li>
+<li><strong>Apple — runtime-dependent.</strong> On the M4 Max, Core AI fp16 beat its fp32 default (13.53 vs 14.62 ms), while CoreML fp16 came out <em>slower</em> than its fp32 default (19.86 vs 11.57 ms). The direction of both results reproduced across runs. Measure per runtime, not per platform.</li>
 </ul>
 </div>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
@@ -3366,7 +3368,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>calibration_data</code></td>
 <td><code>None</code></td>
-<td>Optional image directory, <code>.npy</code> file path, NumPy array, or <code>None</code>. Not consumed when building the generated <code>.tflite</code> models.</td>
+<td>Optional image directory, <code>.npy</code> file path, NumPy array, or <code>None</code>. Ignored: passing it warns, since <code>.tflite</code> INT8 is dynamic-range.</td>
 </tr>
 <tr>
 <td><code>max_images</code></td>
@@ -3406,7 +3408,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>dynamic_batch</code></td>
 <td><code>False</code></td>
-<td>If <code>True</code>, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for <code>format="onnx"</code>, <code>format="tflite"</code> and <code>format="tensorrt"</code> (which then needs <code>max_batch_size</code>) — ExecuTorch, CoreML, Core AI, OpenVINO and LiteRT bake a fixed batch size.</td>
+<td>If <code>True</code>, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for <code>format="onnx"</code>, <code>format="tflite"</code> and <code>format="tensorrt"</code> (which then needs <code>max_batch_size</code>) — ExecuTorch, CoreML, Core AI and LiteRT bake a fixed batch size. OpenVINO refuses <code>dynamic_batch=True</code>, but its IR already accepts any batch size, so omit the flag.</td>
 </tr>
 <tr>
 <td><code>patch_size</code></td>
@@ -3621,7 +3623,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 17:28:15 UTC">2026-09-30 17:28:15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 2, 2026 23:46:04 UTC">2026-10-02 23:46:04</span>
   </span>
 
     
