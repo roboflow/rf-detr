@@ -505,10 +505,17 @@ class TestOpenVINOInferenceDeviceAndCache:
     def test_explicit_hint_in_config_is_honoured_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
         """An ``INFERENCE_PRECISION_HINT`` given via ``config`` reaches the CPU plugin and replaces the f32 default.
 
+        Skipped where the CPU plugin lacks FP16 compute: it then keeps f32 whatever the hint, so the read-back cannot
+        tell a dropped hint from an honoured one.
+
         Without this the f32 test above passes on x86 hosts where OpenVINO's own default is already f32, even if the
         wrapper dropped the hint entirely; reading back a hint that differs from the default cannot.
         """
         ov = pytest.importorskip("openvino")
+        if "FP16" not in ov.Core().get_property("CPU", "OPTIMIZATION_CAPABILITIES"):
+            pytest.skip(
+                "CPU plugin has no FP16 compute (x86 without native f16): it falls back to f32 and reads back f32"
+            )
         compiled = OpenVINOInference(
             openvino_relu_xml, device="CPU", config={"INFERENCE_PRECISION_HINT": "f16"}
         ).compiled_model
