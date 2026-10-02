@@ -405,7 +405,9 @@ class TestCoreAIExporter:
         assert kwargs["input_names"] == ["input"]
         assert kwargs["output_names"] == ["dets", "labels"]
 
-    def test_surviving_grid_sampler_is_refused_before_the_converter(self, tmp_path: Path) -> None:
+    def test_surviving_grid_sampler_is_refused_before_the_converter(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A grid sampler the table failed to lower is named here rather than failing inside ``coreai-torch``.
 
         The table registers the decomposition for both grid-sampling ops, so this only fires if a future torch or
@@ -423,8 +425,12 @@ class TestCoreAIExporter:
             backbone_only=False,
         )
         exporter = CoreAIExporter(CoreAIConfig(output_dir=tmp_path, verbose=False))
+        # Not ``mock.patch.dict(sys.modules, ...)``: on exit it would also drop every module the real
+        # ``torch.export`` below imports for the first time, including torch's inductor cache modules, whose
+        # artifact types stay registered. The next export or compile test in the same process then re-imports them
+        # and fails with "Artifact of type=autotune already registered in mega-cache artifact factory".
+        monkeypatch.setitem(sys.modules, "coreai_torch", coreai_torch)
         with (
-            mock.patch.dict(sys.modules, {"coreai_torch": coreai_torch}),
             mock.patch("rfdetr.export._coreai.exporter.coreai_decomposition_table", return_value={}),
             pytest.raises(NotImplementedError, match="aten.grid_sampler"),
         ):
