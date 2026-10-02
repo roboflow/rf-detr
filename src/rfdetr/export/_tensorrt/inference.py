@@ -19,10 +19,11 @@ TensorRT with automatic backend selection.
 from __future__ import annotations
 
 import contextlib
+import math
 import time
 from collections import OrderedDict, namedtuple
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import torch
@@ -104,28 +105,53 @@ def _resolve_engine_device(device: str | torch.device) -> torch.device:
     return requested if requested.index is not None else torch.device("cuda", torch.cuda.current_device())
 
 
+#: The shape of every engine input, in input-name order: what identifies one captured graph.
+_InputShapes = tuple[tuple[int, ...], ...]
+
+
+class _CapturedGraph(NamedTuple):
+    """One captured launch of an engine at fixed input shapes, and the views of the static input buffers it reads."""
+
+    graph: torch.cuda.CUDAGraph
+    inputs: dict[str, Tensor]
+
+
 class TRTInference:
     """Run a serialized TensorRT engine on torch tensors that already sit on its CUDA device.
 
     TensorRT places an engine, and every execution context created from it, on the CUDA device that is current when the
     engine is deserialized, and each launch must find that device current again. The runtime makes *device* current
-    around both rather than relying on the caller's current device. Inputs are bound by pointer, never copied: each must
-    be a contiguous tensor of the engine's input dtype on that device. That is the layout of an engine with linear
-    (row-major) device I/O, which is what ``RFDETR.export(format="tensorrt")`` builds; vectorized formats such as
-    ``chw32`` are not supported.
+    around both rather than relying on the caller's current device. Inputs are bound by pointer, never copied, except
+    with ``cuda_graph=True``, which copies each into a static buffer on every call. Each must be a contiguous tensor of
+    the engine's input dtype on that device. That is the layout of an engine with linear (row-major) device I/O, which
+    is what ``RFDETR.export(format="tensorrt")`` builds; vectorized formats such as ``chw32`` are not supported.
 
     Args:
         engine_path: Path to a ``.trt`` engine built on this machine's GPU and TensorRT version.
         device: CUDA device to load and run the engine on. A bare ``"cuda"`` is pinned to the current device at
             construction.
-        sync_mode: Run with ``execute_v2`` instead of launching on a CUDA stream; the stream needs the
-            ``tensorrt-bench`` extra (pycuda).
+        sync_mode: Run with ``execute_v2`` instead of launching on a CUDA stream. The default async mode needs the
+            ``tensorrt-bench`` extra (pycuda) for its stream; ``sync_mode=True`` and ``cuda_graph=True`` do not.
         verbose: Log TensorRT at VERBOSE rather than INFO.
+        cuda_graph: Capture the engine's launch into a CUDA graph on the first call at each set of input shapes and
+            replay it on every later call, which removes most of the per-call launch cost at small batch sizes. Each
+            call copies its inputs into static buffers the graph reads, so the caller's tensors may be new every call.
+            A static engine keeps one graph; a dynamic engine one per set of input shapes it is called with, all
+            reading one buffer per input that is as large as the engine's profile maximum. Profile 0, the optimization
+            profile the runtime runs, may vary only the batch, which bounds how many graphs a runtime keeps: for a
+            single-input engine such as RF-DETR's, one per batch size up to the profile maximum. Each graph holds
+            memory of its own (under 1 MiB on the device and about 2 MiB on the host for RF-DETR Nano and Small),
+            which matters for an engine exported with a large ``max_batch_size``. An engine whose profile varies another
+            axis, such as the image size, is refused, because it would keep a graph for every value of that axis it is
+            called with. A capture synchronizes the device, empties torch's allocator cache, and fails if another
+            thread synchronizes the device meanwhile, so make the first call at each shape during warm-up. Uses its own
+            torch stream, so it does not need pycuda, and cannot be combined with ``sync_mode``.
 
     Raises:
-        ImportError: If TensorRT, or pycuda for ``sync_mode=False``, is not installed.
-        ValueError: If *device* is not a CUDA device, or the engine's tensor shapes cannot be resolved from its
-            optimization profile (see :meth:`get_bindings`).
+        ImportError: If TensorRT, or pycuda for ``sync_mode=False`` without *cuda_graph*, is not installed.
+        ValueError: If *device* is not a CUDA device, the engine's tensor shapes cannot be resolved from its
+            optimization profile (see :meth:`get_bindings`), or *cuda_graph* is combined with ``sync_mode=True`` or
+            requested for an engine whose optimization profile varies an axis other than the batch.
         RuntimeError: If TensorRT cannot deserialize the engine or create its execution context.
 
     Attributes:
@@ -134,15 +160,26 @@ class TRTInference:
             :attr:`engine_device` instead; read that to find out where this runtime actually runs.
     """
 
+    # The stream a CUDA graph runs on; None unless the runtime was built with cuda_graph=True, which is how every
+    # dispatch below tells the graph path from the other two.
+    _graph_stream: torch.cuda.Stream | None = None
+
     def __init__(
         self,
         engine_path: str = "dino.trt",
         device: str | torch.device = "cuda:0",
         sync_mode: bool = False,
         verbose: bool = False,
+        *,
+        cuda_graph: bool = False,
     ) -> None:
         if not trt:
             raise ImportError("TensorRT is not installed. Please install TensorRT to use TRTInference.")
+        if cuda_graph and sync_mode:
+            raise ValueError(
+                "cuda_graph=True cannot be combined with sync_mode=True: sync_mode launches with execute_v2, which "
+                "cannot be captured into a CUDA graph. Drop sync_mode to run the graph on its own CUDA stream."
+            )
 
         self.engine_path = engine_path
         self.device = device
@@ -153,6 +190,8 @@ class TRTInference:
 
         with torch.cuda.device(self._engine_device):
             self.engine = self.load_engine(engine_path)
+            if cuda_graph:
+                self._refuse_unbounded_graph_shapes(self.engine)
 
             self.context = self.engine.create_execution_context()
             if self.context is None:
@@ -168,8 +207,12 @@ class TRTInference:
             self.output_names = self.get_output_names()
             self._prime_context()
         self.stream = None
+        self._graphs: dict[_InputShapes, _CapturedGraph] = {}
+        self._static_inputs: dict[str, Tensor] = {}
 
-        if not self.sync_mode:
+        if cuda_graph:
+            self._graph_stream = torch.cuda.Stream(device=self._engine_device)  # type: ignore[no-untyped-call]
+        elif not self.sync_mode:
             if not cuda:
                 raise ImportError(
                     "pycuda is not installed. Install the `tensorrt-bench` extra "
@@ -292,6 +335,42 @@ class TRTInference:
                     "execution context is not on optimization profile 0."
                 )
 
+    @staticmethod
+    def _refuse_unbounded_graph_shapes(engine: Any) -> None:
+        """Refuse, for ``cuda_graph=True``, an engine whose profile varies an input on any axis but the batch.
+
+        A graph is captured and kept for every set of input shapes the runtime is called with. When the profile only
+        varies the batch, that is at most one graph per combination of the inputs' batch sizes; an axis such as the
+        image size would add one per value it is ever called with. The decision reads profile 0, the one this runtime
+        runs, not the ``-1`` axes: an engine reports an axis as dynamic when any of its profiles varies it, so one whose
+        profile 0 pins the image size and whose profile 1 varies it reports a dynamic image size and is still bounded
+        here. An input with a fixed batch is left to :meth:`get_bindings`: it has one shape, or a dynamic axis no mode
+        can size a buffer for.
+
+        Args:
+            engine: A deserialized TensorRT engine.
+
+        Raises:
+            ValueError: If the profile lets a dynamic-batch input take more than one size on another axis.
+        """
+        for name in engine:
+            if engine.get_tensor_mode(name) != trt.TensorIOMode.INPUT:
+                continue
+            if engine.get_tensor_shape(name)[BATCH_AXIS] != -1:
+                continue
+            min_shape, _, max_shape = (
+                tuple(int(dim) for dim in dims) for dims in engine.get_tensor_profile_shape(name, 0)
+            )
+            if min_shape[BATCH_AXIS + 1 :] != max_shape[BATCH_AXIS + 1 :]:
+                raise ValueError(
+                    f"cuda_graph=True needs an engine whose optimization profile varies only the batch, but input "
+                    f"{name!r} ranges from {min_shape} to {max_shape}. A graph is captured and kept for every set of "
+                    "input shapes the runtime is called with, so an input that takes many sizes on another axis "
+                    "would keep one for each. Build the runtime with sync_mode=True instead of cuda_graph=True, or "
+                    "build the engine with a profile that fixes every axis but the batch, as "
+                    'RFDETR.export(format="tensorrt") does.'
+                )
+
     def get_bindings(
         self, engine: Any, context: Any, device: str | torch.device | None = None
     ) -> OrderedDict[str, Any]:
@@ -305,8 +384,9 @@ class TRTInference:
         A tensor whose batch axis is dynamic (``-1``, from an engine built with ``dynamic_batch=True``) is allocated at
         the shape the execution context resolves once every dynamic input has been declared at its profile maximum, so
         any batch within the profile fits. Output sizes come from TensorRT itself rather than from an input's batch --
-        an engine is free to emit an output whose batch axis does not track its input's. :meth:`run_sync` /
-        :meth:`run_async` then set the real input shape per call and return the outputs trimmed to it.
+        an engine is free to emit an output whose batch axis does not track its input's. :meth:`run_sync`,
+        :meth:`run_async` and :meth:`run_graph` then set the real input shape per call and return the outputs trimmed
+        to it.
 
         Args:
             engine: A deserialized TensorRT engine.
@@ -351,8 +431,9 @@ class TRTInference:
     def _check_input_memory(self, name: str, tensor: Tensor) -> None:
         """Refuse a tensor the engine would misread: TensorRT reads a dense buffer of its own dtype off the pointer.
 
-        Nothing copies or casts on the caller's behalf. A hidden copy would be timed as inference by :meth:`speed` and
-        the benchmark, and would hide an input pipeline that produces the wrong layout.
+        Nothing copies or casts on the caller's behalf, except the copy into a static buffer that ``cuda_graph=True``
+        documents. A hidden copy would be timed as inference by :meth:`speed` and the benchmark, and would hide an
+        input pipeline that produces the wrong layout.
 
         Args:
             name: Engine input the tensor is bound to.
@@ -479,7 +560,7 @@ class TRTInference:
             self._bind_inputs(blob)
             # Not migrated to v3 alongside run_async: TensorRT exposes no synchronous v3 call -- execute_async_v3 is
             # the only v3 entry point, and it needs a CUDA stream and an explicit sync per launch. The sync path is
-            # deliberately stream-free; __init__ only builds a stream, and only then requires pycuda, for async mode.
+            # deliberately stream-free; __init__ builds a stream only for the other two modes.
             if not self.context.execute_v2(list(self.bindings_addr.values())):
                 raise RuntimeError("TensorRT execute_v2 reported a launch failure.")
             return self._collect_outputs()
@@ -507,21 +588,138 @@ class TRTInference:
             for name in self.input_names:
                 if not self.context.set_tensor_address(name, int(self.bindings_addr[name])):
                     raise RuntimeError(f"TensorRT refused the tensor address for input {name!r}.")
-            if not self.context.execute_async_v3(stream_handle=self.stream.handle):
-                raise RuntimeError("TensorRT execute_async_v3 reported a launch failure.")
+            self._launch(self.stream.handle)
             # Drain the stream before reading the produced shapes: execute_async_v3 only enqueues the work, so until it
             # completes the context still reports the previous call's batch and _collect_outputs would trim to that.
             self.stream.synchronize()
             return self._collect_outputs()
 
+    def _launch(self, stream_handle: int) -> None:
+        """Enqueue one execution of the engine on the CUDA stream behind *stream_handle*.
+
+        Raises:
+            RuntimeError: If TensorRT reports the launch failed.
+        """
+        if not self.context.execute_async_v3(stream_handle=stream_handle):
+            raise RuntimeError("TensorRT execute_async_v3 reported a launch failure.")
+
+    def _capture_graph(self, blob: Mapping[str, Tensor], stream: torch.cuda.Stream) -> _CapturedGraph:
+        """Capture one launch of the engine at *blob*'s shape, reading from static copies of its inputs.
+
+        Runs after :meth:`_bind_inputs`, so the context already holds this call's input shapes. The context's input
+        addresses are pointed at the static copies here and stay there, because a graph replays the pointers it was
+        captured with. One launch happens before the capture so that TensorRT finishes any lazy set-up, which a capture
+        forbids.
+
+        Args:
+            blob: One validated tensor per engine input.
+            stream: The stream to launch and capture on.
+
+        Returns:
+            The captured graph and the static input buffers it reads.
+
+        Raises:
+            RuntimeError: If TensorRT refuses a launch or an address, or the launch cannot be captured into a graph.
+        """
+        # no_grad: the buffers live as long as the runtime, so an input that requires grad must not leave its autograd
+        # history on them, and a view made under no_grad (a warm-up) must stay writable for one that does.
+        with torch.cuda.stream(stream), torch.no_grad():
+            inputs = {name: self._static_input(name, blob[name]) for name in self.input_names}
+            for name, buffer in inputs.items():
+                buffer.copy_(blob[name])
+                if not self.context.set_tensor_address(name, int(buffer.data_ptr())):
+                    raise RuntimeError(f"TensorRT refused the tensor address for input {name!r}.")
+            self._launch(stream.cuda_stream)
+        stream.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        caller_stream = torch.cuda.current_stream(self._engine_device)
+        try:
+            with torch.cuda.graph(graph, stream=stream):
+                self._launch(stream.cuda_stream)
+        except RuntimeError as err:
+            # torch.cuda.graph does not leave the stream it switched to when ending the capture fails, which would
+            # leave every later torch call of the caller running on ours.
+            torch.cuda.set_stream(caller_stream)
+            raise RuntimeError(
+                "TensorRT could not be captured into a CUDA graph. Build the runtime with sync_mode=True instead of "
+                "cuda_graph=True to launch the engine directly."
+            ) from err
+        return _CapturedGraph(graph, inputs)
+
+    def _static_input(self, name: str, like: Tensor) -> Tensor:
+        """Return a view shaped like *like* onto the one static buffer input *name* reads from under every graph.
+
+        The buffer is allocated on first use at the largest shape the engine accepts (the binding's shape: a dynamic
+        input's profile maximum), so a graph per shape costs a view, not another copy of the input. Every view starts at
+        the same address, which is safe because a call copies its input in, replays, and waits before the next call
+        copies its own.
+
+        Args:
+            name: The engine input.
+            like: A validated tensor for that input, which sets the shape, dtype and device of the view.
+        """
+        buffer = self._static_inputs.get(name)
+        if buffer is None:
+            # A buffer made under torch.inference_mode() (a common way to warm up) is an inference tensor, which no
+            # later call outside that mode may copy into.
+            with torch.inference_mode(False):
+                buffer = self._static_inputs[name] = torch.empty(
+                    math.prod(self.bindings[name].shape), dtype=like.dtype, device=like.device
+                )
+        return buffer[: like.numel()].view(like.shape)
+
+    def run_graph(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
+        """Run inference by replaying a CUDA graph and return the outputs, trimmed to the produced batch.
+
+        The first call at each set of input shapes captures the graph (see :meth:`_capture_graph`). Every call then
+        copies its inputs into the graph's static buffers, replays it, and waits for the stream once, as
+        :meth:`run_async` does.
+
+        Args:
+            blob: One tensor per engine input, already on this engine's device.
+
+        Returns:
+            One tensor per engine output. A dynamic output is a view into a buffer the next call
+            overwrites -- copy it before the next call if it needs to outlive that call.
+
+        Raises:
+            ValueError: If an input is refused before launch (see :meth:`_bind_inputs`).
+            RuntimeError: If the runtime was built without ``cuda_graph=True``, TensorRT refuses a launch, or the launch
+                cannot be captured into a graph.
+        """
+        stream = self._graph_stream
+        if stream is None:
+            raise RuntimeError("Graph replay requires a runtime built with cuda_graph=True.")
+        with torch.cuda.device(self._engine_device):
+            self._bind_inputs(blob)
+            # The inputs may still be in flight on the caller's stream, so the graph's stream waits for them first.
+            stream.wait_stream(torch.cuda.current_stream(self._engine_device))
+            shapes = tuple(tuple(blob[name].shape) for name in self.input_names)
+            captured = self._graphs.get(shapes)
+            if captured is None:
+                captured = self._graphs[shapes] = self._capture_graph(blob, stream)
+            with torch.cuda.stream(stream), torch.no_grad():
+                for name in self.input_names:
+                    captured.inputs[name].copy_(blob[name], non_blocking=True)
+                captured.graph.replay()
+            stream.synchronize()
+            # A replay enqueues nothing at this call's shapes, so the produced shapes come from the ones _bind_inputs
+            # declared, which TensorRT resolves without executing.
+            return self._collect_outputs()
+
     def __call__(self, blob: Mapping[str, Tensor]) -> dict[str, Tensor]:
+        if self._graph_stream is not None:
+            return self.run_graph(blob)
         if self.sync_mode:
             return self.run_sync(blob)
-        else:
-            return self.run_async(blob)
+        return self.run_async(blob)
 
     def synchronize(self) -> None:
-        """Wait for this runtime's work: its stream in async mode, otherwise everything on the engine's device."""
+        """Wait for this runtime's work: its graph or async stream, otherwise everything on the engine's device."""
+        if self._graph_stream is not None:
+            self._graph_stream.synchronize()
+            return
+
         if self.sync_mode:
             if torch.cuda.is_available():
                 torch.cuda.synchronize(self._engine_device)
@@ -537,7 +735,8 @@ class TRTInference:
 
         The timed region is whatever ``__call__`` does: input validation (:meth:`_check_input_memory`) and the
         ``torch.cuda.device`` scope run inside it, so the returned mean includes their overhead alongside the
-        TensorRT launch itself -- it is not engine-only.
+        TensorRT launch itself -- it is not engine-only. With ``cuda_graph=True`` that includes the copy of the inputs
+        into the static buffers.
 
         Args:
             blob: One tensor per engine input, already on this engine's device.
@@ -576,7 +775,7 @@ class TRTInference:
                 Nothing is written to *engine_file_path* in either case, so an engine already there is kept.
 
         Note:
-            Unlike ``__init__``, ``run_sync``, and ``run_async``, this method does not enter
+            Unlike ``__init__``, ``run_sync``, ``run_async``, and ``run_graph``, this method does not enter
             ``torch.cuda.device(self._engine_device)``: it builds on whatever device is current when it is
             called, not necessarily the device this runtime otherwise runs on.
 

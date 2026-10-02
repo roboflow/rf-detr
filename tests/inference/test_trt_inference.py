@@ -154,7 +154,9 @@ class _FakeEngine:
 
     Shapes use ``-1`` for a dynamic batch axis, as TensorRT reports them; ``profile_max`` is the batch upper bound the
     single optimization profile declares on every dynamic input, whose minimum is batch 1. ``input_dtype`` is the numpy
-    type the engine reports for its inputs (outputs are always float32).
+    type the engine reports for its inputs (outputs are always float32). An image axis reported as ``-1`` ranges over
+    ``image_profile`` (minimum, maximum) in profile 0; ``second_image_profile`` adds a second profile, identical but for
+    ranging the image axes over that instead. A profile's optimal shape is batch 2, halfway through its image range.
     """
 
     def __init__(
@@ -162,10 +164,15 @@ class _FakeEngine:
         tensors: dict[str, tuple[str, tuple[int, ...]]],
         profile_max: int = 4,
         input_dtype: type = np.float32,
+        image_profile: tuple[int, int] = (4, 16),
+        second_image_profile: tuple[int, int] | None = None,
     ) -> None:
         self._tensors = tensors
         self.profile_max = profile_max
         self.input_dtype = input_dtype
+        self.image_profile = image_profile
+        self.second_image_profile = second_image_profile
+        self.num_optimization_profiles = 1 if second_image_profile is None else 2
 
     def __iter__(self):
         return iter(self._tensors)
@@ -179,9 +186,17 @@ class _FakeEngine:
     def get_tensor_dtype(self, name: str) -> type:
         return self.input_dtype if self.get_tensor_mode(name) == "input" else np.float32
 
-    def get_tensor_profile_shape(self, name: str, profile_index: int):
-        shape = self._tensors[name][1]
-        return ((1, *shape[1:]), (2, *shape[1:]), (self.profile_max, *shape[1:]))
+    def get_tensor_profile_shape(
+        self, name: str, profile_index: int
+    ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+        """Report the (minimum, optimal, maximum) shape of input *name* in profile *profile_index*: batch from 1 to
+        ``profile_max``, images over that profile's range."""
+        low, high = self.image_profile if profile_index == 0 else self.second_image_profile
+        rest = self._tensors[name][1][1:]
+        floor = tuple(low if dim == -1 else dim for dim in rest)
+        middle = tuple((low + high) // 2 if dim == -1 else dim for dim in rest)
+        ceiling = tuple(high if dim == -1 else dim for dim in rest)
+        return ((1, *floor), (2, *middle), (self.profile_max, *ceiling))
 
     def create_execution_context(self) -> "_FakeContext":
         return _FakeContext(self)
@@ -191,17 +206,19 @@ class _FakeContext:
     """Execution-context stand-in that resolves every dynamic shape from the input shapes it has been given.
 
     TensorRT sizes a dynamic engine's tensors on the execution context, not on the engine, so ``set_input_shape``
-    records the batch a call declares and ``get_tensor_shape`` then reports every dynamic tensor at it. A shape outside
-    the profile -- a batch below 1 or above the engine's profile maximum, or any other axis differing from the engine's
-    -- is refused by returning ``False``, which is how TensorRT reports it instead of raising. ``output_batch`` pins the
-    outputs to a batch of their own, modelling an engine whose output batch is not its input batch. The execution calls
-    are plain ``Mock`` objects so tests can assert on them.
+    records the shape a call declares and ``get_tensor_shape`` then reports a declared input at that shape and every
+    other dynamic tensor at its batch. A shape outside the profile -- a batch below 1 or above the engine's profile
+    maximum, or any other axis outside the range the profile gives it -- is refused by returning ``False``, which is how
+    TensorRT reports it instead of raising. ``output_batch`` pins the outputs to a batch of their own, modelling an
+    engine whose output batch is not its input batch. The execution calls are plain ``Mock`` objects so tests can assert
+    on them.
     """
 
     def __init__(self, engine: _FakeEngine, output_batch: int | None = None) -> None:
         self._engine = engine
         self._output_batch = output_batch
         self._batch: int | None = None
+        self._declared: dict[str, tuple[int, ...]] = {}
         self.set_input_shape = Mock(side_effect=self._set_input_shape)
         self.get_tensor_shape = Mock(side_effect=self._get_tensor_shape)
         self.set_tensor_address = Mock()
@@ -209,17 +226,24 @@ class _FakeContext:
         self.execute_async_v3 = Mock()
 
     def _set_input_shape(self, name: str, shape: tuple[int, ...]) -> bool:
-        if not 1 <= shape[0] <= self._engine.profile_max or shape[1:] != self._engine.get_tensor_shape(name)[1:]:
+        """Accept *shape* for input *name* if every axis is inside the profile, and remember it; else report
+        ``False``."""
+        low, _, high = self._engine.get_tensor_profile_shape(name, 0)
+        if len(shape) != len(low) or not all(lo <= dim <= hi for dim, lo, hi in zip(shape, low, high)):
             return False
         self._batch = int(shape[0])
+        self._declared[name] = tuple(shape)
         return True
 
     def _get_tensor_shape(self, name: str) -> tuple[int, ...]:
+        """Report tensor *name*'s shape the way TensorRT would, resolving a dynamic batch from what was declared."""
         shape = self._engine.get_tensor_shape(name)
         if shape[0] != -1:
             return shape
         if self._output_batch is not None and self._engine.get_tensor_mode(name) == "output":
             return (self._output_batch, *shape[1:])
+        if name in self._declared:
+            return self._declared[name]
         # No input was declared, so TensorRT has nothing to resolve the batch from and still reports it as -1.
         return (-1 if self._batch is None else self._batch, *shape[1:])
 
@@ -281,12 +305,200 @@ def cuda_device_recorder(monkeypatch: pytest.MonkeyPatch) -> _DeviceRecorder:
     return recorder
 
 
+class _FakeStream:
+    """``torch.cuda.Stream`` stand-in: a handle TensorRT could launch on, plus counters for the calls a test asserts on.
+
+    Examples:
+        >>> events = []
+        >>> stream = _FakeStream(handle=11, events=events)
+        >>> stream.synchronize()
+        >>> stream.wait_stream("other")
+        >>> stream.cuda_stream, stream.synchronized, stream.waited_on, events
+        (11, 1, ['other'], ['sync', 'wait'])
+    """
+
+    def __init__(self, handle: int = 11, events: list[str] | None = None) -> None:
+        self.cuda_stream = handle
+        self.synchronized = 0
+        self.waited_on: list[object] = []
+        self._events = events
+
+    def synchronize(self) -> None:
+        """Count one wait for the stream, and log it if the test keeps an event log."""
+        self.synchronized += 1
+        if self._events is not None:
+            self._events.append("sync")
+
+    def wait_stream(self, other: object) -> None:
+        """Record the stream this one was made to wait for, and log it if the test keeps an event log."""
+        self.waited_on.append(other)
+        if self._events is not None:
+            self._events.append("wait")
+
+
+class _FakeCudaGraph:
+    """``torch.cuda.CUDAGraph`` stand-in: notes whether a capture is open and counts replays.
+
+    Examples:
+        >>> recorder = _FakeCudaGraphs()
+        >>> graph = _FakeCudaGraph(recorder)
+        >>> graph.replay(), graph.replays
+        (None, 1)
+    """
+
+    def __init__(self, recorder: "_FakeCudaGraphs") -> None:
+        self._recorder = recorder
+        self.capturing = False
+        self.replays = 0
+
+    def replay(self) -> None:
+        """Count one replay and run the recorder's ``on_replay`` hook, if a test set one."""
+        self.replays += 1
+        self._recorder.events.append("replay")
+        if self._recorder.on_replay is not None:
+            self._recorder.on_replay(self)
+
+
+class _FakeCudaGraphs:
+    """Stand-in for ``torch.cuda.CUDAGraph`` / ``graph`` / ``stream`` / ``Stream`` / ``current_stream``.
+
+    A CPU-only torch cannot capture, so the code under test runs against this instead. Capturing ``graph`` runs its body
+    (so the TensorRT launch is recorded) and marks it as captured; ``on_replay`` lets a test make a replay do what the
+    captured launch would, and ``fail_next_capture`` makes the next capture raise the way an uncapturable engine does --
+    and, like ``torch.cuda.graph`` when ending a capture fails, leave the capture stream current. ``events`` logs the
+    order of stream scopes and replays; the other lists record what the code under test asked torch for.
+
+    Examples:
+        >>> recorder = _FakeCudaGraphs()
+        >>> graph = recorder.new_graph()
+        >>> with recorder.capture(graph):
+        ...     graph.capturing
+        True
+        >>> graph.capturing, len(recorder.graphs)
+        (False, 1)
+        >>> with recorder.stream("any stream"):
+        ...     "still runs"
+        'still runs'
+        >>> before, leaked = recorder.current, _FakeStream(handle=5)
+        >>> recorder.fail_next_capture = True
+        >>> try:
+        ...     with recorder.capture(recorder.new_graph(), stream=leaked):
+        ...         pass
+        ... except RuntimeError as error:
+        ...     print(error)
+        capture refused
+        >>> recorder.current is leaked
+        True
+        >>> recorder.set_stream(before)
+        >>> recorder.current is before, recorder.capture_streams
+        (True, [None, <...>])
+        >>> recorder.new_stream(device="cuda:1").cuda_stream, recorder.stream_kwargs
+        (11, [{'device': 'cuda:1'}])
+        >>> recorder.get_current_stream("cuda:1") is before, recorder.current_stream_args
+        (True, [('cuda:1',)])
+    """
+
+    def __init__(self) -> None:
+        self.graphs: list[_FakeCudaGraph] = []
+        self.on_replay: Callable[[_FakeCudaGraph], None] | None = None
+        self.fail_next_capture = False
+        self.current = _FakeStream(handle=1)
+        self.events: list[str] = []
+        self.capture_streams: list[object | None] = []
+        self.stream_kwargs: list[dict[str, object]] = []
+        self.current_stream_args: list[tuple[object, ...]] = []
+
+    def new_graph(self) -> _FakeCudaGraph:
+        """Hand out a graph and remember it."""
+        graph = _FakeCudaGraph(self)
+        self.graphs.append(graph)
+        return graph
+
+    @contextlib.contextmanager
+    def capture(self, graph: _FakeCudaGraph, stream: object | None = None) -> Iterator[None]:
+        """Stand-in for ``torch.cuda.graph``: refuse once if asked, else mark *graph* as capturing for the body."""
+        self.capture_streams.append(stream)
+        if self.fail_next_capture:
+            self.fail_next_capture = False
+            self.current = stream
+            raise RuntimeError("capture refused")
+        graph.capturing = True
+        try:
+            yield
+        finally:
+            graph.capturing = False
+
+    @contextlib.contextmanager
+    def stream(self, stream: object) -> Iterator[None]:
+        """Stand-in for ``torch.cuda.stream``: only logs when its scope opens and closes."""
+        self.events.append("enter")
+        try:
+            yield
+        finally:
+            self.events.append("exit")
+
+    def record_copies(self, patch: pytest.MonkeyPatch) -> None:
+        """Log ``"copy"`` to ``events`` whenever a tensor is copied into another, so a test sees the scope it ran in.
+
+        Examples:
+            >>> recorder = _FakeCudaGraphs()
+            >>> with pytest.MonkeyPatch.context() as patch:
+            ...     recorder.record_copies(patch)
+            ...     _ = torch.zeros(2).copy_(torch.ones(2))
+            >>> recorder.events
+            ['copy']
+        """
+        original, events = torch.Tensor.copy_, self.events
+
+        def logged_copy(tensor: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            events.append("copy")
+            return original(tensor, *args, **kwargs)
+
+        patch.setattr(torch.Tensor, "copy_", logged_copy)
+
+    def set_stream(self, stream: object) -> None:
+        """Stand-in for ``torch.cuda.set_stream``."""
+        self.current = stream
+
+    def new_stream(self, **kwargs: object) -> _FakeStream:
+        """Stand-in for ``torch.cuda.Stream``: remember what it was asked for."""
+        self.stream_kwargs.append(kwargs)
+        return _FakeStream(handle=11)
+
+    def get_current_stream(self, *args: object) -> _FakeStream:
+        """Stand-in for ``torch.cuda.current_stream``: remember which device it was asked about."""
+        self.current_stream_args.append(args)
+        return self.current
+
+
+@pytest.fixture
+def fake_cuda_graphs(monkeypatch: pytest.MonkeyPatch) -> _FakeCudaGraphs:
+    """Replace the torch CUDA-graph and stream API with a :class:`_FakeCudaGraphs`, which CPU-only CI can enter.
+
+    Examples:
+        A pytest fixture, so it only runs when a test requests it:
+
+        >>> fake_cuda_graphs.graphs  # doctest: +SKIP
+        []
+    """
+    recorder = _FakeCudaGraphs()
+    monkeypatch.setattr(torch.cuda, "CUDAGraph", recorder.new_graph)
+    monkeypatch.setattr(torch.cuda, "graph", recorder.capture)
+    monkeypatch.setattr(torch.cuda, "stream", recorder.stream)
+    monkeypatch.setattr(torch.cuda, "Stream", recorder.new_stream)
+    monkeypatch.setattr(torch.cuda, "current_stream", recorder.get_current_stream)
+    monkeypatch.setattr(torch.cuda, "set_stream", recorder.set_stream)
+    return recorder
+
+
 def _runtime_around(
-    engine: _FakeEngine, context: _FakeContext | None = None, *, sync_mode: bool = True
+    engine: _FakeEngine, context: _FakeContext | None = None, *, sync_mode: bool = True, cuda_graph: bool = False
 ) -> TRTInference:
     """Assemble a ``TRTInference`` around a fake engine and context without touching ``__init__`` (needs a GPU).
 
     A context matching *engine* is built here unless the test needs a non-default one (see :class:`_FakeContext`).
+    Skipping ``__init__`` also skips its refusals, such as that of an engine whose profile varies more than the batch
+    under ``cuda_graph=True``, so a test must not build a runtime here that construction would refuse.
     The engine "runs" on the CPU, so the fakes can hand it ordinary CPU tensors. Calling the runtime needs the
     ``fake_tensorrt`` and ``cuda_device_recorder`` fixtures; the doctest only builds it, and patches ``trt`` itself.
 
@@ -304,7 +516,10 @@ def _runtime_around(
     runtime.sync_mode = sync_mode
     runtime.device = "cpu"
     runtime._engine_device = torch.device("cpu")
-    runtime.stream = None if sync_mode else Mock(handle=7)
+    runtime.stream = None if sync_mode or cuda_graph else Mock(handle=7)
+    runtime._graph_stream = _FakeStream(handle=11) if cuda_graph else None
+    runtime._graphs = {}
+    runtime._static_inputs = {}
     runtime.bindings = runtime.get_bindings(engine, runtime.context, device="cpu")
     runtime.bindings_addr = OrderedDict((n, v.ptr) for n, v in runtime.bindings.items())
     runtime.input_names = runtime.get_input_names()
@@ -780,6 +995,469 @@ class TestTRTInferenceInputValidation:
             runtime({"input": torch.zeros(shape)})
 
         assert ("max_batch_size=5" in str(refusal.value)) is advised
+
+
+#: Tensors of an engine with a dynamic batch axis on its input and output; each test sets the profile maximum.
+_DYNAMIC_ENGINE_TENSORS = {"input": ("input", (-1, 3, 8, 8)), "dets": ("output", (-1, 5, 4))}
+
+#: What identifies the one graph a static engine captures: the shape of its only input.
+_STATIC_SHAPES = ((1, 3, 8, 8),)
+
+
+@pytest.mark.usefixtures("fake_tensorrt", "cuda_device_recorder", "fake_cuda_graphs")
+class TestTRTInferenceCudaGraph:
+    """``cuda_graph=True`` captures the engine's launch once per set of input shapes and replays it on every later call.
+
+    Each call still goes through the plain path's validation and dynamic-shape declaration, and returns the same output
+    buffers, so only the launch differs: the input is copied into a static buffer the graph was captured on.
+    """
+
+    def test_replay_reads_the_input_of_each_call(self, fake_cuda_graphs: _FakeCudaGraphs) -> None:
+        """Two calls with different tensors each get their own values: the caller's tensor is copied, not captured."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        fake_cuda_graphs.on_replay = lambda graph: runtime.bindings["dets"].data.fill_(
+            runtime._graphs[_STATIC_SHAPES].inputs["input"].sum().item()
+        )
+        first, second = torch.full((1, 3, 8, 8), 1.0), torch.full((1, 3, 8, 8), 2.0)
+
+        seen_first = runtime({"input": first})["dets"][0, 0, 0].item()
+        seen_second = runtime({"input": second})["dets"][0, 0, 0].item()
+
+        assert (seen_first, seen_second) == (first.sum().item(), second.sum().item())
+
+    def test_capture_points_the_input_at_the_static_buffer_once(self) -> None:
+        """The captured launch reads the static buffer: the caller's pointers are never handed to the context."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        first, second = torch.zeros(1, 3, 8, 8), torch.zeros(1, 3, 8, 8)
+
+        runtime({"input": first})
+        runtime({"input": second})
+
+        addresses = [
+            call.args[1] for call in runtime.context.set_tensor_address.call_args_list if call.args[0] == "input"
+        ]
+        assert addresses == [runtime._graphs[_STATIC_SHAPES].inputs["input"].data_ptr()]
+        assert first.data_ptr() not in addresses
+        assert second.data_ptr() not in addresses
+
+    def test_one_graph_per_batch_size_on_a_dynamic_engine(self, fake_cuda_graphs: _FakeCudaGraphs) -> None:
+        """Batches 1 and 3 in mixed order capture two graphs, each launched once outside and once inside its capture."""
+        runtime = _runtime_around(_FakeEngine(_DYNAMIC_ENGINE_TENSORS, profile_max=4), sync_mode=False, cuda_graph=True)
+        inside_capture: list[bool] = []
+        runtime.context.execute_async_v3.side_effect = lambda *args, **kwargs: (
+            inside_capture.append(any(graph.capturing for graph in fake_cuda_graphs.graphs)) or True
+        )
+
+        for batch in (1, 3, 1, 3):
+            runtime({"input": torch.zeros(batch, 3, 8, 8)})
+
+        assert sorted(runtime._graphs) == [((1, 3, 8, 8),), ((3, 3, 8, 8),)]
+        assert len(fake_cuda_graphs.graphs) == 2
+        assert (inside_capture.count(False), inside_capture.count(True)) == (2, 2)
+        assert [graph.replays for graph in fake_cuda_graphs.graphs] == [2, 2]
+
+    @pytest.mark.parametrize("batch", [1, 3])
+    def test_dynamic_outputs_are_trimmed_to_the_batch_of_the_call(self, batch: int) -> None:
+        """A dynamic engine's output buffers sit at the profile max; the call returns only the batch it ran."""
+        runtime = _runtime_around(_FakeEngine(_DYNAMIC_ENGINE_TENSORS, profile_max=4), sync_mode=False, cuda_graph=True)
+
+        outputs = runtime({"input": torch.zeros(batch, 3, 8, 8)})
+
+        assert outputs["dets"].shape == (batch, 5, 4)
+
+    @pytest.mark.parametrize(
+        "make_input",
+        [
+            pytest.param(lambda: torch.rand(1, 3, 4, 4), id="wrong_shape"),
+            pytest.param(lambda: torch.rand(1, 3, 8, 8, dtype=torch.float64), id="wrong_dtype"),
+            pytest.param(lambda: torch.rand(1, 3, 8, 16)[..., ::2], id="strided"),
+        ],
+    )
+    def test_a_refused_input_captures_nothing(
+        self, fake_cuda_graphs: _FakeCudaGraphs, make_input: Callable[[], torch.Tensor]
+    ) -> None:
+        """The plain path's input checks still run first, so a bad tensor never reaches the copy or the capture."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+
+        with pytest.raises(ValueError):
+            runtime({"input": make_input()})
+
+        assert (fake_cuda_graphs.graphs, runtime._graphs) == ([], {})
+
+    def test_a_failed_capture_raises_and_the_next_call_captures_again(self, fake_cuda_graphs: _FakeCudaGraphs) -> None:
+        """A user who asked for a graph is told when capture fails instead of silently getting the plain launch.
+
+        Nothing is cached for the failed shape, so the next call at it captures again.
+        """
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        example = {"input": torch.zeros(1, 3, 8, 8)}
+        fake_cuda_graphs.fail_next_capture = True
+
+        with pytest.raises(RuntimeError, match="CUDA graph.*sync_mode=True"):
+            runtime(example)
+        assert runtime._graphs == {}
+
+        runtime(example)
+        assert sorted(runtime._graphs) == [_STATIC_SHAPES]
+
+    def test_a_refused_launch_raises(self) -> None:
+        """``execute_async_v3`` reports failure by returning ``False``; that must not be mistaken for a capture."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        runtime.context.execute_async_v3.return_value = False
+
+        with pytest.raises(RuntimeError, match="launch failure"):
+            runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+    def test_run_graph_needs_a_runtime_built_with_cuda_graph(self) -> None:
+        """Calling ``run_graph`` directly on a plain runtime says what is missing instead of failing on a ``None``
+        stream."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS))
+
+        with pytest.raises(RuntimeError, match="cuda_graph=True"):
+            runtime.run_graph({"input": torch.zeros(1, 3, 8, 8)})
+
+    def test_a_refused_input_address_raises_before_any_launch(self) -> None:
+        """``set_tensor_address`` reports a refusal by returning ``False``; the capture must not go on without it."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        runtime.context.set_tensor_address.return_value = False
+
+        with pytest.raises(RuntimeError, match="refused the tensor address"):
+            runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        runtime.context.execute_async_v3.assert_not_called()
+
+    def test_a_warm_up_under_inference_mode_leaves_buffers_later_calls_can_write(self) -> None:
+        """Warming up under ``torch.inference_mode()`` must not make the static buffers inference tensors."""
+        runtime = _runtime_around(_FakeEngine(_DYNAMIC_ENGINE_TENSORS, profile_max=4), sync_mode=False, cuda_graph=True)
+        with torch.inference_mode():
+            runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        runtime({"input": torch.ones(3, 3, 8, 8)})
+        runtime({"input": torch.ones(1, 3, 8, 8)})
+
+        assert runtime._graphs[((1, 3, 8, 8),)].inputs["input"].sum().item() == 3 * 8 * 8
+
+    @pytest.mark.parametrize(("input_dtype", "torch_dtype"), [(np.float32, torch.float32), (np.float16, torch.float16)])
+    def test_the_static_buffer_has_the_dtype_the_engine_reads(
+        self, input_dtype: type, torch_dtype: torch.dtype
+    ) -> None:
+        """TensorRT reads the buffer as its own input dtype, so a buffer of another one would be read as garbage."""
+        runtime = _runtime_around(
+            _FakeEngine(_STATIC_ENGINE_TENSORS, input_dtype=input_dtype), sync_mode=False, cuda_graph=True
+        )
+
+        runtime({"input": torch.zeros(1, 3, 8, 8, dtype=torch_dtype)})
+
+        assert runtime._static_inputs["input"].dtype == torch_dtype
+
+    def test_the_warm_up_launch_reads_the_callers_input(self) -> None:
+        """The launch that precedes a capture runs on the call's own input, not on whatever the buffer was allocated
+        with."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        seen: list[float] = []
+        runtime.context.execute_async_v3.side_effect = lambda *args, **kwargs: (
+            seen.append(runtime._static_inputs["input"].sum().item()) or True
+        )
+
+        runtime({"input": torch.ones(1, 3, 8, 8)})
+
+        assert seen == [3 * 8 * 8, 3 * 8 * 8]
+
+    def test_a_failed_capture_keeps_the_cause(self, fake_cuda_graphs: _FakeCudaGraphs) -> None:
+        """The error a user sees is ours, and the reason torch gave is chained to it."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        fake_cuda_graphs.fail_next_capture = True
+
+        with pytest.raises(RuntimeError, match="CUDA graph") as refusal:
+            runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        assert str(refusal.value.__cause__) == "capture refused"
+
+    def test_an_input_that_requires_grad_leaves_no_autograd_history_on_the_buffer(self) -> None:
+        """The buffers outlive every call, so they must not collect the graph of an input produced by a differentiable
+        op."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+
+        for _ in range(2):
+            runtime({"input": torch.zeros(1, 3, 8, 8, requires_grad=True) * 1})
+
+        assert runtime._static_inputs["input"].requires_grad is False
+
+    def test_an_input_that_requires_grad_is_accepted_after_a_no_grad_warm_up(self) -> None:
+        """A view made under ``torch.no_grad()`` by the warm-up call can still be written by a call that needs grad."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        with torch.no_grad():
+            runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        runtime({"input": torch.zeros(1, 3, 8, 8, requires_grad=True) * 1})
+
+        assert runtime._static_inputs["input"].requires_grad is False
+
+    def test_every_graph_reads_one_shared_static_buffer(self) -> None:
+        """Graphs at different batch sizes are views of one buffer as large as the profile maximum, not a copy each."""
+        runtime = _runtime_around(_FakeEngine(_DYNAMIC_ENGINE_TENSORS, profile_max=4), sync_mode=False, cuda_graph=True)
+
+        for batch in (1, 3, 2):
+            runtime({"input": torch.zeros(batch, 3, 8, 8)})
+
+        buffer = runtime._static_inputs["input"]
+        views = {captured.inputs["input"].data_ptr() for captured in runtime._graphs.values()}
+        assert (views, buffer.numel()) == ({buffer.data_ptr()}, 4 * 3 * 8 * 8)
+
+    def test_every_input_of_a_multi_input_engine_is_copied_to_its_own_buffer(
+        self, fake_cuda_graphs: _FakeCudaGraphs
+    ) -> None:
+        """Both inputs reach the graph with the values of the call, each through a buffer of its own."""
+        tensors = {"input": ("input", (1, 3, 8, 8)), "aux": ("input", (1, 2)), "dets": ("output", (1, 5, 4))}
+        runtime = _runtime_around(_FakeEngine(tensors), sync_mode=False, cuda_graph=True)
+        shapes = ((1, 3, 8, 8), (1, 2))
+        fake_cuda_graphs.on_replay = lambda graph: runtime.bindings["dets"].data.fill_(
+            runtime._graphs[shapes].inputs["input"].sum().item()
+            + 100 * runtime._graphs[shapes].inputs["aux"].sum().item()
+        )
+
+        first = runtime({"input": torch.full((1, 3, 8, 8), 1.0), "aux": torch.full((1, 2), 1.0)})["dets"][
+            0, 0, 0
+        ].item()
+        second = runtime({"input": torch.full((1, 3, 8, 8), 2.0), "aux": torch.full((1, 2), 3.0)})["dets"][
+            0, 0, 0
+        ].item()
+
+        assert (first, second) == (192 + 200, 384 + 600)
+
+    def test_a_replay_waits_for_the_caller_then_copies_and_replays_on_the_graph_stream_then_synchronizes(
+        self, fake_cuda_graphs: _FakeCudaGraphs, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The order of a replayed call: wait for the caller's stream, then copy and replay inside the graph stream."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        runtime._graph_stream = _FakeStream(handle=11, events=fake_cuda_graphs.events)
+        runtime({"input": torch.zeros(1, 3, 8, 8)})
+        fake_cuda_graphs.events.clear()
+        fake_cuda_graphs.record_copies(monkeypatch)
+
+        runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        assert fake_cuda_graphs.events == ["wait", "enter", "copy", "replay", "exit", "sync"]
+
+    def test_the_warm_up_launch_and_the_capture_use_the_graph_stream(self, fake_cuda_graphs: _FakeCudaGraphs) -> None:
+        """TensorRT is launched on the graph's stream both times, and the capture is told which stream that is."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+
+        runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        handles = [call.kwargs["stream_handle"] for call in runtime.context.execute_async_v3.call_args_list]
+        assert (handles, fake_cuda_graphs.capture_streams) == ([11, 11], [runtime._graph_stream])
+
+    def test_a_failed_capture_gives_the_caller_its_stream_back(self, fake_cuda_graphs: _FakeCudaGraphs) -> None:
+        """``torch.cuda.graph`` leaves the capture stream current when a capture fails; the caller must not keep it."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        caller_stream = fake_cuda_graphs.current
+        fake_cuda_graphs.fail_next_capture = True
+
+        with pytest.raises(RuntimeError, match="CUDA graph"):
+            runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        assert fake_cuda_graphs.current is caller_stream
+
+    def test_every_launch_and_replay_runs_on_the_engine_device(
+        self, cuda_device_recorder: _DeviceRecorder, fake_cuda_graphs: _FakeCudaGraphs
+    ) -> None:
+        """The warm-up launch, the capture and the replay all run with the engine's device current, and ask it for a
+        stream.
+
+        The caller asked for a bare ``"cuda"``, which construction pinned (to the fakes' CPU here), as in the plain
+        paths' device test above.
+        """
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+        runtime.device = "cuda"
+        engine_device = runtime._engine_device
+        active: list[torch.device | None] = []
+        runtime.context.execute_async_v3.side_effect = lambda *args, **kwargs: (
+            active.append(cuda_device_recorder.current) or True
+        )
+        fake_cuda_graphs.on_replay = lambda graph: active.append(cuda_device_recorder.current)
+
+        runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        assert (active, set(fake_cuda_graphs.current_stream_args)) == ([engine_device] * 3, {(engine_device,)})
+
+    def test_the_graph_stream_waits_for_the_callers_stream_before_each_copy(
+        self, fake_cuda_graphs: _FakeCudaGraphs
+    ) -> None:
+        """The input may still be in flight on the caller's stream, so the graph stream waits for it on every call."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+
+        runtime({"input": torch.zeros(1, 3, 8, 8)})
+        runtime({"input": torch.zeros(1, 3, 8, 8)})
+
+        assert runtime._graph_stream.waited_on == [fake_cuda_graphs.current, fake_cuda_graphs.current]
+
+    def test_synchronize_waits_on_the_graph_stream(self) -> None:
+        """``synchronize()`` drains the stream the graph runs on."""
+        runtime = _runtime_around(_FakeEngine(_STATIC_ENGINE_TENSORS), sync_mode=False, cuda_graph=True)
+
+        runtime.synchronize()
+
+        assert runtime._graph_stream.synchronized == 1
+
+
+@pytest.mark.usefixtures("cuda_device_recorder", "fake_cuda_graphs")
+class TestTRTInferenceCudaGraphConstruction:
+    """The ``cuda_graph`` option is opt-in, needs no pycuda, and is refused where it cannot take effect or where its
+    graphs would have no bound."""
+
+    @staticmethod
+    def _engine_file(fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, engine: _FakeEngine | None = None) -> str:
+        """Point the fake runtime at *engine* and return a path TensorRT can be asked to load.
+
+        Without *engine* it is one with a single fixed ``(1, 3, 8, 8)`` input. An engine given here should have no
+        output when construction is meant to succeed: it allocates the output buffers on the CUDA device, which
+        CPU-only CI does not have.
+
+        Examples:
+            >>> import tempfile
+            >>> from unittest.mock import patch
+            >>> fake = _FakeTensorRTModule()
+            >>> with tempfile.TemporaryDirectory() as directory, patch.object(trt_inference, "trt", fake):
+            ...     path = TestTRTInferenceCudaGraphConstruction._engine_file(fake, Path(directory))
+            ...     Path(path).name, fake.runtime.engine.get_tensor_shape("input")
+            ('model.trt', (1, 3, 8, 8))
+            >>> with tempfile.TemporaryDirectory() as directory, patch.object(trt_inference, "trt", fake):
+            ...     engine = _FakeEngine({"input": ("input", (-1, 3, 8, 8))})
+            ...     _ = TestTRTInferenceCudaGraphConstruction._engine_file(fake, Path(directory), engine)
+            ...     fake.runtime.engine is engine
+            True
+        """
+        fake_tensorrt.runtime.engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))}) if engine is None else engine
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+        return str(engine_file)
+
+    def test_cuda_graph_is_off_by_default(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
+        """A caller that does not ask for a graph gets no graph stream."""
+        runtime = TRTInference(self._engine_file(fake_tensorrt, tmp_path), sync_mode=True)
+
+        assert runtime._graph_stream is None
+
+    def test_cuda_graph_with_sync_mode_is_refused_before_loading(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """``sync_mode`` runs ``execute_v2``, which cannot be captured, so asking for both is an error."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path)
+
+        with pytest.raises(ValueError, match="sync_mode"):
+            TRTInference(engine_file, sync_mode=True, cuda_graph=True)
+
+        fake_tensorrt.runtime.deserialize_cuda_engine.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "tensors",
+        [
+            pytest.param({"input": ("input", (-1, 3, -1, -1))}, id="dynamic-image-size"),
+            pytest.param({"input": ("input", (-1, 3, -1, 8))}, id="dynamic-height-only"),
+            pytest.param({"input": ("input", (-1, 3, 8, 8)), "aux": ("input", (-1, -1))}, id="dynamic-second-input"),
+        ],
+    )
+    def test_an_engine_whose_profile_varies_more_than_the_batch_is_refused(
+        self,
+        fake_tensorrt: _FakeTensorRTModule,
+        tmp_path: Path,
+        tensors: dict[str, tuple[str, tuple[int, ...]]],
+    ) -> None:
+        """A graph is kept per input shape, so an engine whose profile takes any image size would keep one for every
+        size it is ever called with; only a profile that varies the batch alone bounds the graphs."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine(tensors))
+
+        with pytest.raises(ValueError, match="varies only the batch"):
+            TRTInference(engine_file, cuda_graph=True)
+
+    def test_the_refusal_comes_before_an_execution_context_is_created(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """The decision needs only the engine, so nothing the refused runtime would hold is allocated first."""
+        engine = _FakeEngine({"input": ("input", (-1, 3, -1, -1))})
+        engine.create_execution_context = Mock(side_effect=engine.create_execution_context)
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, engine)
+
+        with pytest.raises(ValueError, match="varies only the batch"):
+            TRTInference(engine_file, cuda_graph=True)
+
+        engine.create_execution_context.assert_not_called()
+
+    def test_the_refusal_advises_sync_mode(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
+        """``sync_mode=True`` is the mode that needs neither a graph nor pycuda, like the capture error's advice."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine({"input": ("input", (-1, 3, -1, -1))}))
+
+        with pytest.raises(ValueError, match="sync_mode=True instead of cuda_graph=True"):
+            TRTInference(engine_file, cuda_graph=True)
+
+    def test_a_fixed_batch_engine_with_a_dynamic_image_size_gets_the_error_of_every_mode(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """No mode can size such an input, so the refusal must not advise ``sync_mode=True`` for it."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine({"input": ("input", (1, 3, -1, -1))}))
+
+        with pytest.raises(ValueError, match="unresolved dimension"):
+            TRTInference(engine_file, cuda_graph=True)
+
+    def test_the_refused_engine_loads_with_the_advised_sync_mode(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """The refusal's advice works when followed verbatim: the same engine loads with ``sync_mode=True``."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, _FakeEngine({"input": ("input", (-1, 3, -1, -1))}))
+
+        runtime = TRTInference(engine_file, sync_mode=True)
+
+        assert runtime.bindings["input"].shape == (4, 3, 16, 16)
+
+    @pytest.mark.parametrize(
+        "engine",
+        [
+            pytest.param(_FakeEngine({"input": ("input", (-1, 3, 8, 8))}), id="dynamic-batch"),
+            pytest.param(
+                _FakeEngine({"input": ("input", (-1, 3, -1, -1))}, image_profile=(8, 8), second_image_profile=(4, 16)),
+                id="image-size-pinned-in-profile-0",
+            ),
+        ],
+    )
+    def test_an_engine_whose_profile_varies_only_the_batch_is_accepted(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, engine: _FakeEngine
+    ) -> None:
+        """What ``RFDETR.export(format="tensorrt", dynamic_batch=True, max_batch_size=...)`` builds keeps graph replay,
+        and so does an engine that reports a dynamic image size because another profile varies it, while profile 0, the
+        one the runtime runs, pins it."""
+        engine_file = self._engine_file(fake_tensorrt, tmp_path, engine)
+
+        runtime = TRTInference(engine_file, cuda_graph=True)
+
+        assert runtime._graph_stream is not None
+
+    def test_cuda_graph_does_not_need_pycuda(
+        self, fake_tensorrt: _FakeTensorRTModule, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The graph runs on a torch stream, so the ``tensorrt-bench`` extra is not required for it."""
+        monkeypatch.setattr(trt_inference, "cuda", None)
+
+        runtime = TRTInference(self._engine_file(fake_tensorrt, tmp_path), cuda_graph=True)
+
+        assert (runtime._graph_stream is not None, runtime.stream) == (True, None)
+
+    def test_the_graph_stream_is_created_on_the_engine_device(
+        self, fake_tensorrt: _FakeTensorRTModule, fake_cuda_graphs: _FakeCudaGraphs, tmp_path: Path
+    ) -> None:
+        """A stream made without a device would belong to whichever device is current, not to the engine's."""
+        TRTInference(self._engine_file(fake_tensorrt, tmp_path), device="cuda:1", cuda_graph=True)
+
+        assert fake_cuda_graphs.stream_kwargs == [{"device": torch.device("cuda", 1)}]
+
+    def test_async_mode_without_a_graph_still_needs_pycuda(
+        self, fake_tensorrt: _FakeTensorRTModule, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Only the graph option lifts the pycuda requirement; the default async path keeps it."""
+        monkeypatch.setattr(trt_inference, "cuda", None)
+
+        with pytest.raises(ImportError, match="pycuda"):
+            TRTInference(self._engine_file(fake_tensorrt, tmp_path))
 
 
 @pytest.mark.usefixtures("cuda_device_recorder")
