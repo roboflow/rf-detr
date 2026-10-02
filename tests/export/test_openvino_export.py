@@ -188,8 +188,9 @@ def openvino_unimportable() -> Any:
     ``openvino`` simply being absent failed on any host where it is installed.
 
     Examples:
-        Requires pytest's fixture injection, so this is documentation only:
-        ``def test_x(openvino_unimportable): ...``
+        Skipped as a live doctest because it needs pytest's fixture injection to run.
+
+        >>> def test_x(openvino_unimportable): ...  # doctest: +SKIP
     """
     with mock.patch.dict(sys.modules, {"openvino": None}):
         yield
@@ -418,6 +419,22 @@ def _stub_openvino_runtime_module() -> tuple[types.ModuleType, mock.MagicMock]:
     return fake, core
 
 
+@pytest.fixture
+def openvino_relu_xml(tmp_path: Path) -> Path:
+    """Write a one-op ReLU OpenVINO IR to ``tmp_path`` and return its ``.xml`` path (skips without ``openvino``).
+
+    Examples:
+        Skipped as a live doctest because it needs pytest's fixture injection and a real ``openvino`` install.
+
+        >>> def test_x(openvino_relu_xml): ...  # doctest: +SKIP
+    """
+    ov = pytest.importorskip("openvino")
+    param = ov.opset13.parameter([1, 3], ov.Type.f32)
+    xml_path = tmp_path / "relu.xml"
+    ov.save_model(ov.Model([ov.opset13.relu(param)], [param]), xml_path)
+    return xml_path
+
+
 class TestOpenVINOInferenceDeviceAndCache:
     """``device``/``cache_dir`` forwarding in ``OpenVINOInference.__init__``, previously untested.
 
@@ -436,18 +453,29 @@ class TestOpenVINOInferenceDeviceAndCache:
             core.read_model.return_value, "GPU", {"INFERENCE_PRECISION_HINT": "f32"}
         )
 
-    @pytest.mark.parametrize(("inference_precision", "expected_config"), [("bf16", ("bf16",)), (None, ())])
+    @pytest.mark.parametrize(
+        ("inference_precision", "expected_properties"),
+        [
+            ("bf16", {"INFERENCE_PRECISION_HINT": "bf16"}),
+            ("f16", {"INFERENCE_PRECISION_HINT": "f16"}),
+            ("float32", {"INFERENCE_PRECISION_HINT": "f32"}),
+            ("float16", {"INFERENCE_PRECISION_HINT": "f16"}),
+            (None, {}),
+        ],
+    )
     def test_inference_precision_forwarded_to_compile_model(
-        self, tmp_path: Path, inference_precision: str | None, expected_config: tuple[str, ...]
+        self, tmp_path: Path, inference_precision: str | None, expected_properties: dict[str, str]
     ) -> None:
-        """An explicit hint reaches ``compile_model``; ``None`` passes no config, so the device default applies."""
+        """An explicit hint reaches ``compile_model`` (``float32``/``float16`` mapped to ``f32``/``f16``).
+
+        ``None`` passes no hint, so the device default applies.
+        """
         xml_path = tmp_path / "m.xml"
         xml_path.write_bytes(b"<xml/>")
         fake_ov, core = _stub_openvino_runtime_module()
         with mock.patch.dict(sys.modules, {"openvino": fake_ov}):
             OpenVINOInference(xml_path, inference_precision=inference_precision)
-        config = [{"INFERENCE_PRECISION_HINT": hint} for hint in expected_config]
-        core.compile_model.assert_called_once_with(core.read_model.return_value, "AUTO", *config)
+        core.compile_model.assert_called_once_with(core.read_model.return_value, "AUTO", expected_properties)
 
     def test_config_merged_over_precision_hint(self, tmp_path: Path) -> None:
         """Extra compile properties reach ``compile_model`` alongside the precision hint; on a clash ``config`` wins.
@@ -464,14 +492,27 @@ class TestOpenVINOInferenceDeviceAndCache:
             core.read_model.return_value, "AUTO", {"INFERENCE_PRECISION_HINT": "f16", "INFERENCE_NUM_THREADS": 4}
         )
 
-    def test_default_hint_is_float32_on_real_cpu_plugin(self, tmp_path: Path) -> None:
+    @pytest.mark.integration
+    @pytest.mark.e2e_openvino
+    def test_default_hint_is_float32_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
         """The CPU plugin reports f32 execution for the default wrapper, even on hosts whose own default is f16/bf16."""
         ov = pytest.importorskip("openvino")
-        param = ov.opset13.parameter([1, 3], ov.Type.f32)
-        xml_path = tmp_path / "relu.xml"
-        ov.save_model(ov.Model([ov.opset13.relu(param)], [param]), xml_path)
-        compiled = OpenVINOInference(xml_path, device="CPU").compiled_model
+        compiled = OpenVINOInference(openvino_relu_xml, device="CPU").compiled_model
         assert compiled.get_property("INFERENCE_PRECISION_HINT") == ov.Type.f32
+
+    @pytest.mark.integration
+    @pytest.mark.e2e_openvino
+    def test_explicit_hint_in_config_is_honoured_on_real_cpu_plugin(self, openvino_relu_xml: Path) -> None:
+        """An ``INFERENCE_PRECISION_HINT`` given via ``config`` reaches the CPU plugin and replaces the f32 default.
+
+        Without this the f32 test above passes on x86 hosts where OpenVINO's own default is already f32, even if the
+        wrapper dropped the hint entirely; reading back a hint that differs from the default cannot.
+        """
+        ov = pytest.importorskip("openvino")
+        compiled = OpenVINOInference(
+            openvino_relu_xml, device="CPU", config={"INFERENCE_PRECISION_HINT": "f16"}
+        ).compiled_model
+        assert compiled.get_property("INFERENCE_PRECISION_HINT") == ov.Type.f16
 
     def test_cache_dir_sets_property_before_compile(self, tmp_path: Path) -> None:
         """A non-``None`` ``cache_dir`` must set ``CACHE_DIR`` before ``compile_model`` is called.
@@ -904,6 +945,32 @@ class TestOpenVINOEndToEnd:
         box_diff, label_diff = _confident_query_diffs(eager_tensors, ov_tensors)
         assert box_diff < 1e-3, f"OpenVINO detection boxes diverge from PyTorch: max abs diff {box_diff}"
         assert label_diff < 0.1, f"OpenVINO detection logits diverge from PyTorch: max abs diff {label_diff}"
+
+    def test_batch_one_ir_accepts_larger_batch(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
+        """A default (batch-1) detection IR must run a tiled batch of 4 and match eager PyTorch for every sample.
+
+        ``dynamic_batch=True`` is refused for OpenVINO on the premise that the converted IR already takes any batch
+        size, so this pins that premise on a real IR instead of leaving it to the registry flag alone. The same image is
+        tiled four times, so each output sample must equal the batch-1 eager reference on the confident queries (see
+        ``_confident_query_diffs``).
+        """
+        model, example, xml_path = openvino_detection_export
+        batch = 4
+        eager_tensors = eager_reference_tensors(model, example)
+        ov_tensors = [
+            torch.from_numpy(output) for output in _infer_openvino_f32(xml_path, example.repeat(batch, 1, 1, 1).numpy())
+        ]
+
+        assert [tensor.shape[0] for tensor in ov_tensors] == [batch] * len(ov_tensors), (
+            f"a batch-1 IR must return batch dimension {batch} for a batch-{batch} input, "
+            f"got shapes {[tuple(tensor.shape) for tensor in ov_tensors]}"
+        )
+        sample_diffs = [
+            _confident_query_diffs(eager_tensors, [tensor[index : index + 1] for tensor in ov_tensors])
+            for index in range(batch)
+        ]
+        assert max(box_diff for box_diff, _ in sample_diffs) < 1e-3, f"batch-{batch} boxes diverge: {sample_diffs}"
+        assert max(label_diff for _, label_diff in sample_diffs) < 0.1, f"batch-{batch} logits diverge: {sample_diffs}"
 
     def test_segmentation_outputs_match_pytorch(
         self, openvino_segmentation_export: tuple[Any, torch.Tensor, Path]
