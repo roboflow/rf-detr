@@ -21,6 +21,10 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+#: Export-side precision spellings accepted by ``inference_precision`` and mapped to OpenVINO's own names, so the
+#: vocabulary of ``openvino_precision`` at export time also works here.
+_PRECISION_ALIASES: dict[str, str] = {"float32": "f32", "float16": "f16"}
+
 
 class OpenVINOInference:
     """Inference wrapper for OpenVINO IR models.
@@ -69,14 +73,18 @@ class OpenVINOInference:
                 to ``"f32"``: OpenVINO's own CPU default is f16 on ARM and bf16 on x86 hosts with AMX or
                 AVX512-BF16, and at either precision RF-DETR's logits collapse (no detections clear a 0.5
                 threshold). ``None`` keeps the device default — faster where the hardware computes natively in
-                reduced precision (ARM CPU, Intel GPU/NPU), at that accuracy cost. Any other value, e.g.
-                ``"f16"`` or ``"bf16"``, is passed through unchanged.
+                reduced precision (ARM CPU, Intel GPU/NPU), at that accuracy cost. Accepted spellings are
+                ``"f32"``, ``"f16"`` and ``"bf16"``, plus ``"float32"`` and ``"float16"`` as aliases of ``"f32"``
+                and ``"f16"`` (the vocabulary ``openvino_precision`` uses at export). Any other string is not
+                validated here: it is passed through unchanged and OpenVINO rejects it when compiling the model
+                (e.g. ``"fp32"``).
             config: Further compile properties for ``compile_model``, e.g. ``{"INFERENCE_NUM_THREADS": 4}``. Applied
                 after *inference_precision*, so an ``INFERENCE_PRECISION_HINT`` given here wins.
 
         Raises:
             ImportError: If OpenVINO is not installed.
             FileNotFoundError: If the model file doesn't exist.
+            RuntimeError: If OpenVINO rejects *inference_precision* or *config* while compiling the model.
         """
         _check_openvino_available()
         import openvino as ov
@@ -93,12 +101,9 @@ class OpenVINOInference:
         model = core.read_model(model_path)
         properties: dict[str, Any] = {}
         if inference_precision is not None:
-            properties["INFERENCE_PRECISION_HINT"] = inference_precision
+            properties["INFERENCE_PRECISION_HINT"] = _PRECISION_ALIASES.get(inference_precision, inference_precision)
         properties.update(config or {})
-        if properties:
-            self.compiled_model = core.compile_model(model, device, properties)
-        else:
-            self.compiled_model = core.compile_model(model, device)
+        self.compiled_model = core.compile_model(model, device, properties)
         self.infer_request = self.compiled_model.create_infer_request()
         # Guards infer_request.infer() + get_output_tensor(): both touch the same shared
         # buffers, which are not safe for concurrent access from multiple threads.
