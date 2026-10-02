@@ -1954,9 +1954,10 @@ class RFDETR:
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-                Also unsupported for ``format="openvino"``: the IR graph bakes a fixed input shape;
-                export one model per batch size instead. Also unsupported for ``format="litert"``:
-                the ``.tflite`` bakes a fixed input shape; export one file per batch size instead.
+                Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
+                the converted OpenVINO IR already accepts any batch size. Also
+                unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed input shape;
+                export one file per batch size instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
                 provided explicitly it must match the instantiated model's
@@ -2014,20 +2015,12 @@ class RFDETR:
                 float activations; needs no calibration data). ``format="litert"`` accepts only ``None`` /
                 ``"fp32"`` (it writes one float32 ``.tflite``) and raises ``NotImplementedError`` for the other
                 modes rather than silently ignoring them.
-            calibration_data: Optional data not consumed when building the exported ``.tflite`` models. Accepts:
-
-                * ``None`` — auto-generate random data (the default, and adequate for every quantization mode).
-                * A **directory path** (``str``) containing JPEG/PNG
-                  images — the converter automatically loads, resizes, and prepares them.
-                * A path (``str``) to a ``.npy`` file of shape ``(N, H, W, 3)``, dtype float32, values in ``[0, 1]``.
-                * A :class:`numpy.ndarray` with the same format.
-
-                This does **not** improve INT8 accuracy: ``quantization="int8"`` produces a dynamic-range model whose
-                weight scales come from the weights themselves. When passed as ``None``, a directory, or an array, the
-                data is saved to an unused scratch file in *output_dir* but not consumed to build the model. An
-                existing ``.npy`` path is reused without writing a copy.
-            max_images: Maximum number of images to load from a *calibration_data* directory.  Defaults to ``100``.
-                Only used when *calibration_data* is a directory path.
+            calibration_data: Ignored. Any value other than ``None`` raises a ``UserWarning`` and is never read, so a
+                missing path or a malformed array does not fail the export. No data could change the exported
+                ``.tflite`` models: ``quantization="int8"`` produces a dynamic-range model whose weight scales come
+                from the weights themselves, and fp32/fp16 involve no calibration.
+            max_images: Ignored along with *calibration_data*, whose image directory it would have capped. Defaults to
+                ``100``.
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),

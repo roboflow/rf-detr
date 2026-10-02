@@ -205,6 +205,7 @@ loggers = [
 visual = [
     "matplotlib",
     "pandas",
+    "psutil",  # host-memory reader behind rfdetr.export.benchmark.measure_memory() on every non-CUDA device
     "seaborn",
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]

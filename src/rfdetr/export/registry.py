@@ -107,7 +107,7 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "OpenVINOExporter",
         "openvino",
         "OpenVINO",
-        dynamic_batch_reason="(the IR graph bakes a fixed input shape). Export one model per batch size instead.",
+        dynamic_batch_reason="(omit dynamic_batch; the converted OpenVINO IR already accepts any batch size).",
     ),
     "litert": ExporterEntry(
         "rfdetr.export._litert.exporter",

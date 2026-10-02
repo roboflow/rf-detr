@@ -80,6 +80,7 @@ import os
 import sys
 import sysconfig
 import threading
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generator, cast
@@ -876,8 +877,8 @@ class TFLiteConfig(ExportConfig):
     Attributes:
         opset_version: ONNX opset the intermediate graph targets.
         quantization: Quantization mode; ``"int8"`` additionally writes a dynamic-range model.
-        calibration_data: Data written to a scratch file beside the artifacts but not consumed by the conversion.
-        max_images: Maximum images read from a *calibration_data* directory.
+        calibration_data: Ignored, with a ``UserWarning`` at construction; never read, so it cannot fail the export.
+        max_images: Ignored along with *calibration_data*, whose directory it would have capped.
     """
 
     opset_version: int = 17
@@ -948,6 +949,17 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
                 f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}. "
                 "Static / full-integer INT8 is not supported; 'int8' is dynamic-range."
             )
+        if self.config.calibration_data is not None:
+            # A warning, not a refusal: the keyword is kept for a future static-INT8 path. Emitted last, so a refused
+            # configuration never warns first. stacklevel=4 skips this frame, Exporter.__init__ and RFDETR.export, to
+            # point at the caller. Overriding __init__ instead would add a frame under the base class's own
+            # stacklevel=3 warnings and misattribute them.
+            warnings.warn(
+                "`calibration_data` has no effect on the exported .tflite models: INT8 is dynamic-range (weights only, "
+                "no activation calibration) and fp32/fp16 involve no calibration. This argument is ignored.",
+                UserWarning,
+                stacklevel=4,
+            )
 
     @classmethod
     def check_dependencies(cls) -> None:
@@ -1015,8 +1027,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             otherwise the fp32 file.
 
         Raises:
-            FileNotFoundError: If *onnx_path* does not exist or the configured
-                *calibration_data* points to a missing file.
+            FileNotFoundError: If *onnx_path* does not exist.
             ImportError: If ``onnx2tf`` is not installed.
             RuntimeError: If the conversion fails.
 
@@ -1141,28 +1152,19 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             return onnx_path
 
     def _prepare_calibration(self, onnx_path: Path, output_dir: Path) -> Path:
-        """Write the ``.npy`` onnx2tf's conditional validation hook reads, and note when INT8 ignores it.
+        """Write the generated ``.npy`` onnx2tf's conditional validation hook reads.
+
+        The configured *calibration_data* is ignored (:meth:`_check_capabilities` warned about it at construction), so
+        it is never read or validated here: the hook always gets random data shaped like the model input.
 
         Args:
             onnx_path: Path to the ``.onnx`` file the input shape is read from.
-            output_dir: Directory a generated or reformatted ``.npy`` is written to.
+            output_dir: Directory the generated ``.npy`` is written to.
 
         Returns:
             Path to the ``.npy`` calibration data file.
-
-        Raises:
-            FileNotFoundError: If the configured *calibration_data* is a path that does not exist, or a
-                directory with no supported images.
         """
-        if self.config.calibration_data is not None and self.config.quantization == "int8":
-            logger.info(
-                "The provided calibration data has no effect on the generated INT8 model: "
-                "dynamic-range quantization does not use it."
-            )
-
-        return _prepare_calibration_data(
-            onnx_path, self.config.calibration_data, output_dir, max_images=self.config.max_images
-        )
+        return _prepare_calibration_data(onnx_path, None, output_dir, max_images=self.config.max_images)
 
     def _run_onnx2tf(self, onnx_path: Path, output_dir: Path, calib_npy_path: Path) -> None:
         """Run ``onnx2tf.convert`` under the three process-global patches the conversion needs.
