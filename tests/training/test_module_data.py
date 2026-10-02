@@ -1461,6 +1461,192 @@ class TestClassNames:
         assert dm.class_names is None
 
 
+class TestClassNamesMatchDataset:
+    """Setup("fit") checks explicit ``class_names`` against the class names read from the dataset."""
+
+    @staticmethod
+    def _fit_setup(dm: RFDETRDataModule) -> None:
+        """Run ``setup("fit")`` on datasets whose COCO categories are ``cat`` and ``dog``.
+
+        The ``label2cat`` mapping makes these datasets the remapped kind a Roboflow COCO export builds, where labels
+        are contiguous indices into the category list rather than the raw category ids — the only kind whose names are
+        indexed by label, and so the only kind the check compares against ``class_names`` at all.
+
+        Args:
+            dm: Data module to set up.
+
+        Examples:
+            >>> dm = RFDETRDataModule(_base_model_config(), _base_train_config())
+            >>> TestClassNamesMatchDataset._fit_setup(dm)
+            >>> dm.class_names
+            ['cat', 'dog']
+        """
+        datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
+        for dataset in datasets.values():
+            dataset.label2cat = {0: 1, 1: 2}
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
+            dm.setup("fit")
+
+    def test_roboflow_root_category_in_front_raises(self, tmp_path: Path) -> None:
+        """Names read from every entry of a Roboflow export's categories shift each class by one, so fit stops."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["animals", "cat", "dog"]))
+
+        with pytest.raises(ValueError, match=r"'animals'.*shifted by one.*class_names=\['cat', 'dog'\]"):
+            self._fit_setup(dm)
+
+    @pytest.mark.parametrize(
+        ("class_names", "listed_extras"),
+        [
+            pytest.param(["animals", "pets", "cat", "dog"], "'animals', 'pets'", id="two-parents-in-front"),
+            pytest.param(["cat", "pets", "dog"], "'pets'", id="parent-between-classes"),
+        ],
+    )
+    def test_extra_names_above_a_class_raise(self, tmp_path: Path, class_names: list[str], listed_extras: str) -> None:
+        """Any unannotated parent in the list shifts the classes below it, wherever it sits, so fit stops.
+
+        ``filter_parent_categories`` drops every unannotated grouping category, not only a leading one, so a list read
+        from all of them can carry several parents and can carry one between two real classes. Comparing only against
+        ``names[1:]`` saw neither shape and let the run start with each affected class mislabelled.
+        """
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=class_names))
+
+        with pytest.raises(ValueError, match=f"The extra entries — {listed_extras} —"):
+            self._fit_setup(dm)
+
+    @pytest.mark.parametrize(
+        "class_names",
+        [
+            pytest.param([], id="empty"),
+            pytest.param(["dog"], id="one-shorter"),
+            pytest.param(["cat", "dog", "bird"], id="one-longer"),
+        ],
+    )
+    def test_other_length_mismatch_warns(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        class_names: list[str],
+    ) -> None:
+        """A list of another length can't line up with the labels either, but may be deliberate, so it only warns.
+
+        Covers both directions of a plain length mismatch — empty, shorter, and longer than the dataset's own names —
+        none of which carries an extra entry above a real class, so each falls to the generic length-mismatch warning
+        rather than the extra-names raise. The warning reaches the ``rf-detr`` logger only: a second ``warnings.warn``
+        used to repeat it with a stacklevel that pointed inside Lightning's hook dispatcher instead of the caller's own
+        code.
+        """
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=class_names))
+
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            self._fit_setup(dm)
+
+        assert any(
+            f"class_names has {len(class_names)} entries but the dataset has 2 classes" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_empty_dataset_categories_short_circuits(self, tmp_path: Path) -> None:
+        """An explicit class_names passes silently when the dataset itself carries no categories.
+
+        ``_check_class_names_match_dataset``'s ``not dataset_class_names`` short-circuit (module_data.py) was
+        otherwise untested: a dataset with no COCO categories resolves ``class_names`` to ``[]``, which must skip
+        the comparison outright rather than raise or warn on the explicit list.
+        """
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["cat", "dog"]))
+        datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
+        for dataset in datasets.values():
+            dataset.coco.cats = {}
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
+                dm.setup("fit")
+
+        assert dm.class_names == []
+
+    def test_same_length_permutation_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The dataset's own names in another order warn, because the equal length otherwise hides the swap.
+
+        ``["dog", "cat"]`` against a ``cat``/``dog`` dataset labels every prediction of one as the other, in checkpoints
+        and in ``predict()`` output. It only warns: renaming one class to another's name is legal, and nothing here can
+        tell that apart from a list pasted in the wrong order.
+        """
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["dog", "cat"]))
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            self._fit_setup(dm)
+
+        assert any("in a different order" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.parametrize(
+        "class_names",
+        [
+            None,
+            pytest.param(["cat", "dog"], id="same"),
+            pytest.param(["Katze", "Hund"], id="renamed"),
+        ],
+    )
+    def test_matching_length_passes(self, tmp_path: Path, class_names: list[str] | None) -> None:
+        """Unset, identical or renamed names of the right length set up without a warning."""
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=class_names))
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            self._fit_setup(dm)
+
+        assert dm.class_names == ["cat", "dog"]
+
+    def test_raw_category_id_dataset_is_not_compared(self, tmp_path: Path) -> None:
+        """A raw-id dataset labels objects by category id, so a class_names indexed by those ids must be accepted.
+
+        ``dataset_file="coco"`` builds ``CocoDetection`` without remapping, leaving labels equal to the 1-based COCO
+        category ids while the names read back are ordered by id. The ``class_names`` that is correct for such a run
+        therefore carries a placeholder for the unused id 0, which the length/shift comparison used to mistake for a
+        Roboflow export's extra root category and reject with the off-by-one list as its remedy (#1572).
+        """
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["", "cat", "dog"]))
+        datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
+
+        with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
+            dm.setup("fit")
+
+        assert dm.class_names == ["cat", "dog"]
+
+    def test_dataset_names_with_empty_slot_warn_without_raising(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A keypoint dataset's unnamed background slot is a length difference like any other: it warns, never raises.
+
+        An empty name used to skip the comparison outright, which also disabled it for a dataset carrying a category
+        genuinely named ``""``. Whether the labels are remapped now decides what is comparable, so the reserved slot
+        only means the two lists differ in length — worth saying, not worth stopping a run over, because keypoint
+        ``class_names`` follow the model's own slot convention.
+        """
+        dm = RFDETRDataModule(_base_model_config(), _base_train_config(tmp_path, class_names=["dog"]))
+        datasets = {"train": _fake_dataset(10, with_coco=True), "val": _fake_dataset(4, with_coco=True)}
+        for dataset in datasets.values():
+            dataset.label2cat = {1: 2}
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's root-level
+        # handler only sees its records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            with patch("rfdetr.training.module_data.build_dataset", side_effect=lambda split, *_: datasets[split]):
+                dm.setup("fit")
+
+        assert any("dataset has 2 classes ['', 'dog']" in record.getMessage() for record in caplog.records)
+
+
 class TestSegmentationSupport:
     """DataModule accepts SegmentationTrainConfig without errors."""
 
