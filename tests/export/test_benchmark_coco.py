@@ -195,6 +195,13 @@ class TestSelectCocoValIds:
         assert len(ids) == len(set(ids)) == 10
         assert set(ids) <= set(range(1, 51))
 
+    @pytest.mark.parametrize("n_images", [2.5, True, "3"])
+    def test_non_integer_count_raises(self, tmp_path: Path, n_images: object) -> None:
+        """A float, bool or string count is a type error up front, not a ``TypeError`` from deep inside NumPy."""
+        subset = _write_coco(tmp_path)
+        with pytest.raises(TypeError, match="must be an int"):
+            select_coco_val_ids(subset.annotations_path, n_images)  # type: ignore[arg-type]
+
     @pytest.mark.parametrize("n_images", [0, -1])
     def test_fewer_than_one_image_raises(self, tmp_path: Path, n_images: int) -> None:
         """``0`` would score nothing and ``-1`` would silently select all but one image; both are refused."""
@@ -395,10 +402,15 @@ class TestEvaluateCocoMap:
             evaluate_coco_map(run, subset, progress=False)
         run.assert_not_called()
 
-    def test_summary_is_not_printed(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """COCOeval's 12-line summary stays off the notebook; callers get the numbers from the result."""
-        evaluate_coco_map(_gt_detections, _write_coco(tmp_path), progress=False)
-        assert "Average Precision" not in capsys.readouterr().out
+    def test_summary_is_not_logged(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """COCOeval's 12-line summary stays out of the notebook output; callers get the numbers from the result.
+
+        ``faster_coco_eval`` writes the summary through ``logger.info``, which Jupyter shows, so it is that log the test
+        reads.
+        """
+        with caplog.at_level("INFO"):
+            evaluate_coco_map(_gt_detections, _write_coco(tmp_path), progress=False)
+        assert "Average Precision" not in caplog.text
 
     def test_no_detections_score_zero(self, tmp_path: Path) -> None:
         """A runtime that returns nothing scores 0.0 instead of crashing on an empty result set."""
@@ -411,3 +423,12 @@ class TestEvaluateCocoMap:
             evaluate_coco_map(lambda image: sv.Detections.empty(), _write_coco(tmp_path), progress=False)
         logger.warning.assert_called_once()
         assert "no detections" in logger.warning.call_args.args[0]
+
+    def test_empty_subset_does_not_blame_the_runtime(self, tmp_path: Path) -> None:
+        """With no images to score nothing ran, so the collapsed-logits warning would be misleading."""
+        subset = _write_coco(tmp_path)
+        empty = CocoValSubset(subset.images_dir, subset.annotations_path, ())
+        with mock.patch("rfdetr.export._benchmark.logger") as logger:
+            result = evaluate_coco_map(_gt_detections, empty, progress=False)
+        assert (result.map50_95, result.n_images) == (0.0, 0)
+        logger.warning.assert_not_called()

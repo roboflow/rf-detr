@@ -23,7 +23,6 @@ guarantee across versions. Formerly duplicated per export format (see the remove
 from __future__ import annotations
 
 import gc
-import io
 import json
 import os
 import platform
@@ -33,7 +32,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, redirect_stdout, suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -691,6 +690,7 @@ def select_coco_val_ids(annotations_path: Path, n_images: int | None = 500, seed
         Image IDs: sorted when *n_images* is ``None``, otherwise the first *n_images* of a seeded shuffle.
 
     Raises:
+        TypeError: If *n_images* is not an ``int`` (or ``None``).
         ValueError: If *n_images* is below 1, or exceeds the number of images in the split.
 
     Examples:
@@ -712,7 +712,9 @@ def select_coco_val_ids(annotations_path: Path, n_images: int | None = 500, seed
 
 
 def _check_n_images(n_images: int | None) -> None:
-    """Refuse ``n_images < 1``: ``0`` selects nothing and a negative count would slice from the end of the shuffle."""
+    """Refuse a non-integer or ``< 1`` count: ``0`` selects nothing, a negative one slices from the shuffle's end."""
+    if n_images is not None and (isinstance(n_images, bool) or not isinstance(n_images, int)):
+        raise TypeError(f"n_images must be an int or None; got {n_images!r}.")
     if n_images is not None and n_images < 1:
         raise ValueError(f"n_images must be at least 1, or None for the whole split; got {n_images}.")
 
@@ -854,17 +856,18 @@ def evaluate_coco_map(
             rgb = image.convert("RGB")
         records += _coco_records(run(rgb), image_id, rgb.size, num_select, background_class_id)
     if not records:
-        logger.warning(
-            f"evaluate_coco_map: the runtime produced no detections on any of {len(subset.image_ids)} images, so mAP "
-            "is reported as 0.0. A reduced-precision runtime can collapse the logits; check its precision and decoding."
-        )
+        if subset.image_ids:
+            logger.warning(
+                f"evaluate_coco_map: the runtime produced no detections on any of {len(subset.image_ids)} images, so "
+                "mAP is reported as 0.0. A reduced-precision runtime can collapse the logits; check its precision."
+            )
         return CocoMapResult(map50_95=0.0, map50=0.0, n_images=len(subset.image_ids))
-    evaluator = COCOeval_faster(coco_gt, coco_gt.loadRes(records), "bbox")
+    # print_function: COCOeval logs its 12-line summary through ``logger.info``; only ``stats`` is needed here
+    evaluator = COCOeval_faster(coco_gt, coco_gt.loadRes(records), "bbox", print_function=lambda *_args: None)
     evaluator.params.imgIds = list(subset.image_ids)
     evaluator.evaluate()
     evaluator.accumulate()
-    with redirect_stdout(io.StringIO()):  # summarize() prints 12 lines per call; only ``stats`` is needed
-        evaluator.summarize()
+    evaluator.summarize()
     return CocoMapResult(
         map50_95=float(evaluator.stats[0]), map50=float(evaluator.stats[1]), n_images=len(subset.image_ids)
     )
