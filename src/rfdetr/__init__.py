@@ -44,6 +44,7 @@ if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext, RFDETRInference
 from rfdetr.platform import _PLUS_EXPORTS
+from rfdetr.prediction import PredictionInput
 from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRKeypointPreview,
@@ -64,6 +65,7 @@ from rfdetr.variants import (
 __all__ = [
     "ModelContext",
     "RFDETRInference",
+    "PredictionInput",
     "from_checkpoint",
     "RFDETRKeypointPreview",
     "RFDETRNano",

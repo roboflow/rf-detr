@@ -10,21 +10,21 @@ from __future__ import annotations
 __all__ = ["ModelContext", "RFDETRInference"]
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
-import numpy as np
 import torch
-from PIL import Image
 
-from rfdetr._prediction import PredictionContext, predict
+from rfdetr import _prediction
+from rfdetr._prediction import PredictionContext
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.prediction import PredictionInput
 
 if TYPE_CHECKING:
     from supervision import Detections, KeyPoints
@@ -180,65 +180,99 @@ class RFDETRInference:
             "max_batch_size": context.max_batch_size,
         }
 
-    @torch.inference_mode()
+    @overload
     def predict(
         self,
-        images: str
-        | os.PathLike[str]
-        | Image.Image
-        | np.ndarray[Any, Any]
-        | torch.Tensor
-        | list[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor]
-        | tuple[str | os.PathLike[str] | np.ndarray[Any, Any] | Image.Image | torch.Tensor, ...],
+        images: PredictionInput,
         threshold: float = 0.5,
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
         *,
         antialias: bool | None = None,
-    ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
-        """Run prediction with the shared native and exported inference pipeline.
+        stream: Literal[True],
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+    ) -> Generator[Detections | KeyPoints, None, None]: ...
+
+    @overload
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool | None = None,
+        stream: Literal[False] = False,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints]: ...
+
+    @overload
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool | None = None,
+        stream: bool,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]: ...
+
+    def predict(
+        self,
+        images: PredictionInput,
+        threshold: float = 0.5,
+        shape: tuple[int, int] | None = None,
+        patch_size: int | None = None,
+        include_source_image: bool = True,
+        *,
+        antialias: bool | None = None,
+        stream: bool = False,
+        batch: int = 1,
+        vid_stride: int = 1,
+        stream_buffer: bool = False,
+    ) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
+        """Predict images, video, and live sources through the shared prediction pipeline.
 
         Args:
-            images: A file path, URL string, PIL image, HWC NumPy array, CHW tensor, or list or tuple of those inputs.
-                HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
-                which does not bound the total download time. Redirects are followed, and the whole response body is
-                read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
-                URLs, download and validate the image yourself and pass the decoded image instead.
-            threshold: Minimum confidence score for a prediction.
-            shape: Optional input height and width.
-            patch_size: Advanced override for shape divisibility validation; it does not change the backbone.
-            include_source_image: Include each source image in prediction metadata.
-            antialias: Use antialiasing during image resize. None uses the artifact metadata's resize_antialias
-                for exported sources and False for native sources. An explicit boolean overrides the default;
-                match the checkpoint training resize.
+            images: Any source accepted by :meth:`RFDETR.predict`.
+            threshold: Minimum confidence for a result.
+            shape: Input height and width; exports require their recorded shape.
+            patch_size: Backbone patch size for shape validation.
+            include_source_image: Store RGB source pixels in each result.
+            antialias: Override resize antialiasing. None uses artifact metadata for exports
+                and False for native models.
+            stream: Yield results lazily. Close the generator on early exit.
+            batch: Maximum finite-source batch size. Each batch must satisfy the runtime limits.
+                Fixed-batch exports also reject a short final batch. Use batch-one or dynamic exports for video.
+            vid_stride: Read every Nth video frame.
+            stream_buffer: Queue live frames instead of keeping the latest frame.
 
         Returns:
-            A Supervision prediction object or a list of prediction objects.
-
-        Raises:
-            TypeError: If an unknown prediction keyword is supplied.
-            ValueError: If shape or patch_size is invalid, or the source cannot accept the channel count, batch size
-                or input shape.
-
-        Examples:
-            Skipped when run as a doctest: requires model weights and image files.
-
-            >>> from rfdetr import RFDETRInference, RFDETRSmall  # doctest: +SKIP
-            >>> predictor = RFDETRSmall().inference(compile=False)  # doctest: +SKIP
-            >>> results = predictor.predict(["a.jpg", "b.jpg"], threshold=0.4)  # doctest: +SKIP
-            >>> len(results)  # doctest: +SKIP
-            2
+            A generator with stream enabled, otherwise a scalar image result or a list.
         """
-        context = self._prediction_context()
-        return predict(
-            context,
+        return _prediction.predict(
+            self._prediction_context,
             images,
-            threshold=threshold,
-            shape=shape,
-            patch_size=patch_size,
-            include_source_image=include_source_image,
-            antialias=context.antialias if antialias is None else antialias,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias=antialias,
+            stream=stream,
+            batch=batch,
+            vid_stride=vid_stride,
+            stream_buffer=stream_buffer,
         )
 
 

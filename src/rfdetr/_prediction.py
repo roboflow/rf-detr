@@ -11,7 +11,7 @@ import io
 import operator
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -32,7 +32,9 @@ try:
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
+from rfdetr._prediction_sources import is_expanded_source, iter_source_batches
 from rfdetr.models.postprocess import PostProcess
+from rfdetr.prediction import PredictionInput
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -341,27 +343,103 @@ def _mps_lacks_antialiased_resize() -> bool:
     return match is not None and (int(match.group(1)), int(match.group(2))) < (2, 7)
 
 
-@torch.inference_mode()
 def predict(
-    context: PredictionContext,
-    images: str
-    | os.PathLike[str]
-    | Image.Image
-    | np.ndarray[Any, Any]
-    | torch.Tensor
-    | list[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor]
-    | tuple[str | os.PathLike[str] | Image.Image | np.ndarray[Any, Any] | torch.Tensor, ...],
+    context_factory: Callable[[], PredictionContext],
+    images: PredictionInput,
     threshold: float = 0.5,
     shape: tuple[int, int] | None = None,
     patch_size: int | None = None,
     include_source_image: bool = True,
     *,
-    antialias: bool = False,
+    antialias: bool | None = None,
+    stream: bool = False,
+    batch: int = 1,
+    vid_stride: int = 1,
+    stream_buffer: bool = False,
+) -> Detections | KeyPoints | list[Detections | KeyPoints] | Generator[Detections | KeyPoints, None, None]:
+    """Route both public prediction APIs through the same source and runtime pipeline.
+
+    Args:
+        context_factory: Read current execution rules when an inference batch starts.
+        images: Image data, paths, collections, videos, or live sources.
+        threshold: Minimum confidence for a result.
+        shape: Input height and width.
+        patch_size: Backbone patch size for shape validation.
+        include_source_image: Store source pixels in each result.
+        antialias: Use antialiasing during image resize. Match the checkpoint training resize.
+        stream: Yield results on demand instead of collecting them.
+        batch: Maximum batch size for finite sources.
+        vid_stride: Read every Nth video frame.
+        stream_buffer: Queue live frames instead of retaining the latest frame.
+
+    Returns:
+        A lazy generator, a scalar image result, or a list of results.
+    """
+    for name, value in (("batch", batch), ("vid_stride", vid_stride)):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{name} must be a positive integer.")
+    if not isinstance(stream_buffer, bool):
+        raise ValueError("stream_buffer must be a boolean.")
+    if stream or is_expanded_source(images):
+        results = _predict_stream(
+            context_factory,
+            images,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias=antialias,
+            batch=batch,
+            vid_stride=vid_stride,
+            stream_buffer=stream_buffer,
+            warn_on_live=not stream,
+        )
+        return results if stream else list(results)
+    return _predict_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+
+
+def _predict_stream(
+    context_factory: Callable[[], PredictionContext],
+    images: PredictionInput,
+    threshold: float,
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+    include_source_image: bool,
+    *,
+    antialias: bool | None,
+    batch: int,
+    vid_stride: int,
+    stream_buffer: bool,
+    warn_on_live: bool,
+) -> Generator[Detections | KeyPoints, None, None]:
+    """Predict bounded source batches and release capture on every exit path."""
+    source_batches = iter_source_batches(
+        images, batch=batch, vid_stride=vid_stride, stream_buffer=stream_buffer, warn_on_live=warn_on_live
+    )
+    try:
+        for image_batch in source_batches:
+            results = _predict_batch(
+                context_factory, tuple(image_batch), threshold, shape, patch_size, include_source_image, antialias
+            )
+            yield from cast("list[Detections | KeyPoints]", results)
+    finally:
+        source_batches.close()
+
+
+@torch.inference_mode()
+def _predict_batch(
+    context_factory: Callable[[], PredictionContext],
+    images: PredictionInput,
+    threshold: float,
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+    include_source_image: bool,
+    antialias: bool | None,
 ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
     Args:
-        context: Execution and decoding rules for this call.
+        context_factory: Read execution and decoding rules for this batch.
         images: An image, file path, URL string, or list or tuple of those inputs. PIL and file inputs convert to
             grayscale for one-channel models and RGB for three-channel models; arrays and tensors supply their channels.
         threshold: Minimum confidence for a result.
@@ -378,6 +456,8 @@ def predict(
     if isinstance(images, (list, tuple)) and not images:
         raise ValueError("At least one image is required.")
 
+    context = context_factory()
+    antialias = context.antialias if antialias is None else antialias
     if context.fixed_shape:
         shape = context.default_shape if shape is None else shape
         batch_size = len(images) if isinstance(images, (list, tuple)) else 1

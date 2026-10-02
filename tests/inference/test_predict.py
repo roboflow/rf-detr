@@ -72,7 +72,7 @@ class TestPredictEmptyInputs:
         context = replace(model._prediction_context(), fixed_shape=True, batch_size=None)
 
         with pytest.raises(ValueError, match="^At least one image is required\\.$") as exc_info:
-            _prediction.predict(context, images)
+            _prediction.predict(lambda: context, images)
 
         assert "None" not in str(exc_info.value)
 
@@ -173,7 +173,7 @@ class TestPredictReturnTypes:
         image = np.zeros((28, 28, 3), dtype=np.uint8)
 
         with pytest.raises(TypeError, match="legacy_option"):
-            _prediction.predict(model._prediction_context(), image, legacy_option=True)
+            _prediction.predict(model._prediction_context, image, legacy_option=True)
 
 
 class TestPredictScoreThresholdEquivalence:
@@ -1140,14 +1140,12 @@ class TestPredictUint8Conversion:
 
         assert str(predict_error.value) == str(pillow_error.value)
 
-    @pytest.mark.parametrize("kind", ["missing", "empty", "directory"])
+    @pytest.mark.parametrize("kind", ["missing", "empty"])
     def test_predict_unreadable_local_path_raises_the_error_pillow_raises(self, tmp_path: Path, kind: str) -> None:
         """A path the native route cannot read must fail with the exception Pillow raises for that same path."""
         image_path = tmp_path / f"{kind}.png"
         if kind == "empty":
             image_path.write_bytes(b"")
-        elif kind == "directory":
-            image_path.mkdir()
         with pytest.raises(OSError) as pillow_error:
             PIL.Image.open(str(image_path))
 
@@ -2073,8 +2071,9 @@ class TestPredictResizeMatchesTrainingInterpolation:
             pytest.param({"antialias": True}, True, id="opt-in"),
         ],
     )
+    @pytest.mark.parametrize("stream", [False, True])
     def test_predict_resize_antialias_flag(
-        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool
+        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool, stream: bool
     ) -> None:
         """``predict()`` passes the requested ``antialias`` flag to ``F.resize``; the default is ``False``."""
         native_model = _DummyRFDETR()
@@ -2082,7 +2081,7 @@ class TestPredictResizeMatchesTrainingInterpolation:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
         with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img, **predict_kwargs)
+            list(model.predict([img], stream=stream, **predict_kwargs))
 
         assert mock_resize.call_args.kwargs.get("antialias") is expected_antialias, (
             "predict() must resize with antialias=False by default (the #1203 contract: the antialias-free "
@@ -2640,7 +2639,7 @@ class TestPredictClassNameData:
         context.class_id_to_name.update({1: "chat", 90: "brosse à dents"})
 
         img = PIL.Image.new("RGB", (28, 28))
-        detections = _prediction.predict(context, img)
+        detections = _prediction.predict(lambda: context, img)
 
         assert detections.data["class_name"][0] == "brosse à dents", (
             "An explicit class_id_to_name entry must override the background sentinel"
