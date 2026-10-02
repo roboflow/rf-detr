@@ -105,7 +105,7 @@ def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
 
     Args:
         image: A ``(H, W)`` grayscale or ``(H, W, C)`` HWC ``uint8`` array without negative strides, which
-            ``torch.from_numpy`` rejects.
+            ``torch.from_numpy`` rejects. :meth:`RFDETR.predict` copies such arrays before calling this.
 
     Returns:
         A ``(C, H, W)`` ``uint8`` tensor sharing *image*'s storage.
