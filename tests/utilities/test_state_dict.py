@@ -516,7 +516,7 @@ class TestStripCheckpoint:
         assert result["rfdetr_version"] == "override"
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
-    def test_strip_keeps_the_mode_torch_save_gave_the_file(self, tmp_path) -> None:
+    def test_strip_keeps_the_mode_torch_save_gave_the_file(self, tmp_path: Path) -> None:
         """The stripped checkpoint stays readable by others instead of taking the rewrite's ``0o600`` temp mode."""
         previous_umask = os.umask(0o022)
         try:
