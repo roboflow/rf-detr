@@ -158,8 +158,12 @@ class TestExportOnnxNotes:
     def test_notes_are_embedded_when_onnx_was_installed_after_the_module_loaded(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Notes still reach the file when the exporter module bound ``onnx`` before the install (a notebook retry)."""
-        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None)
+        """Notes still reach the file when a module-level ``onnx`` was bound before the install (a notebook retry).
+
+        The exporter module used to bind ``onnx`` at import, to ``None`` without the package; the planted binding keeps
+        the guard should one come back.
+        """
+        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None, raising=False)
         output_file = _export_tiny_model(tmp_path, notes={"run": 1})
 
         meta = {prop.key: prop.value for prop in onnx.load(output_file).metadata_props}

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from rfdetr.export._naming import resolve_export_stem
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import BATCH_AXIS, ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -47,9 +48,9 @@ logger = get_logger()
 #: importing proves nothing about it either way.
 _IS_TENSORRT_AVAILABLE = is_installed("tensorrt")
 
-# polygraphy ships in the ``rfdetr[tensorrt]`` extra alongside ``tensorrt``, and without it in ``rfdetr[onnx]`` (and
-# ``rfdetr[tflite]`` on Python 3.12). Import it lazily at module scope (guarded) so importing this module never fails
-# on hosts without TensorRT, and so tests can monkeypatch these names without polygraphy installed.
+# polygraphy ships in the ``rfdetr[tensorrt]`` extra alongside ``tensorrt``, but it declares no requirements, so it
+# also installs without it. Import it lazily at module scope (guarded) so importing this module never fails on hosts
+# without TensorRT, and so tests can monkeypatch these names without polygraphy installed.
 try:
     from polygraphy.backend.trt import (
         CreateConfig,
@@ -750,7 +751,7 @@ class TensorRTConfig(ExportConfig):
     opt_batch_size: int = 1
     max_batch_size: int | None = None
 
-    def onnx_stage(self) -> Any:
+    def onnx_stage(self) -> OnnxConfig:
         """Return the configuration for the ONNX export this format builds from.
 
         Returns:
@@ -760,8 +761,6 @@ class TensorRTConfig(ExportConfig):
             >>> TensorRTConfig(fp16=False).onnx_stage().opset_version
             17
         """
-        from rfdetr.export._onnx.exporter import OnnxConfig
-
         return OnnxConfig.derive(self, opset_version=self.opset_version)
 
 
@@ -853,8 +852,6 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         Raises:
             ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, before the ONNX export runs.
         """
-        from rfdetr.export._onnx.exporter import OnnxExporter
-
         # Exporter.__call__ has already run check_dependencies; this repeats its TensorRT half for a caller of _convert
         # itself, which would otherwise learn of a missing TensorRT only from build_engine, after the ONNX export.
         self._require_tensorrt()
@@ -966,8 +963,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     def _require_tensorrt(cls) -> None:
         """Fail early when the ``rfdetr[tensorrt]`` extra is missing.
 
-        The message names only the package that is actually absent: ``rfdetr[onnx]`` installs polygraphy alone, so a
-        host can be missing either one, and naming both would send the reader looking for an install that is there.
+        The message names only the package that is actually absent: polygraphy installs without ``tensorrt``, so a host
+        can be missing either one, and naming both would send the reader looking for an install that is there.
 
         Raises:
             ImportError: If ``tensorrt`` or ``polygraphy`` is not installed.

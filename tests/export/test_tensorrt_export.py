@@ -598,11 +598,11 @@ class TestTensorRTAvailability:
     ) -> None:
         """Each flag answers for its own package, so a refusal can name the one that is actually missing.
 
-        Polygraphy imports ``tensorrt`` lazily, so its own import succeeds without it — and ``rfdetr[onnx]`` installs it
-        alone. A bare ``tensorrt/`` directory, such as an export folder named after the format, is importable as a
-        namespace package but is no install either. The exporter source is executed under a private module name, with
-        only *tmp_path* searched for ``tensorrt``, so a real TensorRT on the host cannot answer and the real module
-        keeps its identity for the other tests.
+        Polygraphy imports ``tensorrt`` lazily, so its own import succeeds without it — and it installs without it too.
+        A bare ``tensorrt/`` directory, such as an export folder named after the format, is importable as a namespace
+        package but is no install either. The exporter source is executed under a private module name, with only
+        *tmp_path* searched for ``tensorrt``, so a real TensorRT on the host cannot answer and the real module keeps its
+        identity for the other tests.
         """
         if tensorrt_layout != "absent":
             (tmp_path / "tensorrt").mkdir()
@@ -635,8 +635,8 @@ class TestTensorRTAvailability:
     def test_the_refusal_names_only_the_missing_package(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A host with TensorRT but no polygraphy is told about polygraphy alone.
 
-        ``rfdetr[onnx]`` installs polygraphy without TensorRT, and a lean TensorRT install is the mirror case, so a
-        message naming both packages sends the reader hunting for an install that is already there.
+        polygraphy installs without TensorRT, and a lean TensorRT install is the mirror case, so a message naming both
+        packages sends the reader hunting for an install that is already there.
         """
         monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
         monkeypatch.setattr(tensorrt_export, "_IS_POLYGRAPHY_AVAILABLE", False)

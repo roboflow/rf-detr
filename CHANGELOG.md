@@ -33,6 +33,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.export(format="tensorrt", dynamic_batch=True)` accepts a numpy integer `batch_size`. TensorRT's optimization-profile check refused one because it is not a Python `int`. ([#1556](https://github.com/roboflow/rf-detr/pull/1556))
 
+### Removed
+
+- `rfdetr[onnx]` no longer installs `onnxsim`, `onnx_graphsurgeon` or `polygraphy`, and `rfdetr[tflite]` no longer installs `polygraphy`. ONNX export and ONNX Runtime inference have not used them since graph simplification was removed ([#861](https://github.com/roboflow/rf-detr/pull/861), [#1102](https://github.com/roboflow/rf-detr/pull/1102)); the ONNX exporter imported them only for the graph optimizer left behind in `rfdetr.export._onnx`, which nothing called, and that optimizer is removed too. If you exported to TensorRT with `rfdetr[onnx]` or `rfdetr[tflite]` and a separately installed `tensorrt`, install `polygraphy` yourself (it has no dependencies) or use `rfdetr[tensorrt]`. If you exported to TFLite with `rfdetr[onnx]` and a separately installed `onnx2tf`, install `onnx_graphsurgeon` yourself, or use `rfdetr[tflite]` on Python 3.12, the only version it installs on: without `onnx_graphsurgeon` the export skips its GridSample rewrite and only warns that the `.tflite` may produce incorrect scores; that warning now names `pip install onnx_graphsurgeon` rather than `rfdetr[tflite]` alone. ([#1588](https://github.com/roboflow/rf-detr/issues/1588))
+
+- The private, unused `rfdetr.export._onnx.OnnxOptimizer`, `rfdetr.export._onnx.exporter.onnx_simplify` and the `rfdetr.export._onnx.symbolic` module (`CustomOpSymbolicRegistry`, `register_optimizer`). Importing `rfdetr.export._onnx` no longer imports its submodules; import `rfdetr.export._onnx.exporter` directly. ([#1588](https://github.com/roboflow/rf-detr/issues/1588))
+
 ### Fixed
 
 - Keypoint pipelines composed from `Sequential`, `OneOf`, and `SomeOf` Albumentations containers now swap paired joint identities only after an odd number of applied horizontal flips, including repeated selection by `SomeOf(replace=True)`. Trees containing any container type outside that recognised set -- programmatic containers such as `OneOrOther`, subclasses of the recognised container classes, and any other unknown container -- fall back to replay-based handling, which cannot distinguish repeated draws of the same child. ([#1569](https://github.com/roboflow/rf-detr/pull/1569))
