@@ -55,7 +55,25 @@ This wraps the live model without copying its weights. Each prediction reads the
 
 The public constructor supports ONNX, TensorRT (`.trt` and `.engine`), TFLite, LiteRT, ExecuTorch, OpenVINO, native CoreML, Core AI, and native `.pth`/`.pt`/`.ckpt` checkpoints. Install the runtime package for the format on the target system. LiteRT currently cannot export a full keypoint model. Backbone-only exports contain features rather than predictions and are not supported by this prediction API.
 
-Pass a list to `predict()` to return one result per image. Each call runs the list as one batch. A fixed-shape export must accept that batch size and input shape. If it does not, `predict()` raises before runtime execution. It does not split or pad the list.
+Pass an image-only list to `predict()` to return one result per image. With `stream=False`, the list runs as one batch. A fixed-shape export must accept that batch size and input shape. If it does not, `predict()` raises before runtime execution. It does not split or pad the list.
+
+Both `RFDETR.predict()` and `RFDETRInference.predict()` use the same source pipeline. They accept video paths, HTTP video URLs, webcams, RTSP, YouTube, directories, globs, and manifests. Install `rfdetr[stream]` for the optional source dependencies.
+
+```python
+from rfdetr import RFDETRInference
+
+model = RFDETRInference("output/inference_model.onnx", device="cpu")
+results = model.predict("video.mp4", stream=True, batch=1, vid_stride=2)
+try:
+    for detections in results:
+        frame = detections.metadata["source_image"]  # RGB pixels for Supervision annotations.
+finally:
+    results.close()
+```
+
+`stream=True` yields one result per frame and keeps memory bounded unless the caller retains results. `stream_buffer=False` keeps the latest live frame; `True` queues frames in a bounded buffer. Close the generator on early exit to release capture.
+
+Every inference batch must satisfy the export's shape and batch limits. Use a batch-one export for arbitrary-length video, or a dynamic-batch export to accept a short final batch. A fixed-batch export rejects a short final batch. A `.streams` manifest sends one frame per source as one batch, which must also fit the export.
 
 `runtime_info` reports the selected runtime and device policy. Some vendor runtimes choose a physical device after model load, so the policy might not identify one chip. An explicit device request must match the runtime and available hardware. For example, TensorRT requires CUDA. Core AI accepts `auto` or `cpu`; its GPU and Neural Engine options express a preference and cannot pin execution to that device.
 

@@ -20,6 +20,8 @@ from rfdetr.detr import RFDETR
 from rfdetr.inference import RFDETRInference
 from rfdetr.variants import RFDETRNano
 
+from .helpers import _DummyModel, _DummyRFDETR
+
 
 @pytest.fixture
 def nano_model() -> RFDETRNano:
@@ -61,6 +63,28 @@ class TestLiveModelDevicePolicy:
 
 class TestLiveModelSource:
     """Exercise live model behavior through the inference API."""
+
+    @pytest.mark.parametrize("use_facade", [False, True])
+    def test_stream_reads_current_native_state_between_batches(self, use_facade: bool) -> None:
+        """Both APIs refresh borrowed state lazily without leaking inference mode to the caller."""
+        native = _DummyRFDETR()
+        native.model = _DummyModel(class_names=["cat"], labels=[0])
+        predictor = RFDETRInference(native) if use_facade else native
+        images = np.zeros((24, 32, 3), dtype=np.uint8)
+        results = predictor.predict([images, images], stream=True)
+        native.model.class_names = ["dog"]
+        try:
+            first = next(results)
+            assert list(first.data["class_name"]) == ["dog"]
+            assert not torch.is_inference_mode_enabled()
+            native.model = _DummyModel(class_names=["owl"], labels=[0])
+            second = next(results)
+            assert list(second.data["class_name"]) == ["owl"]
+            assert not torch.is_inference_mode_enabled()
+            with pytest.raises(StopIteration):
+                next(results)
+        finally:
+            results.close()
 
     def test_live_model_prediction_uses_current_model_and_labels(
         self,
