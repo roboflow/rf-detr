@@ -2077,19 +2077,15 @@ class TestSaveTrainingConfig:
         assert _count_config_write_warnings(caplog.records) == 1
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
-    def test_training_config_json_mode_follows_umask(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
+    def test_training_config_json_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
         """training_config.json gets the mode ``open()`` would give it, not the temp file's owner-only ``0o600``."""
         output_dir = tmp_path / "out"
-        previous_umask = os.umask(0o022)
-        try:
-            _save_training_config(
-                _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
-            )
-        finally:
-            os.umask(previous_umask)
-        assert stat.S_IMODE((output_dir / "training_config.json").stat().st_mode) == 0o644
+        _save_training_config(_make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"])
+        assert stat.S_IMODE((output_dir / "training_config.json").stat().st_mode) == 0o666 & ~process_umask
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.usefixtures("process_umask")  # the default 0o022, so both modes differ from a fresh file's 0o644
     @pytest.mark.parametrize("mode", [0o600, 0o640], ids=oct)
     def test_rewritten_training_config_json_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:
         """Rewriting training_config.json keeps the earlier copy's permission bits, as ``open()`` would."""
@@ -2098,13 +2094,7 @@ class TestSaveTrainingConfig:
         config_path = output_dir / "training_config.json"
         config_path.write_text("{}")
         config_path.chmod(mode)
-        previous_umask = os.umask(0o022)
-        try:
-            _save_training_config(
-                _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
-            )
-        finally:
-            os.umask(previous_umask)
+        _save_training_config(_make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"])
         # The content check guards against a swallowed write failure leaving the old file, and its mode, untouched.
         rewritten = _read_training_config(str(config_path))
         assert (rewritten["class_names"], stat.S_IMODE(config_path.stat().st_mode)) == (["cat"], mode)
@@ -2124,9 +2114,12 @@ class TestSaveTrainingConfig:
         prior_payload = {"marker": "prior-good-copy", "run": 1}
         config_path.write_text(json.dumps(prior_payload))
         real_fdopen = os.fdopen
+        test_thread = threading.current_thread()
 
         def _torn_temporary_file(*args: Any, **kwargs: Any) -> Any:
             handle = real_fdopen(*args, **kwargs)
+            if threading.current_thread() is not test_thread:
+                return handle  # The patch is process-wide; only the save under test gets the torn write.
             real_write = handle.write
 
             def _torn_write(data: str) -> int:
@@ -2186,20 +2179,18 @@ class TestSaveTrainingConfig:
 
         def _writer_a() -> None:
             try:
-                with patch("os.fdopen", side_effect=_paced_temporary_file):
-                    _save_training_config(
-                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_a
-                    )
+                _save_training_config(
+                    _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_a
+                )
             except BaseException as exc:
                 errors.append(exc)
 
         def _writer_b() -> None:
             try:
                 assert a_paused.wait(timeout=5), "writer a did not pause in time"
-                with patch("os.fdopen", side_effect=_paced_temporary_file):
-                    _save_training_config(
-                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_b
-                    )
+                _save_training_config(
+                    _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_b
+                )
             except BaseException as exc:
                 errors.append(exc)
             finally:
@@ -2207,10 +2198,14 @@ class TestSaveTrainingConfig:
 
         thread_a = threading.Thread(target=_writer_a, name="writer-a")
         thread_b = threading.Thread(target=_writer_b, name="writer-b")
-        thread_a.start()
-        thread_b.start()
-        thread_a.join(timeout=10)
-        thread_b.join(timeout=10)
+        # One patch, entered and left by this thread around both writers' whole lifetime: entering and leaving it from
+        # each writer would nest it across threads, and an out-of-order exit would restore the wrong os.fdopen. The
+        # thread-name check in _paced_temporary_file keeps the pacing to writer "a".
+        with patch("os.fdopen", side_effect=_paced_temporary_file):
+            thread_a.start()
+            thread_b.start()
+            thread_a.join(timeout=10)
+            thread_b.join(timeout=10)
 
         assert not thread_a.is_alive(), "writer a did not finish in time"
         assert not thread_b.is_alive(), "writer b did not finish in time"
