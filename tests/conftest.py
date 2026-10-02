@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Generator
@@ -52,6 +53,30 @@ def _prewarm_dinov2_cache() -> None:
 def reset_random_seeds() -> None:
     """Reset all RNG sources before every test for reproducibility."""
     seed_all()
+
+
+@pytest.fixture
+def process_umask(request: pytest.FixtureRequest) -> Generator[int, None, None]:
+    """Set the process umask for one test and restore the previous one afterwards, even if the test fails.
+
+    Defaults to ``0o022``; parametrize indirectly to pick another value. Yields the umask in effect.
+
+    Examples:
+        A fixture, so this is documentation rather than a doctest:
+
+        ```python
+        @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
+        def test_new_file_mode(tmp_path: Path, process_umask: int) -> None:
+            (tmp_path / "file").touch()
+            assert stat.S_IMODE((tmp_path / "file").stat().st_mode) == 0o666 & ~process_umask
+        ```
+    """
+    umask = getattr(request, "param", 0o022)
+    previous_umask = os.umask(umask)
+    try:
+        yield umask
+    finally:
+        os.umask(previous_umask)
 
 
 def sparsify_category_ids(annotations_path: Path) -> None:
