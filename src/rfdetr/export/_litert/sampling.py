@@ -19,15 +19,13 @@ from contextlib import contextmanager
 
 import torch
 import torch.nn.functional as F  # noqa: N812
-from torch import Tensor
+from torch import Tensor, nn
 
-import rfdetr.models.ops.functions.ms_deform_attn_func as deform_attention
+from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _bilinear_grid_sample
 
-# float32 represents every integer below 2**24 exactly, so a pixel-row index below it survives the float arithmetic.
+#: float32 represents every integer below 2**24 exactly, so a pixel-row index below it survives the float arithmetic.
 _EXACT_FLOAT32_INTEGERS = 2**24
-# The module-level name that ms_deform_attn_core_pytorch looks up at call time.
-_DEFORMABLE_SAMPLER = "_bilinear_grid_sample"
 
 
 def pixel_row_grid_sample(
@@ -48,6 +46,9 @@ def pixel_row_grid_sample(
         padding_mode: Only ``"zeros"`` takes the pixel-row path. Other modes use the default sampler.
         align_corners: Only ``False`` takes the pixel-row path. ``True`` uses the default sampler.
 
+    The index arithmetic is exact only in float32, so other dtypes, and maps with ``2**24`` or more padded pixels,
+    also use the default sampler.
+
     Returns:
         Sampled tensor of shape ``(N, C, Hg, Wg)``.
 
@@ -59,7 +60,14 @@ def pixel_row_grid_sample(
     """
     batch, channels, height, width = input.shape
     padded_height, padded_width = height + 2, width + 2
-    if padding_mode != "zeros" or align_corners or batch * padded_height * padded_width >= _EXACT_FLOAT32_INTEGERS:
+    takes_pixel_rows = (
+        padding_mode == "zeros"
+        and not align_corners
+        and input.dtype == torch.float32
+        and grid.dtype == torch.float32
+        and batch * padded_height * padded_width < _EXACT_FLOAT32_INTEGERS
+    )
+    if not takes_pixel_rows:
         return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
 
     grid_height, grid_width = grid.shape[1], grid.shape[2]
@@ -79,6 +87,15 @@ def pixel_row_grid_sample(
     ).reshape(batch, 1, 1)
 
     def corner(row: Tensor, column: Tensor) -> Tensor:
+        """Read the padded pixel at each sample point's corner.
+
+        Args:
+            row: Padded row coordinate of the corner for each sample point, integer-valued, ``(N, Hg, Wg)``.
+            column: Padded column coordinate of the corner for each sample point, integer-valued, ``(N, Hg, Wg)``.
+
+        Returns:
+            The corner values in channels-last layout, ``(N, Hg, Wg, C)``.
+        """
         index = (image_offsets + row * padded_width + column).reshape(-1).to(torch.int32)
         return F.embedding(index, pixel_rows).reshape(batch, grid_height, grid_width, channels)
 
@@ -92,23 +109,33 @@ def pixel_row_grid_sample(
 
 
 @contextmanager
-def pixel_row_sampling() -> Iterator[None]:
-    """Make the deformable attention sample with :func:`pixel_row_grid_sample` inside the ``with`` block.
+def pixel_row_sampling(model: nn.Module) -> Iterator[None]:
+    """Make the deformable attention of *model* sample with :func:`pixel_row_grid_sample` inside the ``with`` block.
 
-    The swap is process-wide for the duration of the block, so the LiteRT exporter holds it only around the capture.
-    The segmentation head imports its own reference to the default sampler and is not affected.
+    Only the :class:`~rfdetr.models.ops.modules.ms_deform_attn.MSDeformAttn` instances of *model* change, so other
+    models, such as the live model behind a concurrent ``predict()``, keep the default sampler. On exit each instance
+    gets back the sampler it had before.
+
+    Args:
+        model: The model the LiteRT exporter captures.
 
     Examples:
-        >>> original = deform_attention._bilinear_grid_sample
-        >>> with pixel_row_sampling():
-        ...     deform_attention._bilinear_grid_sample is pixel_row_grid_sample
+        >>> attention = MSDeformAttn(d_model=16, n_levels=1, n_heads=2, n_points=2)
+        >>> with pixel_row_sampling(attention):
+        ...     attention.grid_sample is pixel_row_grid_sample
         True
-        >>> deform_attention._bilinear_grid_sample is original
-        True
+        >>> attention.grid_sample is pixel_row_grid_sample
+        False
     """
-    original = getattr(deform_attention, _DEFORMABLE_SAMPLER)
-    setattr(deform_attention, _DEFORMABLE_SAMPLER, pixel_row_grid_sample)
+    attentions = [module for module in model.modules() if isinstance(module, MSDeformAttn)]
+    overrides = [attention.__dict__.get("grid_sample") for attention in attentions]
+    for attention in attentions:
+        attention.grid_sample = pixel_row_grid_sample
     try:
         yield
     finally:
-        setattr(deform_attention, _DEFORMABLE_SAMPLER, original)
+        for attention, override in zip(attentions, overrides):
+            if override is None:
+                del attention.grid_sample
+            else:
+                attention.grid_sample = override

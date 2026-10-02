@@ -252,7 +252,7 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
             RuntimeError: If ``torch.export`` capture, lowering, or writing the file otherwise fails.
         """
         try:
-            with torch.no_grad(), pixel_row_sampling():
+            with torch.no_grad(), pixel_row_sampling(wrapped_model):
                 edge_model = litert_torch.convert(wrapped_model, (input_tensors,))
                 edge_model.export(str(output_file))
         except (ImportError, NotImplementedError, TypeError):
