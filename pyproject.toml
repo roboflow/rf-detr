@@ -211,6 +211,13 @@ visual = [
     "seaborn",
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
+demo = [
+    "av>=12",
+    "opencv-python-headless>=4.10,<5",
+    "Pillow>=10",
+    "streamlit>=1.36,<2",
+    "streamlit-webrtc>=0.47,<1",
+]
 plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
 # XLA backend for TPU training AND hardware-free XLA validation on CPU/GPU PJRT.
 # torch_xla is built on top of torch (NOT mutually exclusive — it requires torch present) and its
