@@ -39,16 +39,16 @@ The `export()` method accepts several parameters to customize the export process
 
 What each format supports, as declared by its exporter. Parameters a format does not use are ignored with a warning.
 
-| Format       | Extra                | `dynamic_batch`           | Embeds `notes` | Experimental |
-| ------------ | -------------------- | ------------------------- | -------------- | ------------ |
-| `onnx`       | `rfdetr[onnx]`       | yes                       | yes            | no           |
-| `tensorrt`   | `rfdetr[tensorrt]`   | yes                       | yes            | no           |
-| `tflite`     | `rfdetr[tflite]`     | no                        | yes            | yes          |
-| `openvino`   | `rfdetr[openvino]`   | no                        | no             | no           |
-| `executorch` | `rfdetr[executorch]` | no                        | no             | yes          |
-| `litert`     | `rfdetr[litert]`     | no                        | no             | yes          |
-| `coreml`     | `rfdetr[coreml]`     | no                        | no             | yes          |
-| `coreai`     | `rfdetr[coreai]`     | no                        | yes            | yes          |
+| Format       | Extra                | `dynamic_batch` | Embeds `notes` | Experimental |
+| ------------ | -------------------- | --------------- | -------------- | ------------ |
+| `onnx`       | `rfdetr[onnx]`       | yes             | yes            | no           |
+| `tensorrt`   | `rfdetr[tensorrt]`   | yes             | yes            | no           |
+| `tflite`     | `rfdetr[tflite]`     | no              | yes            | yes          |
+| `openvino`   | `rfdetr[openvino]`   | no              | no             | no           |
+| `executorch` | `rfdetr[executorch]` | no              | no             | yes          |
+| `litert`     | `rfdetr[litert]`     | no              | no             | yes          |
+| `coreml`     | `rfdetr[coreml]`     | no              | no             | yes          |
+| `coreai`     | `rfdetr[coreai]`     | no              | yes            | yes          |
 
 For a format without dynamic batch, export one artifact per batch size.
 
