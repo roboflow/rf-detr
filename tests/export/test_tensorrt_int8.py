@@ -236,6 +236,7 @@ class TestInt8Request:
             pytest.param(torch.zeros(1, 3, 8, 8), id="tensor"),
             pytest.param(np.zeros((3, 8, 8), np.float32), id="rank-3"),
             pytest.param(np.zeros((1, 3, 8, 8), np.uint8), id="uint8"),
+            pytest.param(np.zeros((0, 3, 8, 8), np.float32), id="empty"),
         ],
     )
     def test_unusable_calibration_data_is_refused(self, data: object) -> None:
@@ -263,7 +264,7 @@ class TestInt8Host:
         with pytest.raises(ImportError, match="onnxruntime"):
             TensorRTExporter._require_int8_host()
 
-    @pytest.mark.parametrize("version", ["8.6.1", "9.3.0.post12.dev1"])
+    @pytest.mark.parametrize("version", ["8.6.1", "9.3.0.post12.dev1", "unknown"])
     def test_old_tensorrt_is_refused(self, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
         monkeypatch.setattr(tensorrt_export, "_IS_ONNXRUNTIME_AVAILABLE", True)
         monkeypatch.setitem(sys.modules, "tensorrt", types.SimpleNamespace(__version__=version))
@@ -295,6 +296,35 @@ class TestInt8Host:
         config = TensorRTConfig(quantization="int8", calibration_data=missing)
         with pytest.raises(ValueError, match="does not exist"):
             TensorRTExporter(config)._convert(_export_graph())
+
+    @pytest.mark.parametrize(
+        ("name", "content", "message"),
+        [
+            pytest.param("raw.npy", np.zeros((1, 3, 8, 8), np.uint8), "preprocessed", id="uint8-npy"),
+            pytest.param("image.npy", np.zeros((3, 8, 8), np.float32), "preprocessed", id="rank-3-npy"),
+            pytest.param("empty.npy", np.zeros((0, 3, 8, 8), np.float32), "at least one image", id="no-image-npy"),
+            pytest.param("broken.npy", b"", "could not read", id="unreadable-npy"),
+            pytest.param("notes.txt", b"not an array", "file to be a .npy array", id="not-npy"),
+        ],
+    )
+    def test_unusable_calibration_file_is_refused_before_the_onnx_export(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, content: np.ndarray | bytes, message: str
+    ) -> None:
+        monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
+        monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", lambda *_: pytest.fail("ONNX export ran"))
+        path = tmp_path / name
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            np.save(path, content)
+        with pytest.raises(ValueError, match=message):
+            TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=path))._convert(_export_graph())
+
+    def test_preprocessed_npy_is_accepted(self, tmp_path: Path) -> None:
+        path = tmp_path / "images.npy"
+        np.save(path, np.zeros((2, 3, 8, 8), np.float32))
+        TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=path))._require_calibration_path()
 
     def test_build_engine_refuses_a_missing_calibration_path_before_calibrating(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -389,14 +419,44 @@ class TestPlanInt8:
         )
         assert batched == [("context", 0), ("context", 1), ("scores", 0), ("scores", 1)]
 
-    @pytest.mark.parametrize(("sequence", "head_size"), [(8, 8), (8, 128), (513, 16)])
-    def test_attention_the_int8_kernel_cannot_fuse_stays_float(self, sequence: int, head_size: int) -> None:
+    @pytest.mark.parametrize(("sequence", "head_size"), [(8, 8), (8, 128), (326, 16)])
+    def test_attention_outside_the_int8_shapes_stays_float(self, sequence: int, head_size: int) -> None:
         plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=sequence, head_size=head_size))
         assert _names(plan) == ["fc1/MatMul", "fc2/MatMul"]
         assert [name for name, _ in plan.activations] == list(plan.weighted)
 
-    def test_fusable_boundary_is_quantized_whole(self) -> None:
-        plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=512, head_size=32))
+    def test_backbone_attention_left_float_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        messages: list[str] = []
+        monkeypatch.setattr(quantize.logger, "info", messages.append)
+        quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=326, head_size=16))
+        assert [m for m in messages if "stay FP16" in m] != []
+
+    def test_decoder_attention_left_float_is_not_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        messages: list[str] = []
+        monkeypatch.setattr(quantize.logger, "info", messages.append)
+        quantize.plan_int8(_attention_and_mlp(DECODER, sequence=326, head_size=16))
+        assert [m for m in messages if "stay FP16" in m] == []
+
+    def test_attention_left_float_for_its_projections_is_not_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # FP16 because its output projection is outside the quantized regions, not because the kernel cannot fuse it.
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        for node in model.graph.node:
+            if node.name.endswith("o/MatMul"):
+                node.name = f"{HEAD}o/MatMul"
+        messages: list[str] = []
+        monkeypatch.setattr(quantize.logger, "info", messages.append)
+        quantize.plan_int8(model)
+        assert [m for m in messages if "stay FP16" in m] == []
+
+    def test_attention_sharing_a_name_stays_float(self) -> None:
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        for node in model.graph.node:
+            if node.name.endswith("context/MatMul"):
+                node.name = f"{BACKBONE}scores/MatMul"
+        assert _names(quantize.plan_int8(model)) == ["fc1/MatMul", "fc2/MatMul"]
+
+    def test_token_limit_is_quantized_whole(self) -> None:
+        plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=325, head_size=32))
         assert sum("/scores/" in name for name, _ in plan.activations) == 2
 
     @pytest.mark.parametrize("op", ["Div", "Add"])
@@ -452,6 +512,33 @@ class TestPlanInt8:
         plan = quantize.plan_int8(_attention_and_mlp(DECODER, sequence=8, head_size=16))
         assert _names(plan) == ["fc1/MatMul", "fc2/MatMul"]
 
+    @pytest.mark.parametrize(
+        ("channels", "group", "quantized"),
+        [
+            pytest.param(3, 1, False, id="rgb"),
+            pytest.param(48, 1, False, id="48-channels"),
+            pytest.param(32, 32, True, id="depthwise-32"),
+        ],
+    )
+    def test_convolution_is_quantized_only_on_a_multiple_of_32_channels(
+        self, channels: int, group: int, quantized: bool
+    ) -> None:
+        graph = helper.make_graph(
+            [
+                helper.make_node("Conv", ["image", "first"], ["features"], f"{BACKBONE}patch/Conv", group=group),
+                helper.make_node("Conv", ["features", "mix"], ["mixed"], f"{BACKBONE}mix/Conv"),
+            ],
+            "convs",
+            [helper.make_tensor_value_info("image", TensorProto.FLOAT, [1, channels, 8, 8])],
+            [helper.make_tensor_value_info("mixed", TensorProto.FLOAT, [1, 16, 8, 8])],
+            [
+                numpy_helper.from_array(np.ones((32, channels // group, 1, 1), np.float32), "first"),
+                numpy_helper.from_array(np.ones((16, 32, 1, 1), np.float32), "mix"),
+            ],
+        )
+        plan = quantize.plan_int8(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]))
+        assert ("patch/Conv" in _names(plan)) == quantized
+
     def test_heads_are_left_float(self) -> None:
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, second_mlp_prefix=HEAD)
         assert "fc2/MatMul" not in _names(quantize.plan_int8(model))
@@ -489,6 +576,64 @@ class TestInsertQdq:
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, dtype=np.float16)
         quantize.insert_qdq(model, plan, dict.fromkeys(plan.activations, 2.0))
         return model, plan
+
+    @pytest.fixture
+    def ranged(self) -> tuple[Any, quantize.Int8Plan, dict[str, float]]:
+        """Like ``quantized``, but each activation tensor has its own range; also returns tensor -> range."""
+        plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=8, head_size=16))
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, dtype=np.float16)
+        tensors = sorted({quantize._input_tensor(model.graph, *key) for key in plan.activations})
+        by_tensor = {tensor: 0.5 * (index + 1) for index, tensor in enumerate(tensors)}
+        ranges = {key: by_tensor[quantize._input_tensor(model.graph, *key)] for key in plan.activations}
+        quantize.insert_qdq(model, plan, ranges)
+        return model, plan, by_tensor
+
+    def test_every_planned_input_reads_a_dequantize(self, ranged: tuple[Any, quantize.Int8Plan, dict]) -> None:
+        model, plan, _ = ranged
+        producer = {output: node for node in model.graph.node for output in node.output}
+        by_name = {node.name: node for node in model.graph.node}
+        read = [producer[by_name[name].input[index]].op_type for name, index in plan.activations]
+        read += [producer[by_name[name].input[1]].op_type for name in plan.weighted]
+        assert set(read) == {"DequantizeLinear"}
+
+    def test_activation_scale_is_its_range_over_127(self, ranged: tuple[Any, quantize.Int8Plan, dict]) -> None:
+        model, plan, by_tensor = ranged
+        producer = {output: node for node in model.graph.node for output in node.output}
+        by_name = {node.name: node for node in model.graph.node}
+        inits = {init.name: numpy_helper.to_array(init) for init in model.graph.initializer}
+        found = {}
+        for name, index in plan.activations:
+            dequantize = producer[by_name[name].input[index]]
+            quantize_node = producer[dequantize.input[0]]
+            found[quantize_node.input[0]] = (float(inits[quantize_node.input[1]]), float(inits[dequantize.input[1]]))
+        expected = {t: (float(np.float16(r / 127)),) * 2 for t, r in by_tensor.items()}
+        assert found == expected
+
+    def test_activation_zero_point_is_int8_zero(self, ranged: tuple[Any, quantize.Int8Plan, dict]) -> None:
+        model, _, _ = ranged
+        inits = {init.name: numpy_helper.to_array(init) for init in model.graph.initializer}
+        points = {
+            node.input[2] for node in model.graph.node if node.op_type == "QuantizeLinear" and len(node.input) > 2
+        }
+        assert {(inits[name].dtype, int(inits[name])) for name in points} == {(np.dtype(np.int8), 0)}
+
+    def test_convolution_weight_is_quantized_per_output_channel(self) -> None:
+        graph = helper.make_graph(
+            [helper.make_node("Conv", ["features", "mix"], ["mixed"], f"{BACKBONE}mix/Conv")],
+            "conv",
+            [helper.make_tensor_value_info("features", TensorProto.FLOAT, [1, 32, 4, 4])],
+            [helper.make_tensor_value_info("mixed", TensorProto.FLOAT, [1, 16, 4, 4])],
+            [numpy_helper.from_array(np.ones((16, 32, 1, 1), np.float32), "mix")],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        plan = quantize.plan_int8(model)
+        quantize.insert_qdq(model, plan, dict.fromkeys(plan.activations, 1.0))
+        inits = {init.name: init for init in model.graph.initializer}
+        weight_dq = next(n for n in model.graph.node if n.op_type == "DequantizeLinear" and n.input[0] in inits)
+        assert ([a.i for a in weight_dq.attribute if a.name == "axis"], list(inits[weight_dq.input[1]].dims)) == (
+            [0],
+            [16],
+        )
 
     def test_result_is_valid_onnx(self, quantized: tuple[Any, quantize.Int8Plan]) -> None:
         model, _ = quantized
@@ -648,6 +793,19 @@ class TestLiftOpset:
         onnx.checker.check_model(model, full_check=True)
         assert [a.i for a in model.graph.node[0].attribute if a.name == "num_outputs"] == expected
 
+    def test_graph_already_at_opset_19_is_left_alone(self) -> None:
+        reduce = helper.make_node("ReduceMax", ["x"], ["r"], "reduce", axes=[1], keepdims=0)
+        graph = helper.make_graph(
+            [reduce],
+            "lift",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])],
+            [helper.make_tensor_value_info("r", TensorProto.FLOAT, [2])],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 19)])
+        before = model.SerializeToString()
+        quantize._lift_opset(model)
+        assert model.SerializeToString() == before
+
     def test_other_domains_are_left_alone(self) -> None:
         graph = helper.make_graph(
             [helper.make_node("CustomOp", ["x"], ["y"], "custom", domain="com.example")],
@@ -687,6 +845,7 @@ class TestInt8SourceGraph:
             pytest.param("fp16-weights", "not a float32 export", id="fp16-weights-fp32-io"),
             pytest.param("dynamic", "static batch", id="dynamic-batch"),
             pytest.param("pad", "changed meaning", id="unliftable"),
+            pytest.param("masks", "detection models only", id="segmentation"),
         ],
     )
     def test_unquantizable_source_is_refused(self, tmp_path: Path, rewrite: str, message: str) -> None:
@@ -722,8 +881,16 @@ class TestInt8SourceGraph:
             model.graph.input[0].type.tensor_type.shape.dim[0].dim_param = "batch"
         elif rewrite == "pad":
             model.graph.initializer.append(numpy_helper.from_array(np.zeros(6, np.int64), "pads"))
-            model.graph.node.append(helper.make_node("Pad", [model.graph.input[0].name, "pads"], ["padded"], "pad"))
-            model.graph.output.append(helper.make_tensor_value_info("padded", TensorProto.FLOAT, None))
+            model.graph.node.append(helper.make_node("Pad", [model.graph.input[0].name, "pads"], ["labels"], "pad"))
+        if rewrite in ("pad", "masks"):
+            # A detector's outputs, so that only the rewrite under test can be what is refused.
+            model.graph.node.append(helper.make_node("Identity", ["y"], ["dets"], "dets"))
+            outputs = ["dets", "labels"] + (["masks"] if rewrite == "masks" else [])
+            if rewrite == "masks":
+                model.graph.node.append(helper.make_node("Identity", ["y"], ["labels"], "labels"))
+                model.graph.node.append(helper.make_node("Identity", ["y"], ["masks"], "masks"))
+            del model.graph.output[:]
+            model.graph.output.extend(helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in outputs)
         path = tmp_path / "source.onnx"
         onnx.save(model, path)
         with pytest.raises(ValueError, match=message):
@@ -740,25 +907,47 @@ class TestCalibration:
 
     @pytest.fixture
     def image_graph(self, tmp_path: Path) -> Path:
-        """A non-square ``(2, 3, 4, 6)``-input graph with one backbone Conv, saved to disk."""
+        """A non-square ``(2, 3, 4, 6)``-input graph with two backbone Convs, saved to disk.
+
+        The first reads the 3-channel image and stays FP16; the second reads 32 channels and is quantized. The outputs
+        carry a detector's names.
+        """
         graph = helper.make_graph(
             [
                 helper.make_node("Conv", ["input", "kernel"], ["features"], f"{BACKBONE}patch/Conv"),
-                helper.make_node("Relu", ["features"], ["dets"], "relu"),
+                helper.make_node("Conv", ["features", "mix"], ["mixed"], f"{BACKBONE}mix/Conv"),
+                helper.make_node("Relu", ["mixed"], ["dets"], "relu"),
+                helper.make_node("Identity", ["mixed"], ["labels"], "labels"),
             ],
             "image",
             [helper.make_tensor_value_info("input", TensorProto.FLOAT, [2, 3, 4, 6])],
-            [helper.make_tensor_value_info("dets", TensorProto.FLOAT, [2, 2, 4, 6])],
-            [numpy_helper.from_array(np.ones((2, 3, 1, 1), np.float32), "kernel")],
+            [
+                helper.make_tensor_value_info("dets", TensorProto.FLOAT, [2, 2, 4, 6]),
+                helper.make_tensor_value_info("labels", TensorProto.FLOAT, [2, 2, 4, 6]),
+            ],
+            [
+                numpy_helper.from_array(np.ones((32, 3, 1, 1), np.float32), "kernel"),
+                numpy_helper.from_array(np.ones((2, 32, 1, 1), np.float32), "mix"),
+            ],
         )
         path = tmp_path / "image.onnx"
         onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
         return path
 
-    def test_ranges_are_the_absolute_maximum_over_every_image(self, image_graph: Path) -> None:
+    @pytest.mark.parametrize(
+        "values",
+        [
+            # Stopping after the first group would miss the largest magnitude in the padded final group, and keeping
+            # only the last group would miss it in the first.
+            pytest.param((2.0, 3.0, -5.0), id="largest-in-the-last-group"),
+            pytest.param((-5.0, 2.0, 3.0), id="largest-in-the-first-group"),
+        ],
+    )
+    def test_ranges_are_the_absolute_maximum_over_every_image(
+        self, image_graph: Path, values: tuple[float, ...]
+    ) -> None:
         pytest.importorskip("onnxruntime")
-        # The largest magnitude sits in the padded final group, so stopping after the first group would miss it.
-        images = [np.full((1, 3, 4, 6), value, np.float32) for value in (2.0, 3.0, -5.0)]
+        images = [np.full((1, 3, 4, 6), value, np.float32) for value in values]
         ranges = quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input", "features"], images)
         assert ranges == pytest.approx({"input": 5.0, "features": 15.0})
 
@@ -780,11 +969,22 @@ class TestCalibration:
             quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], [np.zeros((1, 3, 4, 6))])
         assert requested == [["CPUExecutionProvider"]]
 
-    def test_non_finite_range_is_refused(self, image_graph: Path) -> None:
+    @pytest.mark.parametrize("value", [np.nan, np.inf])
+    def test_non_finite_calibration_image_is_refused(self, image_graph: Path, value: float) -> None:
         pytest.importorskip("onnxruntime")
+        # Not the first element: onnxruntime's ReduceMax skips a NaN anywhere else and returns a finite range.
         images = np.zeros((2, 3, 4, 6), np.float32)
-        images[1, 0, 0, 0] = np.inf
-        with pytest.raises(ValueError, match="not finite"):
+        images[1, 0, 1, 2] = value
+        with pytest.raises(ValueError, match="NaN or infinite"):
+            with quantize.int8_source_graph(
+                str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
+            ):
+                pass
+
+    def test_range_too_large_for_an_fp16_scale_is_refused(self, image_graph: Path) -> None:
+        pytest.importorskip("onnxruntime")
+        images = np.full((2, 3, 4, 6), 1e8, np.float32)  # finite, but 1e8 / 127 overflows FP16
+        with pytest.raises(ValueError, match="does not fit an FP16 scale"):
             with quantize.int8_source_graph(
                 str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
             ):
@@ -878,6 +1078,14 @@ class TestNanoInt8Plan:
         """The INT8 plan of the exported Nano graph."""
         return quantize.plan_int8(onnx.load(str(nano_onnx)))
 
+    def test_attention_blocks_left_fp16_are_counted(self, monkeypatch: pytest.MonkeyPatch, nano_onnx: Path) -> None:
+        messages: list[str] = []
+        monkeypatch.setattr(quantize.logger, "info", messages.append)
+        quantize.plan_int8(onnx.load(str(nano_onnx)))
+        assert [m.split(";")[0] for m in messages if "stay FP16" in m] == [
+            "INT8 attention in 9 of 12 backbone attention blocks"
+        ]
+
     def test_rewritten_graph_is_valid_onnx(self, nano_onnx: Path, plan: quantize.Int8Plan) -> None:
         pytest.importorskip("onnxconverter_common")
         from rfdetr.export._tensorrt.exporter import fp16_source_graph
@@ -889,10 +1097,11 @@ class TestNanoInt8Plan:
         onnx.shape_inference.infer_shapes(model, strict_mode=True)
 
     def test_counts(self, plan: quantize.Int8Plan) -> None:
-        # Backbone: patch embedding + 9 windowed blocks x (q, k, v, o, fc1, fc2) + 3 global blocks x (fc1, fc2) = 61.
+        # Backbone: 9 windowed blocks x (q, k, v, o, fc1, fc2) + 3 global blocks x (fc1, fc2) = 60; the patch embedding
+        # reads the 3-channel image and stays FP16.
         # Decoder: 2 layers x (value, offsets, attention weights, output, linear1, linear2) + reference-point MLP = 14.
         # Activations: one per weighted node + 4 per INT8 attention block (9 windowed blocks).
-        assert (len(plan.weighted), len(plan.activations)) == (75, 75 + 36)
+        assert (len(plan.weighted), len(plan.activations)) == (74, 74 + 36)
 
     def test_global_blocks_keep_attention_in_fp16(self, plan: quantize.Int8Plan) -> None:
         global_attention = [n for n in plan.weighted if any(f"layer.{i}/attention/" in n for i in (3, 6, 9))]

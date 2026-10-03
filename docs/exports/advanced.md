@@ -33,7 +33,7 @@ The `export()` method accepts several parameters to customize the export process
 | `coreml_precision`   | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (half the size, and the only precision the Apple Neural Engine runs — at a measured accuracy cost, see [Native CoreML](coreml.md#neural-engine-compute-units-and-the-fallback-boundary)). Ignored for every other format.                                                                                                                                                                                                                                       |
 | `coreai_precision`   | `None`     | Compute precision for `format="coreai"`: `None`/`"float32"` (matches eager PyTorch on the GPU) or `"float16"` (half the size, and the precision Core AI runs on the Apple Neural Engine — at a measured accuracy cost, see [Core AI](coreai.md#precision-compute-units-and-latency)); a float16 keypoint model warns, since that asset aborts on the Neural Engine. Ignored for every other format.                                                                                                                                                                              |
 | `openvino_precision` | `None`     | IR *storage* weight precision for `format="openvino"`: `None`/`"float16"` (OpenVINO's default FP16 weight compression) or `"float32"` (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename.                                                                                                                                                                                                                          |
-| `output_name`        | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_{backend}` detail suffix — see [Output Files](basics.md#output-files).                                                                                                                                                                                                                                                                                                                                                                           |
+| `output_name`        | `None`     | Full filename override (without extension). Takes precedence over the model's variant name and suppresses the `_fp32`/`_fp16`/`_int8`/`_{backend}` detail suffix — see [Output Files](basics.md#output-files).                                                                                                                                                                                                                                                                                                                                                                   |
 
 ## Format Capabilities
 
@@ -56,15 +56,15 @@ For a format without dynamic batch, export one artifact per batch size.
 
 Each format exposes precision through its own parameter; [Export Parameters](#export-parameters) above has the details.
 
-| Format       | Parameter            | Values                                                |
-| ------------ | -------------------- | ----------------------------------------------------- |
-| `tflite`     | `quantization`       | `None`/`"fp32"`, `"fp16"`, `"int8"` (dynamic-range)   |
-| `litert`     | `quantization`       | `None`/`"fp32"` only                                  |
-| `tensorrt`   | `fp16`               | `True` (default) or `False`                           |
-| `openvino`   | `openvino_precision` | `None`/`"float16"` or `"float32"` (IR weight storage) |
-| `coreml`     | `coreml_precision`   | `None`/`"float32"` or `"float16"`                     |
-| `coreai`     | `coreai_precision`   | `None`/`"float32"` or `"float16"`                     |
-| `executorch` | `backend`            | `"xnnpack"` (fp32), `"coreml"` (fp16), `"qnn"` (fp16) |
+| Format       | Parameter              | Values                                                                                           |
+| ------------ | ---------------------- | ------------------------------------------------------------------------------------------------ |
+| `tflite`     | `quantization`         | `None`/`"fp32"`, `"fp16"`, `"int8"` (dynamic-range)                                              |
+| `litert`     | `quantization`         | `None`/`"fp32"` only                                                                             |
+| `tensorrt`   | `fp16`, `quantization` | `fp16=True` (default) or `False`; `quantization=None` or `"int8"` (calibrated, with `fp16=True`) |
+| `openvino`   | `openvino_precision`   | `None`/`"float16"` or `"float32"` (IR weight storage)                                            |
+| `coreml`     | `coreml_precision`     | `None`/`"float32"` or `"float16"`                                                                |
+| `coreai`     | `coreai_precision`     | `None`/`"float32"` or `"float16"`                                                                |
+| `executorch` | `backend`              | `"xnnpack"` (fp32), `"coreml"` (fp16), `"qnn"` (fp16)                                            |
 
 Lower precision is not a portable speedup — see [fp16 pays off only where the silicon implements it](index.md#measured-performance-by-hardware).
 

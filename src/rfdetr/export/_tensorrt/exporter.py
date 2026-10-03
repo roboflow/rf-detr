@@ -160,8 +160,8 @@ def _describe(data: object) -> str:
 def _is_calibration_source(data: object) -> bool:
     """Return whether *data* has a form :func:`~rfdetr.export._runtime.calibration.calibration_batches` reads.
 
-    A path is checked for existence later, just before the ONNX export; an array must already be preprocessed, so an
-    integer image array (raw pixels, not normalized) is refused here.
+    A path is checked later, just before the ONNX export; an array must already be preprocessed and hold at least one
+    image, so an integer image array (raw pixels, not normalized) or an empty one is refused here.
 
     Examples:
         >>> _is_calibration_source("images/"), _is_calibration_source(np.zeros((1, 3, 8, 8), np.float32))
@@ -171,7 +171,9 @@ def _is_calibration_source(data: object) -> bool:
     """
     if isinstance(data, (str, os.PathLike)):
         return True
-    return isinstance(data, np.ndarray) and data.ndim == 4 and np.issubdtype(data.dtype, np.floating)
+    return (
+        isinstance(data, np.ndarray) and data.ndim == 4 and data.shape[0] > 0 and np.issubdtype(data.dtype, np.floating)
+    )
 
 
 def _tensorrt_major(version: str) -> int | None:
@@ -916,7 +918,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ValueError: If *quantization* is not ``None`` or ``"int8"``; if *calibration_data* is given without
                 ``"int8"``; if ``"int8"`` comes without *calibration_data*, with ``fp16=False``, with
                 ``dynamic_batch``, with ``backbone_only``, or with a *max_images* that is not a positive integer; or if
-                *calibration_data* is neither a path nor a rank-4 floating-point array.
+                *calibration_data* is neither a path nor a non-empty rank-4 floating-point array.
         """
         config = self.config
         if config.quantization not in (None, INT8):
@@ -939,7 +941,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ),
             (
                 not _is_calibration_source(config.calibration_data),
-                "needs calibration_data to be a directory, a .npy path, or a preprocessed (N, C, H, W) float array, "
+                "needs calibration_data to be a directory, a .npy path, or a preprocessed (N, C, H, W) float array "
+                "with at least one image, "
                 f"got {_describe(config.calibration_data)}",
             ),
         )
@@ -975,14 +978,42 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             )
 
     def _require_calibration_path(self) -> None:
-        """Refuse a *calibration_data* path that is empty or does not exist, before any graph work reads it.
+        """Refuse a *calibration_data* path that cannot be calibrated on, before any graph work reads it.
+
+        A ``.npy`` file is held to the rule an in-memory array meets in :meth:`_check_quantization`; it is opened
+        memory-mapped, so only its header is read here.
 
         Raises:
-            ValueError: If *calibration_data* is a path that is empty or names nothing on disk.
+            ValueError: If *calibration_data* is a path that is empty or names nothing on disk, a file that is not
+                ``.npy``, a ``.npy`` that cannot be read, or one that does not hold a non-empty rank-4 floating-point
+                array.
         """
         data = self.config.calibration_data
-        if isinstance(data, (str, os.PathLike)) and (not os.fspath(data) or not Path(data).exists()):
+        if not isinstance(data, (str, os.PathLike)):
+            return
+        path = Path(data)
+        if not os.fspath(data) or not path.exists():
             raise ValueError(f"TensorRT quantization='int8': calibration_data path does not exist: {data!r}")
+        if path.is_dir():
+            return
+        if path.suffix.lower() != ".npy":
+            raise ValueError(
+                f"TensorRT quantization='int8' needs a calibration_data file to be a .npy array, got {path.name!r}."
+            )
+        try:
+            array = np.load(path, mmap_mode="r")
+        except (ValueError, EOFError, OSError) as error:
+            raise ValueError(
+                f"TensorRT quantization='int8' could not read {path.name!r} as a .npy array: {error}"
+            ) from error
+        # Released before raising, so the error's traceback does not keep the file mapped (Windows would lock it).
+        usable, described = _is_calibration_source(array), _describe(array)
+        del array
+        if not usable:
+            raise ValueError(
+                f"TensorRT quantization='int8' needs {path.name!r} to hold a preprocessed (N, C, H, W) float array "
+                f"with at least one image, got {described}."
+            )
 
     @classmethod
     def check_dependencies(cls) -> None:
@@ -1011,7 +1042,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, or (for ``quantization="int8"``)
                 onnxruntime or onnxconverter-common is missing or TensorRT is older than 10, before the ONNX export
                 runs.
-            ValueError: If ``quantization="int8"`` names a *calibration_data* path that does not exist.
+            ValueError: If ``quantization="int8"`` names a *calibration_data* path that does not exist, a file that is
+                not ``.npy``, a ``.npy`` that cannot be read, or one that does not hold a non-empty rank-4
+                floating-point array.
             NotImplementedError: If ``quantization="int8"`` is asked of a segmentation or keypoint model.
         """
         from rfdetr.export._onnx.exporter import OnnxExporter
@@ -1068,8 +1101,9 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ValueError: If the graph's batch axis disagrees with ``dynamic_batch``: a dynamic batch axis without
                 ``dynamic_batch`` (the engine would accept batch 1 only), or ``dynamic_batch`` on a graph that has
                 none. For ``quantization="int8"``, also if the graph is already quantized or FP16, has a dynamic batch
-                axis, cannot be lifted to opset 19, is not an RF-DETR detector export, or holds attention INT8 cannot be
-                placed around; or if the calibration data is missing, unusable, or gives a range that is not finite.
+                axis, cannot be lifted to opset 19, is not an RF-DETR detector export (a segmentation, keypoint or
+                backbone-only graph included), or holds attention INT8 cannot be placed around; or if the calibration
+                data is missing, unusable, holds a NaN or infinite value, or gives a range that does not fit FP16.
 
         Examples:
             The build logs its progress, so this is documentation rather than a doctest:

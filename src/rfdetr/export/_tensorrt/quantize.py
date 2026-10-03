@@ -8,7 +8,8 @@
 TensorRT 11 has no INT8 builder flag and no calibrator: an INT8 engine is a strongly typed build of a graph that
 carries its own ``QuantizeLinear``/``DequantizeLinear`` pairs. Where those pairs sit decides whether the engine is
 faster than FP16 at all, so the placement here is not "quantize every matrix multiply". It follows what was measured
-on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16; issue #1024):
+on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16), and for the attention token limit on Small to Large (TensorRT
+11.3); issue #1024:
 
 * **FP16 scales on the FP16 graph.** Q/DQ is inserted into the graph :func:`_cast_onnx_to_fp16` produces, with FP16
   scales, so every region left unquantized stays FP16. FP32 scales make each ``DequantizeLinear`` return FP32 and drag
@@ -17,10 +18,17 @@ on RF-DETR Nano (RTX 5070, TensorRT 11.3 and 10.16; issue #1024):
   each quantized operation stays in floating point, so TensorRT fuses the bias, LayerScale and residual add into the
   INT8 kernel's epilogue and the quantize step into the preceding LayerNorm or GELU. The projector, the two-stage
   proposal head and the detection heads stay FP16: quantizing them costs accuracy and buys nothing.
-* **Attention is all INT8 or all FP16.** An attention block whose shape TensorRT's INT8 fused-attention kernel accepts
-  (head size 16, 32 or 64 and at most 512 tokens; the windowed backbone blocks) gets Q/DQ on both batched matrix
-  multiplies as well as on its q/k/v/output projections, which keeps attention fused in INT8. Any other block (the
-  global backbone blocks, the decoder self-attention) keeps its projections and batched multiplies in FP16: quantizing
+* **No convolution whose input channels TensorRT would pad.** TensorRT ran the INT8 patch embedding on the 3-channel
+  image padded to 32 channels and stored the 29 added zero channels in the engine as a ``B x 29 x H x W`` FP16 constant,
+  read on every run: at batch 8 the engine was 110 MB instead of 51 MB and INT8 1.21x instead of 1.37x faster than
+  FP16. Only that convolution was measured; any convolution whose input channels are not a multiple of 32 is kept FP16
+  as a precaution. (The FP16 convolution pads too, to 4 or 8 channels picked per build, so both engines still store 1
+  or 5 zero channels per image.)
+* **Attention is all INT8 or all FP16.** An attention block that TensorRT's INT8 fused-attention kernel accepts and
+  that was measured to run faster for it (head size 16, 32 or 64 and at most 325 tokens: the windowed backbone blocks
+  of Nano, Small and Medium) gets Q/DQ on both batched matrix multiplies as well as on its q/k/v/output projections,
+  which keeps attention fused in INT8. Any other block (Large's windowed blocks, the global backbone blocks, the decoder
+  self-attention) keeps its projections and batched multiplies in FP16: quantizing
   only the projections makes TensorRT emit FP32 projections plus reshape kernels in front of the fused FP16 kernel, and
   a quantized output projection behind FP16 attention makes TensorRT 11 fuse an INT8 output into that kernel, which
   returns wrong values.
@@ -88,11 +96,14 @@ _TYPE_ONLY_CHANGES = frozenset(
     {"Cast", "CastLike", "Constant", "Equal", "Identity", "If", "Loop", "Reshape", "Scan", "Shape", "Size"}
 )
 
-#: Head sizes TensorRT's INT8 fused-attention kernel accepts (TensorRT 11.3 "Attention fusion", SM75-SM90 and SM120).
+#: Head sizes TensorRT's INT8 fused-attention kernel accepts (TensorRT 11.3 "Attention fusion", SM75-90, SM120-121).
 _FUSED_INT8_HEAD_SIZES = frozenset({16, 32, 64})
 
-#: Longest query/key sequence TensorRT's INT8 fused-attention kernel accepts.
-_FUSED_INT8_MAX_SEQUENCE = 512
+#: Longest query/key sequence that gets INT8 attention. TensorRT's INT8 fused-attention kernel accepts up to 512; this
+#: is the largest window measured to pay (Medium: 5% faster from a CUDA graph, about equal with a plain call, -0.28 AP).
+#: Large's 485-token windows ran no faster than with FP16 attention and lost 1.0 AP; 326-484 is not measured (RTX 5070,
+#: TensorRT 11.3, COCO val2017).
+_INT8_ATTENTION_MAX_TOKENS = 325
 
 #: Node-name prefixes of the regions whose weight-bearing operations are quantized: backbone encoder and decoder.
 _QUANTIZED_REGIONS = ("/backbone/backbone.0/encoder/", "/transformer/decoder/")
@@ -108,6 +119,9 @@ _PROJECTION_PASSTHROUGH = frozenset(
 
 #: Ops between a first MLP projection and its activation-path successor, including both GELU forms.
 _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
+
+#: TensorRT padded the INT8 patch embedding's input channels to a multiple of this and stored the padding in the engine.
+_INT8_CONV_CHANNEL_MULTIPLE = 32
 
 #: Ops that make a path a GELU.
 _GELU_OPS = frozenset({"Erf", "Gelu"})
@@ -151,7 +165,7 @@ class _Attention:
     context: Any
     projections: frozenset[str]
     output_projection: str | None
-    fusable: bool
+    int8: bool
 
 
 def _constant_weights(graph: Any) -> dict[str, Any]:
@@ -200,6 +214,22 @@ def _weight_name(node: Any, initializers: Mapping[str, Any]) -> str | None:
     if node.op_type == "Gemm" and any(a.name == "transA" and a.i for a in node.attribute):
         return None
     return str(node.input[1]) if len(weight.dims) == (4 if node.op_type == "Conv" else 2) else None
+
+
+def _pads_input_channels(node: Any, initializers: Mapping[str, Any]) -> bool:
+    """Return whether *node* is a ``Conv`` whose input channels TensorRT would pad to run it in INT8.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> weights = {"rgb": numpy_helper.from_array(np.zeros((8, 3, 4, 4), np.float32), "rgb")}
+        >>> _pads_input_channels(helper.make_node("Conv", ["image", "rgb"], ["y"], "patch"), weights)
+        True
+    """
+    if node.op_type != "Conv":
+        return False
+    groups = int(next((a.i for a in node.attribute if a.name == "group"), 1))
+    channels = int(initializers[node.input[1]].dims[1]) * groups
+    return channels % _INT8_CONV_CHANNEL_MULTIPLE != 0
 
 
 def _dims(shapes: Mapping[str, Any], tensor: str) -> tuple[int | None, ...] | None:
@@ -349,9 +379,9 @@ def _feeds_activation_matmul(softmax: Any, consumers: Mapping[str, list[Any]], i
 def _attention_blocks(model: Any) -> list[_Attention]:
     """Find every ``MatMul -> Softmax -> MatMul`` attention block of *model*'s top-level graph.
 
-    A block is fusable in INT8 when shape inference proves its head size is one of
-    :data:`_FUSED_INT8_HEAD_SIZES` and both sequence lengths are at most :data:`_FUSED_INT8_MAX_SEQUENCE`; an unknown
-    dimension counts as not fusable.
+    A block can run its attention in INT8 when shape inference proves its head size is one of
+    :data:`_FUSED_INT8_HEAD_SIZES` and both sequence lengths are at most :data:`_INT8_ATTENTION_MAX_TOKENS`; an unknown
+    dimension counts as not.
 
     Args:
         model: FP32 ``ModelProto`` with static spatial shapes.
@@ -393,13 +423,13 @@ def _attention_blocks(model: Any) -> list[_Attention]:
         output_projection = _output_projection(context, consumers, initializers)
         projections.add(output_projection)
         score_dims, query_dims = _dims(shapes, scores.output[0]), _dims(shapes, scores.input[0])
-        fusable = (
+        int8 = (
             score_dims is not None
             and query_dims is not None
             and query_dims[-1] in _FUSED_INT8_HEAD_SIZES
-            and all(d is not None and d <= _FUSED_INT8_MAX_SEQUENCE for d in score_dims[-2:])
+            and all(d is not None and d <= _INT8_ATTENTION_MAX_TOKENS for d in score_dims[-2:])
         )
-        blocks.append(_Attention(scores, context, frozenset(p for p in projections if p), output_projection, fusable))
+        blocks.append(_Attention(scores, context, frozenset(p for p in projections if p), output_projection, int8))
     return blocks
 
 
@@ -442,8 +472,9 @@ def plan_int8(model: Any) -> Int8Plan:
         The plan, in graph order.
 
     Raises:
-        ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR detector export, or an FP16
-            attention block's output projection cannot be identified.
+        ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR detector export; if an FP16
+            attention block's output projection cannot be identified; or if a ``Softmax`` in a quantized region feeds a
+            multiply of two activations without being a recognised attention block.
     """
     graph = model.graph
     initializers = _constant_weights(graph)
@@ -457,11 +488,20 @@ def plan_int8(model: Any) -> Int8Plan:
     weighted = {
         node.name
         for node in graph.node
-        if node.name.startswith(_QUANTIZED_REGIONS) and node.name not in duplicated and _weight_name(node, initializers)
+        if node.name.startswith(_QUANTIZED_REGIONS)
+        and node.name not in duplicated
+        and _weight_name(node, initializers)
+        and not _pads_input_channels(node, initializers)
     }
     attention_inputs: list[tuple[str, int]] = []
+    backbone_blocks = fused = 0
+    unfused: list[str] = []  # backbone blocks whose attention stays FP16 because of its shape
     for block in _attention_blocks(model):
-        if block.fusable and block.scores.name.startswith(_INT8_ATTENTION_REGION) and block.projections <= weighted:
+        in_region = block.scores.name.startswith(_INT8_ATTENTION_REGION)
+        backbone_blocks += in_region
+        unnamed = {block.scores.name, block.context.name} & duplicated
+        if block.int8 and in_region and not unnamed and block.projections <= weighted:
+            fused += 1
             attention_inputs += [(block.scores.name, 0), (block.scores.name, 1)]
             attention_inputs += [(block.context.name, 0), (block.context.name, 1)]
             continue
@@ -473,6 +513,14 @@ def plan_int8(model: Any) -> Int8Plan:
                 "could not be identified. INT8 TensorRT export applies to RF-DETR detector exports only."
             )
         weighted -= block.projections
+        if in_region and not block.int8:
+            unfused.append(block.scores.name)
+    if unfused:
+        logger.info(
+            f"INT8 attention in {fused} of {backbone_blocks} backbone attention blocks; "
+            f"{len(unfused)} stay FP16 by shape (e.g. {unfused[0]!r}): INT8 attention needs a head size in "
+            f"{sorted(_FUSED_INT8_HEAD_SIZES)} and at most {_INT8_ATTENTION_MAX_TOKENS} tokens"
+        )
 
     # A projection feeding an FP16 consumer through a GELU comes back as NaN from TensorRT; dropping one projection can
     # expose another, so repeat until nothing changes.
@@ -528,7 +576,7 @@ def _graph_batches(batches: Iterable[NDArray[np.float32]], batch: int | None) ->
 def _calibration_graph(model: Any, tensors: list[str]) -> Any:
     """Return a copy of *model* that also outputs ``max(abs(t))`` for each of *tensors*.
 
-    Reducing inside the graph keeps calibration memory at one scalar per tensor rather than every activation.
+    Reducing inside the graph returns one scalar per tensor rather than every activation.
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -565,8 +613,8 @@ def calibrate_ranges(
     """Run calibration batches through the FP32 graph and return each tensor's absolute maximum.
 
     Args:
-        onnx_path: The FP32 ``.onnx`` file *model* was loaded from; the probe graph is written beside it so external
-            weight files keep resolving.
+        onnx_path: The FP32 ``.onnx`` file *model* was loaded from; the probe graph is written to a temporary file
+            beside it.
         model: The loaded FP32 ``ModelProto``.
         tensors: Tensor names to measure.
         batches: Preprocessed ``(1, C, H, W)`` images.
@@ -575,7 +623,7 @@ def calibrate_ranges(
         Tensor name to the largest absolute value seen.
 
     Raises:
-        ValueError: If *batches* is empty.
+        ValueError: If *batches* is empty or holds a NaN or infinite value.
     """
     import onnx
     import onnxruntime as ort
@@ -597,6 +645,9 @@ def calibrate_ranges(
         ranges = np.zeros(len(tensors), dtype=np.float64)
         count = 0
         for group in _graph_batches(batches, dimension if isinstance(dimension, int) else None):
+            # onnxruntime's ReduceMax skips a NaN, so a NaN image would calibrate to a finite but wrong range.
+            if not np.isfinite(group).all():
+                raise ValueError(f"Calibration batch {count + 1} holds NaN or infinite values.")
             ranges = np.maximum(ranges, np.asarray(session.run(outputs, {feed_name: group}), dtype=np.float64))
             count += 1
         if count == 0:
@@ -828,9 +879,9 @@ def insert_qdq(model: Any, plan: Int8Plan, ranges: Mapping[tuple[str, int], floa
 
 
 def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
-    """Refuse a graph INT8 quantization cannot start from: one already quantized, not float32, or with a dynamic batch.
+    """Refuse a graph INT8 quantization cannot start from: quantized, not float32, dynamic batch, or not a detector.
 
-    Both would otherwise fail late and point the wrong way: a quantized graph plans nothing to quantize, and an FP16
+    Each would otherwise fail late or point the wrong way: a quantized graph plans nothing to quantize, and an FP16
     graph is calibrated in full before the FP16 cast refuses it with advice (``fp16=False``) that an INT8 request
     cannot follow.
 
@@ -839,7 +890,8 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
         onnx_path: The caller's file, named in the error.
 
     Raises:
-        ValueError: If the graph holds Q/DQ nodes, FP16 inputs or weights, or a dynamic batch axis.
+        ValueError: If the graph holds Q/DQ nodes, FP16 inputs or weights, or a dynamic batch axis, or its outputs are
+            not exactly a detector's ``dets`` and ``labels`` (a segmentation, keypoint or backbone-only export).
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -854,7 +906,12 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
     from onnx import TensorProto
 
     # Imported here: exporter.py imports this module at module scope.
-    from rfdetr.export._tensorrt.exporter import _QUANTIZATION_OP_TYPES, _iter_graphs, _onnx_dynamic_batch_inputs
+    from rfdetr.export._tensorrt.exporter import (
+        _INT8_OUTPUT_NAMES,
+        _QUANTIZATION_OP_TYPES,
+        _iter_graphs,
+        _onnx_dynamic_batch_inputs,
+    )
 
     if any(node.op_type in _QUANTIZATION_OP_TYPES for graph in _iter_graphs(model.graph) for node in graph.node):
         raise ValueError(
@@ -871,6 +928,12 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
         raise ValueError(
             f"'{onnx_path}' has a dynamic batch axis, and an INT8 engine is built for a static batch. Re-export the "
             "ONNX graph with a fixed batch_size and dynamic_batch=False."
+        )
+    outputs = tuple(output.name for output in model.graph.output)
+    if outputs != _INT8_OUTPUT_NAMES:
+        raise ValueError(
+            f"'{onnx_path}' outputs {list(outputs)}, and quantization='int8' is measured for detection models only, "
+            f"whose outputs are {list(_INT8_OUTPUT_NAMES)}. Build this graph with quantization=None."
         )
 
 
@@ -896,9 +959,10 @@ def int8_source_graph(
 
     Raises:
         ValueError: If the graph is already quantized, is not float32, has a dynamic batch axis, cannot be lifted to
-            opset 19, is not a quantizable RF-DETR detector, or holds attention INT8 cannot be placed around; or if the
-            calibration data is unusable or gives a range that is not finite. A calibration image the reader cannot
-            decode raises the image library's own error.
+            opset 19, is not a quantizable RF-DETR detector (its outputs must be exactly ``dets`` and ``labels``), or
+            holds attention INT8 cannot be placed around; or if the calibration data is unusable, holds a NaN or
+            infinite value, or gives a range that is not finite or does not fit an FP16 scale. A calibration image the
+            reader cannot decode raises the image library's own error.
     """
     import onnx
 
@@ -927,7 +991,8 @@ def int8_source_graph(
     if unusable:
         raise ValueError(
             f"Calibration gave {len(unusable)} tensor(s) a range that is not finite or does not fit an FP16 scale, "
-            f"e.g. {unusable[0]!r} = {by_tensor[unusable[0]]}. Check calibration_data for NaN or infinite values."
+            f"e.g. {unusable[0]!r} = {by_tensor[unusable[0]]}. Check that calibration_data is normalized as predict() "
+            "normalizes."
         )
     ranges = {key: by_tensor[_input_tensor(source.graph, *key)] for key in keys}
     del source
