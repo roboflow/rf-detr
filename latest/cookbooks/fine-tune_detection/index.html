@@ -99,7 +99,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-18T10:09:20">
+  <meta property="article:modified_time" content="2026-10-02T15:43:02">
   
   <script type="application/ld+json">
   {
@@ -114,7 +114,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-18T10:09:20",
+    "dateModified": "2026-10-02T15:43:02",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1287,6 +1287,62 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../exports/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../exports/advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
     
@@ -1301,10 +1357,10 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_2" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_4" >
         
           
-          <label class="md-nav__link" for="__nav_2_4_2" id="__nav_2_4_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_4_4" id="__nav_2_4_4_label" tabindex="0">
             
   
   
@@ -1322,8 +1378,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2_4_2">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4161,7 +4217,9 @@ print(f"dataset_dir={DATASET_DIR}")</div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="2-infer-class-names">2 - Infer class names<a class="anchor-link" href="#2-infer-class-names">¶</a></h2><p>The COCO annotation file defines a <code>categories</code> list mapping integer IDs to human-readable names. RF-DETR uses
-<strong>0-based class indices</strong> internally, so we sort the categories by their original <code>id</code> field and read names in order.
+<strong>0-based class indices</strong> internally, so we read the names in <code>id</code> order. Roboflow exports also list a top-level
+category (for example <code>animals</code> above <code>cat</code>, <code>dog</code> and <code>horse</code>) that has no annotations. RF-DETR leaves it out of
+its classes, so <code>filter_parent_categories</code> leaves it out here too, and each index keeps its own name.
 The resulting <code>CLASS_NAMES</code> list maps each index back to a label, which is used during inference visualisation.</p>
 <p>If your own dataset has a single category, this list will have one element — that is expected and valid.</p>
 </div>
@@ -4186,19 +4244,31 @@ The resulting <code>CLASS_NAMES</code> list maps each index back to a label, whi
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">with</span> <span class="n">TRAIN_ANNOTATIONS</span><span class="o">.</span><span class="n">open</span><span class="p">()</span> <span class="k">as</span> <span class="n">_f</span><span class="p">:</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.datasets.coco</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotated_category_ids</span><span class="p">,</span> <span class="n">filter_parent_categories</span>
+
+<span class="k">with</span> <span class="n">TRAIN_ANNOTATIONS</span><span class="o">.</span><span class="n">open</span><span class="p">()</span> <span class="k">as</span> <span class="n">_f</span><span class="p">:</span>
     <span class="n">_coco</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">_f</span><span class="p">)</span>
 
-<span class="n">CLASS_NAMES</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">cat</span><span class="p">[</span><span class="s2">"name"</span><span class="p">]</span> <span class="k">for</span> <span class="n">cat</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">_coco</span><span class="p">[</span><span class="s2">"categories"</span><span class="p">],</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">c</span><span class="p">:</span> <span class="n">c</span><span class="p">[</span><span class="s2">"id"</span><span class="p">])]</span>
+<span class="c1"># Roboflow exports also list their top-level category (e.g. "animals" over "cat" and "dog"). It has no</span>
+<span class="c1"># annotations and RF-DETR leaves it out of the model's classes, so leave it out here too.</span>
+<span class="n">CLASS_NAMES</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">cat</span><span class="p">[</span><span class="s2">"name"</span><span class="p">]</span> <span class="k">for</span> <span class="n">cat</span> <span class="ow">in</span> <span class="n">filter_parent_categories</span><span class="p">(</span><span class="n">_coco</span><span class="p">[</span><span class="s2">"categories"</span><span class="p">],</span> <span class="n">annotated_category_ids</span><span class="p">(</span><span class="n">_coco</span><span class="p">))</span>
+<span class="p">]</span>
 <span class="n">NUM_CLASSES</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">CLASS_NAMES</span><span class="p">)</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"class_names=</span><span class="si">{</span><span class="n">CLASS_NAMES</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"num_classes=</span><span class="si">{</span><span class="n">NUM_CLASSES</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">with TRAIN_ANNOTATIONS.open() as _f:
+<div class="clipboard-copy-txt" id="cell-6">from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categories
+
+with TRAIN_ANNOTATIONS.open() as _f:
     _coco = json.load(_f)
 
-CLASS_NAMES: list[str] = [cat["name"] for cat in sorted(_coco["categories"], key=lambda c: c["id"])]
+# Roboflow exports also list their top-level category (e.g. "animals" over "cat" and "dog"). It has no
+# annotations and RF-DETR leaves it out of the model's classes, so leave it out here too.
+CLASS_NAMES: list[str] = [
+    cat["name"] for cat in filter_parent_categories(_coco["categories"], annotated_category_ids(_coco))
+]
 NUM_CLASSES = len(CLASS_NAMES)
 
 print(f"class_names={CLASS_NAMES}")
@@ -5180,7 +5250,7 @@ display(summary_df)</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 18, 2026 10:09:20 UTC">2026-09-18 10:09:20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 2, 2026 15:43:02 UTC">2026-10-02 15:43:02</span>
   </span>
 
     

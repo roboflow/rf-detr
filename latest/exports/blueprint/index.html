@@ -103,7 +103,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-23T10:47:51">
+  <meta property="article:modified_time" content="2026-10-03T08:02:14">
   
   <script type="application/ld+json">
   {
@@ -118,7 +118,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-23T10:47:51",
+    "dateModified": "2026-10-03T08:02:14",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1304,6 +1304,62 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
     
@@ -1318,10 +1374,10 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_2" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_4" >
         
           
-          <label class="md-nav__link" for="__nav_2_4_2" id="__nav_2_4_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_4_4" id="__nav_2_4_4_label" tabindex="0">
             
   
   
@@ -1339,8 +1395,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2_4_2">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3376,7 +3432,7 @@
 <h3 id="5-add-the-dependency-extra">5. Add the dependency extra<a class="headerlink" href="#5-add-the-dependency-extra" title="Permanent link">&para;</a></h3>
 <p>Add <code>myformat = [...]</code> under <code>[project.optional-dependencies]</code> in <code>pyproject.toml</code>, matching the <code>pip_extra</code> you declared. The <code>ci-deps-resolution</code> workflow derives its matrix from that table, so the new extra is checked on every supported interpreter automatically.</p>
 <h3 id="6-document-the-format">6. Document the format<a class="headerlink" href="#6-document-the-format" title="Permanent link">&para;</a></h3>
-<p>Add it to <code>RFDETR.export()</code>'s <code>format</code> docstring in <code>src/rfdetr/detr.py</code> and to <a href="../">Export RF-DETR Model</a> — installation extra, a basic example, output files, and an inference snippet.</p>
+<p>Add it to <code>RFDETR.export()</code>'s <code>format</code> docstring in <code>src/rfdetr/detr.py</code> and to the user-facing export docs (<a href="../">Overview</a>, <a href="../basics/">Export Basics</a>, <a href="../advanced/">Advanced Export</a>) — installation extra, a basic example, output files, and an inference snippet.</p>
 <h3 id="7-test-it">7. Test it<a class="headerlink" href="#7-test-it" title="Permanent link">&para;</a></h3>
 <p>Two suites in <code>tests/export/test_registry.py</code> are parametrized over <code>REGISTRY</code>, so they pick your format up the moment you register it: the capability mirror (registry entry versus class attributes) and the dynamic-batch guard, which also asserts a fixed-batch format explains what to do instead. Everything else is a hand-written case — add your format to the configuration-type list, and write <code>tests/export/test_myformat_export.py</code> for filename resolution, the backbone marker, the missing-dependency message, and numerical parity against eager PyTorch if the runtime can be installed in CI.</p>
 <p>Most of those need no real model: build a throwaway <code>ExportGraph</code> around a <code>MagicMock</code> the way <code>tests/export/test_executorch_export.py</code> does, and only the parity test has to trace anything.</p>
@@ -3436,7 +3492,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 23, 2026 10:47:51 UTC">2026-09-23 10:47:51</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
   </span>
 
     

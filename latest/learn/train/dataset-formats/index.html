@@ -103,7 +103,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-25T22:21:04">
+  <meta property="article:modified_time" content="2026-09-30T22:57:19">
   
   <script type="application/ld+json">
   {
@@ -118,7 +118,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-25T22:21:04",
+    "dateModified": "2026-09-30T22:57:19",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1734,6 +1734,62 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../../exports/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../exports/advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
     
@@ -1748,10 +1804,10 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_2" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_4" >
         
           
-          <label class="md-nav__link" for="__nav_2_4_2" id="__nav_2_4_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_4_4" id="__nav_2_4_4_label" tabindex="0">
             
   
   
@@ -1769,8 +1825,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2_4_2">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3517,9 +3573,9 @@
 <p>When you call <code>model.train(dataset_dir=&lt;path&gt;)</code>, RF-DETR checks the following:</p>
 <ol>
 <li><strong>COCO format</strong>: Looks for <code>train/_annotations.coco.json</code></li>
-<li><strong>YOLO format</strong>: Looks for <code>data.yaml</code> (or <code>data.yml</code>) and <code>train/images/</code> directory</li>
+<li><strong>YOLO format</strong>: Looks for <code>data.yaml</code> (or <code>data.yml</code>) and a training image directory resolved from its split paths or the <code>train/images/</code> fallback</li>
 </ol>
-<p>If neither format is detected, an error is raised with instructions on what's expected.</p>
+<p>COCO takes precedence when both formats are present. If neither format is detected, an error is raised with instructions on what's expected.</p>
 <div class="admonition tip">
 <p class="admonition-title">Roboflow Export</p>
 <p><a href="https://roboflow.com/annotate">Roboflow</a> can export datasets in both COCO and YOLO formats. When downloading from Roboflow, select the appropriate format based on your preference.</p>
@@ -3731,6 +3787,7 @@
 </span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>        ├── image1.txt
 </span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>        └── ...
 </span></code></pre></div>
+<p>The YAML split paths also support layouts such as <code>images/train</code> with <code>labels/train</code>, and <code>images/val</code> with <code>labels/val</code>. An optional <code>path</code> sets the base for these paths; relative bases are resolved from the dataset root, and a relative base that is not a directory under the root is ignored in favour of the root itself, so a stock Ultralytics file whose <code>path</code> repeats the dataset directory name works unchanged. YAML paths must resolve within the dataset root. Without usable YAML split paths, RF-DETR falls back to <code>train/images</code> and <code>valid/images</code> (or <code>val/images</code>), with matching <code>labels</code> directories. Class discovery requires both training and validation directories; the test split is optional.</p>
 <h3 id="datayaml-configuration">data.yaml Configuration<a class="headerlink" href="#datayaml-configuration" title="Permanent link">&para;</a></h3>
 <p>The <code>data.yaml</code> file at the root of your dataset directory defines the class names:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">names</span><span class="p">:</span>
@@ -3762,7 +3819,11 @@
 </tr>
 <tr>
 <td><code>train</code>, <code>val</code>, <code>test</code></td>
-<td>Paths to image directories (relative to data.yaml)</td>
+<td>Paths to image directories (relative to <code>path</code>, or the dataset root)</td>
+</tr>
+<tr>
+<td><code>path</code></td>
+<td>Optional base directory for split paths</td>
 </tr>
 </tbody>
 </table>
@@ -3774,7 +3835,11 @@
 </span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">1</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dog</span>
 </span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">2</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bird</span>
 </span></code></pre></div>
-<p>Both formats are supported.</p>
+<p>Both formats are supported. Dictionary keys may be integers or quoted numeric strings (for example, <code>"0"</code>). Class IDs must be unique after numeric conversion and form a contiguous range starting at <code>0</code>; names are ordered by numeric ID.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Zero-padded numeric keys in the dictionary format</p>
+<p>Two-digit zero padding (e.g. <code>08</code>) works correctly, but three-digit-or-more zero padding does not: under YAML 1.1, an unquoted key like <code>010</code> is parsed as the octal integer 8, colliding with <code>008</code>. Quote such keys (<code>"010"</code>) or drop the leading-zero padding (<code>10</code>) to avoid this.</p>
 </div>
 <h3 id="label-file-format">Label File Format<a class="headerlink" href="#label-file-format" title="Permanent link">&para;</a></h3>
 <p>Each image has a corresponding <code>.txt</code> file in the <code>labels/</code> directory with the same base name. Each line in the label file represents one object:</p>
@@ -4089,7 +4154,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 25, 2026 22:21:04 UTC">2026-09-25 22:21:04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 30, 2026 22:57:19 UTC">2026-09-30 22:57:19</span>
   </span>
 
     

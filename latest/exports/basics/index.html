@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.">
+        <meta name="description" content="Export basics for RF-DETR — install the export extras, run model.export(), find the output files, and run inference with the exported model.">
       
       
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://rfdetr.roboflow.com/latest/exports/tflite/">
+        <link rel="canonical" href="https://rfdetr.roboflow.com/latest/exports/basics/">
       
       
-        <link rel="prev" href="../tensorrt/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../litert/">
+        <link rel="next" href="../advanced/">
       
       
         
@@ -31,7 +31,7 @@
   
     
       
-        <title>TFLite - RF-DETR</title>
+        <title>Basics - RF-DETR</title>
       
     
   
@@ -84,10 +84,10 @@
   
   
   
-  <meta property="og:title" content="TFLite - RF-DETR">
-  <meta property="og:description" content="Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.">
+  <meta property="og:title" content="Basics - RF-DETR">
+  <meta property="og:description" content="Export basics for RF-DETR — install the export extras, run model.export(), find the output files, and run inference with the exported model.">
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://rfdetr.roboflow.com/latest/exports/tflite/">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/latest/exports/basics/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
   <meta property="og:image:width" content="840">
   <meta property="og:image:height" content="630">
@@ -95,34 +95,34 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="TFLite - RF-DETR">
-  <meta name="twitter:description" content="Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.">
+  <meta name="twitter:title" content="Basics - RF-DETR">
+  <meta name="twitter:description" content="Export basics for RF-DETR — install the export extras, run model.export(), find the output files, and run inference with the exported model.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
   
   
   
   
-  <meta property="article:modified_time" content="2026-09-29T14:47:52">
+  <meta property="article:modified_time" content="2026-10-03T18:27:42">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "TFLite",
-    "description": "Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.",
-    "url": "https://rfdetr.roboflow.com/latest/exports/tflite/",
+    "headline": "Basics",
+    "description": "Export basics for RF-DETR \u2014 install the export extras, run model.export(), find the output files, and run inference with the exported model.",
+    "url": "https://rfdetr.roboflow.com/latest/exports/basics/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/latest#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/latest#software"},
     "proficiencyLevel": "Beginner to advanced",
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-29T14:47:52",
+    "dateModified": "2026-10-03T18:27:42",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/latest/exports/tflite/"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/latest/exports/basics/"},
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
@@ -144,14 +144,14 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "Export Formats",
-        "item": "https://rfdetr.roboflow.com/latest/exports/onnx/"
+        "name": "Export Model",
+        "item": "https://rfdetr.roboflow.com/latest/exports/"
       },
       {
         "@type": "ListItem",
         "position": 3,
-        "name": "TFLite",
-        "item": "https://rfdetr.roboflow.com/latest/exports/tflite/"
+        "name": "Basics",
+        "item": "https://rfdetr.roboflow.com/latest/exports/basics/"
       }
       
     ]
@@ -172,7 +172,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#tflite-export" class="md-skip">
+        <a href="#export-basics" class="md-skip">
           Skip to content
         </a>
       
@@ -240,7 +240,7 @@
 
             </a>
             
-              TFLite
+              Basics
             
           </span>
         </div>
@@ -1302,10 +1302,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../basics/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1321,6 +1348,153 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#basic-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-a-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-the-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check the Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output Files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-inference-with-inference-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Inference with inference-models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run Inference with inference-models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-pre-trained-rf-detr-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Pre-trained RF-DETR Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-local-rf-detr-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Local RF-DETR Checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#force-tensorrt-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Force TensorRT Backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-exported-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the Exported Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1358,8 +1532,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1370,11 +1542,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4_4" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_4" >
         
           
           <label class="md-nav__link" for="__nav_2_4_4" id="__nav_2_4_4_label" tabindex="0">
@@ -1395,7 +1569,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_4_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1466,37 +1640,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    TFLite
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../tflite/" class="md-nav__link">
         
   
   
@@ -1512,92 +1659,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prerequisites
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-tflite-export-fp32" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic TFLite Export (FP32)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#int8-quantization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        INT8 Quantization
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fp16-export" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        FP16 Export
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tflite-output-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TFLite Output Files
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tflite-inference-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TFLite Inference Example
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2848,10 +2909,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#installation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Installation
       
     </span>
   </a>
@@ -2859,10 +2920,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#basic-tflite-export-fp32" class="md-nav__link">
+  <a href="#basic-export" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Basic TFLite Export (FP32)
+        Basic Export
       
     </span>
   </a>
@@ -2870,10 +2931,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#int8-quantization" class="md-nav__link">
+  <a href="#choose-a-format" class="md-nav__link">
     <span class="md-ellipsis">
       
-        INT8 Quantization
+        Choose a Format
       
     </span>
   </a>
@@ -2881,10 +2942,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#fp16-export" class="md-nav__link">
+  <a href="#check-the-export" class="md-nav__link">
     <span class="md-ellipsis">
       
-        FP16 Export
+        Check the Export
       
     </span>
   </a>
@@ -2892,10 +2953,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tflite-output-files" class="md-nav__link">
+  <a href="#output-files" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TFLite Output Files
+        Output Files
       
     </span>
   </a>
@@ -2903,10 +2964,71 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tflite-inference-example" class="md-nav__link">
+  <a href="#run-inference-with-inference-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TFLite Inference Example
+        Run Inference with inference-models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run Inference with inference-models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-pre-trained-rf-detr-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Pre-trained RF-DETR Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-local-rf-detr-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Local RF-DETR Checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#force-tensorrt-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Force TensorRT Backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-exported-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the Exported Model
       
     </span>
   </a>
@@ -2933,147 +3055,211 @@
   
 
 
-<h1 id="tflite-export">TFLite Export<a class="headerlink" href="#tflite-export" title="Permanent link">&para;</a></h1>
-<div class="admonition warning">
-<p class="admonition-title">Experimental — Use with Caution</p>
-<p>TFLite export is <strong>experimental and work-in-progress</strong>. The pipeline depends on several upstream packages (<code>onnx2tf</code>, <code>ai_edge_litert</code>, <code>tflite-runtime</code>) that have experienced breaking API changes and installation instabilities across releases. You may encounter errors or unexpected results.</p>
-<p><strong>Known instabilities:</strong></p>
-<ul>
-<li><code>onnx2tf</code> output graph structure can change between minor versions, silently altering output tensor layout and breaking downstream inference code.</li>
-<li><code>ai_edge_litert</code> (Google's replacement for <code>tflite-runtime</code>) is still stabilising its public API; version pinning is strongly recommended.</li>
-<li>INT8 quantization is dynamic-range (INT8 weights, float activations). It is applied without calibration, and quantizing a transformer's weights to 8 bits can still cost accuracy — validate the INT8 model before deploying it.</li>
-<li>The ONNX → TF → TFLite conversion chain introduces numerical rounding that may produce slightly different predictions from the original PyTorch model.</li>
-<li>Installation of the <code>[tflite]</code> extra may conflict with existing TensorFlow or NumPy versions in your environment.</li>
-<li><code>onnx</code> and TensorFlow both bundle Abseil and export its symbols weakly, so whichever loads first supplies them to both. RF-DETR imports TensorFlow first on the TFLite route; if your own code imports <code>onnx</code> before <code>tensorflow</code>, RF-DETR logs a warning and the conversion may block forever while restoring the SavedModel (no error, 0% CPU). Importing <code>onnx</code> <em>after</em> <code>tensorflow</code> is safe; otherwise, in a fresh process, preload/import <code>tensorflow</code> before <code>onnx</code> and then run the export — freshness alone is not sufficient.</li>
-</ul>
-<p><strong>Recommendations:</strong></p>
-<ul>
-<li>Pin your dependency versions (e.g. <code>onnx2tf==X.Y.Z</code>) and test before each upgrade.</li>
-<li>Validate exported <code>.tflite</code> files against a held-out evaluation set before deploying.</li>
-<li>Prefer ONNX export when your target runtime supports it — it is more stable and better tested.</li>
-<li>If export fails, check the <a href="https://github.com/roboflow/rf-detr/issues">open issues</a> for known workarounds or report a new one with your environment details (<code>pip freeze</code>, Python version, OS).</li>
-</ul>
-</div>
-<p>Export your model to TFLite for deployment on mobile devices, microcontrollers, and edge hardware via TensorFlow Lite. The TFLite export pipeline converts ONNX → TensorFlow → TFLite using <a href="https://github.com/PINTO0309/onnx2tf">onnx2tf</a>.</p>
-<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[tflite]"</span>
-</span></code></pre></div>
-<h2 id="basic-tflite-export-fp32">Basic TFLite Export (FP32)<a class="headerlink" href="#basic-tflite-export-fp32" title="Permanent link">&para;</a></h2>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Object Detection</label><label for="__tabbed_1_2">Image Segmentation</label></div>
+<h1 id="export-basics">Export Basics<a class="headerlink" href="#export-basics" title="Permanent link">&para;</a></h1>
+<p>This page covers the everyday export path: install an extra, call <code>model.export()</code>, locate the output files, and run inference. For the full parameter reference and less common options, see <a href="../advanced/">Advanced Export</a>. For a comparison of formats and measured performance, see the <a href="../">Overview</a>.</p>
+<h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
+<p>Install the export dependencies you need:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:7"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><input id="__tabbed_1_5" name="__tabbed_1" type="radio" /><input id="__tabbed_1_6" name="__tabbed_1" type="radio" /><input id="__tabbed_1_7" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">ONNX</label><label for="__tabbed_1_2">OpenVINO</label><label for="__tabbed_1_3">TFLite</label><label for="__tabbed_1_4">LiteRT</label><label for="__tabbed_1_5">ExecuTorch</label><label for="__tabbed_1_6">Native CoreML (macOS)</label><label for="__tabbed_1_7">Apple Core AI</label></div>
 <div class="tabbed-content">
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[onnx]"</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegNano</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegNano</span><span class="p">()</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[openvino]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[tflite]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[litert]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[executorch]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreml]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreai]"</span>
 </span></code></pre></div>
 </div>
 </div>
 </div>
-<p>This produces both <code>output/inference_model_fp32.tflite</code> and <code>output/inference_model_fp16.tflite</code>.</p>
-<h2 id="int8-quantization">INT8 Quantization<a class="headerlink" href="#int8-quantization" title="Permanent link">&para;</a></h2>
-<p><code>quantization="int8"</code> produces a <strong>dynamic-range</strong> INT8 model: weights are stored as INT8, activations stay in float, and the weight scales are derived from the weights themselves. No calibration data is required, and supplying it does not change the result — static/full-integer INT8, the mode that <em>would</em> need representative data, is intentionally unsupported because RF-DETR's transformer activations are not expected to survive TFLite's full-integer mode, which gives every activation a per-tensor 8-bit scale — no TFLite full-integer measurement exists yet to confirm this; it is the current best understanding, not a proven fact. Other toolchains can be configured to keep transformer-sensitive ops in float during 8-bit quantization — ONNX Runtime's QDQ <code>quantize_static</code> via <code>op_types_to_quantize</code>/<code>nodes_to_exclude</code>, OpenVINO's NNCF via <code>model_type=ModelType.TRANSFORMER</code> (NNCF excludes Softmax by default; ORT does not) — so this is a limit of the TFLite route, not of 8-bit post-training quantization in general.</p>
-<p>Dynamic-range INT8 requires a float-capable runtime and is not suitable for integer-only accelerators such as the Coral Edge TPU or integer-only NPUs.</p>
-<p><code>calibration_data</code> accepts a directory of JPEG, PNG, BMP or WebP images, a path to an <code>.npy</code> file of shape <code>(N, H, W, 3)</code> (float32, values in <code>[0, 1]</code>), or a NumPy array in that format; <code>max_images</code> caps how many images are read from a directory. These arguments are not consumed when building the generated <code>.tflite</code> models. Omitting them is the normal path:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
+<h2 id="basic-export">Basic Export<a class="headerlink" href="#basic-export" title="Permanent link">&para;</a></h2>
+<p>Export your trained model to ONNX format:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Object Detection</label><label for="__tabbed_2_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
 </span></code></pre></div>
-<p>This writes <code>output/inference_model_dynamic_range_quant.tflite</code> alongside the FP32 and FP16 models. When GridSample ops are patched, the filename includes a <code>_gs_patched</code> infix: <code>output/inference_model_gs_patched_dynamic_range_quant.tflite</code> (the standard RF-DETR path).</p>
-<h2 id="fp16-export">FP16 Export<a class="headerlink" href="#fp16-export" title="Permanent link">&para;</a></h2>
-<p>FP16 models are always produced alongside FP32. You can explicitly request FP16 mode:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"fp16"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
 </span></code></pre></div>
-<h2 id="tflite-output-files">TFLite Output Files<a class="headerlink" href="#tflite-output-files" title="Permanent link">&para;</a></h2>
-<p>The <code>onnx2tf</code> converter <strong>always</strong> produces both FP32 and FP16 TFLite files, regardless of the requested quantization mode. When <code>quantization="int8"</code> is specified, it additionally produces the INT8-quantized model.</p>
+</div>
+</div>
+</div>
+<p>This command saves the ONNX model to the <code>output</code> directory by default.</p>
+<h2 id="choose-a-format">Choose a Format<a class="headerlink" href="#choose-a-format" title="Permanent link">&para;</a></h2>
+<p>Pass <code>format=</code> to <code>model.export()</code> to pick another target; the extra from <a href="#installation">Installation</a> must be installed first. Which format is fastest depends on the hardware — measured numbers are on the <a href="../#measured-performance-by-hardware">Overview</a>.</p>
 <table>
 <thead>
 <tr>
-<th>File</th>
-<th>Description</th>
+<th>Deploying to</th>
+<th><code>format=</code></th>
+<th>Guide</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>inference_model_fp32.tflite</code></td>
-<td>FP32 model (always produced)</td>
+<td>Anywhere ONNX Runtime runs</td>
+<td><code>"onnx"</code> (default)</td>
+<td><a href="../onnx/">ONNX Inference</a></td>
 </tr>
 <tr>
-<td><code>inference_model_fp16.tflite</code></td>
-<td>FP16 model (always produced)</td>
+<td>NVIDIA GPU</td>
+<td><code>"tensorrt"</code> (alias <code>"trt"</code>)</td>
+<td><a href="../tensorrt/">TensorRT</a></td>
 </tr>
 <tr>
-<td><code>inference_model_dynamic_range_quant.tflite</code></td>
-<td>INT8 model (when <code>quantization="int8"</code>)</td>
+<td>Intel CPU, GPU or NPU</td>
+<td><code>"openvino"</code></td>
+<td><a href="../openvino/">OpenVINO</a></td>
+</tr>
+<tr>
+<td>Android, embedded, edge CPU</td>
+<td><code>"tflite"</code> or <code>"litert"</code></td>
+<td><a href="../tflite/">TFLite</a>, <a href="../litert/">LiteRT</a></td>
+</tr>
+<tr>
+<td>On-device PyTorch runtime</td>
+<td><code>"executorch"</code> (alias <code>"pte"</code>)</td>
+<td><a href="../executorch/">ExecuTorch</a></td>
+</tr>
+<tr>
+<td>Apple platforms (Xcode)</td>
+<td><code>"coreml"</code> or <code>"coreai"</code></td>
+<td><a href="../coreml/">Native CoreML</a>, <a href="../coreai/">Core AI</a></td>
 </tr>
 </tbody>
 </table>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>Segmentation models produce TFLite files with three outputs: <code>dets</code> (bounding boxes), <code>labels</code> (class scores), and <code>masks</code> (per-instance segmentation masks). Keypoint models produce three outputs too, the third being <code>keypoints</code>.</p>
-</div>
-<div class="admonition warning">
-<p class="admonition-title">RF-DETR's TFLite outputs are not named <code>dets</code> / <code>labels</code></p>
-<p>RF-DETR converts through <code>onnx2tf</code>'s SavedModel route, which renames every output: the <code>dets</code> / <code>labels</code> / <code>masks</code> / <code>keypoints</code> names visible in the <code>.onnx</code> file arrive as <code>StatefulPartitionedCall:0</code>, <code>StatefulPartitionedCall:1</code>, … in the <code>.tflite</code> file, and the signature def exposes them as <code>output_0</code>, <code>output_1</code>, … Only the <em>input</em> keeps a readable name (<code>serving_default_input:0</code>). Match outputs by rank and last dimension instead — boxes are the rank-3 tensor with last dim <code>4</code>, logits the other rank-3 tensor — and treat the name check as a best-effort first attempt.</p>
-<p>Segmentation masks and keypoints are both rank-4, so neither the name nor the rank tells them apart. The TFLite <code>_run_inference</code> reference helper safely defaults <code>rank4_output</code> to <code>None</code>, decoding a mask only from an output that names itself. For a name-stripped segmentation export, pass <code>rank4_output="masks"</code>; pass <code>"keypoints"</code> to suppress anonymous-mask decoding for a keypoint export.</p>
-</div>
-<h2 id="tflite-inference-example">TFLite Inference Example<a class="headerlink" href="#tflite-inference-example" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># pip install tflite-runtime  (or use tensorflow.lite)</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="kn">import</span><span class="w"> </span><span class="nn">tflite_runtime.interpreter</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">tflite</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="c1"># Load model</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="n">interpreter</span> <span class="o">=</span> <span class="n">tflite</span><span class="o">.</span><span class="n">Interpreter</span><span class="p">(</span><span class="n">model_path</span><span class="o">=</span><span class="s2">"output/inference_model_fp32.tflite"</span><span class="p">)</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="n">interpreter</span><span class="o">.</span><span class="n">allocate_tensors</span><span class="p">()</span>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="n">input_details</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_input_details</span><span class="p">()</span>
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="n">output_details</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_output_details</span><span class="p">()</span>
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="c1"># Prepare input — TFLite model expects NHWC, ImageNet-normalized</span>
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="n">input_details</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"shape"</span><span class="p">][</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">]</span>
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>
-</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="c1"># Apply ImageNet normalization</span>
-</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
-</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
-</span><span id="__span-5-24"><a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
-</span><span id="__span-5-25"><a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>
-</span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="c1"># Add batch dimension: (1, H, W, 3)</span>
-</span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-</span><span id="__span-5-28"><a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>
-</span><span id="__span-5-29"><a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="c1"># Run inference</span>
-</span><span id="__span-5-30"><a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a><span class="n">interpreter</span><span class="o">.</span><span class="n">set_tensor</span><span class="p">(</span><span class="n">input_details</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"index"</span><span class="p">],</span> <span class="n">image_array</span><span class="p">)</span>
-</span><span id="__span-5-31"><a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="n">interpreter</span><span class="o">.</span><span class="n">invoke</span><span class="p">()</span>
-</span><span id="__span-5-32"><a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a>
-</span><span id="__span-5-33"><a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a><span class="c1"># onnx2tf renames the outputs, so the ONNX names are usually gone: fall back to rank and last dimension.</span>
-</span><span id="__span-5-34"><a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a><span class="c1"># The fallback cannot resolve num_classes == 3, where the logits' last dimension is 4 as well; it raises there.</span>
-</span><span id="__span-5-35"><a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a><span class="n">boxes_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">output_details</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">detail</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"name"</span><span class="p">,</span> <span class="s2">""</span><span class="p">))),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-36"><a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a><span class="n">labels_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">output_details</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">detail</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"name"</span><span class="p">,</span> <span class="s2">""</span><span class="p">))),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-37"><a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a><span class="k">if</span> <span class="n">boxes_detail</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">labels_detail</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-5-38"><a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a>    <span class="n">rank3</span> <span class="o">=</span> <span class="p">[</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">output_details</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">])</span> <span class="o">==</span> <span class="mi">3</span><span class="p">]</span>
-</span><span id="__span-5-39"><a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a>    <span class="n">boxes_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">rank3</span> <span class="k">if</span> <span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">4</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-40"><a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a>    <span class="n">labels_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">rank3</span> <span class="k">if</span> <span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-41"><a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a><span class="k">if</span> <span class="n">boxes_detail</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">labels_detail</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-5-42"><a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Could not identify the dets/labels TFLite outputs; got </span><span class="si">{</span><span class="n">output_details</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</span><span id="__span-5-43"><a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a>
-</span><span id="__span-5-44"><a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a><span class="n">boxes</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">boxes_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">])</span>
-</span><span id="__span-5-45"><a id="__codelineno-5-45" name="__codelineno-5-45" href="#__codelineno-5-45"></a><span class="n">labels</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">labels_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">])</span>
+<p>Formats marked experimental in <a href="../advanced/#format-capabilities">Advanced Export</a> emit a warning when constructed.</p>
+<h2 id="check-the-export">Check the Export<a class="headerlink" href="#check-the-export" title="Permanent link">&para;</a></h2>
+<p>An exported model returns raw tensors — box and logit decoding (sigmoid, background slot, box format) is left to your inference code. The <a href="../onnx/">ONNX guide</a> spells out the decoding rules and two pitfalls that apply to every format. To confirm an export matches PyTorch, run both on the same image and compare detections; the <a href="../../cookbooks/">export cookbooks</a> do this per hardware class, next to their latency numbers.</p>
+<h2 id="output-files">Output Files<a class="headerlink" href="#output-files" title="Permanent link">&para;</a></h2>
+<p>Filenames are built from the model's variant name (e.g. <code>rfdetr-medium</code>, falling back to <code>inference_model</code> when no variant or <code>output_name</code> is set, or <code>backbone_model</code> when <code>backbone_only=True</code> in that same case) plus a detail suffix whenever a detail materially changes the artifact — even at its default value, since the file needs to say what it actually is:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Filename pattern</th>
+<th>Detail encoded</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>onnx</code></td>
+<td><code>{variant}.onnx</code> (or <code>{variant}-backbone.onnx</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>inference_model.onnx</code> (or <code>backbone_model.onnx</code> if <code>backbone_only=True</code>)</td>
+<td>none — <code>-backbone</code> is structural, not a precision detail</td>
+</tr>
+<tr>
+<td><code>coreml</code></td>
+<td><code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code> (or <code>{variant}_fp32-backbone.mlpackage</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>backbone_model_fp32.mlpackage</code> if <code>backbone_only=True</code></td>
+<td><code>coreml_precision</code>, plus <code>-backbone</code> when named</td>
+</tr>
+<tr>
+<td><code>coreai</code></td>
+<td><code>{variant}_fp32.aimodel</code> / <code>{variant}_fp16.aimodel</code>; without a variant or <code>output_name</code>, <code>inference_model_fp32.aimodel</code></td>
+<td><code>coreai_precision</code></td>
+</tr>
+<tr>
+<td><code>executorch</code></td>
+<td><code>{variant}_xnnpack.pte</code> / <code>{variant}_coreml.pte</code> / <code>{variant}_qnn_{soc}.pte</code> (or <code>{variant}_xnnpack-backbone.pte</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>backbone_model_xnnpack.pte</code> if <code>backbone_only=True</code></td>
+<td><code>backend</code> (+ <code>soc</code> for <code>qnn</code>), plus <code>-backbone</code> when named</td>
+</tr>
+<tr>
+<td><code>tensorrt</code></td>
+<td><code>{variant}_fp16.trt</code> / <code>{variant}_fp32.trt</code> (or <code>{variant}-backbone_fp16.trt</code> / <code>{variant}-backbone_fp32.trt</code> if <code>backbone_only=True</code>)</td>
+<td><code>fp16</code>, plus <code>-backbone</code> when named</td>
+</tr>
+<tr>
+<td><code>tflite</code></td>
+<td><code>{variant}_gs_patched_fp32.tflite</code> + <code>{variant}_gs_patched_fp16.tflite</code> (+ <code>{variant}_gs_patched_dynamic_range_quant.tflite</code> for <code>quantization="int8"</code>); the <code>_gs_patched</code> part appears whenever the graph has <code>GridSample</code> nodes, as RF-DETR's do</td>
+<td>precision / quantization mode</td>
+</tr>
+<tr>
+<td><code>openvino</code></td>
+<td><code>{variant}.xml</code> + <code>{variant}.bin</code> (or <code>{variant}-backbone.xml</code>/<code>.bin</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>inference_model.xml</code>/<code>.bin</code> (or <code>backbone_model.xml</code>/<code>.bin</code> if <code>backbone_only=True</code>)</td>
+<td>none — <code>openvino_precision</code> controls IR weight compression, not the filename</td>
+</tr>
+</tbody>
+</table>
+<p>Pass <code>output_name="my-model"</code> to override the variant name and write <code>{output_name}.{ext}</code> verbatim — this suppresses the detail suffix for every format <strong>except</strong> <code>tflite</code>, which always writes multiple files and so keeps its <code>_fp32</code>/<code>_fp16</code>/<code>_dynamic_range_quant</code> suffix even with a custom name (<code>{output_name}_fp32.tflite</code>, etc.).</p>
+<p>With <code>backbone_only=True</code>, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a <code>-backbone</code> marker before the extension even when <code>output_name</code> is set, for example <code>my-model-backbone.onnx</code>. This distinguishes the backbone artifact from the full detector exported with the same name.</p>
+<h2 id="run-inference-with-inference-models">Run Inference with <code>inference-models</code><a class="headerlink" href="#run-inference-with-inference-models" title="Permanent link">&para;</a></h2>
+<p><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.</p>
+<h3 id="installation_1">Installation<a class="headerlink" href="#installation_1" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># CPU / PyTorch only</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>pip<span class="w"> </span>install<span class="w"> </span>inference-models
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># With TensorRT support (NVIDIA GPU required)</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"inference-models[trt10]"</span><span class="w">  </span><span class="c1"># TensorRT 10</span>
 </span></code></pre></div>
+<p>See the <a href="https://inference-models.roboflow.com/getting-started/installation/">inference-models installation guide</a> for all installation options including Jetson and CUDA 11.x.</p>
+<h3 id="load-a-pre-trained-rf-detr-model">Load a Pre-trained RF-DETR Model<a class="headerlink" href="#load-a-pre-trained-rf-detr-model" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Automatically selects the best available backend for your environment</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">)</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">image</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># Convert to supervision Detections</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">predictions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="nb">print</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="load-a-local-rf-detr-checkpoint">Load a Local RF-DETR Checkpoint<a class="headerlink" href="#load-a-local-rf-detr-checkpoint" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Load from a local .pth checkpoint (same file used by rfdetr for training)</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="s2">"/path/to/checkpoint.pth"</span><span class="p">,</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">model_type</span><span class="o">=</span><span class="s2">"rfdetr-small"</span><span class="p">,</span>  <span class="c1"># specify the architecture variant</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="p">)</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="n">image</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="force-tensorrt-backend">Force TensorRT Backend<a class="headerlink" href="#force-tensorrt-backend" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">BackendType</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># Explicitly request TensorRT — requires TRT to be installed</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">)</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="n">image</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>AutoModel.from_pretrained</code> accepts <code>backend="onnx"</code>, <code>backend="torch"</code>, or <code>backend="trt"</code> to override automatic backend selection.</p>
+<h2 id="using-the-exported-model">Using the Exported Model<a class="headerlink" href="#using-the-exported-model" title="Permanent link">&para;</a></h2>
+<p>Once exported, you can use the ONNX model with various inference frameworks. See <a href="../onnx/">ONNX Inference</a> for a complete example, or the format-specific pages for other runtimes.</p>
 
 
 
@@ -3094,7 +3280,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 14:47:52 UTC">2026-09-29 14:47:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 18:27:42 UTC">2026-10-03 18:27:42</span>
   </span>
 
     

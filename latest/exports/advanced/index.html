@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.">
+        <meta name="description" content="Advanced RF-DETR export — full model.export() parameter reference, custom resolution, backbone-only export, and how the export pipeline works internally.">
       
       
         <meta name="author" content="Roboflow">
       
       
-        <link rel="canonical" href="https://rfdetr.roboflow.com/latest/exports/tflite/">
+        <link rel="canonical" href="https://rfdetr.roboflow.com/latest/exports/advanced/">
       
       
-        <link rel="prev" href="../tensorrt/">
+        <link rel="prev" href="../basics/">
       
       
-        <link rel="next" href="../litert/">
+        <link rel="next" href="../onnx/">
       
       
         
@@ -31,7 +31,7 @@
   
     
       
-        <title>TFLite - RF-DETR</title>
+        <title>Advanced - RF-DETR</title>
       
     
   
@@ -84,10 +84,10 @@
   
   
   
-  <meta property="og:title" content="TFLite - RF-DETR">
-  <meta property="og:description" content="Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.">
+  <meta property="og:title" content="Advanced - RF-DETR">
+  <meta property="og:description" content="Advanced RF-DETR export — full model.export() parameter reference, custom resolution, backbone-only export, and how the export pipeline works internally.">
   <meta property="og:type" content="article">
-  <meta property="og:url" content="https://rfdetr.roboflow.com/latest/exports/tflite/">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/latest/exports/advanced/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
   <meta property="og:image:width" content="840">
   <meta property="og:image:height" content="630">
@@ -95,34 +95,34 @@
   
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
-  <meta name="twitter:title" content="TFLite - RF-DETR">
-  <meta name="twitter:description" content="Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.">
+  <meta name="twitter:title" content="Advanced - RF-DETR">
+  <meta name="twitter:description" content="Advanced RF-DETR export — full model.export() parameter reference, custom resolution, backbone-only export, and how the export pipeline works internally.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
   
   
   
   
-  <meta property="article:modified_time" content="2026-09-29T14:47:52">
+  <meta property="article:modified_time" content="2026-10-03T18:25:29">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "TFLite",
-    "description": "Export RF-DETR models to TFLite (FP32, FP16, INT8) for mobile and edge deployment.",
-    "url": "https://rfdetr.roboflow.com/latest/exports/tflite/",
+    "headline": "Advanced",
+    "description": "Advanced RF-DETR export \u2014 full model.export() parameter reference, custom resolution, backbone-only export, and how the export pipeline works internally.",
+    "url": "https://rfdetr.roboflow.com/latest/exports/advanced/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/latest#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/latest#software"},
     "proficiencyLevel": "Beginner to advanced",
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-29T14:47:52",
+    "dateModified": "2026-10-03T18:25:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
-    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/latest/exports/tflite/"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/latest/exports/advanced/"},
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
@@ -144,14 +144,14 @@
       {
         "@type": "ListItem",
         "position": 2,
-        "name": "Export Formats",
-        "item": "https://rfdetr.roboflow.com/latest/exports/onnx/"
+        "name": "Export Model",
+        "item": "https://rfdetr.roboflow.com/latest/exports/"
       },
       {
         "@type": "ListItem",
         "position": 3,
-        "name": "TFLite",
-        "item": "https://rfdetr.roboflow.com/latest/exports/tflite/"
+        "name": "Advanced",
+        "item": "https://rfdetr.roboflow.com/latest/exports/advanced/"
       }
       
     ]
@@ -172,7 +172,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#tflite-export" class="md-skip">
+        <a href="#advanced-export" class="md-skip">
           Skip to content
         </a>
       
@@ -240,7 +240,7 @@
 
             </a>
             
-              TFLite
+              Advanced
             
           </span>
         </div>
@@ -1330,10 +1330,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../advanced/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1349,6 +1376,131 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#export-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export Parameters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#format-capabilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Format Capabilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#precision-by-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Precision by Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-embedded-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read Embedded Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#advanced-export-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Advanced Export Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Advanced Export Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#export-with-custom-output-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export with Custom Output Directory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-with-custom-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export with Custom Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-backbone-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export Backbone Only
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-export-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Export Works
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1358,8 +1510,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1370,11 +1520,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4_4" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_4" >
         
           
           <label class="md-nav__link" for="__nav_2_4_4" id="__nav_2_4_4_label" tabindex="0">
@@ -1395,7 +1547,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_2_4_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1466,37 +1618,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    TFLite
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../tflite/" class="md-nav__link">
         
   
   
@@ -1512,92 +1637,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prerequisites
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#basic-tflite-export-fp32" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Basic TFLite Export (FP32)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#int8-quantization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        INT8 Quantization
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fp16-export" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        FP16 Export
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tflite-output-files" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TFLite Output Files
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tflite-inference-example" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TFLite Inference Example
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2848,10 +2887,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
+  <a href="#export-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Prerequisites
+        Export Parameters
       
     </span>
   </a>
@@ -2859,10 +2898,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#basic-tflite-export-fp32" class="md-nav__link">
+  <a href="#format-capabilities" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Basic TFLite Export (FP32)
+        Format Capabilities
       
     </span>
   </a>
@@ -2870,10 +2909,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#int8-quantization" class="md-nav__link">
+  <a href="#precision-by-format" class="md-nav__link">
     <span class="md-ellipsis">
       
-        INT8 Quantization
+        Precision by Format
       
     </span>
   </a>
@@ -2881,10 +2920,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#fp16-export" class="md-nav__link">
+  <a href="#read-embedded-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        FP16 Export
+        Read Embedded Notes
       
     </span>
   </a>
@@ -2892,21 +2931,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#tflite-output-files" class="md-nav__link">
+  <a href="#advanced-export-examples" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TFLite Output Files
+        Advanced Export Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Advanced Export Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#export-with-custom-output-directory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export with Custom Output Directory
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#tflite-inference-example" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#export-with-custom-resolution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        TFLite Inference Example
+        Export with Custom Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export-backbone-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export Backbone Only
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-export-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How Export Works
       
     </span>
   </a>
@@ -2933,147 +3011,292 @@
   
 
 
-<h1 id="tflite-export">TFLite Export<a class="headerlink" href="#tflite-export" title="Permanent link">&para;</a></h1>
-<div class="admonition warning">
-<p class="admonition-title">Experimental — Use with Caution</p>
-<p>TFLite export is <strong>experimental and work-in-progress</strong>. The pipeline depends on several upstream packages (<code>onnx2tf</code>, <code>ai_edge_litert</code>, <code>tflite-runtime</code>) that have experienced breaking API changes and installation instabilities across releases. You may encounter errors or unexpected results.</p>
-<p><strong>Known instabilities:</strong></p>
-<ul>
-<li><code>onnx2tf</code> output graph structure can change between minor versions, silently altering output tensor layout and breaking downstream inference code.</li>
-<li><code>ai_edge_litert</code> (Google's replacement for <code>tflite-runtime</code>) is still stabilising its public API; version pinning is strongly recommended.</li>
-<li>INT8 quantization is dynamic-range (INT8 weights, float activations). It is applied without calibration, and quantizing a transformer's weights to 8 bits can still cost accuracy — validate the INT8 model before deploying it.</li>
-<li>The ONNX → TF → TFLite conversion chain introduces numerical rounding that may produce slightly different predictions from the original PyTorch model.</li>
-<li>Installation of the <code>[tflite]</code> extra may conflict with existing TensorFlow or NumPy versions in your environment.</li>
-<li><code>onnx</code> and TensorFlow both bundle Abseil and export its symbols weakly, so whichever loads first supplies them to both. RF-DETR imports TensorFlow first on the TFLite route; if your own code imports <code>onnx</code> before <code>tensorflow</code>, RF-DETR logs a warning and the conversion may block forever while restoring the SavedModel (no error, 0% CPU). Importing <code>onnx</code> <em>after</em> <code>tensorflow</code> is safe; otherwise, in a fresh process, preload/import <code>tensorflow</code> before <code>onnx</code> and then run the export — freshness alone is not sufficient.</li>
-</ul>
-<p><strong>Recommendations:</strong></p>
-<ul>
-<li>Pin your dependency versions (e.g. <code>onnx2tf==X.Y.Z</code>) and test before each upgrade.</li>
-<li>Validate exported <code>.tflite</code> files against a held-out evaluation set before deploying.</li>
-<li>Prefer ONNX export when your target runtime supports it — it is more stable and better tested.</li>
-<li>If export fails, check the <a href="https://github.com/roboflow/rf-detr/issues">open issues</a> for known workarounds or report a new one with your environment details (<code>pip freeze</code>, Python version, OS).</li>
-</ul>
-</div>
-<p>Export your model to TFLite for deployment on mobile devices, microcontrollers, and edge hardware via TensorFlow Lite. The TFLite export pipeline converts ONNX → TensorFlow → TFLite using <a href="https://github.com/PINTO0309/onnx2tf">onnx2tf</a>.</p>
-<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[tflite]"</span>
-</span></code></pre></div>
-<h2 id="basic-tflite-export-fp32">Basic TFLite Export (FP32)<a class="headerlink" href="#basic-tflite-export-fp32" title="Permanent link">&para;</a></h2>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Object Detection</label><label for="__tabbed_1_2">Image Segmentation</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
-</span></code></pre></div>
-</div>
-<div class="tabbed-block">
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegNano</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegNano</span><span class="p">()</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
-</span></code></pre></div>
-</div>
-</div>
-</div>
-<p>This produces both <code>output/inference_model_fp32.tflite</code> and <code>output/inference_model_fp16.tflite</code>.</p>
-<h2 id="int8-quantization">INT8 Quantization<a class="headerlink" href="#int8-quantization" title="Permanent link">&para;</a></h2>
-<p><code>quantization="int8"</code> produces a <strong>dynamic-range</strong> INT8 model: weights are stored as INT8, activations stay in float, and the weight scales are derived from the weights themselves. No calibration data is required, and supplying it does not change the result — static/full-integer INT8, the mode that <em>would</em> need representative data, is intentionally unsupported because RF-DETR's transformer activations are not expected to survive TFLite's full-integer mode, which gives every activation a per-tensor 8-bit scale — no TFLite full-integer measurement exists yet to confirm this; it is the current best understanding, not a proven fact. Other toolchains can be configured to keep transformer-sensitive ops in float during 8-bit quantization — ONNX Runtime's QDQ <code>quantize_static</code> via <code>op_types_to_quantize</code>/<code>nodes_to_exclude</code>, OpenVINO's NNCF via <code>model_type=ModelType.TRANSFORMER</code> (NNCF excludes Softmax by default; ORT does not) — so this is a limit of the TFLite route, not of 8-bit post-training quantization in general.</p>
-<p>Dynamic-range INT8 requires a float-capable runtime and is not suitable for integer-only accelerators such as the Coral Edge TPU or integer-only NPUs.</p>
-<p><code>calibration_data</code> accepts a directory of JPEG, PNG, BMP or WebP images, a path to an <code>.npy</code> file of shape <code>(N, H, W, 3)</code> (float32, values in <code>[0, 1]</code>), or a NumPy array in that format; <code>max_images</code> caps how many images are read from a directory. These arguments are not consumed when building the generated <code>.tflite</code> models. Omitting them is the normal path:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">()</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
-</span></code></pre></div>
-<p>This writes <code>output/inference_model_dynamic_range_quant.tflite</code> alongside the FP32 and FP16 models. When GridSample ops are patched, the filename includes a <code>_gs_patched</code> infix: <code>output/inference_model_gs_patched_dynamic_range_quant.tflite</code> (the standard RF-DETR path).</p>
-<h2 id="fp16-export">FP16 Export<a class="headerlink" href="#fp16-export" title="Permanent link">&para;</a></h2>
-<p>FP16 models are always produced alongside FP32. You can explicitly request FP16 mode:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tflite"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"fp16"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">"output"</span><span class="p">)</span>
-</span></code></pre></div>
-<h2 id="tflite-output-files">TFLite Output Files<a class="headerlink" href="#tflite-output-files" title="Permanent link">&para;</a></h2>
-<p>The <code>onnx2tf</code> converter <strong>always</strong> produces both FP32 and FP16 TFLite files, regardless of the requested quantization mode. When <code>quantization="int8"</code> is specified, it additionally produces the INT8-quantized model.</p>
+<h1 id="advanced-export">Advanced Export<a class="headerlink" href="#advanced-export" title="Permanent link">&para;</a></h1>
+<p>This page is the reference for every <code>model.export()</code> parameter, plus less common export options. New to exporting? Start with <a href="../basics/">Export Basics</a>.</p>
+<h2 id="export-parameters">Export Parameters<a class="headerlink" href="#export-parameters" title="Permanent link">&para;</a></h2>
+<p>The <code>export()</code> method accepts several parameters to customize the export process:</p>
 <table>
 <thead>
 <tr>
-<th>File</th>
+<th>Parameter</th>
+<th>Default</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>inference_model_fp32.tflite</code></td>
-<td>FP32 model (always produced)</td>
+<td><code>output_dir</code></td>
+<td><code>"output"</code></td>
+<td>Directory where the exported model will be saved.</td>
 </tr>
 <tr>
-<td><code>inference_model_fp16.tflite</code></td>
-<td>FP16 model (always produced)</td>
+<td><code>format</code></td>
+<td><code>"onnx"</code></td>
+<td>Export format: <code>"onnx"</code>, <code>"tflite"</code>, <code>"tensorrt"</code> (alias: <code>"trt"</code>), <code>"executorch"</code>, <code>"openvino"</code>, <code>"coreml"</code>, <code>"coreai"</code> or <code>"litert"</code>.</td>
 </tr>
 <tr>
-<td><code>inference_model_dynamic_range_quant.tflite</code></td>
-<td>INT8 model (when <code>quantization="int8"</code>)</td>
+<td><code>quantization</code></td>
+<td><code>None</code></td>
+<td>TFLite quantization mode: <code>None</code>/<code>"fp32"</code>, <code>"fp16"</code>, or <code>"int8"</code>. Only used when <code>format="tflite"</code>; <code>format="litert"</code> accepts only <code>None</code>/<code>"fp32"</code> and raises <code>NotImplementedError</code> otherwise.</td>
+</tr>
+<tr>
+<td><code>calibration_data</code></td>
+<td><code>None</code></td>
+<td>Optional image directory, <code>.npy</code> file path, NumPy array, or <code>None</code>. Not consumed when building the generated <code>.tflite</code> models.</td>
+</tr>
+<tr>
+<td><code>max_images</code></td>
+<td><code>100</code></td>
+<td>Maximum number of images to load from a <code>calibration_data</code> directory. Ignored for other calibration data formats.</td>
+</tr>
+<tr>
+<td><code>infer_dir</code></td>
+<td><code>None</code></td>
+<td>Optional directory of sample images for inference validation during export tracing. If not provided, a random dummy image is generated.</td>
+</tr>
+<tr>
+<td><code>backbone_only</code></td>
+<td><code>False</code></td>
+<td>Export only the backbone feature extractor instead of the full model.</td>
+</tr>
+<tr>
+<td><code>opset_version</code></td>
+<td><code>17</code></td>
+<td>ONNX opset version to use for export. Higher versions support more operations.</td>
+</tr>
+<tr>
+<td><code>verbose</code></td>
+<td><code>True</code></td>
+<td>Whether to print verbose export information.</td>
+</tr>
+<tr>
+<td><code>shape</code></td>
+<td><code>None</code></td>
+<td>Input shape as tuple <code>(height, width)</code>. Each dimension must be divisible by the selected model's block size (<code>patch_size * num_windows</code>). If not provided, uses the model's default resolution.</td>
+</tr>
+<tr>
+<td><code>batch_size</code></td>
+<td><code>1</code></td>
+<td>Batch size for the exported model. With <code>dynamic_batch=True</code> and <code>format="tensorrt"</code>, also the batch the engine's optimization profile is tuned for.</td>
+</tr>
+<tr>
+<td><code>dynamic_batch</code></td>
+<td><code>False</code></td>
+<td>If <code>True</code>, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for <code>format="onnx"</code> and <code>format="tensorrt"</code> (which then needs <code>max_batch_size</code>) — TFLite, ExecuTorch, CoreML, Core AI, OpenVINO and LiteRT bake a fixed batch size (TFLite because <code>onnx2tf</code> fails on the dynamic-batch graph).</td>
+</tr>
+<tr>
+<td><code>patch_size</code></td>
+<td><code>None</code></td>
+<td>Backbone patch size override. Defaults to the value from <code>model_config.patch_size</code>. Must match the instantiated model's patch size when provided.</td>
+</tr>
+<tr>
+<td><code>backend</code></td>
+<td><code>None</code></td>
+<td>Backend for ExecuTorch: <code>"xnnpack"</code> (CPU, fp32), <code>"coreml"</code> (Apple, fp16), or <code>"qnn"</code> (Qualcomm HTP, fp16). Required when <code>format="executorch"</code>.</td>
+</tr>
+<tr>
+<td><code>soc</code></td>
+<td><code>None</code></td>
+<td>Target SoC chip identifier for the <code>"qnn"</code> backend (e.g. <code>"SM8650"</code> for Snapdragon 8 Gen 3). Required when <code>backend="qnn"</code>.</td>
+</tr>
+<tr>
+<td><code>fp16</code></td>
+<td><code>True</code></td>
+<td>Build the TensorRT engine with FP16 precision (only used when <code>format="tensorrt"</code>). TensorRT 11+ removed the FP16 builder flag, so there the engine is built from an FP16-cast graph instead; engine inputs and outputs stay FP32 either way. On strongly typed TensorRT (11+), this graph cast requires <code>onnx</code>/<code>onnxconverter-common</code> — install <code>rfdetr[tensorrt]</code> for the complete set, or export raises <code>ImportError</code>. A lean/partial TensorRT &lt; 11 wheel lacking the FP16 builder flag falls back to an FP32 engine with a warning instead. Pass <code>False</code> for an FP32 engine.</td>
+</tr>
+<tr>
+<td><code>max_batch_size</code></td>
+<td><code>None</code></td>
+<td>Largest batch a dynamic TensorRT engine accepts. Required when <code>format="tensorrt"</code> and <code>dynamic_batch=True</code>: the engine gets one optimization profile spanning batch <code>1 .. max_batch_size</code>, tuned for <code>batch_size</code>. Ignored for every other format.</td>
+</tr>
+<tr>
+<td><code>notes</code></td>
+<td><code>None</code></td>
+<td>Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the <code>"rfdetr_notes"</code> metadata property.</td>
+</tr>
+<tr>
+<td><code>coreml_precision</code></td>
+<td><code>None</code></td>
+<td>Compute precision for <code>format="coreml"</code>: <code>None</code>/<code>"float32"</code> (tight CPU parity with eager PyTorch) or <code>"float16"</code> (half the size, and the only precision the Apple Neural Engine runs — at a measured accuracy cost, see <a href="../coreml/#neural-engine-compute-units-and-the-fallback-boundary">Native CoreML</a>). Ignored for every other format.</td>
+</tr>
+<tr>
+<td><code>coreai_precision</code></td>
+<td><code>None</code></td>
+<td>Compute precision for <code>format="coreai"</code>: <code>None</code>/<code>"float32"</code> (matches eager PyTorch on the GPU) or <code>"float16"</code> (half the size, and the precision Core AI runs on the Apple Neural Engine — at a measured accuracy cost, see <a href="../coreai/#precision-compute-units-and-latency">Core AI</a>). Ignored for every other format.</td>
+</tr>
+<tr>
+<td><code>openvino_precision</code></td>
+<td><code>None</code></td>
+<td>IR <em>storage</em> weight precision for <code>format="openvino"</code>: <code>None</code>/<code>"float16"</code> (OpenVINO's default FP16 weight compression) or <code>"float32"</code> (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename.</td>
+</tr>
+<tr>
+<td><code>output_name</code></td>
+<td><code>None</code></td>
+<td>Full filename override (without extension). Takes precedence over the model's variant name and suppresses the <code>_fp32</code>/<code>_fp16</code>/<code>_{backend}</code> detail suffix — see <a href="../basics/#output-files">Output Files</a>.</td>
 </tr>
 </tbody>
 </table>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>Segmentation models produce TFLite files with three outputs: <code>dets</code> (bounding boxes), <code>labels</code> (class scores), and <code>masks</code> (per-instance segmentation masks). Keypoint models produce three outputs too, the third being <code>keypoints</code>.</p>
-</div>
-<div class="admonition warning">
-<p class="admonition-title">RF-DETR's TFLite outputs are not named <code>dets</code> / <code>labels</code></p>
-<p>RF-DETR converts through <code>onnx2tf</code>'s SavedModel route, which renames every output: the <code>dets</code> / <code>labels</code> / <code>masks</code> / <code>keypoints</code> names visible in the <code>.onnx</code> file arrive as <code>StatefulPartitionedCall:0</code>, <code>StatefulPartitionedCall:1</code>, … in the <code>.tflite</code> file, and the signature def exposes them as <code>output_0</code>, <code>output_1</code>, … Only the <em>input</em> keeps a readable name (<code>serving_default_input:0</code>). Match outputs by rank and last dimension instead — boxes are the rank-3 tensor with last dim <code>4</code>, logits the other rank-3 tensor — and treat the name check as a best-effort first attempt.</p>
-<p>Segmentation masks and keypoints are both rank-4, so neither the name nor the rank tells them apart. The TFLite <code>_run_inference</code> reference helper safely defaults <code>rank4_output</code> to <code>None</code>, decoding a mask only from an output that names itself. For a name-stripped segmentation export, pass <code>rank4_output="masks"</code>; pass <code>"keypoints"</code> to suppress anonymous-mask decoding for a keypoint export.</p>
-</div>
-<h2 id="tflite-inference-example">TFLite Inference Example<a class="headerlink" href="#tflite-inference-example" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># pip install tflite-runtime  (or use tensorflow.lite)</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="kn">import</span><span class="w"> </span><span class="nn">tflite_runtime.interpreter</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">tflite</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="c1"># Load model</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="n">interpreter</span> <span class="o">=</span> <span class="n">tflite</span><span class="o">.</span><span class="n">Interpreter</span><span class="p">(</span><span class="n">model_path</span><span class="o">=</span><span class="s2">"output/inference_model_fp32.tflite"</span><span class="p">)</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="n">interpreter</span><span class="o">.</span><span class="n">allocate_tensors</span><span class="p">()</span>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="n">input_details</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_input_details</span><span class="p">()</span>
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="n">output_details</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_output_details</span><span class="p">()</span>
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="c1"># Prepare input — TFLite model expects NHWC, ImageNet-normalized</span>
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span> <span class="o">=</span> <span class="n">input_details</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"shape"</span><span class="p">][</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">]</span>
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
-</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="p">[</span><span class="n">input_height</span><span class="p">,</span> <span class="n">input_width</span><span class="p">],</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>
-</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="c1"># Apply ImageNet normalization</span>
-</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="n">mean</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
-</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="n">std</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
-</span><span id="__span-5-24"><a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="n">image_tensor</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">image_tensor</span><span class="p">,</span> <span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="p">)</span>
-</span><span id="__span-5-25"><a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>
-</span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="c1"># Add batch dimension: (1, H, W, 3)</span>
-</span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="n">image_array</span> <span class="o">=</span> <span class="n">image_tensor</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-</span><span id="__span-5-28"><a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>
-</span><span id="__span-5-29"><a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="c1"># Run inference</span>
-</span><span id="__span-5-30"><a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a><span class="n">interpreter</span><span class="o">.</span><span class="n">set_tensor</span><span class="p">(</span><span class="n">input_details</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"index"</span><span class="p">],</span> <span class="n">image_array</span><span class="p">)</span>
-</span><span id="__span-5-31"><a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="n">interpreter</span><span class="o">.</span><span class="n">invoke</span><span class="p">()</span>
-</span><span id="__span-5-32"><a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a>
-</span><span id="__span-5-33"><a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a><span class="c1"># onnx2tf renames the outputs, so the ONNX names are usually gone: fall back to rank and last dimension.</span>
-</span><span id="__span-5-34"><a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a><span class="c1"># The fallback cannot resolve num_classes == 3, where the logits' last dimension is 4 as well; it raises there.</span>
-</span><span id="__span-5-35"><a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a><span class="n">boxes_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">output_details</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">detail</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"name"</span><span class="p">,</span> <span class="s2">""</span><span class="p">))),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-36"><a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a><span class="n">labels_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">output_details</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">detail</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"name"</span><span class="p">,</span> <span class="s2">""</span><span class="p">))),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-37"><a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a><span class="k">if</span> <span class="n">boxes_detail</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">labels_detail</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-5-38"><a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a>    <span class="n">rank3</span> <span class="o">=</span> <span class="p">[</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">output_details</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">])</span> <span class="o">==</span> <span class="mi">3</span><span class="p">]</span>
-</span><span id="__span-5-39"><a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a>    <span class="n">boxes_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">rank3</span> <span class="k">if</span> <span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">4</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-40"><a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a>    <span class="n">labels_detail</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">detail</span> <span class="k">for</span> <span class="n">detail</span> <span class="ow">in</span> <span class="n">rank3</span> <span class="k">if</span> <span class="n">detail</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-5-41"><a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a><span class="k">if</span> <span class="n">boxes_detail</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">labels_detail</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-5-42"><a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a>    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Could not identify the dets/labels TFLite outputs; got </span><span class="si">{</span><span class="n">output_details</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</span><span id="__span-5-43"><a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a>
-</span><span id="__span-5-44"><a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a><span class="n">boxes</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">boxes_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">])</span>
-</span><span id="__span-5-45"><a id="__codelineno-5-45" name="__codelineno-5-45" href="#__codelineno-5-45"></a><span class="n">labels</span> <span class="o">=</span> <span class="n">interpreter</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">labels_detail</span><span class="p">[</span><span class="s2">"index"</span><span class="p">])</span>
+<h2 id="format-capabilities">Format Capabilities<a class="headerlink" href="#format-capabilities" title="Permanent link">&para;</a></h2>
+<p>What each format supports, as declared by its exporter. Parameters a format does not use are ignored with a warning.</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Extra</th>
+<th><code>dynamic_batch</code></th>
+<th>Embeds <code>notes</code></th>
+<th>Experimental</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>onnx</code></td>
+<td><code>rfdetr[onnx]</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>tensorrt</code></td>
+<td><code>rfdetr[tensorrt]</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>tflite</code></td>
+<td><code>rfdetr[tflite]</code></td>
+<td>no</td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>openvino</code></td>
+<td><code>rfdetr[openvino]</code></td>
+<td>no</td>
+<td>no</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>executorch</code></td>
+<td><code>rfdetr[executorch]</code></td>
+<td>no</td>
+<td>no</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>litert</code></td>
+<td><code>rfdetr[litert]</code></td>
+<td>no</td>
+<td>no</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>coreml</code></td>
+<td><code>rfdetr[coreml]</code></td>
+<td>no</td>
+<td>no</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>coreai</code></td>
+<td><code>rfdetr[coreai]</code></td>
+<td>no</td>
+<td>yes</td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<p>For a format without dynamic batch, export one artifact per batch size.</p>
+<h2 id="precision-by-format">Precision by Format<a class="headerlink" href="#precision-by-format" title="Permanent link">&para;</a></h2>
+<p>Each format exposes precision through its own parameter; <a href="#export-parameters">Export Parameters</a> above has the details.</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Parameter</th>
+<th>Values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tflite</code></td>
+<td><code>quantization</code></td>
+<td><code>None</code>/<code>"fp32"</code>, <code>"fp16"</code>, <code>"int8"</code> (dynamic-range)</td>
+</tr>
+<tr>
+<td><code>litert</code></td>
+<td><code>quantization</code></td>
+<td><code>None</code>/<code>"fp32"</code> only</td>
+</tr>
+<tr>
+<td><code>tensorrt</code></td>
+<td><code>fp16</code></td>
+<td><code>True</code> (default) or <code>False</code></td>
+</tr>
+<tr>
+<td><code>openvino</code></td>
+<td><code>openvino_precision</code></td>
+<td><code>None</code>/<code>"float16"</code> or <code>"float32"</code> (IR weight storage)</td>
+</tr>
+<tr>
+<td><code>coreml</code></td>
+<td><code>coreml_precision</code></td>
+<td><code>None</code>/<code>"float32"</code> or <code>"float16"</code></td>
+</tr>
+<tr>
+<td><code>coreai</code></td>
+<td><code>coreai_precision</code></td>
+<td><code>None</code>/<code>"float32"</code> or <code>"float16"</code></td>
+</tr>
+<tr>
+<td><code>executorch</code></td>
+<td><code>backend</code></td>
+<td><code>"xnnpack"</code> (fp32), <code>"coreml"</code> (fp16), <code>"qnn"</code> (fp16)</td>
+</tr>
+</tbody>
+</table>
+<p>Lower precision is not a portable speedup — see <a href="../#measured-performance-by-hardware">fp16 pays off only where the silicon implements it</a>.</p>
+<h2 id="read-embedded-notes">Read Embedded Notes<a class="headerlink" href="#read-embedded-notes" title="Permanent link">&para;</a></h2>
+<p>Pass <code>notes=</code> to attach your own metadata, such as a dataset version or training run. For ONNX it is stored under the <code>rfdetr_notes</code> metadata property; strings are stored as is, any other JSON-serialisable value as JSON:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">onnx</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">notes</span><span class="o">=</span><span class="p">{</span><span class="s2">"dataset"</span><span class="p">:</span> <span class="s2">"v3"</span><span class="p">,</span> <span class="s2">"run"</span><span class="p">:</span> <span class="s2">"2026-10-01"</span><span class="p">})</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">onnx_model</span> <span class="o">=</span> <span class="n">onnx</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"output/rfdetr-small.onnx"</span><span class="p">)</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">notes</span> <span class="o">=</span> <span class="p">{</span><span class="n">prop</span><span class="o">.</span><span class="n">key</span><span class="p">:</span> <span class="n">prop</span><span class="o">.</span><span class="n">value</span> <span class="k">for</span> <span class="n">prop</span> <span class="ow">in</span> <span class="n">onnx_model</span><span class="o">.</span><span class="n">metadata_props</span><span class="p">}[</span><span class="s2">"rfdetr_notes"</span><span class="p">]</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">notes</span><span class="p">))</span>
 </span></code></pre></div>
+<h2 id="advanced-export-examples">Advanced Export Examples<a class="headerlink" href="#advanced-export-examples" title="Permanent link">&para;</a></h2>
+<h3 id="export-with-custom-output-directory">Export with Custom Output Directory<a class="headerlink" href="#export-with-custom-output-directory" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">output_dir</span><span class="o">=</span><span class="s2">"exports/my_model"</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="export-with-custom-resolution">Export with Custom Resolution<a class="headerlink" href="#export-with-custom-resolution" title="Permanent link">&para;</a></h3>
+<p>Export the model with a specific input resolution. For example, <code>RFDETRSmall</code> expects dimensions divisible by <code>32</code> (<code>patch_size=16</code>, <code>num_windows=2</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">608</span><span class="p">,</span> <span class="mi">608</span><span class="p">))</span>
+</span></code></pre></div>
+<h3 id="export-backbone-only">Export Backbone Only<a class="headerlink" href="#export-backbone-only" title="Permanent link">&para;</a></h3>
+<p>Export only the backbone feature extractor for use in custom pipelines:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="n">backbone_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The backbone export contains the encoder and its feature projector, without the detection decoder or prediction heads. ONNX outputs are feature maps in NCHW layout, ordered by <code>projector_scale</code>: <code>features</code> for the first level, followed by <code>features_1</code>, <code>features_2</code>, and so on when more levels are configured. Backbones with a second projector also return its levels as <code>cross_attn_features</code>, <code>cross_attn_features_1</code>, and so on, after the primary levels. These outputs are feature maps, not decoded boxes, masks, or keypoint coordinates.</p>
+<h2 id="how-export-works">How Export Works<a class="headerlink" href="#how-export-works" title="Permanent link">&para;</a></h2>
+<p>Every format is written by an <code>Exporter</code> class built from that format's own configuration, and <code>model.export()</code> is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent <code>ExportGraph</code>, and hands the graph to the exporter. <code>RFDETR.export()</code>'s signature and return value are the supported surface; the classes behind it are internal.</p>
+<p>If you want to add a format, or you are reading the export code, see <a href="../blueprint/">Exporter Blueprint</a> for the contract each format implements and the steps a new one takes.</p>
 
 
 
@@ -3094,7 +3317,7 @@
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 14:47:52 UTC">2026-09-29 14:47:52</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 18:25:29 UTC">2026-10-03 18:25:29</span>
   </span>
 
     
