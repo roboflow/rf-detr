@@ -68,7 +68,10 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "TFLiteExporter",
         "tflite",
         "TFLite",
-        supports_dynamic_batch=True,
+        dynamic_batch_reason=(
+            "(onnx2tf cannot lower the dynamic-batch graph: a position-embedding Add broadcasts a batch-1 constant"
+            " against the dynamic encoder input). Export one .tflite per batch size instead."
+        ),
         preimport="rfdetr.export._backend:preload_tensorflow_before_onnx",
     ),
     "tensorrt": ExporterEntry(
