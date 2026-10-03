@@ -31,6 +31,7 @@ extra:
 nav:
   - Home: index.md
   - How to:
+      - How It Works: learn/how-it-works.md
       - Getting Started:
           - Install: getting-started/install.md
           - Migration Guide: getting-started/migration.md
