@@ -47,22 +47,24 @@ nav:
           - Custom Training API: learn/train/customization.md
           - Augmentations: learn/train/augmentations.md
           - Training Loggers: learn/train/loggers.md
-      - Export Model:
-          - Overview: exports/index.md
-          - Basics: exports/basics.md
-          - Advanced: exports/advanced.md
-          - Export Formats:
-              - ONNX: exports/onnx.md
-              - TensorRT: exports/tensorrt.md
-              - TFLite: exports/tflite.md
-              - LiteRT: exports/litert.md
-              - OpenVINO: exports/openvino.md
-              - ExecuTorch: exports/executorch.md
-              - CoreML: exports/coreml.md
-              - Core AI: exports/coreai.md
-          - Exporter Blueprint: exports/blueprint.md
+      - Export Model: exports/index.md
       - Deploy Model: learn/deploy.md
       - Benchmarks: learn/benchmarks.md
+  - Export:
+      - Overview: exports/index.md
+      - Basics: exports/basics.md
+      - Advanced: exports/advanced.md
+      - Export Formats:
+          - ONNX: exports/onnx.md
+          - TensorRT: exports/tensorrt.md
+          - TFLite: exports/tflite.md
+          - LiteRT: exports/litert.md
+          - OpenVINO: exports/openvino.md
+          - ExecuTorch: exports/executorch.md
+          - CoreML: exports/coreml.md
+          - Core AI: exports/coreai.md
+      - Contributing:
+          - Exporter Blueprint: exports/blueprint.md
   - API Reference:
       - RF-DETR: reference/rfdetr.md
       - Detection Models:
