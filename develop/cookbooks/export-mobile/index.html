@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-03T08:02:14">
+  <meta property="article:modified_time" content="2026-10-03T13:13:48">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-03T08:02:14",
+    "dateModified": "2026-10-03T13:13:48",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3878,7 +3878,7 @@ these milliseconds against the architecture headline on the
 <a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a> (NVIDIA T4, TensorRT
 FP16, model only) or the number on
 <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>
-(NVIDIA L4, Roboflow Inference, scope not stated) — those are GPU numbers, not comparable to a CPU
+(L4, Roboflow Inference, scope not stated, batch 1) — those are GPU numbers, not comparable to a CPU
 run at all, let alone without checking precision, batch size, and scope.</p>
 </blockquote>
 </div>
@@ -3891,9 +3891,9 @@ run at all, let alone without checking precision, batch size, and scope.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="part-a-tflite">Part A: TFLite<a class="anchor-link" href="#part-a-tflite">¶</a></h2><h3 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h3><p>Installs from <code>develop</code> to test the latest performance work; the newest release (1.11.1) does not yet
-ship the public <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports.
-Once a release does, swap <code>develop</code> for <code>release/latest</code> in the install URL.
+<h2 id="part-a-tflite">Part A: TFLite<a class="anchor-link" href="#part-a-tflite">¶</a></h2><h3 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h3><p><code>RFDETR_SPEC</code> holds the install source and defaults to the <code>develop</code> branch. The public
+<code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports ship in
+1.11.2; to install from PyPI instead, swap in the commented <code>&gt;=1.11.2,&lt;2</code> line.
 <code>ai_edge_litert</code>, which runs the <code>.tflite</code> files below, comes with <code>[tflite]</code>
 transitively: <code>onnx2tf</code> pins <code>ai-edge-litert==2.1.2</code>, so it is not listed separately (an unpinned
 extra install would fight that pin). The assertion below fails fast on any interpreter other
@@ -3965,11 +3965,15 @@ assert sys.version_info[:2] == (3, 12), (
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[tflite] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">RFDETR_SPEC</span> <span class="o">=</span> <span class="s2">"rfdetr[tflite] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span>
+<span class="c1"># RFDETR_SPEC = "rfdetr[tflite]&gt;=1.11.2,&lt;2"</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="s2">"pillow==11.3.0"</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">torchaudio</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">!pip install -q "rfdetr[tflite] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" psutil supervision pandas faster-coco-eval
+<div class="clipboard-copy-txt" id="cell-2">RFDETR_SPEC = "rfdetr[tflite] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"
+# RFDETR_SPEC = "rfdetr[tflite]&gt;=1.11.2,&lt;2"
+!pip install -q "{RFDETR_SPEC}" psutil supervision pandas faster-coco-eval
 !pip install -q --force-reinstall --no-deps "pillow==11.3.0"
 !pip uninstall -q -y torchaudio</div>
 </div>
@@ -4889,8 +4893,8 @@ the selected images.</p>
 <p>Raw outputs are decoded with <code>background_class_id=None</code> (the evaluator's default). The official COCO
 checkpoints use sparse COCO category IDs that fill every logit slot, including category 90, so the
 decoder's usual habit of dropping the last slot as background would delete a real class.</p>
-<p><code>fetch_coco_val2017</code> and <code>evaluate_coco_map</code> come from the private <code>rfdetr.export._benchmark</code>
-module — an intentional exception to this notebook's public-API-only rule.</p>
+<p>Display and scoring helpers come from the private <code>rfdetr.export._benchmark</code> module; they are not a
+supported API and do not change what any runtime computes.</p>
 </div>
 </div>
 </div>
@@ -5339,10 +5343,11 @@ approximately, and numbers vary by CPU generation — rerun the cells above to g
 is the precision/layout used for that row; <code>Batch</code> is the batch size that row's <code>.tflite</code> artifact
 was exported (or, for PyTorch, re-traced) at; <code>Memory [MB]</code> is host resident-memory growth across
 constructing the runtime plus its first inference call — an approximate, single-process
-measurement, not an isolated per-format sandbox. TFLite's <code>dynamic_batch=True</code> path fails at
-export time on this stack (see the note in Section 6), so every TFLite row below is its own
-static per-batch artifact.</p>
-<p>Measured on an Apple M4 Max (arm64), macOS 27.0, Python 3.12.14, rfdetr <code>develop</code> (version not recorded), <code>RFDETRSmall</code>,
+measurement, not an isolated per-format sandbox. TFLite refuses <code>dynamic_batch=True</code> with
+<code>NotImplementedError</code> before conversion starts (see the note in Section 6), so every TFLite row
+below is its own static per-batch artifact.</p>
+<!-- TODO: replace <VERSION> with the rfdetr version printed by the Host cell on the next run. -->
+<p>Measured on an Apple M4 Max (arm64), macOS 27.0, Python 3.12.14, <code>rfdetr &lt;VERSION&gt;</code>, <code>RFDETRSmall</code>,
 5 warmup + 30 timed runs per row.</p>
 <blockquote>
 <p><strong>Note</strong>: the two <code>PyTorch inference() JIT</code> memory cells below are marked <code>n/a (pending rerun)</code>
@@ -5624,9 +5629,9 @@ each other, but both conflict with <code>[tflite]</code> above — <strong>Colab
 then run from the next cell. This part re-installs, re-imports, and re-downloads the sample
 image and PyTorch baseline independently of Part A.</p>
 </blockquote>
-<h3 id="9-install">9. Install<a class="anchor-link" href="#9-install">¶</a></h3><p>Installs from <code>develop</code> to test the latest performance work; the newest release (1.11.1) does not yet
-ship the public <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports.
-Once a release does, swap <code>develop</code> for <code>release/latest</code> in the install URL.
+<h3 id="9-install">9. Install<a class="anchor-link" href="#9-install">¶</a></h3><p><code>RFDETR_SPEC</code> holds the install source and defaults to the <code>develop</code> branch. The public
+<code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports ship in
+1.11.2; to install from PyPI instead, swap in the commented <code>&gt;=1.11.2,&lt;2</code> line.
 Colab ships mutually inconsistent preinstalled packages that otherwise crash <code>import rfdetr</code>, so
 two are aligned: <code>torchaudio</code> is uninstalled (RF-DETR never uses it, but <code>transformers</code> imports
 it when present and a <code>torch</code>/<code>torchaudio</code> CUDA-version mismatch then errors), and <code>pillow</code> is
@@ -5638,15 +5643,15 @@ Linux <code>executorch</code> wheel (so Colab works out of the box); on macOS in
 <code>brew install flatbuffers</code>.</p>
 </blockquote>
 <blockquote>
-<p><strong><code>executorch==1.3.1</code> is pinned deliberately.</strong> <code>pyproject.toml</code>'s <code>[executorch]</code> extra allows
-<code>&gt;=1.3,&lt;2.0</code> and says "validated on 1.3.1" — but the <em>unpinned</em> upper end of that range,
-<code>executorch==1.5.1</code> (the newest release satisfying it as of this run), raises
+<p><strong><code>executorch&gt;=1.3.1,&lt;1.4</code> is pinned deliberately.</strong> <code>pyproject.toml</code>'s <code>[executorch]</code> extra is
+capped at <code>&gt;=1.3,&lt;1.4</code> and says "validated on 1.3.1". One reason for the cap:
+<code>executorch==1.5.1</code> raises
 <code>RuntimeError: tensor does not have a device</code> from <code>executorch::extension::alias_tensor_ptr_to_attensor</code>
 on every <code>method.execute(...)</code> call on this platform (confirmed with <code>torch.randn</code>, <code>torch.zeros</code>,
 and cloned/contiguous variants — all six failed identically, then all six succeeded after
-downgrading to 1.3.1 alone, with no other package changed). Pin <code>executorch==1.3.1</code> explicitly
-until this regression is confirmed fixed upstream and <code>pyproject.toml</code>'s validated version is
-bumped.</p>
+downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
+<code>executorch&gt;=1.3.1,&lt;1.4</code> range until this regression is confirmed fixed upstream and
+<code>pyproject.toml</code>'s validated version is bumped.</p>
 </blockquote>
 </div>
 </div>
@@ -5670,11 +5675,15 @@ bumped.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[litert,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="s2">"torch&lt;2.13"</span> <span class="s2">"executorch==1.3.1"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">RFDETR_SPEC</span> <span class="o">=</span> <span class="s2">"rfdetr[litert,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span>
+<span class="c1"># RFDETR_SPEC = "rfdetr[litert,executorch]&gt;=1.11.2,&lt;2"</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="s2">"torch&lt;2.13"</span> <span class="s2">"executorch&gt;=1.3.1,&lt;1.4"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="s2">"pillow==11.3.0"</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">torchaudio</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-21">!pip install -q "rfdetr[litert,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" "torch&lt;2.13" "executorch==1.3.1" psutil supervision pandas faster-coco-eval
+<div class="clipboard-copy-txt" id="cell-21">RFDETR_SPEC = "rfdetr[litert,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"
+# RFDETR_SPEC = "rfdetr[litert,executorch]&gt;=1.11.2,&lt;2"
+!pip install -q "{RFDETR_SPEC}" "torch&lt;2.13" "executorch&gt;=1.3.1,&lt;1.4" psutil supervision pandas faster-coco-eval
 !pip install -q --force-reinstall --no-deps "pillow==11.3.0"
 !pip uninstall -q -y torchaudio</div>
 </div>
@@ -6662,8 +6671,8 @@ all 5000 images. At the as-measured batch-1 end2end rates below that is about 30
 ~40 s for ExecuTorch, and ~70 s for LiteRT (pending a rerun, see the notes) at 500 images — ten times
 that with <code>FULL_VAL</code>. Raw outputs are decoded with <code>background_class_id=None</code>, required for the
 official COCO checkpoints, whose sparse category IDs fill every logit slot including category 90.</p>
-<p><code>fetch_coco_val2017</code> and <code>evaluate_coco_map</code> come from the private <code>rfdetr.export._benchmark</code>
-module — an intentional exception to this notebook's public-API-only rule.</p>
+<p>Display and scoring helpers come from the private <code>rfdetr.export._benchmark</code> module; they are not a
+supported API and do not change what any runtime computes.</p>
 </div>
 </div>
 </div>
@@ -7078,7 +7087,8 @@ approximately, and numbers vary by CPU generation — rerun the cells above to g
 is the batch size that row's artifact was exported (or, for PyTorch, re-traced) at — both LiteRT
 and ExecuTorch bake a fixed batch shape, so each batch size below is its own export. <code>Memory [MB]</code>
 is host resident-memory growth across constructing the runtime plus its first inference call.</p>
-<p>Measured on an Apple M4 Max (arm64), macOS 27.0, Python 3.12.14, rfdetr <code>develop</code> (version not recorded), <code>RFDETRSmall</code>,
+<!-- TODO: replace <VERSION> with the rfdetr version printed by the Host cell on the next run. -->
+<p>Measured on an Apple M4 Max (arm64), macOS 27.0, Python 3.12.14, <code>rfdetr &lt;VERSION&gt;</code>, <code>RFDETRSmall</code>,
 5 warmup + 30 timed runs per row (<code>executorch==1.3.1</code> — see the note in Section 9).</p>
 <blockquote>
 <p><strong>Note</strong>: the two <code>PyTorch inference() JIT</code> memory cells below are marked <code>n/a (pending rerun)</code>
@@ -7339,7 +7349,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 13:13:48 UTC">2026-10-03 13:13:48</span>
   </span>
 
     

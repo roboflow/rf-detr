@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-03T08:02:14">
+  <meta property="article:modified_time" content="2026-10-03T13:13:48">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-03T08:02:14",
+    "dateModified": "2026-10-03T13:13:48",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3783,7 +3783,7 @@ set these milliseconds against the architecture headline on the
 <a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a> (NVIDIA T4, TensorRT
 FP16, model only) or the number on
 <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>
-(NVIDIA L4, Roboflow Inference, scope not stated) — those are GPU numbers, not comparable to a CPU run
+(L4, Roboflow Inference, scope not stated, batch 1) — those are GPU numbers, not comparable to a CPU run
 at all, let alone without checking precision, batch size, and scope.</p>
 </blockquote>
 </div>
@@ -3796,9 +3796,9 @@ at all, let alone without checking precision, batch size, and scope.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to test the latest performance work; the newest release (1.11.1) does not yet
-ship the public <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports.
-Once a release does, swap <code>develop</code> for <code>release/latest</code> in the install URL.
+<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p><code>RFDETR_SPEC</code> holds the install source and defaults to the <code>develop</code> branch. The public
+<code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports ship in
+1.11.2; to install from PyPI instead, swap in the commented <code>&gt;=1.11.2,&lt;2</code> line.
 No CUDA-specific packages needed.</p>
 </div>
 </div>
@@ -3822,9 +3822,13 @@ No CUDA-specific packages needed.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">RFDETR_SPEC</span> <span class="o">=</span> <span class="s2">"rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span>
+<span class="c1"># RFDETR_SPEC = "rfdetr[onnx,openvino]&gt;=1.11.2,&lt;2"</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip install -q "rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" psutil supervision pandas faster-coco-eval</div>
+<div class="clipboard-copy-txt" id="cell-1">RFDETR_SPEC = "rfdetr[onnx,openvino] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"
+# RFDETR_SPEC = "rfdetr[onnx,openvino]&gt;=1.11.2,&lt;2"
+!pip install -q "{RFDETR_SPEC}" psutil supervision pandas faster-coco-eval</div>
 </div>
 </div>
 </div>
@@ -5319,9 +5323,8 @@ COCO_ROOT = Path("coco")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p><code>fetch_coco_val2017</code> and <code>evaluate_coco_map</code> come from the private <code>rfdetr.export._benchmark</code>
-module. This is the one deliberate exception to this notebook's public-API-only rule: the helpers
-exist only to score these cookbooks and are not a supported API. The fetch downloads the 241 MB
+<p>Display and scoring helpers come from the private <code>rfdetr.export._benchmark</code> module; they are not a
+supported API and do not change what any runtime computes. The fetch downloads the 241 MB
 annotation archive once, then only the selected images, and skips files already on disk.</p>
 </div>
 </div>
@@ -6063,7 +6066,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 13:13:48 UTC">2026-10-03 13:13:48</span>
   </span>
 
     

@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-03T08:02:14">
+  <meta property="article:modified_time" content="2026-10-03T13:13:48">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-03T08:02:14",
+    "dateModified": "2026-10-03T13:13:48",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3738,7 +3738,7 @@ exported, run once for a correctness check, then benchmarked.</p>
 <tr>
 <td><strong>TensorRT</strong></td>
 <td><code>model.export(format="trt")</code> → <code>.trt</code></td>
-<td><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> (builds its own engine — see note below), <strong>and</strong> <code>rfdetr</code>'s own <code>TRTInference</code> loading the <code>.trt</code> file directly</td>
+<td><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> (selects and loads its own prebuilt TensorRT engine — see note below), <strong>and</strong> <code>rfdetr</code>'s own <code>TRTInference</code> loading the <code>.trt</code> file directly</td>
 </tr>
 </tbody>
 </table>
@@ -3748,7 +3748,7 @@ for which formats can hold one artifact across batch sizes and which cannot: ONN
 both bake a <em>dynamic</em> batch axis (<code>supports_dynamic_batch=True</code>), so one exported artifact serves
 every row below for each of them; PyTorch needs no export step and trivially takes any batch as a
 <code>(N, C, H, W)</code> tensor. <code>inference-models</code>' managed TensorRT engine is a separate
-build (its engine construction is not part of this repository) — its own batch handling is exercised through its documented multi-image <code>__call__</code>
+artifact (its engine build is not part of this repository) — its own batch handling is exercised through its documented multi-image <code>__call__</code>
 signature (<code>Union[np.ndarray, List[np.ndarray], torch.Tensor, List[torch.Tensor]]</code>, confirmed by
 reading <code>inference_models/models/base/object_detection.py</code> on GitHub), not verified against the
 package's source the way the two <code>rfdetr</code>-exported formats are.</p>
@@ -3761,11 +3761,11 @@ run on a CPU-only or Apple Silicon runtime.</p>
 <blockquote>
 <p><strong>Two TensorRT artifacts, on purpose.</strong> The <code>.trt</code> file from the export step is a standalone
 artifact for raw TensorRT deployment, locked to this GPU + TensorRT version. <code>inference-models</code>
-builds and manages its <strong>own</strong> engine internally, so it does not load that file — it is the
+selects and loads its <strong>own</strong> prebuilt TensorRT engine, so it does not load that file — it is the
 easier, portable inference path, benchmarked first below. The <code>.trt</code> file itself is then loaded
 and timed too, via <code>rfdetr.export.inference.TRTInference</code> — a reference runtime the
 package ships for parity testing, not a recommended production path (see its section below) —
-so both TensorRT artifacts get a number, not just the one <code>inference-models</code> builds internally.
+so both TensorRT artifacts get a number, not just the one <code>inference-models</code> loads.
 It is exported once with <code>dynamic_batch=True, max_batch_size=8</code> so the same engine serves every
 batch size below, the same way the managed engine and ONNX do.</p>
 </blockquote>
@@ -3777,7 +3777,7 @@ milliseconds against the architecture headline on the
 <a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a> (T4, TensorRT FP16,
 model only, batch 1) or the number on
 <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a> (L4,
-Roboflow Inference, scope not stated) without checking hardware, precision, batch size, and scope
+Roboflow Inference, scope not stated, batch 1) without checking hardware, precision, batch size, and scope
 match. See <a href="#8-results">Section 8</a> for where this notebook's own TensorRT number disagrees with
 Roboflow's model page.</p>
 </blockquote>
@@ -3791,9 +3791,9 @@ Roboflow's model page.</p>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p>Installs from <code>develop</code> to test the latest performance work; the newest release (1.11.1) does not yet
-ship the public <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports.
-Once a release does, swap <code>develop</code> for <code>release/latest</code> in the install URL.
+<h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p><code>RFDETR_SPEC</code> holds the install source and defaults to the <code>develop</code> branch. The public
+<code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports ship in
+1.11.2; to install from PyPI instead, swap in the commented <code>&gt;=1.11.2,&lt;2</code> line.
 Colab ships mutually inconsistent
 preinstalled packages that otherwise crash <code>import rfdetr</code>, so two are aligned: <code>torchaudio</code> is
 uninstalled (RF-DETR never uses it, but <code>transformers</code> imports it when present and a
@@ -3830,14 +3830,18 @@ loaded until a restart.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">onnxruntime</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span>
-<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span> <span class="s2">"inference-models[trt10]"</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">RFDETR_SPEC</span> <span class="o">=</span> <span class="s2">"rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span>
+<span class="c1"># RFDETR_SPEC = "rfdetr[onnx,tensorrt]&gt;=1.11.2,&lt;2"</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">onnxruntime</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="s2">"inference-models[trt10]"</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="n">onnxruntime</span><span class="o">-</span><span class="n">gpu</span> <span class="o">--</span><span class="n">extra</span><span class="o">-</span><span class="n">index</span><span class="o">-</span><span class="n">url</span> <span class="n">https</span><span class="p">:</span><span class="o">//</span><span class="n">aiinfra</span><span class="o">.</span><span class="n">pkgs</span><span class="o">.</span><span class="n">visualstudio</span><span class="o">.</span><span class="n">com</span><span class="o">/</span><span class="n">PublicPackages</span><span class="o">/</span><span class="n">_packaging</span><span class="o">/</span><span class="n">onnxruntime</span><span class="o">-</span><span class="n">cuda</span><span class="o">-</span><span class="mi">12</span><span class="o">/</span><span class="n">pypi</span><span class="o">/</span><span class="n">simple</span><span class="o">/</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="s2">"pillow==11.3.0"</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">torchaudio</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-1">!pip uninstall -q -y onnxruntime onnxruntime-gpu
-!pip install -q "rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip" "inference-models[trt10]" supervision pandas faster-coco-eval
+<div class="clipboard-copy-txt" id="cell-1">RFDETR_SPEC = "rfdetr[onnx,tensorrt] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"
+# RFDETR_SPEC = "rfdetr[onnx,tensorrt]&gt;=1.11.2,&lt;2"
+!pip uninstall -q -y onnxruntime onnxruntime-gpu
+!pip install -q "{RFDETR_SPEC}" "inference-models[trt10]" supervision pandas faster-coco-eval
 !pip install -q --force-reinstall --no-deps onnxruntime-gpu --extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/
 !pip install -q --force-reinstall --no-deps "pillow==11.3.0"
 !pip uninstall -q -y torchaudio</div>
@@ -3863,7 +3867,8 @@ contributes three rows to the final results table.</p>
 device-wide, so it also captures ONNX Runtime's CUDA execution provider and TensorRT's own
 <code>cudaMalloc</code> calls, not just PyTorch's own caching allocator. <code>preprocess_to_nchw</code> and
 <code>decode_detections</code> come from <code>rfdetr.export.inference</code> — the same preprocessing and decoding
-<code>predict()</code> runs, so a runtime fed through them is comparable to it.</p>
+<code>predict()</code> runs, so a runtime fed through them is comparable to it. The installed <code>rfdetr</code>
+version is printed so the Results header can be filled from it.</p>
 </div>
 </div>
 </div>
@@ -3886,7 +3891,8 @@ device-wide, so it also captures ONNX Runtime's CUDA execution provider and Tens
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">importlib.metadata</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">onnxruntime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ort</span>
@@ -3908,6 +3914,7 @@ device-wide, so it also captures ONNX Runtime's CUDA execution provider and Tens
 <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"This notebook requires a CUDA GPU; none is available."</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rfdetr: </span><span class="si">{</span><span class="n">importlib</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">version</span><span class="p">(</span><span class="s1">'rfdetr'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
 <span class="n">EXPORT_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"export_cuda"</span><span class="p">)</span>
 <span class="n">EXPORT_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -3916,7 +3923,8 @@ device-wide, so it also captures ONNX Runtime's CUDA execution provider and Tens
 <span class="n">MEASURE_RUNS</span> <span class="o">=</span> <span class="mi">100</span>
 <span class="n">BATCH_SIZES</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-2">from pathlib import Path
+<div class="clipboard-copy-txt" id="cell-2">import importlib.metadata
+from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
@@ -3938,6 +3946,7 @@ from rfdetr.export.inference import decode_detections, preprocess_to_nchw
 if not torch.cuda.is_available():
     raise RuntimeError("This notebook requires a CUDA GPU; none is available.")
 print(f"GPU: {torch.cuda.get_device_name(0)}")
+print(f"rfdetr: {importlib.metadata.version('rfdetr')}")
 
 EXPORT_DIR = Path("export_cuda")
 EXPORT_DIR.mkdir(exist_ok=True)
@@ -4596,8 +4605,8 @@ print(f"TensorRT engine: {trt_engine_path}  ({trt_size_mb:.1f} MB)")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p>Inference goes through <code>inference-models</code>, which builds and manages its own <strong>managed
-TensorRT engine</strong> — the easier, portable path that also handles preprocessing, postprocessing,
+<h3 id="inference">Inference<a class="anchor-link" href="#inference">¶</a></h3><p>Inference goes through <code>inference-models</code>, which selects and loads its own prebuilt TensorRT
+engine (the <strong>managed engine</strong> rows below) — the easier, portable path that also handles preprocessing, postprocessing,
 and class names — rather than loading the <code>.trt</code> file exported above. Its precision is
 controlled by <code>AutoModel.from_pretrained(..., quantization=...)</code>, independent of the <code>fp16</code>
 kwarg used for the standalone <code>.trt</code> export: <code>quantization=None</code> (default) picks automatically
@@ -4605,7 +4614,7 @@ based on device capabilities, and <code>"fp32"</code>/<code>"fp16"</code>/<code>
 <code>verbose=True</code> prints <code>inference-models</code>' own package-selection log line, which names the
 backend and the quantization it actually picked for <code>quantization=None</code> below. It is constructed
 once and fed every batch size below through its documented <code>List[np.ndarray]</code> call signature —
-whether it internally rebuilds anything per batch is not part of this repository and not something this
+what it does per batch internally is not part of this repository and not something this
 notebook can verify, only measure.</p>
 </div>
 </div>
@@ -4737,7 +4746,7 @@ for batch in BATCH_SIZES:
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="tensorrt-fp32-explicit">TensorRT (fp32, explicit)<a class="anchor-link" href="#tensorrt-fp32-explicit">¶</a></h3><p><code>quantization="fp32"</code> forces full precision through <code>inference-models</code>' own engine builder — the
+<h3 id="tensorrt-fp32-explicit">TensorRT (fp32, explicit)<a class="anchor-link" href="#tensorrt-fp32-explicit">¶</a></h3><p><code>quantization="fp32"</code> asks <code>inference-models</code> for its full-precision prebuilt engine — the
 numeric-parity anchor against the auto-selected (typically fp16 on a capable GPU) row above.</p>
 </div>
 </div>
@@ -5192,9 +5201,8 @@ COCO_ROOT = Path("coco")</div>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<p><code>fetch_coco_val2017</code> and <code>evaluate_coco_map</code> come from the private <code>rfdetr.export._benchmark</code>
-module. This is the one deliberate exception to this notebook's public-API-only rule: the helpers
-exist only to score these cookbooks and are not a supported API. The fetch downloads the 241 MB
+<p>Display and scoring helpers come from the private <code>rfdetr.export._benchmark</code> module; they are not a
+supported API and do not change what any runtime computes. The fetch downloads the 241 MB
 annotation archive once, then only the selected images, and skips files already on disk.</p>
 </div>
 </div>
@@ -5630,7 +5638,8 @@ display(
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="8-results">8. Results<a class="anchor-link" href="#8-results">¶</a></h2><p>Measured on an <strong>NVIDIA L4</strong> (compute capability 8.9, 22 GB), Colab GPU runtime, rfdetr <code>develop</code> (version not recorded),
+<h2 id="8-results">8. Results<a class="anchor-link" href="#8-results">¶</a></h2><!-- TODO: replace <VERSION> with the rfdetr version printed by the Setup cell on the next run. -->
+<p>Measured on an <strong>NVIDIA L4</strong> (compute capability 8.9, 22 GB), Colab GPU runtime, <code>rfdetr &lt;VERSION&gt;</code>,
 batches 1/4/8, 20 warmup + 100 timed runs per row, <code>RFDETRSmall</code>. Numbers vary by GPU model,
 TensorRT version, and driver — rerun the cells below to get yours. <code>Config</code> is the precision/EP
 used for that row; <code>—</code> marks a scope this format doesn't have. <code>forward [ms]</code> / <code>end2end [ms]</code> are
@@ -5834,20 +5843,17 @@ reserved at construction — is the consistent one.</p>
 well ahead of forcing fp32 (151.0 → 161.2 → 162.7 FPS, batching barely moves it). The raw <code>.trt</code>
 engine's <code>forward</code> scales close to linearly with batch — 2.16 → 7.40 → 14.83 ms is 3.43× at batch 4
 and 6.87× at batch 8, both under the batch multiplier, so per-image cost keeps dropping as the
-batch grows. ONNX's <code>forward</code>/<code>end2end</code> gap (7.35/13.78 ms at batch 1) stays roughly constant in
-absolute terms as batch grows (64.11/76.97 ms at batch 8) — the ~6–13 ms of CPU-side
-pre/postprocessing does not scale with batch the way the GPU-side forward pass does, so it becomes
-a smaller fraction of the total at larger batches.</p>
+batch grows. ONNX's <code>forward</code>/<code>end2end</code> gap is ~6.5 ms at batch 1–4 (6.43 ms, 6.81 ms) and
+roughly doubles at batch 8 (12.86 ms) — the CPU-side pre/postprocessing grows far more slowly
+than the GPU-side forward pass, so it becomes a smaller fraction of the total at larger batches.</p>
 <blockquote>
 <p><strong>Open gap: these numbers vs Roboflow's product page.</strong>
-<a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>
-reports <strong>8.3 ms</strong> for <code>rfdetr-small</code> TensorRT FP16 and <strong>12.9 ms</strong> for ONNX on an L4 through
-Roboflow Inference, batch 1 (mean of 1,000 inferences after 100 warmup). The page does not state
-what the timing covers. This notebook reads <strong>3.41 ms</strong> end-to-end for the managed engine,
-<strong>2.16 ms</strong> <code>forward</code> for the raw <code>.trt</code> engine and <strong>7.35 ms</strong> <code>forward</code> for ONNX at batch 1.
-These have <strong>not</strong> been run side by side on one L4 with the same image, TensorRT version, and a
-logged <code>inference-models</code> version — until that happens, treat all of these numbers as
-unreconciled rather than picking one to publish.</p>
+This notebook, L4, batch 1: <strong>3.41 ms</strong> end-to-end for the managed engine, <strong>2.16 ms</strong>
+<code>forward</code> for the raw <code>.trt</code> engine, <strong>7.35 ms</strong> <code>forward</code> for ONNX.
+<a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>,
+L4, Roboflow Inference, batch 1: <strong>8.3 ms</strong> TensorRT and <strong>12.9 ms</strong> ONNX.
+The model page does not state what its timing covers; the two harnesses have not been run side
+by side.</p>
 </blockquote>
 </div>
 </div>
@@ -6031,7 +6037,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 13:13:48 UTC">2026-10-03 13:13:48</span>
   </span>
 
     
