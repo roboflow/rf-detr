@@ -49,6 +49,8 @@ nav:
           - Training Loggers: learn/train/loggers.md
       - Export Model:
           - Overview: exports/index.md
+          - Basics: exports/basics.md
+          - Advanced: exports/advanced.md
           - Export Formats:
               - ONNX: exports/onnx.md
               - TensorRT: exports/tensorrt.md
