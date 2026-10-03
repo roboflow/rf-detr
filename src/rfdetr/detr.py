@@ -1946,7 +1946,7 @@ class RFDETR:
             dynamic_batch: If True, export with a dynamic batch dimension
                 so the model accepts variable batch sizes at runtime
                 (spatial dimensions always stay fixed). Applies to the ONNX
-                and TFLite graphs, and to ``format="tensorrt"``, where the engine is built with one
+                graph and to ``format="tensorrt"``, where the engine is built with one
                 optimization profile spanning batch ``1 .. max_batch_size`` (tuned for *batch_size*); pass
                 *max_batch_size* in that case. Not supported for ExecuTorch export on
                 executorch 1.3.1 (raises ``NotImplementedError``): the runtime
@@ -1957,7 +1957,10 @@ class RFDETR:
                 Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
                 the converted OpenVINO IR already accepts any batch size. Also
                 unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed input shape;
-                export one file per batch size instead.
+                export one file per batch size instead. Also refused for ``format="tflite"``:
+                ``onnx2tf`` fails on the dynamic-batch graph (an ``Add`` against the dynamic-shaped
+                encoder input reports mismatched dimensions) — export one ``.tflite`` per batch size
+                instead.
             patch_size: Backbone patch size. Defaults to the value stored
                 in ``model_config.patch_size`` (typically 14 or 16). When
                 provided explicitly it must match the instantiated model's
@@ -2118,11 +2121,11 @@ class RFDETR:
                 cannot be placed around, also raise.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
-                ``format="coreml"``, ``format="openvino"``, or ``format="litert"`` — those paths require a fixed
-                batch size; if ``format="litert"`` is combined with a ``quantization`` other than ``None`` /
-                ``"fp32"``; if ``format="litert"`` is asked to export a keypoint model (``backbone_only=True``
-                still converts); or if ``format="tensorrt"`` with ``quantization="int8"`` is asked to export a
-                segmentation or keypoint model.
+                ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
+                paths require a fixed batch size; if ``format="litert"`` is combined with a ``quantization``
+                other than ``None`` / ``"fp32"``; if ``format="litert"`` is asked to export a keypoint model
+                (``backbone_only=True`` still converts); or if ``format="tensorrt"`` with ``quantization="int8"`` is
+                asked to export a segmentation or keypoint model.
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
