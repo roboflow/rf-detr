@@ -240,6 +240,7 @@ uv run twine check --strict dist/*
 - `src/rfdetr/export/prepare.py` does the format-independent graph work once and returns an `ExportGraph`. Never duplicate it into a format.
 - Refuse a bad request before the forward pass: config values in `_check_capabilities` (config only), keywords that are derived, not stored, or hidden by a config default in `_format_settings`, missing packages in a `check_dependencies` override (called by `RFDETR.export` and `Exporter.__call__`, never by the constructor or the format itself). Only refusals that need the prepared graph go in `_convert`, first.
 - Adding a format: config + exporter class in its own package, one registry entry, one `pyproject.toml` extra, tests. Never an edit to `base.py`. Full recipe: [docs/exports/blueprint.md](docs/exports/blueprint.md).
+- TensorRT INT8 placement (`src/rfdetr/export/_tensorrt/quantize.py`) encodes measurements and two TensorRT bugs, not a generic recipe: an MLP's `fc1` is quantized only together with its `fc2` (INT8 GEMM → GELU → FP16 consumer returns NaN), and attention is all INT8 or all FP16 with no Q/DQ behind an FP16 attention (TensorRT 11.3 computes that wrongly). Any placement change needs a COCO AP and latency measurement.
 
 **Model Selection (examples, docs, CI, tests, defaults):**
 

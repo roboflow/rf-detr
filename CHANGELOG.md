@@ -12,11 +12,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `RFDETR.export(format="tensorrt", quantization="int8", calibration_data=...)` builds an INT8 TensorRT engine (`*_int8.trt`) for detection models. INT8 covers the patch embedding, every backbone MLP, the windowed backbone blocks' attention with its projections, and the decoder's cross-attention, feed-forward and reference-point layers; the global backbone blocks' attention, the decoder self-attention, the projector, the two-stage head and the detection heads stay FP16. Activation ranges come from running `calibration_data` through the FP32 graph with onnxruntime on the CPU: a directory of images (the first `max_images` by file name), a `.npy` path or an `(N, C, H, W)` float array. On RF-DETR Nano with an RTX 5070 and TensorRT 11.3 at batch 8, the engine runs in 0.411 ms per image against FP16's 0.496 ms when replayed from a CUDA graph (1.21×), and 0.476 against 0.551 ms with a plain `execute_async_v3` call (1.16×). COCO val2017 AP is 47.34 against 48.03. Batch 32 is 1.23× faster from a CUDA graph and 1.22× without one; batch 1 is 1.14× faster from a CUDA graph and unchanged without one. The engine needs a static batch, `fp16=True` and TensorRT 10 or newer. Segmentation and keypoint models, `dynamic_batch=True` and `backbone_only=True` are refused rather than built unmeasured. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
 - Public `rfdetr.export.inference` exposes `TRTInference`, `load_executorch_method`, `preprocess_to_nchw`, `decode_detections` and `DecodedDetections` next to `OpenVINOInference`; each resolves lazily, so importing the module does not require an optional runtime. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
 - Public `rfdetr.export.benchmark` exposes `measure_latency`, `measure_memory`, `BenchmarkResult` and `MemoryResult`, the helpers the per-hardware export cookbooks use. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
 ### Changed
+
+- `format="tensorrt"` no longer drops `quantization` and `calibration_data` silently. It used to build an FP16 or FP32 engine whatever they said; it now raises `ValueError` for a `quantization` other than `None` or `"int8"` (`"fp16"` and `"fp32"` included: choose the precision with `fp16`), and for `calibration_data` without `quantization="int8"`. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
 
 - YOLO split directories must stay inside the dataset root however they are reached. The containment rule applied only to paths declared in `data.yaml`, so a declared `train: images/train` pointing at mounted storage was refused while a `train/images` symlink to that same storage was read — the guard rejected by layout rather than by destination. Format detection and `is_valid_yolo_dataset` now refuse a conventional split directory resolving outside the root, and `build_roboflow_from_yolo` raises `ValueError` naming it. A dataset whose entire root is a symlink is unaffected, because containment resolves both sides; only an individual split escaping its own root is refused. ([#1570](https://github.com/roboflow/rf-detr/pull/1570))
 
