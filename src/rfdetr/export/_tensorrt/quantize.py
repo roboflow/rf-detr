@@ -642,7 +642,7 @@ def calibrate_ranges(
         dimension = session.get_inputs()[0].shape[0]
         # The probe outputs follow the model's own, one per tensor in order (names may carry a collision prefix).
         outputs = [o.name for o in session.get_outputs()][-len(tensors) :]
-        ranges = np.zeros(len(tensors), dtype=np.float64)
+        ranges: NDArray[np.float64] = np.zeros(len(tensors), dtype=np.float64)
         count = 0
         for group in _graph_batches(batches, dimension if isinstance(dimension, int) else None):
             # onnxruntime's ReduceMax skips a NaN, so a NaN image would calibrate to a finite but wrong range.
