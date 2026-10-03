@@ -54,7 +54,7 @@ model.export(format="tensorrt", quantization="int8", calibration_data="path/to/i
 
 This writes `output/rfdetr-small_int8.trt` (next to the intermediate `output/rfdetr-small.onnx`). The export runs the first `max_images` (default `100`) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as `predict()` does, and records each quantized tensor's largest absolute value. Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. `calibration_data` also accepts a `.npy` path or an array shaped `(N, C, H, W)`, already normalized the way `predict()` normalizes; an integer array, raw pixels, is refused. Calibration runs the graph at the export's `batch_size`, so its host memory grows with the batch: about 9.5 GB for Nano at batch 32.
 
-Measured with an RTX 5070 (sm_120) and TensorRT 11.3, calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from a captured CUDA graph and from back-to-back `execute_async_v3` calls with no synchronization in between. Nano across batch sizes:
+Measured with TensorRT 11.3 on an RTX 5070 (sm_120) and a Tesla T4 (sm_75), calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from a captured CUDA graph and from back-to-back `execute_async_v3` calls with no synchronization in between. On the RTX 5070, Nano across batch sizes:
 
 | Batch | Precision | AP    | AP50  | Latency, CUDA graph | Latency, plain call | Engine    |
 | ----- | --------- | ----- | ----- | ------------------- | ------------------- | --------- |
@@ -74,7 +74,22 @@ Every model at batch 1, measured the same way:
 | Medium | 54.69    | 53.84 (−0.85) | 1.625 → 1.370 ms (1.19×) | 2.536 → 2.412 ms (1.05×) | 71 → 48 MB          |
 | Large  | 56.52    | 56.02 (−0.50) | 2.000 → 1.820 ms (1.10×) | 2.806 → 2.682 ms (1.05×) | 68 → 51 MB          |
 
+The same on a Tesla T4, from a Colab notebook run (INT8 loses 0.55 to 0.85 AP, 1.0% to 1.6% of the FP16 AP, and is faster everywhere):
+
+| Model, batch | AP, FP16 | AP, INT8      | Latency, CUDA graph     | Latency, plain call     | Engine, FP16 → INT8 |
+| ------------ | -------- | ------------- | ----------------------- | ----------------------- | ------------------- |
+| Nano, 1      | 48.07    | 47.31 (−0.77) | 3.21 → 2.65 ms (1.21×)  | 3.26 → 2.68 ms (1.22×)  | 60 → 48 MB          |
+| Small, 1     | 52.83    | 52.23 (−0.60) | 5.31 → 4.60 ms (1.16×)  | 5.25 → 4.68 ms (1.12×)  | 64 → 59 MB          |
+| Medium, 1    | 54.66    | 53.80 (−0.85) | 6.71 → 5.76 ms (1.16×)  | 6.69 → 5.89 ms (1.14×)  | 69 → 67 MB          |
+| Large, 1     | 56.51    | 55.96 (−0.55) | 10.18 → 9.14 ms (1.11×) | 10.13 → 9.28 ms (1.09×) | 70 → 83 MB          |
+| Nano, 8      | 47.98    | 47.23 (−0.75) | 2.72 → 2.13 ms (1.28×)  | 2.72 → 2.16 ms (1.26×)  | 70 → 120 MB         |
+| Nano, 32     | 48.02    | 47.28 (−0.75) | 2.97 → 2.31 ms (1.28×)  | 2.98 → 2.33 ms (1.28×)  | 113 → 366 MB        |
+
 The larger models gain less: their global attention, which stays FP16, is a bigger share of the work, and Large keeps its windowed attention in FP16 as well (see below).
+
+!!! warning "Engine size on the T4"
+
+    On the T4 the INT8 engine is larger than the FP16 one for Large at batch 1 and for Nano at batch 8 and 32, where the RTX 5070 shows the opposite. The cause has not been diagnosed. Speed and accuracy are unaffected, but check the file size if disk or load time matters.
 
 The INT8 weights take 32 MB against FP16's 54 MB on Nano. On top of the weights, both engines store a block of zeros: TensorRT pads the 3-channel image of the FP16 patch embedding to 4 or 8 channels, picked per build, and keeps the added channels as a constant of 0.3 or 1.5 MB per image of batch. Two builds of the same graph can therefore differ by up to 1.2 MB per image, which is why the batch-32 sizes are ranges, and why an INT8 engine at batch 32 can come out larger than an FP16 one built separately.
 
