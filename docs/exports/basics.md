@@ -95,7 +95,7 @@ Formats marked experimental in [Advanced Export](advanced.md#format-capabilities
 
 ## Check the Export
 
-An exported model returns raw tensors — box and logit decoding (sigmoid, background slot, box format) is left to your inference code. The [ONNX guide](onnx.md) spells out the decoding rules and two pitfalls that apply to every format. To confirm an export matches PyTorch, run both on the same image and compare detections; the [export cookbooks](../cookbooks.md) do this per hardware class, with latency and COCO mAP next to each other.
+An exported model returns raw tensors — box and logit decoding (sigmoid, background slot, box format) is left to your inference code. The [ONNX guide](onnx.md) spells out the decoding rules and two pitfalls that apply to every format. To confirm an export matches PyTorch, run both on the same image and compare detections; the [export cookbooks](../cookbooks.md) do this per hardware class, next to their latency numbers.
 
 ## Output Files
 
