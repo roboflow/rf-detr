@@ -59,9 +59,9 @@ Export your trained model to ONNX format:
 === "Object Detection"
 
     ```python
-    from rfdetr import RFDETRMedium
+    from rfdetr import RFDETRSmall
 
-    model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+    model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
 
     model.export()
     ```

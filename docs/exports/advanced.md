@@ -23,7 +23,7 @@ The `export()` method accepts several parameters to customize the export process
 | `verbose`            | `True`     | Whether to print verbose export information.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `shape`              | `None`     | Input shape as tuple `(height, width)`. Each dimension must be divisible by the selected model's block size (`patch_size * num_windows`). If not provided, uses the model's default resolution.                                                                                                                                                                                                                                                                                                                                                                                  |
 | `batch_size`         | `1`        | Batch size for the exported model: a positive integer (numpy integers work, `bool` does not); anything else raises `ValueError`. With `dynamic_batch=True` and `format="tensorrt"`, also the batch the engine's optimization profile is tuned for.                                                                                                                                                                                                                                                                                                                               |
-| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for `format="onnx"` and `format="tensorrt"` (which then needs `max_batch_size`) — TFLite, ExecuTorch, CoreML, Core AI and LiteRT bake a fixed batch size (TFLite because `onnx2tf` cannot lower the dynamic-batch graph). OpenVINO refuses `dynamic_batch=True`, but its IR already accepts any batch size, so omit the flag.                                                                                                                                   |
+| `dynamic_batch`      | `False`    | If `True`, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for `format="onnx"` and `format="tensorrt"` (which then needs `max_batch_size`) — TFLite, ExecuTorch, CoreML, Core AI and LiteRT bake a fixed batch size (TFLite because `onnx2tf` fails on the dynamic-batch graph). OpenVINO refuses `dynamic_batch=True`, but its IR already accepts any batch size, so omit the flag.                                                                                                                                       |
 | `patch_size`         | `None`     | Backbone patch size override. Defaults to the value from `model_config.patch_size`. Must match the instantiated model's patch size when provided.                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `backend`            | `None`     | Backend for ExecuTorch: `"xnnpack"` (CPU, fp32), `"coreml"` (Apple, fp16), or `"qnn"` (Qualcomm HTP, fp16). Required when `format="executorch"`.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `soc`                | `None`     | Target SoC chip identifier for the `"qnn"` backend (e.g. `"SM8650"` for Snapdragon 8 Gen 3). Required when `backend="qnn"`.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -89,21 +89,21 @@ print(json.loads(notes))
 ### Export with Custom Output Directory
 
 ```python
-from rfdetr import RFDETRMedium
+from rfdetr import RFDETRSmall
 
-model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
 
 model.export(output_dir="exports/my_model")
 ```
 
 ### Export with Custom Resolution
 
-Export the model with a specific input resolution. For example, `RFDETRMedium` expects dimensions divisible by `32` (`patch_size=16`, `num_windows=2`):
+Export the model with a specific input resolution. For example, `RFDETRSmall` expects dimensions divisible by `32` (`patch_size=16`, `num_windows=2`):
 
 ```python
-from rfdetr import RFDETRMedium
+from rfdetr import RFDETRSmall
 
-model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
 
 model.export(shape=(608, 608))
 ```
@@ -113,9 +113,9 @@ model.export(shape=(608, 608))
 Export only the backbone feature extractor for use in custom pipelines:
 
 ```python
-from rfdetr import RFDETRMedium
+from rfdetr import RFDETRSmall
 
-model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
+model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
 
 model.export(backbone_only=True)
 ```
@@ -124,6 +124,6 @@ The backbone export contains the encoder and its feature projector, without the 
 
 ## How Export Works
 
-Every format is written by an `Exporter` class built from that format's own configuration, and `model.export()` is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent `ExportGraph`, and hands the graph to the exporter. The signature and return value on this page are the supported surface; the classes behind it are internal.
+Every format is written by an `Exporter` class built from that format's own configuration, and `model.export()` is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent `ExportGraph`, and hands the graph to the exporter. `RFDETR.export()`'s signature and return value are the supported surface; the classes behind it are internal.
 
 If you want to add a format, or you are reading the export code, see [Exporter Blueprint](blueprint.md) for the contract each format implements and the steps a new one takes.
