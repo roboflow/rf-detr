@@ -906,7 +906,11 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
     }
     format = "tflite"
     display_name = "TFLite"
-    supports_dynamic_batch = True
+    supports_dynamic_batch = False
+    dynamic_batch_reason = (
+        "(onnx2tf fails on the dynamic-batch graph: an Add of a constant, likely the position embedding, against the"
+        " dynamic-shaped encoder input reports mismatched dimensions). Export one .tflite per batch size instead."
+    )
     supports_notes = True
     experimental = True
     experimental_note = "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results."
