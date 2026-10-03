@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: weekly-metrics-svg
@@ -60,18 +59,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/update_weekly_metrics.py
 
-      # Requires the repository setting "Allow GitHub Actions to create and approve pull requests"
-      # (Settings > Actions > General). Without it this step fails with HTTP 403 on every run.
-      - name: 📨 Create or update metrics pull request
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        with:
-          add-paths: docs/assets/weekly-metrics.svg
-          base: ${{ github.event.repository.default_branch }}
-          branch: automation/update-weekly-metrics
-          commit-message: "docs: update weekly project metrics"
-          delete-branch: true
-          title: "docs: update weekly project metrics"
-          body: |
-            Automated weekly refresh of GitHub star growth and PyPI download metrics.
-
-            Download totals cover completed Monday-to-Sunday periods and exclude known mirrors.
+      - name: 📤 Commit and push metrics update
+        env:
+          METRICS_BRANCH: automation/update-weekly-metrics
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- docs/assets/weekly-metrics.svg; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git add -- docs/assets/weekly-metrics.svg
+          git commit -m "docs: update weekly project metrics"
+          set +e
+          remote_branch_sha="$(git ls-remote --exit-code --heads origin "$METRICS_BRANCH" | awk '{print $1}')"
+          ls_remote_status=$?
+          set -e
+          if [ "$ls_remote_status" -eq 0 ]; then
+            git push --force-with-lease="refs/heads/$METRICS_BRANCH:$remote_branch_sha" origin HEAD:"$METRICS_BRANCH"
+          elif [ "$ls_remote_status" -eq 2 ]; then
+            git push origin HEAD:"$METRICS_BRANCH"
+          else
+            echo "::error::git ls-remote failed for $METRICS_BRANCH"
+            exit "$ls_remote_status"
+          fi

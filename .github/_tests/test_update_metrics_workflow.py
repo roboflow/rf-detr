@@ -126,6 +126,38 @@ def _restore_env(workspace: Path, branch_exists: bool, git_show_fails: bool = Fa
     return env
 
 
+def _commit_env(
+    workspace: Path,
+    branch_exists: bool,
+    svg_changed: bool,
+    ls_remote_status: int | None = None,
+) -> dict[str, str]:
+    """Build the environment a commit-step run sees, including the stub controls.
+
+    Args:
+        workspace: Directory the step runs in; the stub command log is written beside the step script.
+        branch_exists: Whether the `git` stub reports the automation branch as existing on the remote.
+        svg_changed: Whether the `git diff --quiet` guard reports a tracked SVG change.
+        ls_remote_status: Explicit `git ls-remote` exit status to simulate when needed.
+
+    Returns:
+        Environment overlay handed to `_run_step`.
+
+    Examples:
+        >>> env = _commit_env(Path("workspace"), branch_exists=False, svg_changed=False)
+        >>> (env["STUB_LS_REMOTE_STATUS"], env["STUB_DIFF_CLEAN"])
+        ('2', '1')
+    """
+    env = {
+        "METRICS_BRANCH": "automation/update-weekly-metrics",
+        "STUB_LOG": str(workspace / STUB_LOG_NAME),
+        "STUB_LS_REMOTE_STATUS": str(ls_remote_status if ls_remote_status is not None else (0 if branch_exists else 2)),
+    }
+    if not svg_changed:
+        env["STUB_DIFF_CLEAN"] = "1"
+    return env
+
+
 @pytest.fixture
 def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
     """Workspace holding a checked-in SVG, plus a stub recording every `git` call.
@@ -163,6 +195,49 @@ def restore_sandbox(tmp_path: Path) -> tuple[Path, Path]:
         "      exit 128\n"
         "    fi\n"
         '    printf "%s" "$STUB_UNMERGED_SVG"\n'
+        "    ;;\n"
+        "esac",
+    )
+    return workspace, stubs
+
+
+@pytest.fixture
+def commit_sandbox(tmp_path: Path) -> tuple[Path, Path]:
+    """Workspace plus a git stub for exercising the commit-and-push step.
+
+    The stub reports whether the tracked SVG changed through `STUB_DIFF_CLEAN`, whether the remote
+    automation branch exists through `STUB_REMOTE_BRANCH_EXISTS`, and records every `git` call in
+    `STUB_LOG` so tests can assert how the step tried to publish its update.
+
+    Examples:
+        >>> commit_sandbox  # doctest: +SKIP
+        pytest fixture; builds a workspace and a stub directory under tmp_path.
+    """
+    workspace = tmp_path / "workspace"
+    (workspace / "docs" / "assets").mkdir(parents=True)
+    (workspace / TRACKED_SVG).write_text(UNMERGED_SVG, encoding="utf-8")
+
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    _write_stub(
+        stubs,
+        "git",
+        'echo "git $*" >> "$STUB_LOG"\n'
+        "case $1 in\n"
+        "  diff)\n"
+        '    if [ "$2" = "--quiet" ] && [ -n "${STUB_DIFF_CLEAN:-}" ]; then\n'
+        "      exit 0\n"
+        "    fi\n"
+        '    if [ "$2" = "--quiet" ]; then\n'
+        "      exit 1\n"
+        "    fi\n"
+        "    ;;\n"
+        "  ls-remote)\n"
+        '    if [ "${STUB_LS_REMOTE_STATUS:-0}" = "0" ]; then\n'
+        '      printf "%s\\t%s\\n" "deadbeef" "refs/heads/$5"\n'
+        "      exit 0\n"
+        "    fi\n"
+        '    exit "${STUB_LS_REMOTE_STATUS:-2}"\n'
         "    ;;\n"
         "esac",
     )
@@ -209,8 +284,8 @@ class TestUpdateMetricsWorkflow:
         assert "workflow_dispatch" in triggers
 
     def test_workflow_has_only_required_write_permissions(self, metrics_workflow: dict[str, Any]) -> None:
-        """Automation must receive only permissions needed to update its pull request."""
-        assert metrics_workflow["permissions"] == {"contents": "write", "pull-requests": "write"}
+        """Automation must receive only permissions needed to update the metrics branch."""
+        assert metrics_workflow["permissions"] == {"contents": "write"}
 
     def test_runs_never_cancel_one_another(self, metrics_workflow: dict[str, Any]) -> None:
         """Overlapping runs must queue behind one another instead of cancelling.
@@ -234,11 +309,6 @@ class TestUpdateMetricsWorkflow:
         [
             pytest.param("📥 Checkout the repository", "actions/checkout", id="checkout"),
             pytest.param("🐍 Install uv and set Python", "astral-sh/setup-uv", id="setup-uv"),
-            pytest.param(
-                "📨 Create or update metrics pull request",
-                "peter-evans/create-pull-request",
-                id="create-pull-request",
-            ),
         ],
     )
     def test_third_party_actions_are_pinned_to_commit_shas(
@@ -291,14 +361,28 @@ class TestUpdateMetricsWorkflow:
         assert "> docs/assets/weekly-metrics.svg.tmp" in run
         assert "mv docs/assets/weekly-metrics.svg.tmp docs/assets/weekly-metrics.svg" in run
 
-    def test_pull_request_updates_only_metrics_svg(self, metrics_steps: dict[str, dict[str, Any]]) -> None:
-        """Pull-request action must write only generated SVG on stable automation branch."""
-        create_pull_request = metrics_steps["📨 Create or update metrics pull request"]
+    def test_commit_step_updates_only_metrics_svg_on_the_automation_branch(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+    ) -> None:
+        """Commit step must write only the generated SVG and force-update the fixed branch."""
+        commit_step = metrics_steps["📤 Commit and push metrics update"]
+        run = commit_step["run"]
 
-        assert create_pull_request["with"]["add-paths"] == "docs/assets/weekly-metrics.svg"
-        assert create_pull_request["with"]["base"] == "${{ github.event.repository.default_branch }}"
-        assert create_pull_request["with"]["branch"] == "automation/update-weekly-metrics"
-        assert create_pull_request["with"]["delete-branch"] is True
+        assert commit_step["env"]["METRICS_BRANCH"] == "automation/update-weekly-metrics"
+        assert "git diff --quiet -- docs/assets/weekly-metrics.svg" in run
+        assert "git add -- docs/assets/weekly-metrics.svg" in run
+        assert 'git commit -m "docs: update weekly project metrics"' in run
+        assert 'git ls-remote --exit-code --heads origin "$METRICS_BRANCH" | awk \'{print $1}\'' in run
+        assert "ls_remote_status=$?" in run
+        assert 'if [ "$ls_remote_status" -eq 0 ]; then' in run
+        assert 'elif [ "$ls_remote_status" -eq 2 ]; then' in run
+        assert (
+            'git push --force-with-lease="refs/heads/$METRICS_BRANCH:$remote_branch_sha" '
+            'origin HEAD:"$METRICS_BRANCH"' in run
+        )
+        assert 'git push origin HEAD:"$METRICS_BRANCH"' in run
+        assert 'echo "::error::git ls-remote failed for $METRICS_BRANCH"' in run
 
 
 @requires_bash
@@ -409,3 +493,91 @@ class TestRestoreUnmergedHistoryStep:
 
         logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
         assert "fetch --no-tags --depth=1 origin automation/update-weekly-metrics" in logged
+
+
+@requires_bash
+class TestCommitAndPushStep:
+    """Tests that run the commit step's own shell against a stubbed `git`."""
+
+    def test_clean_svg_skips_commit_and_push(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        commit_sandbox: tuple[Path, Path],
+    ) -> None:
+        """No SVG change must leave the automation branch untouched."""
+        workspace, stubs = commit_sandbox
+
+        result = _run_step(
+            metrics_steps["📤 Commit and push metrics update"]["run"],
+            workspace,
+            stubs,
+            _commit_env(workspace, branch_exists=True, svg_changed=False),
+        )
+
+        assert result.returncode == 0, result.stderr
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert "commit -m" not in logged
+        assert "push " not in logged
+
+    def test_first_push_creates_the_branch_without_force_with_lease(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        commit_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A first run must create the automation branch without requiring a lease."""
+        workspace, stubs = commit_sandbox
+
+        result = _run_step(
+            metrics_steps["📤 Commit and push metrics update"]["run"],
+            workspace,
+            stubs,
+            _commit_env(workspace, branch_exists=False, svg_changed=True),
+        )
+
+        assert result.returncode == 0, result.stderr
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert "ls-remote --exit-code --heads origin automation/update-weekly-metrics" in logged
+        assert "push origin HEAD:automation/update-weekly-metrics" in logged
+        assert "push --force-with-lease origin HEAD:automation/update-weekly-metrics" not in logged
+
+    def test_existing_branch_updates_with_force_with_lease(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        commit_sandbox: tuple[Path, Path],
+    ) -> None:
+        """An existing automation branch must still be force-updated behind a lease."""
+        workspace, stubs = commit_sandbox
+
+        result = _run_step(
+            metrics_steps["📤 Commit and push metrics update"]["run"],
+            workspace,
+            stubs,
+            _commit_env(workspace, branch_exists=True, svg_changed=True),
+        )
+
+        assert result.returncode == 0, result.stderr
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert (
+            "push --force-with-lease=refs/heads/automation/update-weekly-metrics:deadbeef "
+            "origin HEAD:automation/update-weekly-metrics" in logged
+        )
+
+    def test_remote_lookup_failure_stops_before_any_push(
+        self,
+        metrics_steps: dict[str, dict[str, Any]],
+        commit_sandbox: tuple[Path, Path],
+    ) -> None:
+        """A transient remote lookup failure must fail the step instead of masquerading as branch creation."""
+        workspace, stubs = commit_sandbox
+
+        result = _run_step(
+            metrics_steps["📤 Commit and push metrics update"]["run"],
+            workspace,
+            stubs,
+            _commit_env(workspace, branch_exists=False, svg_changed=True, ls_remote_status=128),
+        )
+
+        assert result.returncode == 128
+        assert "::error::git ls-remote failed for automation/update-weekly-metrics" in result.stdout
+        logged = (workspace / STUB_LOG_NAME).read_text(encoding="utf-8")
+        assert "push " not in logged
