@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import torch
 from torch import Tensor
 
@@ -27,8 +29,14 @@ def ms_deform_attn_core_pytorch(
     sampling_locations: Tensor,
     attention_weights: Tensor,
     value_spatial_shapes_hw: list[tuple[int, int]] | None = None,
+    grid_sample: Callable[..., Tensor] = _bilinear_grid_sample,
 ) -> Tensor:
-    """For debug and test only, need to use cuda version instead."""
+    """For debug and test only, need to use cuda version instead.
+
+    ``grid_sample`` samples each level's value map. It takes ``(value, grid, padding_mode=..., align_corners=...)``
+    like :func:`~rfdetr.utilities.tensors._bilinear_grid_sample`, the default. An exporter passes another exact
+    sampler when its converter lowers ``grid_sample`` poorly.
+    """
     # batch_size, n_heads, head_dim, spatial_size
     batch_size, n_heads, head_dim, _ = value.shape
     # Use Python int pairs when available (required for torch.export compatibility,
@@ -65,7 +73,7 @@ def ms_deform_attn_core_pytorch(
             grid_l = sampling_grids[:, :, :, level_index]
         sampling_grid_l_ = grid_l.transpose(1, 2).flatten(0, 1)
         # batch_size*n_heads, head_dim, len_query, num_points
-        sampling_value_l_ = _bilinear_grid_sample(value_l_, sampling_grid_l_, padding_mode="zeros", align_corners=False)
+        sampling_value_l_ = grid_sample(value_l_, sampling_grid_l_, padding_mode="zeros", align_corners=False)
         sampling_value_list.append(sampling_value_l_)
     # (batch_size, len_query, n_heads, num_levels * num_points)
     # -> (batch_size, n_heads, len_query, num_levels, num_points)
