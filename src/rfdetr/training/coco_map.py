@@ -762,7 +762,10 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         )
         coco_target = self._build_coco(target_dataset)
         if self._loads_detections_from_array(detection_boxes):
-            return coco_target.loadRes(self._detection_results_array()), coco_target, None
+            # ufcoco's `loadRes` prints pycocotools' progress lines.
+            with contextlib.redirect_stdout(io.StringIO()):
+                coco_preds = coco_target.loadRes(self._detection_results_array())
+            return coco_preds, coco_target, None
 
         prediction_dataset = backend._get_coco_format(
             labels=self.detection_labels,
@@ -787,9 +790,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
         Building the prediction dataset is the dominant cost of ``compute()`` once the evaluator is fast: at COCO
         validation scale TorchMetrics materializes one Python dict per detection, over a million of them, which
-        takes longer than hotcoco needs to evaluate them. ``loadRes`` accepts the same detections as one array and
-        parses it in Rust. faster-coco-eval is excluded because its own ``loadRes`` is slower than the dict path it
-        would replace, and mask evaluation is excluded because an array carries no segmentation.
+        takes longer than hotcoco or ufcoco needs to evaluate them. ``loadRes`` accepts the same detections as one
+        array and parses it in Rust. ufcoco keeps the array rows in columns through evaluation even under the
+        adapter's ``COCOeval`` subclass from ultrafast-pycocotools 0.1.13, the floor ``rfdetr[train]`` pins.
+        faster-coco-eval is excluded because its own ``loadRes`` is slower than the dict path it would replace, and
+        mask evaluation is excluded because an array carries no segmentation.
 
         Args:
             detection_boxes: Stored detection boxes, or ``None`` when the state holds none.
@@ -798,7 +803,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             Whether the detection-array path applies.
         """
         return (
-            isinstance(self._coco_backend, _HotCocoBackend)
+            isinstance(self._coco_backend, (_HotCocoBackend, _UfcocoBackend))
             and detection_boxes is not None
             and tuple(self.iou_type) == ("bbox",)
         )
