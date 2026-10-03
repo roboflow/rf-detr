@@ -931,7 +931,8 @@ class TestCalibration:
             ],
         )
         path = tmp_path / "image.onnx"
-        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)]), path)
+        # Pinned: onnx 1.21 writes IR version 14 by default, which the onnxruntime CI installs (IR 13 at most) refuses.
+        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=10), path)
         return path
 
     @pytest.mark.parametrize(
