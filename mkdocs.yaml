@@ -162,6 +162,7 @@ plugins:
 hooks:
   - docs/hooks/package_version.py
   - docs/hooks/cookbooks_cards.py
+  - docs/hooks/notebook_toc.py
 
 markdown_extensions:
   - admonition
