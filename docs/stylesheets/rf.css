@@ -223,8 +223,10 @@ body:not(:has(#dropdown-products:checked)) .products-sublist {
 }
 /* Notebook pages (cookbooks) sit outside the nav tree, so the primary sidebar is empty:
    drop it and let the notebook use the freed width. */
-.md-main__inner:has(.jp-Notebook) .md-sidebar--primary {
-  display: none;
+@media screen and (min-width: 76.25em) {
+  .md-main__inner:has(.jp-Notebook) .md-sidebar--primary {
+    display: none;
+  }
 }
 .md-main__inner:has(.jp-Notebook) .md-content {
   max-width: 100%;
