@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-02T23:46:04">
+  <meta property="article:modified_time" content="2026-10-03T08:02:14">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-02T23:46:04",
+    "dateModified": "2026-10-03T08:02:14",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1297,6 +1297,62 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
   
+    <li class="md-nav__item">
+      <a href="../../exports/basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../exports/advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
     
@@ -1311,10 +1367,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_2" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4_4" >
         
           
-          <label class="md-nav__link" for="__nav_2_4_2" id="__nav_2_4_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_4_4" id="__nav_2_4_4_label" tabindex="0">
             
   
   
@@ -1332,8 +1388,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_2_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2_4_2">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_2_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4_4">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2722,22 +2778,22 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-pytorch-baseline-on-metal-mps" class="md-nav__link">
+  <a href="#4-pytorch-baseline-predict-on-metal-mps" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. PyTorch baseline — on Metal (MPS)
+        4. PyTorch baseline — <code>predict()</code> on Metal (MPS)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="4. PyTorch baseline — on Metal (MPS)">
+    <nav class="md-nav" aria-label="4. PyTorch baseline — predict() on Metal (MPS)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#pytorch-fp16jit-anchor" class="md-nav__link">
+  <a href="#pytorch-inferencedtypetorchfloat16-fp16jit-anchor" class="md-nav__link">
     <span class="md-ellipsis">
       
-        PyTorch — fp16+JIT anchor
+        PyTorch <code>inference(dtype=torch.float16)</code> — fp16+JIT anchor
       
     </span>
   </a>
@@ -2801,7 +2857,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#export-benchmark_1" class="md-nav__link">
+  <a href="#export-benchmark" class="md-nav__link">
     <span class="md-ellipsis">
       
         Export + Benchmark
@@ -2840,7 +2896,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#export-benchmark_2" class="md-nav__link">
+  <a href="#export-benchmark" class="md-nav__link">
     <span class="md-ellipsis">
       
         Export + Benchmark
@@ -3695,7 +3751,7 @@ within this machine</em> — never set these milliseconds against the architectu
 <a href="https://rfdetr.roboflow.com/latest/learn/benchmarks/">Benchmarks page</a> (NVIDIA T4, TensorRT
 FP16, model only) or the number on
 <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>
-(NVIDIA L4, Roboflow Inference, model only) — those are GPU numbers, not comparable to an Apple
+(NVIDIA L4, Roboflow Inference, scope not stated) — those are GPU numbers, not comparable to an Apple
 Silicon run at all, let alone without checking precision, batch size, and scope.</p>
 </blockquote>
 </div>
@@ -5938,7 +5994,7 @@ display(
 <p><strong><code>mAP@50:95 [%]</code></strong> — not measured yet: run §8 (COCO val2017 accuracy) to get it for every batch-1
 row below, from the same artifact and precision as that row's latency.</p>
 </blockquote>
-<p>Measured on an Apple M4 Max (arm64), macOS 27.0, rfdetr v1.11.0, batches 1/4/8, 5 warmup + 30
+<p>Measured on an Apple M4 Max (arm64), macOS 27.0, rfdetr <code>develop</code> (version not recorded), batches 1/4/8, 5 warmup + 30
 timed runs per (format, config, batch), <code>RFDETRSmall</code>. Numbers vary by Apple Silicon generation —
 rerun the cells above to get yours. <code>Config</code> is the precision/backend used for that row; <code>—</code>
 marks a scope this format doesn't have (PyTorch's <code>predict()</code> has no forward-only path). <code>FPS</code>
@@ -6286,7 +6342,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 2, 2026 23:46:04 UTC">2026-10-02 23:46:04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
   </span>
 
     

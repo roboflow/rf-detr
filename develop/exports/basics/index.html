@@ -6,32 +6,38 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Real-time transformer for object detection and instance segmentation. DINOv2 backbone, SOTA on COCO (60.1 AP50:95). Apache 2.0. Works with Python ≥3.10.">
+        <meta name="description" content="Export basics for RF-DETR — install the export extras, run model.export(), find the output files, and run inference with the exported model.">
       
       
         <meta name="author" content="Roboflow">
       
       
+        <link rel="canonical" href="https://rfdetr.roboflow.com/develop/exports/basics/">
       
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../advanced/">
       
       
         
       
       
-      <link rel="icon" href="/develop/assets/roboflow-logo.svg">
+      <link rel="icon" href="../../assets/roboflow-logo.svg">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
   
     
       
-        <title>RF-DETR</title>
+        <title>Basics - RF-DETR</title>
       
     
   
 
     
-      <link rel="stylesheet" href="/develop/assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
       
 
@@ -50,11 +56,11 @@
       
     
     
-      <link rel="stylesheet" href="/develop/assets/_mkdocstrings.css">
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
     
-      <link rel="stylesheet" href="/develop/stylesheets/rf.css">
+      <link rel="stylesheet" href="../../stylesheets/rf.css">
     
-    <script>__md_scope=new URL("/develop",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,6 +84,83 @@
   <link rel="preconnect" href="https://storage.googleapis.com">
 
   
+  
+  
+  <meta property="og:title" content="Basics - RF-DETR">
+  <meta property="og:description" content="Export basics for RF-DETR — install the export extras, run model.export(), find the output files, and run inference with the exported model.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://rfdetr.roboflow.com/develop/exports/basics/">
+  <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+  <meta property="og:image:width" content="840">
+  <meta property="og:image:height" content="630">
+
+  
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@roboflow">
+  <meta name="twitter:title" content="Basics - RF-DETR">
+  <meta name="twitter:description" content="Export basics for RF-DETR — install the export extras, run model.export(), find the output files, and run inference with the exported model.">
+  <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
+
+  
+  
+  
+  
+  <meta property="article:modified_time" content="2026-10-03T08:02:14">
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Basics",
+    "description": "Export basics for RF-DETR \u2014 install the export extras, run model.export(), find the output files, and run inference with the exported model.",
+    "url": "https://rfdetr.roboflow.com/develop/exports/basics/",
+    "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
+    "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
+    "proficiencyLevel": "Beginner to advanced",
+    "inLanguage": "en",
+    "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
+    "datePublished": "2025-03-01",
+    "dateModified": "2026-10-03T08:02:14",
+    "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
+    "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
+    "mainEntityOfPage": {"@type": "WebPage", "@id": "https://rfdetr.roboflow.com/develop/exports/basics/"},
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".md-content h1", ".md-typeset > p:first-child"]
+    }
+  }
+  </script>
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "RF-DETR",
+        "item": "https://rfdetr.roboflow.com/develop"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Export Model",
+        "item": "https://rfdetr.roboflow.com/develop/exports/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "name": "Basics",
+        "item": "https://rfdetr.roboflow.com/develop/exports/basics/"
+      }
+      
+    ]
+  }
+  </script>
+  
+  
 
   </head>
   
@@ -89,6 +172,11 @@
     <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
+      
+        
+        <a href="#export-basics" class="md-skip">
+          Skip to content
+        </a>
       
     </div>
     <div data-md-component="announce">
@@ -102,7 +190,7 @@
               You are reading the unreleased development version of the documentation, built from the <code>develop</code> branch.<br>
 APIs described here may change or may never ship in a release, so use the <a href="https://rfdetr.roboflow.com/latest/"><strong>latest stable release</strong></a> instead.
             </div>
-            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("/develop"),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
           </aside>
         
       </div>
@@ -122,14 +210,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
     <!-- Link to home -->
     <a
-      href="/develop/."
+      href="../.."
       title="RF-DETR"
       class="md-header__button md-logo"
       aria-label="RF-DETR"
       data-md-component="logo"
     >
       
-  <img src="/develop/assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+  <img src="../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
 
@@ -150,7 +238,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis" style="display: flex; align-items: center; gap: 0.5rem;">
             <a
-            href="/develop/."
+            href="../.."
             title="RF-DETR"
             class="md-header__button md-logo"
             aria-label="RF-DETR"
@@ -158,11 +246,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
             id="item-logo"
             >
             
-  <img src="/develop/assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+  <img src="../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
             </a>
             
-              
+              Basics
             
           </span>
         </div>
@@ -321,7 +409,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-tabs__item">
-      <a href="/develop/." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -338,6 +426,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
   
+    
+  
   
     
     
@@ -345,11 +435,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="/develop/getting-started/install/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../getting-started/install/" class="md-tabs__link">
           
   
   
@@ -372,7 +464,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
     
       <li class="md-tabs__item">
-        <a href="/develop/reference/rfdetr/" class="md-tabs__link">
+        <a href="../../reference/rfdetr/" class="md-tabs__link">
           
   
   
@@ -390,7 +482,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-tabs__item">
-      <a href="/develop/faq/" class="md-tabs__link">
+      <a href="../../faq/" class="md-tabs__link">
         
   
   
@@ -409,7 +501,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-tabs__item">
-      <a href="/develop/cookbooks/" class="md-tabs__link">
+      <a href="../../cookbooks/" class="md-tabs__link">
         
   
   
@@ -428,7 +520,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-tabs__item">
-      <a href="/develop/resources/" class="md-tabs__link">
+      <a href="../../resources/" class="md-tabs__link">
         
   
   
@@ -447,7 +539,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-tabs__item">
-      <a href="/develop/changelog/" class="md-tabs__link">
+      <a href="../../changelog/" class="md-tabs__link">
         
   
   
@@ -488,9 +580,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/develop/." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
+    <a href="../.." title="RF-DETR" class="md-nav__button md-logo" aria-label="RF-DETR" data-md-component="logo">
       
-  <img src="/develop/assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
+  <img src="../../assets/roboflow-logo.svg" alt="RF-DETR" width="24" height="24">
 
     </a>
     RF-DETR
@@ -517,7 +609,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -541,26 +633,29 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
   
   
+    
   
   
+  
     
     
     
     
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
       
         
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
-        
-          
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -578,7 +673,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -648,7 +743,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/getting-started/install/" class="md-nav__link">
+      <a href="../../getting-started/install/" class="md-nav__link">
         
   
   
@@ -676,7 +771,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/getting-started/migration/" class="md-nav__link">
+      <a href="../../getting-started/migration/" class="md-nav__link">
         
   
   
@@ -764,7 +859,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/run/detection/" class="md-nav__link">
+      <a href="../../learn/run/detection/" class="md-nav__link">
         
   
   
@@ -792,7 +887,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/run/segmentation/" class="md-nav__link">
+      <a href="../../learn/run/segmentation/" class="md-nav__link">
         
   
   
@@ -820,7 +915,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/run/keypoints/" class="md-nav__link">
+      <a href="../../learn/run/keypoints/" class="md-nav__link">
         
   
   
@@ -848,7 +943,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/pretrained/" class="md-nav__link">
+      <a href="../../learn/pretrained/" class="md-nav__link">
         
   
   
@@ -936,7 +1031,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/" class="md-nav__link">
+      <a href="../../learn/train/" class="md-nav__link">
         
   
   
@@ -964,7 +1059,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/dataset-formats/" class="md-nav__link">
+      <a href="../../learn/train/dataset-formats/" class="md-nav__link">
         
   
   
@@ -992,7 +1087,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/training-parameters/" class="md-nav__link">
+      <a href="../../learn/train/training-parameters/" class="md-nav__link">
         
   
   
@@ -1020,7 +1115,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/advanced/" class="md-nav__link">
+      <a href="../../learn/train/advanced/" class="md-nav__link">
         
   
   
@@ -1048,7 +1143,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/customization/" class="md-nav__link">
+      <a href="../../learn/train/customization/" class="md-nav__link">
         
   
   
@@ -1076,7 +1171,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/augmentations/" class="md-nav__link">
+      <a href="../../learn/train/augmentations/" class="md-nav__link">
         
   
   
@@ -1104,7 +1199,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/train/loggers/" class="md-nav__link">
+      <a href="../../learn/train/loggers/" class="md-nav__link">
         
   
   
@@ -1137,8 +1232,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
                 
   
   
+    
   
   
+  
     
     
     
@@ -1147,13 +1244,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-          
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" checked>
         
           
           <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
@@ -1174,7 +1269,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1192,7 +1287,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -1217,10 +1312,37 @@ APIs described here may change or may never ship in a release, so use the <a hre
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="/develop/exports/basics/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1236,6 +1358,153 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#basic-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-a-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-the-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check the Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output Files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-inference-with-inference-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Inference with inference-models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run Inference with inference-models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-pre-trained-rf-detr-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Pre-trained RF-DETR Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-local-rf-detr-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Local RF-DETR Checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#force-tensorrt-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Force TensorRT Backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-exported-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the Exported Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1248,7 +1517,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/advanced/" class="md-nav__link">
+      <a href="../advanced/" class="md-nav__link">
         
   
   
@@ -1328,7 +1597,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/onnx/" class="md-nav__link">
+      <a href="../onnx/" class="md-nav__link">
         
   
   
@@ -1356,7 +1625,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/tensorrt/" class="md-nav__link">
+      <a href="../tensorrt/" class="md-nav__link">
         
   
   
@@ -1384,7 +1653,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/tflite/" class="md-nav__link">
+      <a href="../tflite/" class="md-nav__link">
         
   
   
@@ -1412,7 +1681,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/litert/" class="md-nav__link">
+      <a href="../litert/" class="md-nav__link">
         
   
   
@@ -1440,7 +1709,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/openvino/" class="md-nav__link">
+      <a href="../openvino/" class="md-nav__link">
         
   
   
@@ -1468,7 +1737,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/executorch/" class="md-nav__link">
+      <a href="../executorch/" class="md-nav__link">
         
   
   
@@ -1496,7 +1765,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/coreml/" class="md-nav__link">
+      <a href="../coreml/" class="md-nav__link">
         
   
   
@@ -1524,7 +1793,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/coreai/" class="md-nav__link">
+      <a href="../coreai/" class="md-nav__link">
         
   
   
@@ -1560,7 +1829,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/exports/blueprint/" class="md-nav__link">
+      <a href="../blueprint/" class="md-nav__link">
         
   
   
@@ -1596,7 +1865,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/deploy/" class="md-nav__link">
+      <a href="../../learn/deploy/" class="md-nav__link">
         
   
   
@@ -1624,7 +1893,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/learn/benchmarks/" class="md-nav__link">
+      <a href="../../learn/benchmarks/" class="md-nav__link">
         
   
   
@@ -1711,7 +1980,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/rfdetr/" class="md-nav__link">
+      <a href="../../reference/rfdetr/" class="md-nav__link">
         
   
   
@@ -1791,7 +2060,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/nano/" class="md-nav__link">
+      <a href="../../reference/nano/" class="md-nav__link">
         
   
   
@@ -1819,7 +2088,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/small/" class="md-nav__link">
+      <a href="../../reference/small/" class="md-nav__link">
         
   
   
@@ -1847,7 +2116,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/medium/" class="md-nav__link">
+      <a href="../../reference/medium/" class="md-nav__link">
         
   
   
@@ -1875,7 +2144,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/large/" class="md-nav__link">
+      <a href="../../reference/large/" class="md-nav__link">
         
   
   
@@ -1903,7 +2172,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/xlarge/" class="md-nav__link">
+      <a href="../../reference/xlarge/" class="md-nav__link">
         
   
   
@@ -1931,7 +2200,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/2xlarge/" class="md-nav__link">
+      <a href="../../reference/2xlarge/" class="md-nav__link">
         
   
   
@@ -2019,7 +2288,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_nano/" class="md-nav__link">
+      <a href="../../reference/seg_nano/" class="md-nav__link">
         
   
   
@@ -2047,7 +2316,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_small/" class="md-nav__link">
+      <a href="../../reference/seg_small/" class="md-nav__link">
         
   
   
@@ -2075,7 +2344,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_medium/" class="md-nav__link">
+      <a href="../../reference/seg_medium/" class="md-nav__link">
         
   
   
@@ -2103,7 +2372,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_large/" class="md-nav__link">
+      <a href="../../reference/seg_large/" class="md-nav__link">
         
   
   
@@ -2131,7 +2400,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_xlarge/" class="md-nav__link">
+      <a href="../../reference/seg_xlarge/" class="md-nav__link">
         
   
   
@@ -2159,7 +2428,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/seg_2xlarge/" class="md-nav__link">
+      <a href="../../reference/seg_2xlarge/" class="md-nav__link">
         
   
   
@@ -2247,7 +2516,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/kp_preview/" class="md-nav__link">
+      <a href="../../reference/kp_preview/" class="md-nav__link">
         
   
   
@@ -2335,7 +2604,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/train_config/" class="md-nav__link">
+      <a href="../../reference/train_config/" class="md-nav__link">
         
   
   
@@ -2363,7 +2632,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/segmentation_train_config/" class="md-nav__link">
+      <a href="../../reference/segmentation_train_config/" class="md-nav__link">
         
   
   
@@ -2391,7 +2660,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/keypoint_train_config/" class="md-nav__link">
+      <a href="../../reference/keypoint_train_config/" class="md-nav__link">
         
   
   
@@ -2479,7 +2748,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/reference/training/" class="md-nav__link">
+      <a href="../../reference/training/" class="md-nav__link">
         
   
   
@@ -2522,7 +2791,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/faq/" class="md-nav__link">
+      <a href="../../faq/" class="md-nav__link">
         
   
   
@@ -2549,7 +2818,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/cookbooks/" class="md-nav__link">
+      <a href="../../cookbooks/" class="md-nav__link">
         
   
   
@@ -2576,7 +2845,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/resources/" class="md-nav__link">
+      <a href="../../resources/" class="md-nav__link">
         
   
   
@@ -2603,7 +2872,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
-      <a href="/develop/changelog/" class="md-nav__link">
+      <a href="../../changelog/" class="md-nav__link">
         
   
   
@@ -2640,6 +2909,143 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#basic-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Basic Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-a-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a Format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#check-the-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Check the Export
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#output-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Output Files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-inference-with-inference-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run Inference with inference-models
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run Inference with inference-models">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#installation_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-pre-trained-rf-detr-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Pre-trained RF-DETR Model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#load-a-local-rf-detr-checkpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load a Local RF-DETR Checkpoint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#force-tensorrt-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Force TensorRT Backend
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#using-the-exported-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the Exported Model
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -2652,8 +3058,252 @@ APIs described here may change or may never ship in a release, so use the <a hre
               
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+                  
 
+
+  
+  
+
+
+<h1 id="export-basics">Export Basics<a class="headerlink" href="#export-basics" title="Permanent link">&para;</a></h1>
+<p>This page covers the everyday export path: install an extra, call <code>model.export()</code>, locate the output files, and run inference. For the full parameter reference and less common options, see <a href="../advanced/">Advanced Export</a>. For a comparison of formats and measured performance, see the <a href="../">Overview</a>.</p>
+<h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
+<p>Install the export dependencies you need:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:7"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><input id="__tabbed_1_4" name="__tabbed_1" type="radio" /><input id="__tabbed_1_5" name="__tabbed_1" type="radio" /><input id="__tabbed_1_6" name="__tabbed_1" type="radio" /><input id="__tabbed_1_7" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">ONNX</label><label for="__tabbed_1_2">OpenVINO</label><label for="__tabbed_1_3">TFLite</label><label for="__tabbed_1_4">LiteRT</label><label for="__tabbed_1_5">ExecuTorch</label><label for="__tabbed_1_6">Native CoreML (macOS)</label><label for="__tabbed_1_7">Apple Core AI</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[onnx]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[openvino]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[tflite]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[litert]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[executorch]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreml]"</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[coreai]"</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<h2 id="basic-export">Basic Export<a class="headerlink" href="#basic-export" title="Permanent link">&para;</a></h2>
+<p>Export your trained model to ONNX format:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="2:2"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">Object Detection</label><label for="__tabbed_2_2">Image Segmentation</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSegMedium</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSegMedium</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<p>This command saves the ONNX model to the <code>output</code> directory by default.</p>
+<h2 id="choose-a-format">Choose a Format<a class="headerlink" href="#choose-a-format" title="Permanent link">&para;</a></h2>
+<p>Pass <code>format=</code> to <code>model.export()</code> to pick another target; the extra from <a href="#installation">Installation</a> must be installed first. Which format is fastest depends on the hardware — measured numbers are on the <a href="../#measured-performance-by-hardware">Overview</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Deploying to</th>
+<th><code>format=</code></th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Anywhere ONNX Runtime runs</td>
+<td><code>"onnx"</code> (default)</td>
+<td><a href="../onnx/">ONNX Inference</a></td>
+</tr>
+<tr>
+<td>NVIDIA GPU</td>
+<td><code>"tensorrt"</code> (alias <code>"trt"</code>)</td>
+<td><a href="../tensorrt/">TensorRT</a></td>
+</tr>
+<tr>
+<td>Intel CPU, GPU or NPU</td>
+<td><code>"openvino"</code></td>
+<td><a href="../openvino/">OpenVINO</a></td>
+</tr>
+<tr>
+<td>Android, embedded, edge CPU</td>
+<td><code>"tflite"</code> or <code>"litert"</code></td>
+<td><a href="../tflite/">TFLite</a>, <a href="../litert/">LiteRT</a></td>
+</tr>
+<tr>
+<td>On-device PyTorch runtime</td>
+<td><code>"executorch"</code> (alias <code>"pte"</code>)</td>
+<td><a href="../executorch/">ExecuTorch</a></td>
+</tr>
+<tr>
+<td>Apple platforms (Xcode)</td>
+<td><code>"coreml"</code> or <code>"coreai"</code></td>
+<td><a href="../coreml/">Native CoreML</a>, <a href="../coreai/">Core AI</a></td>
+</tr>
+</tbody>
+</table>
+<p>Format names are case-insensitive. Formats marked experimental in <a href="../advanced/#format-capabilities">Advanced Export</a> emit a warning when constructed.</p>
+<h2 id="check-the-export">Check the Export<a class="headerlink" href="#check-the-export" title="Permanent link">&para;</a></h2>
+<p>An exported model returns raw tensors — box and logit decoding (sigmoid, background slot, box format) is left to your inference code. The <a href="../onnx/">ONNX guide</a> spells out the decoding rules and two pitfalls that apply to every format. To confirm an export matches PyTorch, run both on the same image and compare detections; the <a href="../../cookbooks/">export cookbooks</a> do this per hardware class, with latency and COCO mAP next to each other.</p>
+<h2 id="output-files">Output Files<a class="headerlink" href="#output-files" title="Permanent link">&para;</a></h2>
+<p>Filenames are built from the model's variant name (e.g. <code>rfdetr-medium</code>, falling back to <code>inference_model</code> when no variant or <code>output_name</code> is set, or <code>backbone_model</code> when <code>backbone_only=True</code> in that same case) plus a detail suffix whenever a detail materially changes the artifact — even at its default value, since the file needs to say what it actually is:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Filename pattern</th>
+<th>Detail encoded</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>onnx</code></td>
+<td><code>{variant}.onnx</code> (or <code>{variant}-backbone.onnx</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>inference_model.onnx</code> (or <code>backbone_model.onnx</code> if <code>backbone_only=True</code>)</td>
+<td>none — <code>-backbone</code> is structural, not a precision detail</td>
+</tr>
+<tr>
+<td><code>coreml</code></td>
+<td><code>{variant}_fp32.mlpackage</code> / <code>{variant}_fp16.mlpackage</code> (or <code>{variant}_fp32-backbone.mlpackage</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>backbone_model_fp32.mlpackage</code> if <code>backbone_only=True</code></td>
+<td><code>coreml_precision</code>, plus <code>-backbone</code> when named</td>
+</tr>
+<tr>
+<td><code>coreai</code></td>
+<td><code>{variant}_fp32.aimodel</code> / <code>{variant}_fp16.aimodel</code>; without a variant or <code>output_name</code>, <code>inference_model_fp32.aimodel</code></td>
+<td><code>coreai_precision</code></td>
+</tr>
+<tr>
+<td><code>executorch</code></td>
+<td><code>{variant}_xnnpack.pte</code> / <code>{variant}_coreml.pte</code> / <code>{variant}_qnn_{soc}.pte</code> (or <code>{variant}_xnnpack-backbone.pte</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>backbone_model_xnnpack.pte</code> if <code>backbone_only=True</code></td>
+<td><code>backend</code> (+ <code>soc</code> for <code>qnn</code>), plus <code>-backbone</code> when named</td>
+</tr>
+<tr>
+<td><code>tensorrt</code></td>
+<td><code>{variant}_fp16.trt</code> / <code>{variant}_fp32.trt</code> (or <code>{variant}-backbone_fp16.trt</code> / <code>{variant}-backbone_fp32.trt</code> if <code>backbone_only=True</code>)</td>
+<td><code>fp16</code>, plus <code>-backbone</code> when named</td>
+</tr>
+<tr>
+<td><code>tflite</code></td>
+<td><code>{variant}_fp32.tflite</code> + <code>{variant}_fp16.tflite</code> (+ <code>{variant}_dynamic_range_quant.tflite</code> for <code>quantization="int8"</code>)</td>
+<td>precision / quantization mode</td>
+</tr>
+<tr>
+<td><code>openvino</code></td>
+<td><code>{variant}.xml</code> + <code>{variant}.bin</code> (or <code>{variant}-backbone.xml</code>/<code>.bin</code> if <code>backbone_only=True</code>); without a variant or <code>output_name</code>, <code>inference_model.xml</code>/<code>.bin</code> (or <code>backbone_model.xml</code>/<code>.bin</code> if <code>backbone_only=True</code>)</td>
+<td>none — <code>openvino_precision</code> controls IR weight compression, not the filename</td>
+</tr>
+</tbody>
+</table>
+<p>Pass <code>output_name="my-model"</code> to override the variant name and write <code>{output_name}.{ext}</code> verbatim — this suppresses the detail suffix for every format <strong>except</strong> <code>tflite</code>, which always writes multiple files and so keeps its <code>_fp32</code>/<code>_fp16</code>/<code>_dynamic_range_quant</code> suffix even with a custom name (<code>{output_name}_fp32.tflite</code>, etc.).</p>
+<p>With <code>backbone_only=True</code>, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a <code>-backbone</code> marker before the extension even when <code>output_name</code> is set, for example <code>my-model-backbone.onnx</code>. This distinguishes the backbone artifact from the full detector exported with the same name.</p>
+<h2 id="run-inference-with-inference-models">Run Inference with <code>inference-models</code><a class="headerlink" href="#run-inference-with-inference-models" title="Permanent link">&para;</a></h2>
+<p><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.</p>
+<h3 id="installation_1">Installation<a class="headerlink" href="#installation_1" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># CPU / PyTorch only</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>pip<span class="w"> </span>install<span class="w"> </span>inference-models
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># With TensorRT support (NVIDIA GPU required)</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"inference-models[trt10]"</span><span class="w">  </span><span class="c1"># TensorRT 10</span>
+</span></code></pre></div>
+<p>See the <a href="https://inference-models.roboflow.com/getting-started/installation/">inference-models installation guide</a> for all installation options including Jetson and CUDA 11.x.</p>
+<h3 id="load-a-pre-trained-rf-detr-model">Load a Pre-trained RF-DETR Model<a class="headerlink" href="#load-a-pre-trained-rf-detr-model" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># Automatically selects the best available backend for your environment</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">)</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">image</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># Convert to supervision Detections</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">predictions</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to_supervision</span><span class="p">()</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="nb">print</span><span class="p">(</span><span class="n">detections</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="load-a-local-rf-detr-checkpoint">Load a Local RF-DETR Checkpoint<a class="headerlink" href="#load-a-local-rf-detr-checkpoint" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Load from a local .pth checkpoint (same file used by rfdetr for training)</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="s2">"/path/to/checkpoint.pth"</span><span class="p">,</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>    <span class="n">model_type</span><span class="o">=</span><span class="s2">"rfdetr-small"</span><span class="p">,</span>  <span class="c1"># specify the architecture variant</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="p">)</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="n">image</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="force-tensorrt-backend">Force TensorRT Backend<a class="headerlink" href="#force-tensorrt-backend" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">inference_models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModel</span><span class="p">,</span> <span class="n">BackendType</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># Explicitly request TensorRT — requires TRT to be installed</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">AutoModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"rfdetr-small"</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">BackendType</span><span class="o">.</span><span class="n">TRT</span><span class="p">)</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="n">image</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">)</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>AutoModel.from_pretrained</code> accepts <code>backend="onnx"</code>, <code>backend="torch"</code>, or <code>backend="trt"</code> to override automatic backend selection.</p>
+<h2 id="using-the-exported-model">Using the Exported Model<a class="headerlink" href="#using-the-exported-model" title="Permanent link">&para;</a></h2>
+<p>Once exported, you can use the ONNX model with various inference frameworks. See <a href="../onnx/">ONNX Inference</a> for a complete example, or the format-specific pages for other runtimes.</p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
+  </span>
+
+    
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
               </article>
             </div>
           
@@ -2745,12 +3395,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "/develop", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "/develop/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.tabs.link", "content.code.copy", "navigation.expand", "navigation.tabs", "content.code.annotate", "navigation.tracking", "content.tooltips", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="/develop/assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
-        <script src="/develop/javascripts/version-banner.js"></script>
+        <script src="../../javascripts/version-banner.js"></script>
       
     
   </body>
