@@ -79,7 +79,7 @@ import onnx
 
 model.export(notes={"dataset": "v3", "run": "2026-10-01"})
 
-onnx_model = onnx.load("output/rfdetr-medium.onnx")
+onnx_model = onnx.load("output/rfdetr-small.onnx")
 notes = {prop.key: prop.value for prop in onnx_model.metadata_props}["rfdetr_notes"]
 print(json.loads(notes))
 ```
