@@ -1923,6 +1923,7 @@ class RFDETR:
         max_batch_size: int | None = None,
         notes: object = None,
         coreml_precision: str | None = None,
+        coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
         output_name: str | None = None,
@@ -2066,6 +2067,11 @@ class RFDETR:
                 ``"float32"`` selects FP32 (tight CPU parity with eager
                 PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
+            coreml_neural_engine: For ``format="coreml"``, rewrite the backbone attention as one einsum pair per head
+                in query chunks, and the two-stage top-k query selection as a one-hot matmul. Same weights; the
+                Apple Neural Engine then runs the whole graph, and an fp16 export is about 30-40% faster there. The
+                same artifact is 25-80% slower on the CPU and the GPU, so leave it off unless the app runs the model
+                with ``CPU_AND_NE`` or ``ALL`` compute units. Ignored for every other format.
             coreai_precision: Precision the graph is traced and stored in for ``format="coreai"`` — ``None``
                 (default) or ``"float32"``, or ``"float16"`` for a half-size asset whose input and outputs are
                 float16 too. A float16 keypoint model warns: the asset aborts the process on the Neural Engine.
@@ -2184,6 +2190,7 @@ class RFDETR:
             soc=soc,
             fp16=fp16,
             coreml_precision=coreml_precision,
+            coreml_neural_engine=coreml_neural_engine,
             coreai_precision=coreai_precision,
             openvino_precision=openvino_precision,
             quantization=quantization,

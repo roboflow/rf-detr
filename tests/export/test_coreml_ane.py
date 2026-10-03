@@ -207,3 +207,48 @@ class TestCoreMLNeuralEngineFallbackBoundary:
         assert ane_cost / total_cost >= _MIN_ANE_COST_SHARE, (
             f"only {ane_cost / total_cost:.3f} of the estimated work stays on the Neural Engine"
         )
+
+
+@pytest.fixture(scope="module")
+def nano_fp16_neural_engine_export(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Export an untrained RFDETRNano to fp16 CoreML with ``coreml_neural_engine=True``.
+
+    Examples:
+        Skipped: a pytest fixture that needs coremltools, so it cannot run standalone.
+
+        >>> nano_fp16_neural_engine_export.suffix  # doctest: +SKIP
+        '.mlpackage'
+    """
+    seed_all(_EXPORT_SEED)
+    detector = RFDETRNano(pretrain_weights=None)
+    out_dir = tmp_path_factory.mktemp("coreml_neural_engine")
+    return Path(
+        detector.export(
+            output_dir=str(out_dir),
+            format="coreml",
+            coreml_precision="float16",
+            coreml_neural_engine=True,
+            verbose=False,
+        )
+    )
+
+
+@coreml_runtime_only
+@pytest.mark.integration
+@pytest.mark.e2e_coreml
+class TestCoreMLNeuralEngineRewrites:
+    """With ``coreml_neural_engine=True``, Core ML must schedule every op of the export onto the Neural Engine."""
+
+    def test_no_operation_prefers_the_cpu(self, nano_fp16_neural_engine_export: Path) -> None:
+        """The two-stage selection island of the default export (``topk``, ``gather``) must be gone."""
+        plan = _compute_plan(nano_fp16_neural_engine_export)
+        operations = plan.model_structure.program.functions["main"].block.operations
+
+        off_neural_engine = sorted(
+            operation.operator_name
+            for operation in operations
+            if (usage := plan.get_compute_device_usage_for_mlprogram_operation(operation)) is not None
+            and "NeuralEngine" not in type(usage.preferred_compute_device).__name__
+        )
+
+        assert off_neural_engine == []
