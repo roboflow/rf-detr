@@ -1044,6 +1044,8 @@ class _TinyConvNet(torch.nn.Module):
 
 
 @executorch_only
+@pytest.mark.integration
+@pytest.mark.e2e_executorch
 class TestExecutorchXnnpackRuntimeSmoke:
     """A tiny XNNPACK ``.pte`` must run through ``Method.execute`` on the installed executorch runtime.
 
