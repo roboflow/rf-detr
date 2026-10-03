@@ -6,7 +6,7 @@ description: A visual, intuition-first explanation of how RF-DETR works, why it 
 
 !!! tip "Key Takeaways"
 
-    - RF-DETR treats detection as a set of answers to a fixed number of learned questions (queries), so it never produces duplicate boxes and needs no non-maximum suppression (NMS)
+    - RF-DETR treats detection as a set of answers to a fixed number of learned questions (queries), so it learns to suppress duplicate boxes and needs no non-maximum suppression (NMS)
     - Its backbone is DINOv2, a vision transformer pretrained without labels, which is why it adapts well to small and unusual datasets
     - Windowed attention keeps the backbone cheap, and deformable attention lets each query read only a few points of the image instead of all of them
     - Training uses one-to-one Hungarian matching, which is what teaches the model not to produce duplicates
@@ -96,7 +96,7 @@ Two details here are easy to miss:
 
 ### Step 4: choosing where to look
 
-Now we need queries. Instead of starting from blank questions, RF-DETR uses a **two-stage** scheme. Every memory token makes a quick guess: a class score and a box around itself. The 300 tokens with the highest scores become the starting queries, each already carrying a rough box.
+Now we need to choose where those learned queries should look. RF-DETR uses a **two-stage** scheme: every memory token makes a quick class score and box proposal, and the 300 highest-scoring proposals initialize the learned queries' reference boxes.
 
 So a query does not start with "is there anything out there?" It starts with "I think there is something like a dog near here; let me check."
 
@@ -174,7 +174,7 @@ The trade-offs are real as well:
 
 - RF-DETR has many more parameters, so model files are larger. If memory or storage is your binding constraint, measure on your target device.
 - At the very smallest size, YOLO26-N is faster (1.7 ms against 2.3 ms for RF-DETR-N), though less accurate (40.3 against 48.4 AP50:95).
-- The input is a square image whose side must be divisible by patch size × number of windows. Arbitrary aspect ratios are resized, not processed natively.
+- Inputs are resized to the configured inference shape, which defaults to a square. Custom inference and export shapes may be rectangular, but both dimensions must be divisible by patch size × number of windows.
 
 ## RF-DETR in the DETR family
 
