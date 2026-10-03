@@ -205,7 +205,7 @@ Add `myformat = [...]` under `[project.optional-dependencies]` in `pyproject.tom
 
 ### 6. Document the format
 
-Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to [Export RF-DETR Model](index.md) — installation extra, a basic example, output files, and an inference snippet.
+Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to the user-facing export docs ([Overview](index.md), [Export Basics](basics.md), [Advanced Export](advanced.md)) — installation extra, a basic example, output files, and an inference snippet.
 
 ### 7. Test it
 
