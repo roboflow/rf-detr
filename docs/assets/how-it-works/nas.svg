@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" role="img" aria-labelledby="title desc">
+  <title id="title">One trained network, many model sizes</title>
+  <desc id="desc">Five architecture knobs (patch size, resolution, number of attention windows, decoder layers and queries) are sampled at random during a single training run. Afterwards, every setting can be evaluated without retraining; the released Nano, Small, Medium and Large models are points on the resulting accuracy-latency curve.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 24px; }
+    .s { font-size: 15px; fill: #B8B8B8; }
+    .lbl { font-size: 15px; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+    .track { stroke: #4A4F5A; stroke-width: 4; stroke-linecap: round; }
+    .knob { fill: #F4D345; stroke: #16181D; stroke-width: 2; }
+    .fixed { fill: #888888; stroke: #16181D; stroke-width: 2; }
+    .kres { animation: kres 12s infinite; }
+    .kdec { animation: kdec 12s infinite; }
+    .axis { stroke: #6A6F79; stroke-width: 1.2; }
+    .gl { stroke: #2C313A; stroke-width: 1; }
+    .tick { font-size: 13px; fill: #9A9FA9; }
+    .front { fill: none; stroke: #2F96B5; stroke-width: 2; }
+    .dot { fill: #2F96B5; stroke: #16181D; stroke-width: 2; }
+    .cloud { fill: #6A6F79; opacity: .55; }
+    .ring { fill: none; stroke: #F4D345; stroke-width: 2.5; }
+    .ro { opacity: 0; }
+    .rS { opacity: 1; }
+    .aN { animation: showN 12s infinite; } .aS { animation: showS 12s infinite; }
+    .aM { animation: showM 12s infinite; } .aL { animation: showL 12s infinite; }
+    @keyframes kres { 0%, 22% { transform: translateX(-75.0px); } 25%, 47% { transform: translateX(0.0px); } 50%, 72% { transform: translateX(37.5px); } 75%, 97% { transform: translateX(112.5px); } 100% { transform: translateX(-75.0px); } }
+    @keyframes kdec { 0%, 22% { transform: translateX(-60.0px); } 25%, 47% { transform: translateX(0.0px); } 50%, 72% { transform: translateX(60.0px); } 75%, 97% { transform: translateX(60.0px); } 100% { transform: translateX(-60.0px); } }
+    @keyframes showN { 0%, 22% { opacity: 1; } 25%, 97% { opacity: 0; } 100% { opacity: 1; } }
+    @keyframes showS { 0%, 22% { opacity: 0; } 25%, 47% { opacity: 1; } 50%, 100% { opacity: 0; } }
+    @keyframes showM { 0%, 47% { opacity: 0; } 50%, 72% { opacity: 1; } 75%, 100% { opacity: 0; } }
+    @keyframes showL { 0%, 72% { opacity: 0; } 75%, 97% { opacity: 1; } 100%, 100% { opacity: 0; } }
+  </style>
+  <rect width="1000" height="440" rx="16" fill="#16181D"/>
+  <text class="h" x="40" y="46">Five knobs, one set of weights</text>
+  <text class="s" x="40" y="70">every training step samples a random setting</text>
+  <text class="s" x="70" y="106">patch size</text>
+  <line class="track" x1="70" y1="118" x2="370" y2="118"/>
+  <circle class="fixed" cx="220.0" cy="118" r="9"/>
+  <text class="s" x="390" y="123">16 px</text>
+  <text class="s" x="70" y="158">resolution</text>
+  <line class="track" x1="70" y1="170" x2="370" y2="170"/>
+  <circle class="knob kres" cx="220.0" cy="170" r="10"/>
+  <text class="s ro aN" x="390" y="175">384 px</text>
+  <text class="s ro rS aS" x="390" y="175">512 px</text>
+  <text class="s ro aM" x="390" y="175">576 px</text>
+  <text class="s ro aL" x="390" y="175">704 px</text>
+  <text class="s" x="70" y="210">attention windows</text>
+  <line class="track" x1="70" y1="222" x2="370" y2="222"/>
+  <circle class="fixed" cx="175.0" cy="222" r="9"/>
+  <text class="s" x="390" y="227">2 × 2</text>
+  <text class="s" x="70" y="262">decoder layers</text>
+  <line class="track" x1="70" y1="274" x2="370" y2="274"/>
+  <circle class="knob kdec" cx="190.0" cy="274" r="10"/>
+  <text class="s ro aN" x="390" y="279">2</text>
+  <text class="s ro rS aS" x="390" y="279">3</text>
+  <text class="s ro aM" x="390" y="279">4</text>
+  <text class="s ro aL" x="390" y="279">4</text>
+  <text class="s" x="70" y="314">queries</text>
+  <line class="track" x1="70" y1="326" x2="370" y2="326"/>
+  <circle class="fixed" cx="310.0" cy="326" r="9"/>
+  <text class="s" x="390" y="331">300</text>
+  <text class="h" x="560" y="46">The released sizes</text>
+  <text class="s" x="560" y="70">COCO, NVIDIA T4, TensorRT FP16</text>
+  <line class="gl" x1="590" y1="330.0" x2="950" y2="330.0"/><text class="tick" x="582" y="334.0" text-anchor="end">46</text>
+  <line class="gl" x1="590" y1="246.0" x2="950" y2="246.0"/><text class="tick" x="582" y="250.0" text-anchor="end">50</text>
+  <line class="gl" x1="590" y1="162.0" x2="950" y2="162.0"/><text class="tick" x="582" y="166.0" text-anchor="end">54</text>
+  <line class="gl" x1="590" y1="78.0" x2="950" y2="78.0"/><text class="tick" x="582" y="82.0" text-anchor="end">58</text>
+  <text class="tick" x="590.0" y="350" text-anchor="middle">0</text>
+  <text class="tick" x="680.0" y="350" text-anchor="middle">2</text>
+  <text class="tick" x="770.0" y="350" text-anchor="middle">4</text>
+  <text class="tick" x="860.0" y="350" text-anchor="middle">6</text>
+  <text class="tick" x="950.0" y="350" text-anchor="middle">8</text>
+  <line class="axis" x1="590" y1="330" x2="950" y2="330"/>
+  <text class="tick" x="770" y="374" text-anchor="middle">latency [ms]</text>
+  <text class="tick" x="548" y="200" text-anchor="middle" transform="rotate(-90 548 200)">AP 50:95</text>
+  <circle class="cloud" cx="707.0" cy="306.9" r="4"/>
+  <circle class="cloud" cx="725.0" cy="267.0" r="4"/>
+  <circle class="cloud" cx="738.5" cy="233.4" r="4"/>
+  <circle class="cloud" cx="765.5" cy="216.6" r="4"/>
+  <circle class="cloud" cx="779.0" cy="199.8" r="4"/>
+  <circle class="cloud" cx="806.0" cy="180.9" r="4"/>
+  <circle class="cloud" cx="828.5" cy="170.4" r="4"/>
+  <circle class="cloud" cx="855.5" cy="153.6" r="4"/>
+  <circle class="cloud" cx="878.0" cy="141.0" r="4"/>
+  <circle class="cloud" cx="914.0" cy="132.6" r="4"/>
+  <circle class="cloud" cx="720.5" cy="317.4" r="4"/>
+  <circle class="cloud" cx="752.0" cy="283.8" r="4"/>
+  <circle class="cloud" cx="792.5" cy="243.9" r="4"/>
+  <circle class="cloud" cx="819.5" cy="206.1" r="4"/>
+  <circle class="cloud" cx="864.5" cy="187.2" r="4"/>
+  <circle class="cloud" cx="905.0" cy="164.1" r="4"/>
+  <circle class="cloud" cx="932.0" cy="145.2" r="4"/>
+  <circle class="cloud" cx="770.0" cy="254.4" r="4"/>
+  <circle class="cloud" cx="842.0" cy="227.1" r="4"/>
+  <circle class="cloud" cx="891.5" cy="208.2" r="4"/>
+  <polyline class="front" points="693.5,279.6 747.5,183.0 788.0,147.3 896.0,109.5"/>
+  <circle class="dot" cx="693.5" cy="279.6" r="6"/><text class="lbl" x="685.5" y="265.6">N</text>
+  <circle class="ring ro aN" cx="693.5" cy="279.6" r="13"/>
+  <circle class="dot" cx="747.5" cy="183.0" r="6"/><text class="lbl" x="739.5" y="169.0">S</text>
+  <circle class="ring ro rS aS" cx="747.5" cy="183.0" r="13"/>
+  <circle class="dot" cx="788.0" cy="147.3" r="6"/><text class="lbl" x="780.0" y="133.3">M</text>
+  <circle class="ring ro aM" cx="788.0" cy="147.3" r="13"/>
+  <circle class="dot" cx="896.0" cy="109.5" r="6"/><text class="lbl" x="888.0" y="95.5">L</text>
+  <circle class="ring ro aL" cx="896.0" cy="109.5" r="13"/>
+  <circle class="cloud" cx="600" cy="400" r="4"/><text class="s" x="612" y="405">other settings of the same weights (illustrative)</text>
+  <text class="s" x="40" y="405">No retraining to change size: pick the point that fits your latency budget.</text>
+</svg>
