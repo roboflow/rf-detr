@@ -39,6 +39,7 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
+from rfdetr.training.callbacks.best_model import BestModelCallback
 from rfdetr.training.callbacks.coco_eval import _get_ema_inner_module
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.training.fused_adamw_ema import LIBDEVICE_FUNCTIONS, UNSUPPORTED_ADAMW_OPTIONS, FusedAdamWEMA
@@ -448,6 +449,7 @@ class RFDETRModelModule(LightningModule):
                         "Reset keypoint Gaussian precision outputs to unit values after pretrained weight load."
                     )
         if model_config.backbone_lora:
+            # No-op when load_pretrain_weights already wrapped the encoder to load a LoRA checkpoint.
             apply_lora(self.model)
 
         # Build criterion/postprocessors after potential num_classes alignment so
@@ -478,8 +480,13 @@ class RFDETRModelModule(LightningModule):
             )
         if compile_enabled:
             # Dynamic shapes let one graph handle all multi-scale input sizes instead of
-            # recompiling per (H, W) pair. Fixed-resolution training uses a static graph so
-            # Inductor can specialize dimensions that stay fixed across training batches
+            # recompiling per (H, W) pair. The backbone projector is the exception on CUDA:
+            # Inductor's convolution-backward lowering (pytorch/pytorch#178945) pins the strides of
+            # convolutions that need an input gradient, so that frame still recompiles per size up
+            # to Dynamo's recompile limit. Past that limit the resolutions still unseen run the
+            # projector eager, while the sizes compiled before it keep their graphs and the rest of
+            # the model stays compiled at every scale. Fixed-resolution training uses a static graph
+            # so Inductor can specialize dimensions that stay fixed across training batches
             # (a validation batch of another shape recompiles once). Positional
             # interpolation has its own eager boundary for unsupported symbolic bicubic backward.
             # Do not suppress other compiler errors: nested retries can flood logs and conceal
@@ -1825,6 +1832,37 @@ class RFDETRModelModule(LightningModule):
             outputs = self.model(samples)
         orig_sizes = torch.stack([t["orig_size"] for t in targets])
         return self.postprocess(outputs, orig_sizes)
+
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Describe the model in every Lightning checkpoint the way the best ``.pth`` files do.
+
+        Lightning calls this hook for each ``.ckpt`` a ``Trainer`` writes for this module, such as ``last.ckpt`` and
+        ``checkpoint_<epoch>.ckpt`` during training. Without it they hold weights and optimizer state but no ``args``,
+        ``model_name`` or ``model_config``, and :meth:`rfdetr.detr.RFDETR.from_checkpoint` cannot rebuild the model they
+        hold (#1552). The keys and values are exactly the ones
+        :class:`~rfdetr.training.callbacks.best_model.BestModelCallback` writes into its ``.pth`` files: both go
+        through :meth:`~rfdetr.training.callbacks.best_model.BestModelCallback._model_description`, which also stores
+        a config value a weights-only ``torch.load`` cannot read as its ``repr`` so that
+        ``Trainer.fit(ckpt_path=...)`` can still resume from the file.
+
+        A ``*DeprecatedConfig`` is named rather than refused here, unlike in the callback's own ``.pth`` files:
+        ``RFDETRLargeDeprecated`` is supported until 2.0 and :meth:`rfdetr.detr.RFDETR.from_checkpoint` resolves that
+        name, so refusing it would leave a plain ``Trainer`` unable to write any checkpoint for a still-supported
+        model rather than one unable to describe it.
+
+        Args:
+            checkpoint: Checkpoint dict Lightning is about to save (mutated in-place).
+        """
+        # Sync the saved config from the weights this file stores. torch.compile nests them one level deeper.
+        model_state_dict = {
+            key.removeprefix("model.").removeprefix("_orig_mod."): value
+            for key, value in checkpoint["state_dict"].items()
+            if key.startswith("model.")
+        }
+        args_dict, model_name, model_config_dict = BestModelCallback._resolve_model_description(
+            self.trainer, self, model_state_dict, allow_deprecated=True
+        )
+        checkpoint.update(BestModelCallback._model_description(args_dict, model_name, model_config_dict))
 
     def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         """Auto-detect legacy formats and reconcile PE shapes at checkpoint load time.

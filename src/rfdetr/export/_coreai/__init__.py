@@ -8,8 +8,8 @@
 Import the exporter from its submodule, not this package root.
 """
 
-import importlib.util
+from rfdetr.utilities.package import is_installed
 
-# find_spec rather than an import: coreai-torch imports torch._dynamo machinery and the Core AI compiler bindings,
-# which is too much to pay for on `import rfdetr`.
-_IS_COREAI_TORCH_AVAILABLE: bool = importlib.util.find_spec("coreai_torch") is not None
+# A metadata probe rather than an import: coreai-torch imports torch._dynamo machinery and the Core AI compiler
+# bindings, which is too much to pay for on `import rfdetr`.
+_IS_COREAI_TORCH_AVAILABLE: bool = is_installed("coreai_torch")

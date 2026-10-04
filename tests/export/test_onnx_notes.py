@@ -19,6 +19,10 @@ onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX notes t
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter  # noqa: E402
 from rfdetr.export.prepare import ExportGraph  # noqa: E402
 
+#: A list that contains itself: JSON cannot encode it, and ``json.dumps`` reports it as a ``ValueError``.
+_CIRCULAR_NOTES: list[object] = []
+_CIRCULAR_NOTES.append(_CIRCULAR_NOTES)
+
 
 class _TinyModel(nn.Module):
     """Minimal model that can be exported to ONNX."""
@@ -151,7 +155,29 @@ class TestExportOnnxNotes:
         meta = {prop.key: prop.value for prop in model.metadata_props}
         assert meta["rfdetr_notes"] == notes
 
-    def test_nan_notes_raises_value_error(self, tmp_path: Path) -> None:
-        """Non-finite float notes raise ValueError (allow_nan=False)."""
-        with pytest.raises(ValueError):
-            _export_tiny_model(tmp_path, notes=float("nan"))
+    def test_notes_are_embedded_when_onnx_was_installed_after_the_module_loaded(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Notes still reach the file when the exporter module bound ``onnx`` before the install (a notebook retry)."""
+        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None)
+        output_file = _export_tiny_model(tmp_path, notes={"run": 1})
+
+        meta = {prop.key: prop.value for prop in onnx.load(output_file).metadata_props}
+        assert meta["rfdetr_notes"] == '{"run": 1}'
+
+    @pytest.mark.parametrize(
+        "notes, error",
+        [
+            (float("nan"), ValueError),
+            (float("inf"), ValueError),
+            pytest.param({"scores": [float("nan")]}, ValueError, id="nested-nan"),
+            pytest.param({1, 2}, TypeError, id="set"),
+            pytest.param(_CIRCULAR_NOTES, ValueError, id="circular"),
+        ],
+    )
+    def test_unserializable_notes_are_refused_at_construction(
+        self, tmp_path: Path, notes: object, error: type[Exception]
+    ) -> None:
+        """A value the metadata slot cannot hold is refused when the exporter is built, before any trace."""
+        with pytest.raises(error, match="notes"):
+            OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False, notes=notes))

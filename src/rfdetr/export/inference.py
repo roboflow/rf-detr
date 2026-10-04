@@ -3,13 +3,23 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Public inference wrappers for exported RF-DETR artifacts.
+"""Public runtimes and pre/post-processing helpers for exported RF-DETR artifacts.
 
-This module is session-tier only: a wrapper here loads an exported artifact and runs it, taking already-preprocessed
-tensors in and returning the model's raw output tensors. Turning those raw outputs into detections is deliberately
-**not** part of this surface — see the reference decoders in ``rfdetr.export._onnx.inference`` and
-``rfdetr.export._tflite.inference``, which are private and exist to pin numerical parity with
-:meth:`rfdetr.detr.RFDETR.predict`, not to be imported.
+A runtime here loads an exported artifact and runs it, taking already-preprocessed tensors in and returning the model's
+raw output tensors: :class:`OpenVINOInference` (``.xml``, NumPy arrays), :class:`TRTInference` (``.trt``, torch tensors
+already on the GPU) and :func:`load_executorch_method` (``.pte``). The two helpers around them reproduce
+:meth:`rfdetr.detr.RFDETR.predict`'s own steps, so a runtime fed through them matches it: :func:`preprocess_to_nchw`
+(PIL image to normalized NCHW array) and :func:`decode_detections` (raw ``dets``/``labels`` to boxes, scores and class
+IDs, returned as :class:`DecodedDetections`). The format-specific reference decoders in
+``rfdetr.export._onnx.inference`` and ``rfdetr.export._tflite.inference`` stay private.
+
+The three runtimes share no common call contract: :class:`OpenVINOInference` is called with one NCHW NumPy array and
+returns a tuple of arrays, :class:`TRTInference` is called with a mapping of binding name to torch tensor on the
+engine's device and returns a dict of tensors, and :func:`load_executorch_method` returns a raw ExecuTorch method driven
+through its own ``execute([tensor])``. The stable public subset of :class:`TRTInference` is its constructor,
+``__call__``, ``engine_device`` and ``synchronize``; its other attributes and methods (engine building, binding and
+profiling helpers) are implementation detail that may change without notice, even though the class itself is exported
+here.
 
 For multi-backend inference (PyTorch / ONNX / TensorRT) with automatic backend selection, prefer `inference-models
 <https://github.com/roboflow/inference/tree/main/inference_models>`_.
@@ -17,25 +27,43 @@ For multi-backend inference (PyTorch / ONNX / TensorRT) with automatic backend s
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from rfdetr.export._openvino.inference import OpenVINOInference
+    # ``X as X`` marks an explicit re-export: ``__all__`` below is computed, so linters cannot see these names used.
+    from rfdetr.export._executorch.inference import load_executorch_method as load_executorch_method
+    from rfdetr.export._openvino.inference import OpenVINOInference as OpenVINOInference
+    from rfdetr.export._runtime.decode import DecodedDetections as DecodedDetections
+    from rfdetr.export._runtime.decode import decode_detections as decode_detections
+    from rfdetr.export._runtime.preprocess import preprocess_to_nchw as preprocess_to_nchw
+    from rfdetr.export._tensorrt.inference import TRTInference as TRTInference
 
-__all__ = ["OpenVINOInference"]
+#: Public name -> private module that defines it, imported on first access.
+_LAZY_EXPORTS = {
+    "DecodedDetections": "rfdetr.export._runtime.decode",
+    "OpenVINOInference": "rfdetr.export._openvino.inference",
+    "TRTInference": "rfdetr.export._tensorrt.inference",
+    "decode_detections": "rfdetr.export._runtime.decode",
+    "load_executorch_method": "rfdetr.export._executorch.inference",
+    "preprocess_to_nchw": "rfdetr.export._runtime.preprocess",
+}
+
+__all__ = sorted(_LAZY_EXPORTS)
 
 
 def __getattr__(name: str) -> Any:
-    """Resolve a public inference wrapper on first attribute access.
+    """Resolve a public runtime or helper on first attribute access.
 
     Deferred so that importing this module never pulls in an optional runtime dependency the caller
-    may not have installed — ``import rfdetr.export.inference`` stays free of ``openvino``.
+    may not have installed — ``import rfdetr.export.inference`` stays free of ``openvino``, ``tensorrt``
+    and ``executorch``.
 
     Args:
         name: Attribute being looked up on this module.
 
     Returns:
-        The requested wrapper class.
+        The requested class or function.
 
     Raises:
         AttributeError: If *name* is not one of :data:`__all__`.
@@ -47,8 +75,20 @@ def __getattr__(name: str) -> Any:
         ...
         AttributeError: module 'rfdetr.export.inference' has no attribute 'NotARuntime'
     """
-    if name == "OpenVINOInference":
-        from rfdetr.export._openvino.inference import OpenVINOInference
-
-        return OpenVINOInference
+    if name in _LAZY_EXPORTS:
+        return getattr(importlib.import_module(_LAZY_EXPORTS[name]), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include the lazily resolved public names in ``dir()`` and interactive tab-completion.
+
+    Returns:
+        The module's own globals plus every name in :data:`__all__`, sorted.
+
+    Examples:
+        >>> from rfdetr.export import inference
+        >>> "TRTInference" in dir(inference)
+        True
+    """
+    return sorted(set(globals()) | set(__all__))
