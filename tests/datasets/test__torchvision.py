@@ -165,7 +165,7 @@ class TestTorchvisionTransformOutputs:
         torch.testing.assert_close(transformed["boxes"], torch.tensor([[70.0, 5.0, 90.0, 25.0]]))
         torch.testing.assert_close(
             transformed["keypoints"],
-            torch.tensor([[[69.0, 25.0, 2.0], [89.0, 5.0, 2.0]]]),
+            torch.tensor([[[70.0, 25.0, 2.0], [90.0, 5.0, 2.0]]]),
         )
 
 
@@ -270,6 +270,23 @@ class TestCropFunction:
 
 class TestRandomHorizontalFlipEdgeCases:
     """RandomHorizontalFlip boundary and skip-path behaviour."""
+
+    @pytest.mark.parametrize("width", [10, 11])
+    def test_continuous_keypoint_stays_aligned_with_pixel_feature(self, width: int) -> None:
+        """Horizontal flip keeps continuous keypoints aligned at even and odd widths."""
+        row, column = 2, 3
+        image = torch.zeros((1, 6, width), dtype=torch.float32)
+        image[0, row, column] = 1.0
+        target = {
+            "keypoints": torch.tensor([[[column + 0.5, row + 0.5, 2.0]]]),
+        }
+
+        flipped_image, transformed = RandomHorizontalFlip(p=1.0)(image, target)
+
+        flipped_column = int(torch.nonzero(flipped_image[0, row], as_tuple=False).item())
+        feature_center_x = flipped_column + 0.5
+        assert transformed is not None
+        assert transformed["keypoints"][0, 0, 0].item() == feature_center_x
 
     def test_p_zero_returns_input_unchanged(self) -> None:
         """p=0.0 always skips the flip; image and target returned unmodified."""
