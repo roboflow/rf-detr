@@ -125,6 +125,9 @@ def _filter_per_instance_fields(target: Dict[str, Any], keep: torch.Tensor, boxe
 def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """Clear keypoints that are invisible or outside the image.
 
+    Keypoints use continuous coordinates, so both image edges are inside: ``0 <= x <= width`` and
+    ``0 <= y <= height``. A horizontal flip maps ``x = 0`` to ``x = width`` and keeps such a point visible.
+
     Args:
         keypoints: Keypoint tensor of shape ``(N, K, 3)``.
         height: Image height.
@@ -137,7 +140,10 @@ def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) 
         return keypoints
     visible = keypoints[..., 2] > 0
     inside = (
-        (keypoints[..., 0] >= 0) & (keypoints[..., 0] < width) & (keypoints[..., 1] >= 0) & (keypoints[..., 1] < height)
+        (keypoints[..., 0] >= 0)
+        & (keypoints[..., 0] <= width)
+        & (keypoints[..., 1] >= 0)
+        & (keypoints[..., 1] <= height)
     )
     invalid = ~(visible & inside)
     if not invalid.any():

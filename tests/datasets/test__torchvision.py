@@ -288,6 +288,17 @@ class TestRandomHorizontalFlipEdgeCases:
         assert transformed is not None
         assert transformed["keypoints"][0, 0, 0].item() == feature_center_x
 
+    @pytest.mark.parametrize("x", [0.0, 10.0])
+    def test_keypoint_on_image_edge_stays_visible(self, x: float) -> None:
+        """A keypoint on either vertical image edge stays visible and moves to the opposite edge."""
+        image = torch.zeros((1, 6, 10), dtype=torch.float32)
+        target = {"keypoints": torch.tensor([[[x, 2.5, 2.0]]])}
+
+        _, transformed = RandomHorizontalFlip(p=1.0)(image, target)
+
+        assert transformed is not None
+        torch.testing.assert_close(transformed["keypoints"], torch.tensor([[[10.0 - x, 2.5, 2.0]]]))
+
     def test_p_zero_returns_input_unchanged(self) -> None:
         """p=0.0 always skips the flip; image and target returned unmodified."""
         image = Image.new("RGB", (100, 50))
@@ -472,6 +483,26 @@ class TestEdgeCaseCoverage:
         result = _mark_invisible_keypoints(empty_kps, height=480, width=640)
 
         assert result.shape == (0, 17, 3)
+
+    @pytest.mark.parametrize(
+        ("x", "y", "kept"),
+        [
+            (0.0, 0.0, True),
+            (640.0, 480.0, True),
+            (640.5, 10.0, False),
+            (10.0, 480.5, False),
+            (-0.5, 10.0, False),
+        ],
+    )
+    def test_mark_invisible_keypoints_keeps_points_on_image_edges(self, x: float, y: float, kept: bool) -> None:
+        """Continuous coordinates include both image edges; points beyond them are cleared."""
+        from rfdetr.datasets._torchvision import _mark_invisible_keypoints
+
+        keypoints = torch.tensor([[[x, y, 2.0]]])
+        result = _mark_invisible_keypoints(keypoints, height=480, width=640)
+
+        expected = keypoints if kept else torch.zeros_like(keypoints)
+        torch.testing.assert_close(result, expected)
 
 
 class TestNonUniformMaskParity:
