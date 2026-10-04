@@ -21,7 +21,6 @@ import types
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest import mock
 
 import numpy as np
 import pytest
@@ -254,9 +253,26 @@ class TestInt8Request:
         config = TensorRTExporter.build_config(quantization="int8", calibration_data=str(tmp_path), max_images=7)
         assert (config.quantization, config.calibration_data, config.max_images) == ("int8", str(tmp_path), 7)
 
-    def test_engine_is_named_int8(self, tmp_path: Path) -> None:
-        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path)))
-        assert exporter.build_engine(str(tmp_path / "model.onnx"), dry_run=True) == str(tmp_path / "model_int8.trt")
+    @pytest.mark.parametrize(
+        ("onnx_path", "output_name", "engine"),
+        [
+            pytest.param("out/model.onnx", None, "out/model_int8.trt", id="plain"),
+            pytest.param("model.onnx", None, "model_int8.trt", id="no-directory"),
+            pytest.param("out\\model.onnx", None, "out\\model_int8.trt", id="windows-separator"),
+            pytest.param("out/model.v1.onnx", None, "out/model.v1_int8.trt", id="dotted-stem"),
+            pytest.param("out/model.onnx", "custom", "out/custom.trt", id="custom-name"),
+            pytest.param("out/model.onnx", "custom.trt", "out/custom.trt", id="custom-name-with-extension"),
+        ],
+    )
+    def test_engine_is_named_int8(self, tmp_path: Path, onnx_path: str, output_name: str | None, engine: str) -> None:
+        config = TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), output_name=output_name)
+        assert TensorRTExporter(config).build_engine(onnx_path, dry_run=True) == engine
+
+    @pytest.mark.parametrize("fp16", [True, False])
+    def test_precision_suffix_follows_the_request(self, tmp_path: Path, fp16: bool) -> None:
+        config = TensorRTConfig(quantization=None, fp16=fp16)
+        expected = "model_fp16.trt" if fp16 else "model_fp32.trt"
+        assert TensorRTExporter(config).build_engine(str(tmp_path / "model.onnx"), dry_run=True).endswith(expected)
 
 
 class TestInt8Host:
@@ -462,18 +478,19 @@ class TestPlanInt8:
         plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=325, head_size=32))
         assert sum("/scores/" in name for name, _ in plan.activations) == 2
 
-    @pytest.mark.parametrize("op", ["Div", "Add"])
+    @pytest.mark.parametrize("op", ["Add", "Cast", "Div", "Mul", "Sub", "Where"])
     def test_scaled_or_masked_scores_are_still_recognised_as_attention(self, op: str) -> None:
         model = _attention_and_mlp(DECODER, sequence=8, head_size=16, scaled_scores=True)
         next(node for node in model.graph.node if node.name.endswith("scale/Div")).op_type = op
         assert _names(quantize.plan_int8(model)) == ["fc1/MatMul", "fc2/MatMul"]
 
-    def test_cast_probabilities_are_still_recognised_as_attention(self) -> None:
+    @pytest.mark.parametrize("op", ["Cast", "Identity"])
+    def test_probabilities_through_a_passthrough_are_still_recognised_as_attention(self, op: str) -> None:
         model = _attention_and_mlp(DECODER, sequence=8, head_size=16)
         nodes = list(model.graph.node)
         index = next(i for i, node in enumerate(nodes) if node.op_type == "Softmax")
         nodes[index].output[0] = "p32"
-        nodes.insert(index + 1, helper.make_node("Cast", ["p32"], ["p"], f"{DECODER}probs/Cast", to=TensorProto.FLOAT))
+        nodes.insert(index + 1, helper.make_node(op, ["p32"], ["p"], f"{DECODER}probs/{op}"))
         del model.graph.node[:]
         model.graph.node.extend(nodes)
         assert _names(quantize.plan_int8(model)) == ["fc1/MatMul", "fc2/MatMul"]
@@ -586,6 +603,17 @@ class TestPlanInt8:
         with pytest.raises(ValueError, match="RF-DETR detector exports only"):
             quantize.plan_int8(model)
 
+    def test_layer_inside_a_subgraph_is_not_planned(self) -> None:
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        inner = helper.make_node("MatMul", ["c2", "wo"], ["inner"], f"{BACKBONE}inner/MatMul")
+        branch = helper.make_graph([inner], "branch", [], [helper.make_tensor_value_info("inner", 1, [1, 8, 32])])
+        model.graph.initializer.append(numpy_helper.from_array(np.array(True), "flag"))
+        model.graph.node.append(
+            helper.make_node("If", ["flag"], ["picked"], "if", then_branch=branch, else_branch=branch)
+        )
+        model.graph.output.append(helper.make_tensor_value_info("picked", 1, [1, 8, 32]))
+        assert "inner/MatMul" not in _names(quantize.plan_int8(model))
+
     def test_nodes_sharing_a_name_are_skipped(self) -> None:
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=8)
         for node in model.graph.node:
@@ -593,6 +621,384 @@ class TestPlanInt8:
                 node.name = f"{BACKBONE}fc1/MatMul"
         with pytest.raises(ValueError, match="RF-DETR detector exports only"):
             quantize.plan_int8(model)
+
+
+def _node(op_type: str, inputs: list[str], output: str, name: str = "", **attributes: Any) -> Any:
+    """Return a one-output ``NodeProto`` called *name*; an empty name stands for an unnamed layer.
+
+    Examples:
+        >>> _node("Add", ["a", "b"], "c", "sum").output[0]
+        'c'
+    """
+    return helper.make_node(op_type, inputs, [output], name, **attributes)
+
+
+def _weights(*names: str, dims: tuple[int, ...] = (4, 4)) -> dict[str, Any]:
+    """Return a constant-weight map holding a zero initializer of *dims* for each of *names*.
+
+    Examples:
+        >>> sorted(_weights("w", "v", dims=(2, 3)))
+        ['v', 'w']
+    """
+    return {name: numpy_helper.from_array(np.zeros(dims, np.float32), name) for name in names}
+
+
+def _readers(nodes: list[Any]) -> dict[str, list[Any]]:
+    """Map every tensor name to the nodes that read it, as ``plan_int8`` builds it.
+
+    Examples:
+        >>> add = _node("Add", ["a", "b"], "c")
+        >>> [node.op_type for node in _readers([add])["a"]]
+        ['Add']
+    """
+    readers: dict[str, list[Any]] = {}
+    for node in nodes:
+        for tensor in node.input:
+            readers.setdefault(tensor, []).append(node)
+    return readers
+
+
+def _producers(nodes: list[Any]) -> dict[str, Any]:
+    """Map every tensor name to the node that writes it.
+
+    Examples:
+        >>> _producers([_node("Add", ["a", "b"], "c", "sum")])["c"].name
+        'sum'
+    """
+    return {output: node for node in nodes for output in node.output}
+
+
+class TestWeightLookup:
+    """``_weight_name`` says which nodes the plan can refer to; ``_holds_weight`` says which ones read a constant."""
+
+    #: Nodes as (node, weight dims). ``w`` is the only constant; ``act`` is an activation.
+    CASES = [
+        pytest.param(_node("MatMul", ["x", "w"], "y", "fc"), (4, 4), True, True, id="matmul"),
+        pytest.param(_node("Gemm", ["x", "w"], "y", "fc"), (4, 4), True, True, id="gemm"),
+        pytest.param(_node("Gemm", ["x", "w"], "y", "fc", transB=1), (4, 4), True, True, id="gemm-trans-b"),
+        pytest.param(_node("Gemm", ["x", "w"], "y", "fc", transA=1), (4, 4), False, True, id="gemm-trans-a"),
+        pytest.param(_node("Conv", ["x", "w"], "y", "conv"), (4, 3, 1, 1), True, True, id="conv"),
+        pytest.param(_node("Conv", ["x", "w"], "y", "conv"), (4, 4), False, True, id="conv-with-a-matrix"),
+        pytest.param(_node("MatMul", ["x", "w"], "y", "fc"), (2, 4, 4), False, True, id="matmul-with-a-batch"),
+        pytest.param(_node("MatMul", ["x", "w"], "y", ""), (4, 4), False, True, id="unnamed"),
+        pytest.param(_node("MatMul", ["x", "act"], "y", "bmm"), (4, 4), False, False, id="two-activations"),
+        pytest.param(_node("Add", ["x", "w"], "y", "add"), (4, 4), False, False, id="not-a-weight-op"),
+        pytest.param(_node("MatMul", ["x"], "y", "fc"), (4, 4), False, False, id="one-input"),
+    ]
+
+    @pytest.mark.parametrize(("node", "dims", "plannable", "_reads"), CASES)
+    def test_weight_name_is_the_weight_only_for_a_plannable_node(
+        self, node: Any, dims: tuple[int, ...], plannable: bool, _reads: bool
+    ) -> None:
+        assert (quantize._weight_name(node, _weights("w", dims=dims)) == "w") is plannable
+
+    @pytest.mark.parametrize(("node", "dims", "_plannable", "reads"), CASES)
+    def test_holds_weight_ignores_everything_but_the_constant(
+        self, node: Any, dims: tuple[int, ...], _plannable: bool, reads: bool
+    ) -> None:
+        assert quantize._holds_weight(node, _weights("w", dims=dims)) is reads
+
+    def test_weight_reached_through_an_identity_is_constant(self) -> None:
+        graph = helper.make_graph(
+            [_node("Identity", ["w"], "w_alias"), _node("Constant", [], "c", value=_weights("c")["c"])],
+            "g",
+            [],
+            [],
+            [_weights("w")["w"]],
+        )
+        assert sorted(quantize._constant_weights(graph)) == ["c", "w", "w_alias"]
+
+
+class TestGraphWalkers:
+    """The helpers that find an attention block's neighbours, on graphs of a few nodes."""
+
+    @pytest.mark.parametrize("op", ["Add", "Cast", "Div", "Mul", "Sub", "Where"])
+    def test_scores_are_found_behind_scaling_and_masking(self, op: str) -> None:
+        nodes = [
+            _node("MatMul", ["q", "k"], "s0", "scores"),
+            _node(op, ["s0", "mask"], "s", "scale"),
+            _node("Softmax", ["s"], "p", "softmax"),
+        ]
+        assert quantize._scores_matmul(nodes[2], _producers(nodes), {}).name == "scores"
+
+    @pytest.mark.parametrize(
+        "nodes",
+        [
+            pytest.param([_node("Softmax", ["s"], "p", "softmax")], id="no-producer"),
+            pytest.param(
+                [_node("MatMul", ["q", "w"], "s", "projection"), _node("Softmax", ["s"], "p", "softmax")],
+                id="weight-multiply",
+            ),
+            pytest.param(
+                [
+                    _node("Relu", ["s0"], "s", "act"),
+                    _node("MatMul", ["q", "k"], "s0", "scores"),
+                    _node("Softmax", ["s"], "p", "softmax"),
+                ],
+                id="blocked-by-another-op",
+            ),
+        ],
+    )
+    def test_scores_are_not_found_where_they_are_not_a_multiply_of_activations(self, nodes: list[Any]) -> None:
+        softmax = next(node for node in nodes if node.op_type == "Softmax")
+        assert quantize._scores_matmul(softmax, _producers(nodes), _weights("w")) is None
+
+    def test_scores_are_found_when_a_node_is_reached_twice(self) -> None:
+        nodes = [
+            _node("MatMul", ["q", "k"], "s0", "scores"),
+            _node("Add", ["s0", "s0"], "s", "twice"),
+            _node("Softmax", ["s"], "p", "softmax"),
+        ]
+        assert quantize._scores_matmul(nodes[2], _producers(nodes), {}).name == "scores"
+
+    @pytest.mark.parametrize("passthrough", [[], ["Cast"], ["Identity"], ["Cast", "Identity"]])
+    def test_context_is_found_behind_casts(self, passthrough: list[str]) -> None:
+        nodes, tensor = [_node("Softmax", ["s"], "p0", "softmax")], "p0"
+        for index, op in enumerate(passthrough):
+            nodes.append(_node(op, [tensor], f"p{index + 1}", f"pass{index}"))
+            tensor = f"p{index + 1}"
+        nodes.append(_node("MatMul", [tensor, "v"], "c", "context"))
+        assert quantize._context_matmul(nodes[0], _readers(nodes)).name == "context"
+
+    @pytest.mark.parametrize(
+        "nodes",
+        [
+            pytest.param([_node("Softmax", ["s"], "p", "softmax")], id="no-reader"),
+            pytest.param(
+                [
+                    _node("Softmax", ["s"], "p", "softmax"),
+                    _node("Relu", ["p"], "r", "act"),
+                    _node("MatMul", ["r", "v"], "c", "context"),
+                ],
+                id="blocked-by-another-op",
+            ),
+            pytest.param(
+                [
+                    _node("Softmax", ["s"], "p", "softmax"),
+                    _node("MatMul", ["p", "v"], "c", "context"),
+                    _node("Identity", ["p"], "tap", "tap"),
+                ],
+                id="two-readers",
+            ),
+            pytest.param(
+                [_node("Softmax", ["s"], "p", "softmax"), _node("MatMul", ["v", "p"], "c", "context")],
+                id="probabilities-as-the-second-operand",
+            ),
+        ],
+    )
+    def test_context_is_not_found_unless_probabilities_feed_one_multiply(self, nodes: list[Any]) -> None:
+        assert quantize._context_matmul(nodes[0], _readers(nodes)) is None
+
+    @pytest.mark.parametrize("follower", ["Cast", "Expand", "Identity", "Reshape", "Squeeze", "Transpose", "Unsqueeze"])
+    def test_softmax_reaches_a_multiply_through_shape_ops(self, follower: str) -> None:
+        nodes = [
+            _node("Softmax", ["s"], "p", "softmax"),
+            _node(follower, ["p"], "p1", "follow"),
+            _node("MatMul", ["p1", "v"], "c", "context"),
+        ]
+        assert quantize._feeds_activation_matmul(nodes[0], _readers(nodes), {}) is True
+
+    @pytest.mark.parametrize(
+        "nodes",
+        [
+            pytest.param([_node("Softmax", ["s"], "p", "softmax")], id="no-reader"),
+            pytest.param(
+                [_node("Softmax", ["s"], "p", "softmax"), _node("MatMul", ["p", "w"], "c", "projection")],
+                id="weight-multiply",
+            ),
+            pytest.param(
+                [
+                    _node("Softmax", ["s"], "p", "softmax"),
+                    _node("Mul", ["p", "p"], "m", "mul"),
+                    _node("MatMul", ["m", "v"], "c", "context"),
+                ],
+                id="blocked-by-another-op",
+            ),
+            pytest.param(
+                [
+                    _node("Softmax", ["s"], "p", "softmax"),
+                    _node("Identity", ["p"], "a", "a"),
+                    _node("Identity", ["p"], "b", "b"),
+                    _node("Mul", ["a", "b"], "m", "mul"),
+                ],
+                id="reader-reached-twice",
+            ),
+        ],
+    )
+    def test_softmax_that_never_reaches_a_multiply_of_activations_is_not_attention(self, nodes: list[Any]) -> None:
+        assert quantize._feeds_activation_matmul(nodes[0], _readers(nodes), _weights("w")) is False
+
+    @pytest.mark.parametrize("op", ["Add", "Cast", "Div", "Identity", "Mul", "Transpose"])
+    def test_projection_is_found_behind_each_passthrough_op(self, op: str) -> None:
+        nodes = [_node("MatMul", ["x", "w"], "q0", "q_proj"), _node(op, ["q0", "bias"], "q", "after")]
+        assert quantize._trace_projection("q", _producers(nodes), _weights("w", "bias")) == "q_proj"
+
+    @pytest.mark.parametrize("op", ["Reshape", "Squeeze", "Unsqueeze"])
+    def test_projection_is_found_through_the_data_input_of_a_shape_op(self, op: str) -> None:
+        # The shape operand comes from another projection and must not be followed.
+        nodes = [
+            _node("MatMul", ["x", "w"], "q0", "q_proj"),
+            _node("MatMul", ["x", "w"], "shape", "shape_proj"),
+            _node(op, ["q0", "shape"], "q", "after"),
+        ]
+        assert quantize._trace_projection("q", _producers(nodes), _weights("w")) == "q_proj"
+
+    @pytest.mark.parametrize(
+        "nodes",
+        [
+            pytest.param([], id="graph-input"),
+            pytest.param([_node("Shape", ["x"], "q", "shape")], id="shape-arithmetic"),
+            pytest.param([_node("Relu", ["q0"], "q", "act"), _node("MatMul", ["x", "w"], "q0", "q_proj")], id="act"),
+        ],
+    )
+    def test_projection_is_not_found_behind_other_ops(self, nodes: list[Any]) -> None:
+        assert quantize._trace_projection("q", _producers(nodes), _weights("w")) is None
+
+    @pytest.mark.parametrize("hops", [0, 1, 3])
+    def test_output_projection_is_found_within_three_shape_ops(self, hops: int) -> None:
+        nodes, tensor = [], "ctx"
+        for index in range(hops):
+            nodes.append(_node("Transpose" if index % 2 else "Reshape", [tensor, "shape"], f"t{index}", f"hop{index}"))
+            tensor = f"t{index}"
+        nodes.append(_node("MatMul", [tensor, "w"], "y", "out_proj"))
+        context = _node("MatMul", ["p", "v"], "ctx", "context")
+        assert quantize._output_projection(context, _readers(nodes), _weights("w", "shape")) == "out_proj"
+
+    @pytest.mark.parametrize(
+        "nodes",
+        [
+            pytest.param([], id="no-reader"),
+            pytest.param(
+                [_node("MatMul", ["ctx", "w"], "a", "p1"), _node("MatMul", ["ctx", "w"], "b", "p2")], id="two-readers"
+            ),
+            pytest.param([_node("Relu", ["ctx"], "a", "act"), _node("MatMul", ["a", "w"], "y", "p")], id="other-op"),
+            pytest.param([_node("MatMul", ["x", "ctx"], "y", "ctx_as_weight")], id="context-is-the-second-operand"),
+        ],
+    )
+    def test_output_projection_is_not_found_unless_one_weight_reads_the_context(self, nodes: list[Any]) -> None:
+        context = _node("MatMul", ["p", "v"], "ctx", "context")
+        assert quantize._output_projection(context, _readers(nodes), _weights("w")) is None
+
+    def test_output_projection_is_not_found_beyond_three_shape_ops(self) -> None:
+        nodes = [_node("Reshape", [f"t{i}", "shape"], f"t{i + 1}", f"hop{i}") for i in range(4)]
+        nodes[0].input[0] = "ctx"
+        nodes.append(_node("MatMul", ["t4", "w"], "y", "out_proj"))
+        context = _node("MatMul", ["p", "v"], "ctx", "context")
+        assert quantize._output_projection(context, _readers(nodes), _weights("w", "shape")) is None
+
+
+class TestGeluConsumers:
+    """``_feeds_gelu_into`` lists what reads a GELU output, so a projection can wait for a quantized consumer."""
+
+    @staticmethod
+    def _chain(activation: str, *, after: list[str] | None = None, consumer_name: str = "fc2") -> tuple[list[Any], Any]:
+        """Return ``fc1 -> GELU -> [ops in *after*] -> consumer`` as a node list and the ``fc1`` node.
+
+        Examples:
+            >>> nodes, fc1 = TestGeluConsumers._chain("Gelu", after=["Identity"])
+            >>> [node.op_type for node in nodes]
+            ['MatMul', 'Gelu', 'Identity', 'MatMul']
+        """
+        nodes = [_node("MatMul", ["x", "w1"], "h", "fc1")]
+        if activation == "Erf":
+            nodes += [
+                _node("Div", ["h", "sqrt2"], "h1", "div"),
+                _node("Erf", ["h1"], "h2", "erf"),
+                _node("Add", ["h2", "one"], "h3", "add"),
+                _node("Mul", ["h", "h3"], "h4", "mul"),
+                _node("Mul", ["h4", "half"], "g", "mul_half"),
+            ]
+        else:
+            nodes.append(_node(activation, ["h"], "g", "act"))
+        tensor = "g"
+        for index, op in enumerate(after or []):
+            nodes.append(_node(op, [tensor], f"g{index}", f"after{index}"))
+            tensor = f"g{index}"
+        nodes.append(_node("MatMul", [tensor, "w2"], "y", consumer_name))
+        return nodes, nodes[0]
+
+    @pytest.mark.parametrize("activation", ["Erf", "Gelu"])
+    def test_both_gelu_forms_lead_to_the_second_projection(self, activation: str) -> None:
+        nodes, fc1 = self._chain(activation)
+        assert quantize._feeds_gelu_into(fc1, _readers(nodes), _weights("w2")) == {"fc2"}
+
+    def test_relu_is_not_a_gelu(self) -> None:
+        nodes, fc1 = self._chain("Relu")
+        assert quantize._feeds_gelu_into(fc1, _readers(nodes), _weights("w2")) == set()
+
+    @pytest.mark.parametrize("after", [["Identity"], ["Cast", "Reshape"]])
+    def test_any_op_between_the_gelu_and_its_consumer_counts_as_a_consumer(self, after: list[str]) -> None:
+        nodes, fc1 = self._chain("Gelu", after=after)
+        assert quantize._feeds_gelu_into(fc1, _readers(nodes), _weights("w2")) == {"after0"}
+
+    @pytest.mark.parametrize("consumer_name", ["", "fc2"])
+    def test_a_consumer_is_listed_by_name_even_when_it_cannot_be_planned(self, consumer_name: str) -> None:
+        nodes, fc1 = self._chain("Gelu", consumer_name=consumer_name)
+        assert quantize._feeds_gelu_into(fc1, _readers(nodes), _weights("w2")) == {consumer_name}
+
+    def test_a_consumer_reading_the_gelu_twice_is_listed_once(self) -> None:
+        nodes, fc1 = self._chain("Gelu")
+        nodes[-1].input[0] = "g"
+        nodes[-1].input.append("g")
+        assert quantize._feeds_gelu_into(fc1, _readers(nodes), _weights("w2")) == {"fc2"}
+
+    def test_the_branch_that_skips_the_gelu_is_not_a_consumer(self) -> None:
+        nodes, fc1 = self._chain("Gelu")
+        nodes.append(_node("MatMul", ["h", "w2"], "skip", "skip_fc"))
+        assert quantize._feeds_gelu_into(fc1, _readers(nodes), _weights("w2")) == {"fc2"}
+
+
+class TestAttentionShapes:
+    """INT8 attention needs a head size TensorRT's fused kernel accepts and a window of at most 325 tokens."""
+
+    @pytest.mark.parametrize("head_size", [16, 32, 64])
+    @pytest.mark.parametrize("sequence", [1, 8, 324, 325])
+    def test_supported_shape_is_quantized_whole(self, sequence: int, head_size: int) -> None:
+        plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=sequence, head_size=head_size))
+        assert (sum("/scores/" in n for n, _ in plan.activations), "o/MatMul" in _names(plan)) == (2, True)
+
+    @pytest.mark.parametrize("head_size", [8, 24, 48, 128])
+    def test_unsupported_head_size_stays_float(self, head_size: int) -> None:
+        plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=8, head_size=head_size))
+        assert _names(plan) == ["fc1/MatMul", "fc2/MatMul"]
+
+    @pytest.mark.parametrize("sequence", [326, 400, 485, 580])
+    def test_long_window_stays_float(self, sequence: int) -> None:
+        plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=sequence, head_size=16))
+        assert _names(plan) == ["fc1/MatMul", "fc2/MatMul"]
+
+    def test_graph_without_shapes_counts_as_not_fusable(self) -> None:
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        del model.graph.input[:]
+        model.graph.input.append(helper.make_empty_tensor_value_info("x"))
+        for node in model.graph.node:
+            if node.op_type == "Reshape":
+                node.input[1] = "unknown_shape"  # a runtime shape: inference cannot see the head layout
+        plan = quantize.plan_int8(model)
+        assert [n for n, _ in plan.activations if "/scores/" in n] == []
+
+    def test_symbolic_dimension_is_unknown(self) -> None:
+        info = helper.make_tensor_value_info("t", TensorProto.FLOAT, ["n", 4])
+        assert quantize._dims({"t": info}, "t") == (None, 4)
+
+    def test_value_info_without_a_shape_is_unknown(self) -> None:
+        assert quantize._dims({"t": helper.make_empty_tensor_value_info("t")}, "t") is None
+
+
+def _quantized_with(mutate: Any) -> tuple[Any, quantize.Int8Plan]:
+    """Plan on the FP32 attention-and-MLP graph, then quantize its FP16 twin, after *mutate* edited both.
+
+    Examples:
+        >>> model, plan = _quantized_with(lambda m: None)
+        >>> onnx.checker.check_model(model, full_check=True)
+    """
+    fp32 = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+    fp16 = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, dtype=np.float16)
+    mutate(fp32)
+    mutate(fp16)
+    plan = quantize.plan_int8(fp32)
+    quantize.insert_qdq(fp16, plan, dict.fromkeys(plan.activations, 2.0))
+    return fp16, plan
 
 
 class TestInsertQdq:
@@ -628,6 +1034,44 @@ class TestInsertQdq:
         ranges = {key: by_tensor[quantize._input_tensor(model.graph, *key)] for key in plan.activations}
         quantize.insert_qdq(model, plan, ranges)
         return model, plan, by_tensor
+
+    def test_weight_shared_by_two_layers_is_quantized_for_each(self) -> None:
+        def share(model: Any) -> None:
+            next(n for n in model.graph.node if n.name.endswith("k/MatMul")).input[1] = "wq"
+
+        model, plan = _quantized_with(share)
+        by_name = {n.name: n for n in model.graph.node}
+        readers = {by_name[f"{BACKBONE}{layer}/MatMul"].input[1] for layer in "qk"}
+        assert len(readers) == 2 and all(r.endswith("_dequantized") for r in readers)
+        onnx.checker.check_model(model, full_check=True)
+
+    @pytest.mark.parametrize("tensor", ["c2", "wq", "x"])
+    def test_quantized_tensor_that_is_also_a_graph_output_stays_an_output(self, tensor: str) -> None:
+        shapes = {"c2": [1, 8, 32], "x": [1, 8, 32], "wq": [32, 32]}
+
+        def expose(model: Any) -> None:
+            elem = model.graph.output[0].type.tensor_type.elem_type
+            model.graph.output.append(helper.make_tensor_value_info(tensor, elem, shapes[tensor]))
+
+        model, _ = _quantized_with(expose)
+        assert tensor in [o.name for o in model.graph.output]
+        onnx.checker.check_model(model, full_check=True)
+        onnx.shape_inference.infer_shapes(model, strict_mode=True)
+
+    def test_tensor_read_inside_a_subgraph_keeps_its_original_binding(self) -> None:
+        def capture(model: Any) -> None:
+            tap = helper.make_node("Identity", ["c2"], ["inner"], "inner/Identity")
+            branch = helper.make_graph([tap], "branch", [], [helper.make_tensor_value_info("inner", 10, [1, 8, 32])])
+            model.graph.initializer.append(numpy_helper.from_array(np.array(True), "flag"))
+            model.graph.node.append(
+                helper.make_node("If", ["flag"], ["picked"], "if", then_branch=branch, else_branch=branch)
+            )
+            model.graph.output.append(helper.make_tensor_value_info("picked", 10, [1, 8, 32]))
+
+        model, _ = _quantized_with(capture)
+        if_node = next(n for n in model.graph.node if n.op_type == "If")
+        assert if_node.attribute[0].g.node[0].input[0] == "c2"
+        onnx.checker.check_model(model, full_check=True)
 
     def test_every_planned_input_reads_a_dequantize(self, ranged: tuple[Any, quantize.Int8Plan, dict]) -> None:
         model, plan, _ = ranged
@@ -793,31 +1237,18 @@ class TestCalibrationGraph:
         onnx.checker.check_model(probe, full_check=True)
 
 
-class TestCalibrationArrays:
-    """A preprocessed calibration array must match the graph, and a ``.npy`` file is streamed rather than loaded."""
-
-    @pytest.mark.parametrize("source", ["array", "npy"])
-    def test_array_with_the_wrong_channel_count_is_refused(self, tmp_path: Path, source: str) -> None:
-        samples = np.zeros((2, 1, 8, 8), np.float32)
-        if source == "npy":
-            np.save(tmp_path / "images.npy", samples)
-            samples = tmp_path / "images.npy"
-        with pytest.raises(ValueError, match="channels"):
-            list(calibration.calibration_batches(samples, height=8, width=8, channels=3))
-
-    def test_npy_file_reaches_the_samples_memory_mapped(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        path = tmp_path / "images.npy"
-        np.save(path, np.zeros((2, 3, 8, 8), np.float32))
-        spy = mock.Mock(wraps=calibration._arrays_from_samples)
-        monkeypatch.setattr(calibration, "_arrays_from_samples", spy)
-        assert len(list(calibration.calibration_batches(path, height=8, width=8))) == 2
-        assert isinstance(spy.call_args.args[0], np.memmap)
-
-    def test_batches_do_not_alias_the_calibration_file(self, tmp_path: Path) -> None:
-        path = tmp_path / "images.npy"
-        np.save(path, np.zeros((2, 3, 8, 8), np.float32))
-        batch = next(calibration.calibration_batches(path, height=8, width=8))
-        assert batch.flags.writeable and batch.base is None
+#: The reductions whose ``axes`` moved from an attribute to an input in opset 18; spelled out so a shrunken set fails.
+REDUCTIONS = [
+    "ReduceL1",
+    "ReduceL2",
+    "ReduceLogSum",
+    "ReduceLogSumExp",
+    "ReduceMax",
+    "ReduceMean",
+    "ReduceMin",
+    "ReduceProd",
+    "ReduceSumSquare",
+]
 
 
 class TestLiftOpset:
@@ -841,6 +1272,50 @@ class TestLiftOpset:
         onnx.checker.check_model(model, full_check=True)
         inner = model.graph.node[0].attribute[0].g.node[0]
         assert (len(inner.input), [a.name for a in inner.attribute]) == (2, ["keepdims"])
+
+    @staticmethod
+    def _reduction_model(op: str, opset: int, *, axes: list[int] | None, taken: str | None = None) -> Any:
+        """Return ``x -> op -> y`` at *opset*, with an ``axes`` attribute unless *axes* is ``None``.
+
+        Examples:
+            >>> model = TestLiftOpset._reduction_model("ReduceMax", 17, axes=[1])
+            >>> (model.opset_import[0].version, model.graph.node[0].attribute[0].name)
+            (17, 'axes')
+        """
+        attributes = {"keepdims": 0} | ({"axes": axes} if axes is not None else {})
+        node = helper.make_node(op, ["x"], ["y"], "reduce", **attributes)
+        graph = helper.make_graph(
+            [node],
+            "reduce",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])],
+            [numpy_helper.from_array(np.zeros(1, np.int64), taken)] if taken else [],
+        )
+        return helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)])
+
+    @pytest.mark.parametrize("opset", [17, 18])
+    @pytest.mark.parametrize("op", REDUCTIONS)
+    def test_every_reduction_moves_its_axes_to_an_input(self, op: str, opset: int) -> None:
+        model = self._reduction_model(op, opset, axes=[1])
+        quantize._lift_opset(model)
+        node = model.graph.node[0]
+        assert (model.opset_import[0].version, len(node.input), "axes" in {a.name for a in node.attribute}) == (
+            19,
+            2,
+            False,
+        )
+
+    @pytest.mark.parametrize("op", REDUCTIONS)
+    def test_reduction_without_axes_is_left_alone(self, op: str) -> None:
+        model = self._reduction_model(op, 17, axes=None)
+        quantize._lift_opset(model)
+        assert (len(model.graph.node[0].input), len(model.graph.initializer)) == (1, 0)
+
+    def test_axes_input_does_not_reuse_a_taken_name(self) -> None:
+        model = self._reduction_model("ReduceMax", 17, axes=[1], taken="reduce_axes")
+        quantize._lift_opset(model)
+        new = model.graph.node[0].input[1]
+        assert new != "reduce_axes" and sorted(i.name for i in model.graph.initializer) == sorted([new, "reduce_axes"])
 
     @pytest.mark.parametrize(
         ("inputs", "expected"),
@@ -1224,6 +1699,44 @@ class TestNanoInt8Plan:
         assert (len(fc1), fc1) == (12, fc2)
 
 
+def _assert_confident_detections_match(fp16_engine: Path, int8_engine: Path, example: np.ndarray, batch: int) -> None:
+    """Run both engines on *batch* copies of *example*; every confident FP16 detection needs an INT8 match.
+
+    A match is an INT8 box with IoU above 0.85 and a score within 0.1 of the FP16 one, and at least three FP16
+    detections must be confident for the check to mean anything. The INT8 engine must also give every row of the batch
+    the same answer.
+
+    Examples:
+        Needs a GPU, TensorRT and two built engines, so it is documentation rather than a doctest:
+
+        >>> _assert_confident_detections_match(fp16_path, int8_path, example, batch=1)  # doctest: +SKIP
+    """
+    from rfdetr.export._tensorrt.inference import TRTInference
+
+    inputs = {"input": torch.from_numpy(np.repeat(example, batch, axis=0)).cuda()}
+    results = []
+    for path in (fp16_engine, int8_engine):
+        outputs = TRTInference(str(path), sync_mode=True, device="cuda:0")(inputs)
+        results.append((outputs["dets"].float().cpu(), outputs["labels"].float().sigmoid().max(dim=-1).values.cpu()))
+    (fp16_boxes, fp16_scores), (int8_boxes, int8_scores) = results
+    assert torch.isfinite(int8_boxes).all() and torch.isfinite(int8_scores).all()
+    assert torch.allclose(int8_boxes, int8_boxes[:1].expand_as(int8_boxes), atol=2e-2), "rows of one batch differ"
+    for row in range(batch):
+        confident = fp16_scores[row] > 0.5
+        assert int(confident.sum()) >= 3, "the photo must give the FP16 engine several confident people"
+        # (confident FP16 boxes, all INT8 boxes); several INT8 queries can cover one person, so a match is the closest
+        # score among the INT8 boxes that overlap, not the score of the single best-overlapping box.
+        overlaps = box_iou(box_cxcywh_to_xyxy(fp16_boxes[row][confident]), box_cxcywh_to_xyxy(int8_boxes[row]))[0]
+        gaps = (int8_scores[row][None, :] - fp16_scores[row][confident][:, None]).abs()
+        gaps = gaps.masked_fill(overlaps <= 0.85, float("inf")).min(dim=1).values
+        unmatched = [
+            (round(float(o), 3), round(float(g), 3)) for o, g in zip(overlaps.max(dim=1).values, gaps) if g >= 0.1
+        ]
+        assert unmatched == [], (
+            f"row {row}: confident FP16 detections without an INT8 match (best IoU, score gap): {unmatched}"
+        )
+
+
 @tensorrt_only
 @pytest.mark.gpu
 @pytest.mark.integration
@@ -1232,13 +1745,13 @@ class TestInt8EndToEnd:
     """Real FP16 and INT8 engines of the pretrained RFDETRNano agree on a photo's confident detections."""
 
     @pytest.fixture(scope="class")
-    def engines(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path, np.ndarray]:
-        """Export FP16 and INT8 engines, calibrating on crops and flips of supervision's PEOPLE_WALKING photo.
+    def photo(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, np.ndarray]:
+        """Crops and flips of supervision's PEOPLE_WALKING photo for calibration, and the photo as a model input.
 
         Examples:
-            A pytest fixture, and it needs a GPU, TensorRT and a network download.
+            A pytest fixture, and it needs a network download.
 
-            >>> fp16_engine, int8_engine, photo = engines(tmp_path_factory)  # doctest: +SKIP
+            >>> calibration_dir, example = photo(tmp_path_factory)  # doctest: +SKIP
         """
         from PIL import Image, ImageOps
         from supervision.assets import ImageAssets, download_assets
@@ -1263,9 +1776,25 @@ class TestInt8EndToEnd:
                 crop = image.crop(box)
                 crop.save(calibration / f"{index}.jpg")
                 ImageOps.mirror(crop).save(calibration / f"{index}_flipped.jpg")
-            model = RFDETRNano()
-            resolution = int(model.model.resolution)
+            resolution = int(RFDETRNano().model.resolution)
             example = preprocess_to_nchw(image, height=resolution, width=resolution)
+        return calibration, example
+
+    @pytest.fixture(scope="class")
+    def engines(
+        self, photo: tuple[Path, np.ndarray], tmp_path_factory: pytest.TempPathFactory
+    ) -> tuple[Path, Path, np.ndarray]:
+        """Export FP16 and INT8 engines at batch 1, calibrating on the photo's crops and flips.
+
+        Examples:
+            A pytest fixture, and it needs a GPU and TensorRT.
+
+            >>> fp16_engine, int8_engine, example = engines(photo, tmp_path_factory)  # doctest: +SKIP
+        """
+        from rfdetr import RFDETRNano
+
+        calibration, example = photo
+        model = RFDETRNano()
         out_dir = tmp_path_factory.mktemp("int8_engines")
         fp16 = model.export(output_dir=str(out_dir / "fp16"), format="tensorrt", verbose=False)
         int8 = model.export(
@@ -1283,28 +1812,54 @@ class TestInt8EndToEnd:
         assert sorted(p.name for p in int8.parent.iterdir()) == ["rfdetr-nano.onnx", "rfdetr-nano_int8.trt"]
 
     def test_confident_detections_match_fp16(self, engines: tuple[Path, Path, np.ndarray]) -> None:
-        from rfdetr.export._tensorrt.inference import TRTInference
-
         fp16_path, int8_path, example = engines
-        results = []
-        for path in (fp16_path, int8_path):
-            outputs = TRTInference(str(path), sync_mode=True, device="cuda:0")(
-                {"input": torch.from_numpy(example).cuda()}
-            )
-            boxes = outputs["dets"][0].float().cpu()
-            scores = outputs["labels"][0].float().sigmoid().max(dim=-1).values.cpu()
-            results.append((boxes, scores))
-        (fp16_boxes, fp16_scores), (int8_boxes, int8_scores) = results
-        assert torch.isfinite(int8_boxes).all() and torch.isfinite(int8_scores).all()
-        confident = fp16_scores > 0.5
-        assert int(confident.sum()) >= 3, "the photo must give the FP16 engine several confident people"
-        # (confident FP16 boxes, all INT8 boxes)
-        overlaps = box_iou(box_cxcywh_to_xyxy(fp16_boxes[confident]), box_cxcywh_to_xyxy(int8_boxes))[0]
-        best = overlaps.argmax(dim=1)
-        score_gaps = (int8_scores[best] - fp16_scores[confident]).abs()
-        unmatched = [
-            (round(float(o), 3), round(float(g), 3))
-            for o, g in zip(overlaps.max(dim=1).values, score_gaps)
-            if o <= 0.85 or g >= 0.1
-        ]
-        assert unmatched == [], f"confident FP16 detections without an INT8 match (IoU, score gap): {unmatched}"
+        _assert_confident_detections_match(fp16_path, int8_path, example, batch=1)
+
+    @pytest.mark.parametrize("source", ["npy-path", "array"])
+    def test_preprocessed_calibration_gives_a_matching_engine(
+        self,
+        source: str,
+        photo: tuple[Path, np.ndarray],
+        engines: tuple[Path, Path, np.ndarray],
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        from rfdetr import RFDETRNano
+        from rfdetr.export._runtime.calibration import calibration_batches
+
+        calibration, example = photo
+        fp16_path, _, _ = engines
+        size = example.shape[-1]
+        samples = np.concatenate(list(calibration_batches(calibration, height=size, width=size)))
+        data: Any = samples
+        if source == "npy-path":
+            data = tmp_path_factory.mktemp("int8_samples") / "calibration.npy"
+            np.save(data, samples)
+        int8 = RFDETRNano().export(
+            output_dir=str(tmp_path_factory.mktemp(f"int8_{source}")),
+            format="tensorrt",
+            quantization="int8",
+            calibration_data=data,
+            verbose=False,
+        )
+        assert Path(int8).name == "rfdetr-nano_int8.trt"
+        _assert_confident_detections_match(fp16_path, Path(int8), example, batch=1)
+
+    @pytest.mark.parametrize("batch", [2, 4])
+    def test_static_batch_engine_matches_fp16_on_every_row(
+        self, batch: int, photo: tuple[Path, np.ndarray], tmp_path_factory: pytest.TempPathFactory
+    ) -> None:
+        from rfdetr import RFDETRNano
+
+        calibration, example = photo
+        model = RFDETRNano()
+        out_dir = tmp_path_factory.mktemp(f"int8_batch_{batch}")
+        fp16 = model.export(output_dir=str(out_dir / "fp16"), format="tensorrt", batch_size=batch, verbose=False)
+        int8 = model.export(
+            output_dir=str(out_dir / "int8"),
+            format="tensorrt",
+            quantization="int8",
+            calibration_data=str(calibration),
+            batch_size=batch,
+            verbose=False,
+        )
+        _assert_confident_detections_match(Path(fp16), Path(int8), example, batch=batch)
