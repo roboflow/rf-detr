@@ -140,10 +140,10 @@ For YOLO pose datasets, use `infer_yolo_keypoint_schema(DATASET_DIR / "data.yaml
 
 RF-DETR **automatically detects** whether your dataset is in COCO or YOLO format. Simply pass your dataset directory to the `train()` method and the appropriate data loader will be used.
 
-| Format   | Detection Method                         | Learn More                                          |
-| -------- | ---------------------------------------- | --------------------------------------------------- |
-| **COCO** | Looks for `train/_annotations.coco.json` | [COCO Format Guide](dataset-formats.md#coco-format) |
-| **YOLO** | Looks for `data.yaml` + `train/images/`  | [YOLO Format Guide](dataset-formats.md#yolo-format) |
+| Format   | Detection Method                                               | Learn More                                          |
+| -------- | -------------------------------------------------------------- | --------------------------------------------------- |
+| **COCO** | Looks for `train/_annotations.coco.json`                       | [COCO Format Guide](dataset-formats.md#coco-format) |
+| **YOLO** | Looks for `data.yaml` or `data.yml` + resolved training images | [YOLO Format Guide](dataset-formats.md#yolo-format) |
 
 For keypoint preview training, use COCO keypoint JSON or YOLO pose labels. YOLO pose datasets must declare `kpt_shape` in `data.yaml`; detection-only YOLO datasets still fail clearly in keypoint mode instead of being treated as pose labels.
 
@@ -192,6 +192,8 @@ During training, multiple model checkpoints are saved to the output directory:
 
 - `checkpoint_<epoch>.ckpt` – periodic full checkpoints saved every N epochs (default is every 10).
 
+    Both `.ckpt` files also store the training config, the model class name and the model config, the same fields as the `.pth` files below, so `RFDETR.from_checkpoint("output/last.ckpt")` rebuilds the model with that epoch's non-EMA weights and the dataset's class names.
+
 - `checkpoint_best_ema.pth` – best checkpoint based on validation score, using the EMA (Exponential Moving Average) weights. EMA weights are a smoothed version of the model's parameters across training steps, often yielding better generalization.
 
 - `checkpoint_best_regular.pth` – best checkpoint based on validation score, using the raw (non-EMA) model weights.
@@ -216,7 +218,7 @@ The output directory also holds `training_config.json`, a record of how the run 
 
 ## Load and Run Fine-Tuned Model
 
-`RFDETR.from_checkpoint("<CHECKPOINT_PATH>")` picks the model class and restores the trained resolution and architecture when the checkpoint contains `model_config`. Best-total checkpoints written by RF-DETR 1.11.0 and earlier lack that metadata; load the matching unstripped `checkpoint_best_<source>.pth` when it is still beside the file, or pass the training architecture explicitly. The variant constructors below read only the weights, so pass `resolution=` explicitly if you trained at a non-default resolution.
+`RFDETR.from_checkpoint("<CHECKPOINT_PATH>")` picks the model class and restores the trained resolution and architecture when the checkpoint contains `model_config`. Best-total checkpoints written by RF-DETR 1.11.0 and earlier lack that metadata; load the matching unstripped `checkpoint_best_<source>.pth` when it is still beside the file, or pass the training architecture explicitly. `last.ckpt` and `checkpoint_<epoch>.ckpt` files written by RF-DETR 1.11.0 and earlier hold the weights but not the model class or its settings, so `from_checkpoint` rejects them. Load `checkpoint_best_ema.pth` from the same run instead, or pass the file as `pretrain_weights=` to the variant constructor it was trained with, together with the architecture settings listed in `training_config.json`; that route keeps the default class names, because those files do not store the dataset's. The variant constructors below read only the weights, so pass `resolution=` explicitly if you trained at a non-default resolution.
 
 === "Object Detection"
 

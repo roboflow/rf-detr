@@ -25,7 +25,6 @@ from typing import Any
 import numpy as np
 import torch
 import torch.utils.data
-from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import MultiScale
@@ -36,7 +35,7 @@ from rfdetr.datasets.coco import (
     make_coco_transforms_square_div_64,
     scale_coco_annotation,
 )
-from rfdetr.datasets.io_utils import decode_image_bytes
+from rfdetr.datasets.io_utils import decode_pil_image_bytes
 from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
 from rfdetr.datasets.webdataset.index import (
     IMAGE_EXTENSIONS,
@@ -177,7 +176,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         seed: Rank-independent base seed for shard order. The loader uses a dedicated generator so rank-local
             random draws cannot change the pre-split permutation; see :meth:`_epoch_seeds`.
         draft_size: Smallest source extent the transform pipeline can consume without upscaling, applied by
-            :func:`~rfdetr.datasets.io_utils.decode_image_bytes` the same way the loose-file loaders apply it, or
+            :func:`~rfdetr.datasets.io_utils.decode_pil_image_bytes` the same way the loose-file loaders apply it, or
             ``None`` to decode at full resolution. See :func:`~rfdetr.datasets.coco.draft_size_for_transforms`
             for when a non-``None`` value is actually correct — only the train split, never a mask dataset.
     """
@@ -307,9 +306,9 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
     def _decode(self, sample: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         """Turn one raw WebDataset sample into the ``(image, target)`` pair the transform pipeline expects.
 
-        Decodes through :func:`~rfdetr.datasets.io_utils.decode_image_bytes`, the same entry point the loose-file
-        loaders use, so a shard member gets the same ``simplejpeg``-or-Pillow choice and the same power-of-two
-        reduced-scale decode when ``self._draft_size`` is set (train split only — see
+        Decodes through :func:`~rfdetr.datasets.io_utils.decode_pil_image_bytes`, the in-memory counterpart of the
+        entry point ``CocoDetection`` uses, so a shard member gets the same ``simplejpeg``-or-Pillow choice and the
+        same power-of-two reduced-scale decode when ``self._draft_size`` is set (train split only — see
         :func:`draft_size_for_transforms`), plus the same annotation rescale when a draft actually reduces the
         image.
 
@@ -332,8 +331,7 @@ class WebDatasetDetection(torch.utils.data.IterableDataset[tuple[Any, Any]]):
         if "json" not in sample:
             raise KeyError(f"WebDataset sample {sample.get('__key__', '?')} has no 'json' annotation sidecar.")
 
-        pixels, (x_scale, y_scale) = decode_image_bytes(sample[extension], self._draft_size)
-        image = Image.fromarray(pixels)
+        image, (x_scale, y_scale) = decode_pil_image_bytes(sample[extension], self._draft_size)
         metadata = json.loads(sample["json"])
         annotations = metadata["annotations"]
         if (x_scale, y_scale) != (1.0, 1.0):

@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
-import json
 import os
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -23,9 +23,10 @@ from typing import Any, Protocol, TypeVar, cast
 import numpy as np
 import torch
 
+from rfdetr.export._backend import check_onnx_available as _check_onnx_available
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
-from rfdetr.export.base import ExportConfig, Exporter, shared_settings
+from rfdetr.export.base import ExportConfig, Exporter, serialize_notes, shared_settings
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 
@@ -979,6 +980,15 @@ class OnnxExporter(Exporter[OnnxConfig]):
     supports_notes = True
     pip_extra = "onnx"
 
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Raise the ``rfdetr[onnx]`` install hint when ``onnx`` is missing.
+
+        Raises:
+            ImportError: If ``onnx`` is not installed.
+        """
+        _check_onnx_available()
+
     def _resolve_output_file(self, *, backbone_only: bool) -> str:
         """Return the path the ``.onnx`` file is written to.
 
@@ -1033,18 +1043,17 @@ class OnnxExporter(Exporter[OnnxConfig]):
         """Write the configured *notes* into the already-exported file's ``rfdetr_notes`` metadata property.
 
         ``torch.onnx.export`` writes to disk only and hands back no in-memory handle, so the model is reloaded and
-        resaved (~1-2 s on large models). Does nothing when no notes were supplied, or when ``onnx`` is unavailable.
+        resaved (~1-2 s on large models). Does nothing when no notes were supplied.
 
         Args:
             output_file: Path of the exported model to annotate.
         """
-        if self.config.notes is None or onnx is None:
+        if self.config.notes is None:
             return
-        onnx_model = onnx.load(output_file)
-        # Strings stored as-is so readers can consume without JSON-decoding;
-        # non-strings go through json.dumps to survive the round-trip.
-        notes = self.config.notes
-        notes_value = notes if isinstance(notes, str) else json.dumps(notes, allow_nan=False)
+        # Imported now, like the check in `_check_onnx_available`: the module-level binding may predate the install.
+        onnx_module = cast(_OnnxModule, importlib.import_module("onnx"))
+        onnx_model = onnx_module.load(output_file)
+        notes_value = serialize_notes(self.config.notes)
         existing = next((prop for prop in onnx_model.metadata_props if prop.key == "rfdetr_notes"), None)
         if existing is not None:
             existing.value = notes_value
@@ -1052,7 +1061,7 @@ class OnnxExporter(Exporter[OnnxConfig]):
             meta = onnx_model.metadata_props.add()
             meta.key = "rfdetr_notes"
             meta.value = notes_value
-        onnx.save(onnx_model, output_file)
+        onnx_module.save(onnx_model, output_file)
 
     def _convert(self, graph: ExportGraph) -> str:
         """Write the ``.onnx`` file and return its path."""

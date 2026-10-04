@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rfdetr.datasets._yolo_yaml import _ascii_digit_key, _extract_yolo_class_names_from_data, _load_yaml_mapping
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -90,60 +91,6 @@ class YoloKeypointSchema:
 KeypointSchema = CocoKeypointSchema | YoloKeypointSchema
 
 
-def _load_yaml_mapping(yaml_path: Path) -> dict[str, Any]:
-    """Load a YAML file and require a mapping root.
-
-    Args:
-        yaml_path: Path to a YAML data file.
-
-    Returns:
-        Parsed YAML mapping.
-
-    Raises:
-        ValueError: If the YAML root is not a mapping.
-        OSError: If the file cannot be read.
-
-    Example:
-        >>> import tempfile
-        >>> path = Path(tempfile.mkdtemp()) / "data.yaml"
-        >>> _ = path.write_text("names: [person]\\nkpt_shape: [1, 3]\\n", encoding="utf-8")
-        >>> sorted(_load_yaml_mapping(path))
-        ['kpt_shape', 'names']
-    """
-    import yaml  # type: ignore[import-untyped,unused-ignore]
-
-    with yaml_path.open(encoding="utf-8") as file:
-        data = yaml.safe_load(file)
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected mapping in data file {str(yaml_path)!r}, got {type(data).__name__}.")
-    return data
-
-
-def _extract_yolo_class_names_from_data(data: dict[str, Any], data_file: Path) -> list[str]:
-    """Extract contiguous YOLO class names from parsed YAML data."""
-    names = data.get("names")
-    if isinstance(names, dict):
-        numeric_keys: list[int] = []
-        non_numeric_keys: list[Any] = []
-        for key in names.keys():
-            key_str = str(key)
-            if key_str.isdigit():
-                numeric_keys.append(int(key_str))
-            else:
-                non_numeric_keys.append(key)
-
-        unique_sorted_keys = sorted(set(numeric_keys))
-        if not unique_sorted_keys or unique_sorted_keys != list(range(len(unique_sorted_keys))) or non_numeric_keys:
-            raise ValueError(
-                "Unsupported 'names' mapping in data file "
-                f"{str(data_file)!r}: expected integer keys 0..N-1 with no gaps."
-            )
-        return [str(names[idx]) for idx in unique_sorted_keys]
-    if isinstance(names, list):
-        return [str(name) for name in names]
-    raise ValueError(f"Expected 'names' to be a list or dict in {str(data_file)!r}, got {type(names).__name__}.")
-
-
 def _validate_yolo_kpt_shape(raw_kpt_shape: Any, data_file: Path) -> tuple[int, int]:
     """Validate and normalize a YOLO pose ``kpt_shape`` entry."""
     if not isinstance(raw_kpt_shape, (list, tuple)) or len(raw_kpt_shape) != 2:
@@ -168,7 +115,12 @@ def _extract_yolo_keypoint_names(data: dict[str, Any], num_keypoints: int) -> li
     raw_kpt_names = data.get("kpt_names")
     keypoint_names: Any = None
     if isinstance(raw_kpt_names, dict) and raw_kpt_names:
-        keypoint_names = raw_kpt_names.get(0, raw_kpt_names.get("0"))
+        # Reuse the same ASCII-digit key normalization as class names, so a "00"-style key is
+        # recognized as keypoint-name key 0 just as it is for the top-level "names" mapping.
+        keypoint_names = next(
+            (value for key, value in raw_kpt_names.items() if _ascii_digit_key(key) == 0),
+            None,
+        )
     elif isinstance(raw_kpt_names, list):
         keypoint_names = raw_kpt_names
 

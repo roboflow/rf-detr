@@ -125,6 +125,32 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
     pip_extra = "coreml"
     notes_reason = "CoreML .mlpackage has no ONNX-style metadata slot"
 
+    def _check_capabilities(self) -> None:
+        """Refuse an unrecognized precision string before the forward pass.
+
+        A non-string value is passed through to ``coremltools``, as before: telling a ``coremltools.precision`` member
+        apart needs ``coremltools``, and construction reads the configuration only, never the environment.
+
+        Raises:
+            ValueError: If the configured precision is a string naming neither ``"float32"`` nor ``"float16"``.
+        """
+        super()._check_capabilities()
+        compute_precision = self.config.compute_precision
+        if isinstance(compute_precision, str) and compute_precision not in ("float32", "float16"):
+            raise ValueError(
+                f"compute_precision must be 'float32', 'float16', a coremltools.precision value, or "
+                f"None, got {compute_precision!r}"
+            )
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``coremltools`` is installed.
+
+        Raises:
+            ImportError: If ``coremltools`` is not installed.
+        """
+        _check_coremltools_available()
+
     def _convert(self, graph: ExportGraph) -> Path:
         """Write the ``.mlpackage`` bundle and return its path.
 
@@ -142,9 +168,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                 installed (e.g. a partial/ABI-mismatched install).
             NotImplementedError: If the exported graph contains op kinds missing from coremltools'
                 Torch registry (fast-fail checklist).
-            ValueError: If the configured precision is unrecognized, or if ``torch.export`` /
-                ``coremltools.convert`` raises it directly (e.g. invalid shape arguments) — passed
-                through unwrapped rather than re-wrapped as ``RuntimeError``.
+            ValueError: If ``torch.export`` / ``coremltools.convert`` raises it directly (e.g. invalid shape
+                arguments) — passed through unwrapped rather than re-wrapped as ``RuntimeError``.
             RuntimeError: If ``torch.export`` or ``coremltools.convert`` fails for any other reason.
         """
         api = self._import_coreml_api()
@@ -196,22 +221,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         Returns:
             The configured ``coremltools.precision`` value, the member its string names, or
             ``FLOAT32`` when unset (tight CPU parity with eager PyTorch).
-
-        Raises:
-            ValueError: If the configured precision is a string naming neither ``"float32"`` nor
-                ``"float16"``.
         """
         compute_precision: Any = self.config.compute_precision
         if compute_precision is None:
             return api.float32
         if isinstance(compute_precision, str):
-            try:
-                return {"float32": api.float32, "float16": api.float16}[compute_precision]
-            except KeyError:
-                raise ValueError(
-                    f"compute_precision must be 'float32', 'float16', a coremltools.precision value, or "
-                    f"None, got {compute_precision!r}"
-                ) from None
+            return {"float32": api.float32, "float16": api.float16}[compute_precision]
         return compute_precision
 
     def _resolve_output_file(
