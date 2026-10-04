@@ -14,18 +14,21 @@ builds real FP16 and INT8 engines on a GPU and compares their detections on a ph
 from __future__ import annotations
 
 import contextlib
+import inspect
 import os
 import sys
 import types
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import numpy as np
 import pytest
 import torch
 
 from rfdetr.export._onnx import exporter as onnx_export
+from rfdetr.export._runtime import calibration
 from rfdetr.export._tensorrt import exporter as tensorrt_export
 from rfdetr.export._tensorrt import quantize
 from rfdetr.export._tensorrt.exporter import (
@@ -481,6 +484,14 @@ class TestPlanInt8:
         with pytest.raises(ValueError, match="not a recognised attention block"):
             quantize.plan_int8(model)
 
+    def test_unrecognised_attention_named_outside_the_regions_is_refused(self) -> None:
+        # Its projections sit in a quantized region, so a rename of the Softmax must not let them slip through.
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, scaled_scores=True)
+        next(node for node in model.graph.node if node.name.endswith("scale/Div")).op_type = "Max"
+        next(node for node in model.graph.node if node.op_type == "Softmax").name = f"{HEAD}Softmax"
+        with pytest.raises(ValueError, match="not a recognised attention block"):
+            quantize.plan_int8(model)
+
     def test_float_attention_with_an_unfollowable_output_is_refused(self) -> None:
         model = _attention_and_mlp(DECODER, sequence=8, head_size=16, second_reader=True)
         with pytest.raises(ValueError, match="output projection"):
@@ -548,6 +559,24 @@ class TestPlanInt8:
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, second_mlp_prefix=HEAD, activation=activation)
         assert _names(quantize.plan_int8(model)) == ["q/MatMul", "k/MatMul", "v/MatMul", "o/MatMul"]
 
+    def test_gelu_projection_waits_for_a_consumer_the_plan_cannot_name(self) -> None:
+        # An unnamed fc2 cannot be planned, but it is still the FP16 consumer fc1's GELU feeds.
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, activation="Erf")
+        next(node for node in model.graph.node if node.name.endswith("fc2/MatMul")).name = ""
+        assert _names(quantize.plan_int8(model)) == ["q/MatMul", "k/MatMul", "v/MatMul", "o/MatMul"]
+
+    def test_gelu_projection_waits_for_a_consumer_behind_another_op(self) -> None:
+        # Only a GELU's direct readers were followed: an Identity before the unplannable fc2 hid it.
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, activation="Erf")
+        nodes = list(model.graph.node)
+        fc2 = next(node for node in nodes if node.name.endswith("fc2/MatMul"))
+        fc2.name, fc2.input[0] = "", "g_copy"
+        index = nodes.index(fc2)
+        nodes.insert(index, helper.make_node("Identity", ["g"], ["g_copy"], f"{BACKBONE}tap/Identity"))
+        del model.graph.node[:]
+        model.graph.node.extend(nodes)
+        assert _names(quantize.plan_int8(model)) == ["q/MatMul", "k/MatMul", "v/MatMul", "o/MatMul"]
+
     def test_relu_projection_does_not_wait(self) -> None:
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, second_mlp_prefix=HEAD, activation="Relu")
         assert _names(quantize.plan_int8(model))[-1] == "fc1/MatMul"
@@ -571,7 +600,13 @@ class TestInsertQdq:
 
     @pytest.fixture
     def quantized(self) -> tuple[Any, quantize.Int8Plan]:
-        """Plan on the FP32 graph, then quantize its FP16 twin, as ``int8_source_graph`` does."""
+        """Plan on the FP32 graph, then quantize its FP16 twin, as ``int8_source_graph`` does.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> model, plan = quantized()  # doctest: +SKIP
+        """
         plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=8, head_size=16))
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, dtype=np.float16)
         quantize.insert_qdq(model, plan, dict.fromkeys(plan.activations, 2.0))
@@ -579,7 +614,13 @@ class TestInsertQdq:
 
     @pytest.fixture
     def ranged(self) -> tuple[Any, quantize.Int8Plan, dict[str, float]]:
-        """Like ``quantized``, but each activation tensor has its own range; also returns tensor -> range."""
+        """Like ``quantized``, but each activation tensor has its own range; also returns tensor -> range.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> model, plan, by_tensor = ranged()  # doctest: +SKIP
+        """
         plan = quantize.plan_int8(_attention_and_mlp(BACKBONE, sequence=8, head_size=16))
         model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16, dtype=np.float16)
         tensors = sorted({quantize._input_tensor(model.graph, *key) for key in plan.activations})
@@ -752,6 +793,33 @@ class TestCalibrationGraph:
         onnx.checker.check_model(probe, full_check=True)
 
 
+class TestCalibrationArrays:
+    """A preprocessed calibration array must match the graph, and a ``.npy`` file is streamed rather than loaded."""
+
+    @pytest.mark.parametrize("source", ["array", "npy"])
+    def test_array_with_the_wrong_channel_count_is_refused(self, tmp_path: Path, source: str) -> None:
+        samples = np.zeros((2, 1, 8, 8), np.float32)
+        if source == "npy":
+            np.save(tmp_path / "images.npy", samples)
+            samples = tmp_path / "images.npy"
+        with pytest.raises(ValueError, match="channels"):
+            list(calibration.calibration_batches(samples, height=8, width=8, channels=3))
+
+    def test_npy_file_reaches_the_samples_memory_mapped(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        path = tmp_path / "images.npy"
+        np.save(path, np.zeros((2, 3, 8, 8), np.float32))
+        spy = mock.Mock(wraps=calibration._arrays_from_samples)
+        monkeypatch.setattr(calibration, "_arrays_from_samples", spy)
+        assert len(list(calibration.calibration_batches(path, height=8, width=8))) == 2
+        assert isinstance(spy.call_args.args[0], np.memmap)
+
+    def test_batches_do_not_alias_the_calibration_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "images.npy"
+        np.save(path, np.zeros((2, 3, 8, 8), np.float32))
+        batch = next(calibration.calibration_batches(path, height=8, width=8))
+        assert batch.flags.writeable and batch.base is None
+
+
 class TestLiftOpset:
     """FP16 scales need opset 19; lifting a 17 graph keeps every op's meaning or refuses."""
 
@@ -911,6 +979,11 @@ class TestCalibration:
 
         The first reads the 3-channel image and stays FP16; the second reads 32 channels and is quantized. The outputs
         carry a detector's names.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> path = image_graph(tmp_path)  # doctest: +SKIP
         """
         graph = helper.make_graph(
             [
@@ -951,6 +1024,28 @@ class TestCalibration:
         images = [np.full((1, 3, 4, 6), value, np.float32) for value in values]
         ranges = quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input", "features"], images)
         assert ranges == pytest.approx({"input": 5.0, "features": 15.0})
+
+    def test_calibration_data_is_closed_when_calibration_fails(
+        self, monkeypatch: pytest.MonkeyPatch, image_graph: Path
+    ) -> None:
+        pytest.importorskip("onnxruntime")
+        generators: list[Iterator[np.ndarray]] = []
+        real = calibration.calibration_batches
+
+        def keep(*args: Any, **kwargs: Any) -> Iterator[np.ndarray]:
+            """Return the real batch generator and remember it."""
+            generators.append(real(*args, **kwargs))
+            return generators[-1]
+
+        monkeypatch.setattr(calibration, "calibration_batches", keep)
+        images = np.zeros((2, 3, 4, 6), np.float32)
+        images[1, 0, 1, 2] = np.nan
+        with pytest.raises(ValueError, match="NaN or infinite"):
+            with quantize.int8_source_graph(
+                str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
+            ):
+                pass
+        assert [inspect.getgeneratorstate(g) for g in generators] == [inspect.GEN_CLOSED]
 
     def test_no_image_is_refused(self, image_graph: Path) -> None:
         pytest.importorskip("onnxruntime")
@@ -1062,7 +1157,13 @@ class TestNanoInt8Plan:
 
     @pytest.fixture(scope="class")
     def nano_onnx(self, tmp_path_factory: pytest.TempPathFactory) -> Path:
-        """Export an untrained RFDETRNano to ONNX on CPU, once for the class."""
+        """Export an untrained RFDETRNano to ONNX on CPU, once for the class.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> path = nano_onnx(tmp_path_factory)  # doctest: +SKIP
+        """
         from rfdetr import RFDETRNano
         from rfdetr.utilities.reproducibility import seed_all
 
@@ -1076,7 +1177,13 @@ class TestNanoInt8Plan:
 
     @pytest.fixture(scope="class")
     def plan(self, nano_onnx: Path) -> quantize.Int8Plan:
-        """The INT8 plan of the exported Nano graph."""
+        """The INT8 plan of the exported Nano graph.
+
+        Examples:
+            A pytest fixture cannot be called directly.
+
+            >>> plan = plan(nano_onnx)  # doctest: +SKIP
+        """
         return quantize.plan_int8(onnx.load(str(nano_onnx)))
 
     def test_attention_blocks_left_fp16_are_counted(self, monkeypatch: pytest.MonkeyPatch, nano_onnx: Path) -> None:
@@ -1126,7 +1233,13 @@ class TestInt8EndToEnd:
 
     @pytest.fixture(scope="class")
     def engines(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path, np.ndarray]:
-        """Export FP16 and INT8 engines, calibrating on crops and flips of supervision's PEOPLE_WALKING photo."""
+        """Export FP16 and INT8 engines, calibrating on crops and flips of supervision's PEOPLE_WALKING photo.
+
+        Examples:
+            A pytest fixture, and it needs a GPU, TensorRT and a network download.
+
+            >>> fp16_engine, int8_engine, photo = engines(tmp_path_factory)  # doctest: +SKIP
+        """
         from PIL import Image, ImageOps
         from supervision.assets import ImageAssets, download_assets
 

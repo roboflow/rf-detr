@@ -17,7 +17,7 @@ prepared.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -58,35 +58,42 @@ def _image_paths(directory: Path, max_images: int) -> list[Path]:
     return paths[:max_images]
 
 
-def _arrays_from_samples(array: NDArray[Any], height: int, width: int) -> Iterator[NDArray[np.float32]]:
+def _arrays_from_samples(array: NDArray[Any], height: int, width: int, channels: int) -> Iterator[NDArray[np.float32]]:
     """Yield one ``(1, C, H, W)`` float32 batch per sample of a pre-normalized calibration array.
 
     Args:
         array: Samples shaped ``(N, C, H, W)``, already normalized the way the model expects.
         height: Spatial height the graph was exported at.
         width: Spatial width the graph was exported at.
+        channels: Channel count the graph expects.
 
     Yields:
         One single-sample batch per row of *array*.
 
     Raises:
-        ValueError: If *array* is not rank 4 or its spatial dimensions do not match the graph.
+        ValueError: If *array* is not rank 4 or its channels or spatial dimensions do not match the graph.
 
     Examples:
         >>> import numpy as np
-        >>> batches = list(_arrays_from_samples(np.zeros((2, 3, 4, 4), dtype=np.float32), height=4, width=4))
+        >>> samples = np.zeros((2, 3, 4, 4), dtype=np.float32)
+        >>> batches = list(_arrays_from_samples(samples, height=4, width=4, channels=3))
         >>> len(batches), batches[0].shape
         (2, (1, 3, 4, 4))
     """
     if array.ndim != 4:
         raise ValueError(f"Calibration array must be rank 4 (N, C, H, W); got shape {array.shape}.")
+    if array.shape[1] != channels:
+        raise ValueError(
+            f"Calibration array has {array.shape[1]} channels but the graph expects {channels}. "
+            "Pass a directory of images instead to have them converted for you."
+        )
     if array.shape[2] != height or array.shape[3] != width:
         raise ValueError(
             f"Calibration array is {array.shape[2]}x{array.shape[3]} but the graph expects {height}x{width}. "
             "Pass a directory of images instead to have them resized for you."
         )
     for sample in array:
-        yield np.ascontiguousarray(sample[None], dtype=np.float32)
+        yield np.array(sample[None], dtype=np.float32, order="C")  # a copy: never a view of a memory-mapped file
 
 
 def calibration_batches(
@@ -96,7 +103,7 @@ def calibration_batches(
     width: int,
     channels: int = 3,
     max_images: int = 100,
-) -> Iterator[NDArray[np.float32]]:
+) -> Generator[NDArray[np.float32], None, None]:
     """Yield ``(1, C, H, W)`` float32 batches to calibrate activation ranges with.
 
     A directory of images is the normal case: each is preprocessed exactly as
@@ -114,7 +121,8 @@ def calibration_batches(
         One preprocessed single-image batch at a time, so calibration never holds the whole set in memory.
 
     Raises:
-        ValueError: If *calibration_data* names a path that does not exist, or holds no usable image.
+        ValueError: If *calibration_data* names a path that does not exist, or holds no usable image, or is an array
+            whose rank, channels or spatial size do not match the graph.
 
     Examples:
         >>> import numpy as np
@@ -122,7 +130,7 @@ def calibration_batches(
         3
     """
     if isinstance(calibration_data, np.ndarray):
-        yield from _arrays_from_samples(calibration_data, height, width)
+        yield from _arrays_from_samples(calibration_data, height, width, channels)
         return
 
     path = Path(calibration_data)
@@ -131,7 +139,7 @@ def calibration_batches(
     if path.is_file():
         if path.suffix.lower() != ".npy":
             raise ValueError(f"Calibration file must be a .npy array; got {path.name}.")
-        yield from _arrays_from_samples(np.load(path), height, width)
+        yield from _arrays_from_samples(np.load(path, mmap_mode="r"), height, width, channels)
         return
 
     from PIL import Image  # Pillow is an inference-time dependency, not an import-time one.

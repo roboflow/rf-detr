@@ -216,6 +216,23 @@ def _weight_name(node: Any, initializers: Mapping[str, Any]) -> str | None:
     return str(node.input[1]) if len(weight.dims) == (4 if node.op_type == "Conv" else 2) else None
 
 
+def _holds_weight(node: Any, initializers: Mapping[str, Any]) -> bool:
+    """Return whether *node* is a ``MatMul``/``Gemm``/``Conv`` with a constant weight, however it is named.
+
+    Unlike :func:`_weight_name` this does not ask whether the node can be planned, so an unnamed layer, or a ``Gemm``
+    that transposes its activation, still counts as a consumer of the tensor it reads.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> weights = {"w": numpy_helper.from_array(np.zeros((4, 2), np.float32), "w")}
+        >>> _holds_weight(helper.make_node("MatMul", ["x", "w"], ["y"], ""), weights)
+        True
+        >>> _holds_weight(helper.make_node("MatMul", ["x", "z"], ["y"], "bmm"), weights)
+        False
+    """
+    return node.op_type in ("MatMul", "Gemm", "Conv") and len(node.input) > 1 and node.input[1] in initializers
+
+
 def _pads_input_channels(node: Any, initializers: Mapping[str, Any]) -> bool:
     """Return whether *node* is a ``Conv`` whose input channels TensorRT would pad to run it in INT8.
 
@@ -390,7 +407,7 @@ def _attention_blocks(model: Any) -> list[_Attention]:
         One entry per attention block, with the names of the projections found around it.
 
     Raises:
-        ValueError: If a ``Softmax`` inside a quantized region feeds an activation-by-activation multiply but is not
+        ValueError: If a ``Softmax`` anywhere in the graph feeds an activation-by-activation multiply but is not
             recognised as a block, so its projections could not be kept out of INT8 with certainty.
     """
     import onnx
@@ -410,8 +427,8 @@ def _attention_blocks(model: Any) -> list[_Attention]:
         scores = _scores_matmul(softmax, producers, initializers)
         context = _context_matmul(softmax, consumers)
         if scores is None or context is None or any(name in initializers for name in (*scores.input, context.input[1])):
-            in_region = softmax.name.startswith(_QUANTIZED_REGIONS)
-            if in_region and _feeds_activation_matmul(softmax, consumers, initializers):
+            # Anywhere in the graph: a renamed Softmax must not hide an attention block from the projection rules.
+            if _feeds_activation_matmul(softmax, consumers, initializers):
                 raise ValueError(
                     f"Cannot place INT8 safely: the Softmax {softmax.name!r} feeds a matrix multiply of two "
                     "activations but is not a recognised attention block. INT8 TensorRT export applies to RF-DETR "
@@ -454,11 +471,13 @@ def _feeds_gelu_into(node: Any, consumers: Mapping[str, list[Any]], initializers
             if (id(reader), through_gelu) in seen:
                 continue
             seen.add((id(reader), through_gelu))
-            if _weight_name(reader, initializers):
+            if _holds_weight(reader, initializers):
                 if through_gelu:
                     found.add(str(reader.name))
             elif reader.op_type in _GELU_PATH:
                 frontier.extend((name, through_gelu or reader.op_type in _GELU_OPS) for name in reader.output)
+            elif through_gelu:
+                found.add(str(reader.name))  # any other reader of a GELU output runs in FP16
     return found
 
 
@@ -473,7 +492,7 @@ def plan_int8(model: Any) -> Int8Plan:
 
     Raises:
         ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR detector export; if an FP16
-            attention block's output projection cannot be identified; or if a ``Softmax`` in a quantized region feeds a
+            attention block's output projection cannot be identified; or if a ``Softmax`` anywhere in the graph feeds a
             multiply of two activations without being a recognised attention block.
     """
     graph = model.graph
@@ -986,7 +1005,8 @@ def int8_source_graph(
     batches = calibration_batches(
         calibration_data, height=height, width=width, channels=channels, max_images=max_images
     )
-    by_tensor = calibrate_ranges(onnx_path, source, tensors, batches)
+    with contextlib.closing(batches):  # releases a memory-mapped ``.npy`` even when calibration raises
+        by_tensor = calibrate_ranges(onnx_path, source, tensors, batches)
     unusable = sorted(t for t, r in by_tensor.items() if not np.isfinite(r) or r / _INT8_MAX > _MAX_FP16)
     if unusable:
         raise ValueError(
