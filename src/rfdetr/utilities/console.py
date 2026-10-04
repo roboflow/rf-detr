@@ -13,11 +13,13 @@ try:
     from rich.console import Console, Group
     from rich.live import Live
     from rich.table import Table
+    from rich.text import Text
 except ImportError:
     Console = None  # type: ignore[assignment, misc]
     Group = None  # type: ignore[assignment, misc]
     Live = None  # type: ignore[assignment, misc]
     Table = None  # type: ignore[assignment, misc]
+    Text = None  # type: ignore[assignment, misc]
     _IS_RICH_AVAILABLE = False
 else:
     _IS_RICH_AVAILABLE = True
@@ -247,7 +249,10 @@ def _build_summary_renderable(
         table.add_column("Recall", justify="right")
         for row in per_class:
             table.add_row(
-                row["name"],
+                # A plain ``str`` cell is parsed as console markup, so a class name such as
+                # ``helmet[red]`` would lose its brackets, ``:dollar:`` would become an emoji,
+                # and ``sign[/]`` would raise ``MarkupError``. ``Text`` renders it verbatim.
+                Text(row["name"]),
                 _fmt(row["ap"]),
                 _fmt(row["ar"]),
                 _fmt(row["f1"]),

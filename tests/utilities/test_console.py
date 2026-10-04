@@ -238,6 +238,17 @@ class TestBuildSummaryRenderable:
             console.print(result)
         assert "—" in capture.get()
 
+    @pytest.mark.parametrize("name", ["helmet[red]", "car [parked]", "sign[/]", "price:dollar:", r"a\[b]"])
+    def test_class_name_renders_verbatim(self, name: str) -> None:
+        """A class name is data, not Rich markup or an emoji code, so it prints exactly as written."""
+        from rich.console import Console
+
+        per_class = [{"name": name, "ap": 0.5, "ar": 0.6, "f1": 0.55, "precision": 0.6, "recall": 0.5}]
+        console = Console(width=200, color_system=None)
+        with console.capture() as capture:
+            console.print(_build_summary_renderable("Val", "overall-text", per_class))
+        assert name in capture.get()
+
 
 # ---------------------------------------------------------------------------
 # _render_summary_tables
