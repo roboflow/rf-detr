@@ -29,7 +29,12 @@ from rfdetr.datasets._keypoint_schema import infer_yolo_keypoint_schema as infer
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
 from rfdetr.datasets.webdataset.load import build_webdataset
-from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
+from rfdetr.datasets.yolo import (
+    YoloDetection,
+    build_roboflow_from_yolo,
+    find_yolo_data_file,
+    find_yolo_train_images,
+)
 
 
 def get_coco_api_from_dataset(dataset: Dataset[Any]) -> Any | None:
@@ -60,17 +65,24 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     if coco_annotation.exists():
         return "coco"
 
-    # Check for YOLO format: look for data.yaml or data.yml and train/images folder
-    yolo_data_file_yaml = dataset_dir / "data.yaml"
-    yolo_data_file_yml = dataset_dir / "data.yml"
-    yolo_images_dir = dataset_dir / "train" / "images"
-    if (yolo_data_file_yaml.exists() or yolo_data_file_yml.exists()) and yolo_images_dir.exists():
+    if find_yolo_train_images(dataset_dir) is not None:
         return "yolo"
+
+    yolo_data_file = find_yolo_data_file(dataset_dir)
+    if yolo_data_file is not None:
+        # Naming the config that was found keeps the message from reading as "no data.yaml
+        # here" when one is present but declares nothing usable.
+        raise ValueError(
+            f"Could not detect dataset format in {dataset_dir}. Found the YOLO data file {yolo_data_file}, "
+            f"but no training image directory resolved from it: neither its 'train' path nor "
+            f"{dataset_dir / 'train' / 'images'} is a directory inside the dataset. "
+            f"Enable debug logging to see each declaration that was rejected."
+        )
 
     raise ValueError(
         f"Could not detect dataset format in {dataset_dir}. "
         f"Expected either COCO format (train/_annotations.coco.json) "
-        f"or YOLO format (data.yaml or data.yml + train/images/)"
+        f"or YOLO format (data.yaml or data.yml + training images resolved from YAML or train/images/)"
     )
 
 

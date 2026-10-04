@@ -68,7 +68,11 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "TFLiteExporter",
         "tflite",
         "TFLite",
-        supports_dynamic_batch=True,
+        dynamic_batch_reason=(
+            "(onnx2tf fails on the dynamic-batch graph: an Add of a constant, likely the position embedding,"
+            " against the dynamic-shaped encoder input reports mismatched dimensions)."
+            " Export one .tflite per batch size instead."
+        ),
         preimport="rfdetr.export._backend:preload_tensorflow_before_onnx",
     ),
     "tensorrt": ExporterEntry(
@@ -107,7 +111,7 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "OpenVINOExporter",
         "openvino",
         "OpenVINO",
-        dynamic_batch_reason="(the IR graph bakes a fixed input shape). Export one model per batch size instead.",
+        dynamic_batch_reason="(omit dynamic_batch; the converted OpenVINO IR already accepts any batch size).",
     ),
     "litert": ExporterEntry(
         "rfdetr.export._litert.exporter",
@@ -123,21 +127,28 @@ ALIASES: Mapping[str, str] = {"trt": "tensorrt", "pte": "executorch"}
 
 
 def normalize_format(format: str) -> str:
-    """Resolve an alias to the canonical format name.
+    """Resolve a format name or alias, in any case, to the canonical format name.
 
     Args:
         format: Format name or alias as the caller spelled it.
 
     Returns:
-        The canonical format name, unchanged when *format* is already canonical.
+        The canonical format name. An unknown name, or a non-string value, comes back unchanged, so the error that
+        rejects it names it as the caller passed it.
 
     Examples:
         >>> normalize_format("trt")
         'tensorrt'
-        >>> normalize_format("onnx")
+        >>> normalize_format("ONNX")
         'onnx'
+        >>> normalize_format("NoneSuch")
+        'NoneSuch'
     """
-    return ALIASES.get(format, format)
+    if not isinstance(format, str):
+        return format
+    name = format.lower()
+    canonical = ALIASES.get(name, name)
+    return canonical if canonical in REGISTRY else format
 
 
 def resolve_exporter(format: str) -> type[Exporter[Any]]:
@@ -196,7 +207,7 @@ def require_entry(format: str) -> ExporterEntry:
         >>> require_entry("tensorrt").label
         'TensorRT'
     """
-    entry = REGISTRY.get(format)
+    entry = REGISTRY.get(format) if isinstance(format, str) else None
     if entry is None:
         raise ValueError(f"Unsupported export format {format!r}. Choose from: {sorted(REGISTRY)}.")
     return entry

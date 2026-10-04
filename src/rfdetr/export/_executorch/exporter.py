@@ -199,7 +199,8 @@ def _build_partitioner(backend: str) -> list[Any]:
         # macOS 27.0, COCO val2017, all 5000 images): 48.05 -> 45.06 mAP and 14.0 -> 18.4 ms p50. The default
         # path already runs the delegate in fp16 and already reaches the Neural Engine (verified from the
         # `com.apple.ane` unified log); the explicit specs additionally cast the weights, which is what costs
-        # the accuracy. Compute units are chosen by whoever loads the .pte, not baked in here.
+        # the accuracy. With no compute-unit spec, ExecuTorch's CoreMLBackend converts with ct.ComputeUnit.ALL
+        # (`compute_unit_from_compile_specs` fallback, applied in its `ct.convert` call at lowering time).
         return [CoreMLPartitioner()]
     # QNN uses _lower_qnn instead of this function; this raise is reached only if a new
     # backend is added to _VALID_BACKENDS without a corresponding branch above.
@@ -306,8 +307,8 @@ class ExecutorchConfig(ExportConfig):
 class ExecuTorchExporter(Exporter[ExecutorchConfig]):
     """Lower a prepared graph to an ExecuTorch ``.pte`` for the configured delegation backend.
 
-    The conversion runs in five steps, each its own method: validate the delegation backend, check the ``executorch``
-    dependency and create the output directory, resolve the artifact filename, lower the graph (QNN through its own
+    The conversion runs in four steps, each its own method, after :meth:`check_dependencies`: create the output
+    directory, resolve the artifact filename, lower the graph (QNN through its own
     entry point, XNNPACK and CoreML through the generic partitioner), then write the ``.pte`` bytes.
 
     The graph arrives already switched into its export-friendly forward and on CPU: the base
@@ -372,21 +373,22 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # configuration declares.
         return {"backend": cast("Literal['xnnpack', 'coreml', 'qnn']", backend), "soc": settings.get("soc")}
 
-    def _resolve_backend(self) -> str:
-        """Return the configured delegation backend, lowercased and checked against the supported set.
-
-        Returns:
-            The backend name in lowercase, one of :data:`_VALID_BACKENDS`.
+    def _check_capabilities(self) -> None:
+        """Refuse an unsupported delegation backend when the exporter is built.
 
         Raises:
             ValueError: If the configured backend is not one ExecuTorch export supports.
         """
+        super()._check_capabilities()
         backend_name = self.config.backend.lower()
         if backend_name not in _VALID_BACKENDS:
             raise ValueError(
                 f"Unsupported ExecuTorch backend {backend_name!r}. Choose from: {sorted(_VALID_BACKENDS)}."
             )
-        return backend_name
+
+    def _resolve_backend(self) -> str:
+        """Return the configured delegation backend in lowercase, one of :data:`_VALID_BACKENDS`."""
+        return self.config.backend.lower()
 
     def _resolve_soc(self) -> str:
         """Return the target SoC for a backend that compiles ahead-of-time for one chip.
@@ -400,11 +402,9 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         """
         return self.config.soc if self.config.soc is not None else _DEFAULT_SOC
 
-    def _prepare_output_dir(self) -> Path:
-        """Check the ExecuTorch dependency, then create and return the configured output directory.
-
-        Returns:
-            The output directory, created if it did not already exist.
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``executorch``, and the ``executorch.exir`` entry point the lowering goes through.
 
         Raises:
             ImportError: If ``executorch`` is missing, older than 1.3, or ships without ``executorch.exir``.
@@ -414,6 +414,12 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # point the delegated path lowers through -- does not, and that has always failed before anything is written.
         from executorch.exir import to_edge_transform_and_lower  # noqa: F401
 
+    def _prepare_output_dir(self) -> Path:
+        """Create and return the configured output directory.
+
+        Returns:
+            The output directory, created if it did not already exist.
+        """
         output_dir = Path(self.config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
@@ -555,8 +561,9 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
             Path to the exported ``.pte`` file.
 
         Raises:
-            ImportError: If ``executorch`` or the backend's extension is not installed.
-            ValueError: If the configured backend, or the SoC a SoC-locked backend compiles for, is not supported.
+            ImportError: If the backend's extension is not installed (``executorch`` itself is checked first, by
+                :meth:`check_dependencies`).
+            ValueError: If the SoC a SoC-locked backend compiles for is not supported.
             RuntimeError: If ``torch.export`` or ExecuTorch lowering fails.
         """
         backend = self._resolve_backend()

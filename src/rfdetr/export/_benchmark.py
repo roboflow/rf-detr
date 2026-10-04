@@ -12,21 +12,47 @@ desynchronize from in the first place. The same split applies to :func:`measure_
 on a CUDA GPU don't show up in host resident memory, so it reads ``torch.cuda.mem_get_info()`` there instead of process
 RSS.
 
-Private module: no compatibility guarantee across versions. Formerly duplicated per export format (see the removed
+The module itself is private. Its timing API (:class:`BenchmarkResult`, :class:`MemoryResult`, :func:`measure_latency`,
+:func:`measure_memory`) is re-exported from the public ``rfdetr.export.benchmark``, and that import path is the
+compatibility surface: the objects keep ``__module__`` pointing here, so their reprs, tracebacks and pickles name this
+private path. Everything else in the module, such as the COCO and notebook display helpers, has no compatibility
+guarantee across versions. Formerly duplicated per export format (see the removed
 ``rfdetr.export._onnx.inference._onnx_runtime``); this is the single home for it.
 """
 
 from __future__ import annotations
 
 import gc
+import json
+import os
+import platform
+import shutil
+import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from typing import NamedTuple
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NamedTuple
+from urllib.parse import quote
+from urllib.request import urlopen
 
 import numpy as np
+import numpy.typing as npt
+import supervision as sv
+from PIL import Image
+from tqdm.auto import tqdm
+
+from rfdetr.assets.coco_classes import COCO_CLASSES
+from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.utilities.logger import get_logger
+
+if TYPE_CHECKING:
+    import torch
+
+logger = get_logger()
 
 
 class BenchmarkResult(NamedTuple):
@@ -58,21 +84,28 @@ def _mean_std(timings: list[float]) -> tuple[float, float]:
     return float(arr.mean()), float(arr.std())
 
 
-def _measure_cuda(fn: Callable[[], object], warmup: int, runs: int) -> tuple[float, float]:
-    """Time ``fn`` with CUDA events — captures device-side kernel execution, not Python overhead."""
+def _measure_cuda(fn: Callable[[], object], warmup: int, runs: int, device: torch.device) -> tuple[float, float]:
+    """Time ``fn`` with CUDA events on *device*: the elapsed time between two events recorded on its current stream.
+
+    The events bracket the work ``fn`` enqueues, so this is time on the GPU's timeline, not pure kernel time: a host
+    stall that leaves the stream idle between the events (a ``fn`` that blocks on the host, or slow Python before the
+    launch) is included. Every synchronize targets *device*, so ``"cuda:1"`` is timed on GPU 1 even while another GPU is
+    the process's current device.
+    """
     import torch
 
     for _ in range(warmup):
         fn()
-    torch.cuda.synchronize()
+    torch.cuda.synchronize(device)
+    stream = torch.cuda.current_stream(device)
     start = torch.cuda.Event(enable_timing=True)  # type: ignore[no-untyped-call]
     end = torch.cuda.Event(enable_timing=True)  # type: ignore[no-untyped-call]
     timings: list[float] = []
     for _ in range(runs):
-        start.record()
+        start.record(stream)
         fn()
-        end.record()
-        torch.cuda.synchronize()
+        end.record(stream)
+        torch.cuda.synchronize(device)
         timings.append(start.elapsed_time(end))
     return _mean_std(timings)
 
@@ -89,17 +122,47 @@ def _measure_wall_clock(fn: Callable[[], object], warmup: int, runs: int) -> tup
     return _mean_std(timings)
 
 
+def _cuda_device(device: str | torch.device) -> torch.device | None:
+    """Parse *device* and return it when it names a CUDA device, else ``None``.
+
+    Dispatch matches the parsed device type rather than the raw string, so ``"cuda:0"`` and ``torch.device("cuda", 1)``
+    take the CUDA path just like ``"cuda"`` does.
+
+    Args:
+        device: Device string or :class:`torch.device`.
+
+    Returns:
+        The parsed CUDA device, or ``None`` for any other device type.
+
+    Raises:
+        RuntimeError: If *device* is a string torch cannot parse as a device.
+
+    Examples:
+        >>> import torch
+        >>> _cuda_device("cuda:1")
+        device(type='cuda', index=1)
+        >>> _cuda_device(torch.device("cuda"))
+        device(type='cuda')
+        >>> _cuda_device("cpu") is None
+        True
+    """
+    import torch
+
+    parsed = torch.device(device)
+    return parsed if parsed.type == "cuda" else None
+
+
 def measure_latency(
     fn: Callable[[], object],
     *,
     label: str,
-    device: str = "cpu",
+    device: str | torch.device = "cpu",
     warmup: int = 20,
     runs: int = 100,
 ) -> BenchmarkResult:
     """Measure the latency of a zero-argument callable.
 
-    ``device="cuda"`` times with CUDA events; any other value times with ``time.perf_counter``. Pass
+    A CUDA device times with CUDA events on that device; any other device times with ``time.perf_counter``. Pass
     a thunk wrapping only the runtime's forward call to measure ``forward_ms``, or a thunk wrapping
     preprocess + forward + postprocess to measure ``end2end_ms`` — the caller chooses the scope by
     what it wraps, this function only times whatever it is given.
@@ -107,12 +170,18 @@ def measure_latency(
     Args:
         fn: Zero-argument callable to time.
         label: Name for the resulting :class:`BenchmarkResult` row, e.g. ``"TensorRT forward"``.
-        device: ``"cuda"`` selects the CUDA-event timer; any other value uses ``perf_counter``.
+        device: Device the callable runs on, as a string or :class:`torch.device`. Any CUDA device — ``"cuda"``,
+            ``"cuda:1"``, ``torch.device("cuda", 1)`` — selects the CUDA-event timer on that device; any other device
+            type (``"cpu"``, ``"mps"``, ...) uses ``perf_counter``.
         warmup: Untimed warm-up calls before measurement starts, to skip first-call JIT/lazy-init cost.
         runs: Timed calls used to compute the mean and standard deviation.
 
     Returns:
         A :class:`BenchmarkResult` with ``mean_ms``, ``std_ms``, and the derived ``fps``.
+
+    Raises:
+        ValueError: If ``warmup`` is negative or ``runs`` is not positive.
+        RuntimeError: If ``device`` is a string torch cannot parse as a device.
 
     Examples:
         >>> result = measure_latency(lambda: sum(range(1000)), label="sum", warmup=1, runs=3)
@@ -126,8 +195,11 @@ def measure_latency(
     if runs <= 0:
         raise ValueError("runs must be positive")
 
-    measure = _measure_cuda if device == "cuda" else _measure_wall_clock
-    mean_ms, std_ms = measure(fn, warmup, runs)
+    cuda_device = _cuda_device(device)
+    if cuda_device is None:
+        mean_ms, std_ms = _measure_wall_clock(fn, warmup, runs)
+    else:
+        mean_ms, std_ms = _measure_cuda(fn, warmup, runs, cuda_device)
     return BenchmarkResult(label, mean_ms, std_ms)
 
 
@@ -198,16 +270,27 @@ def _sampled_delta_mb(read_bytes_in_use: Callable[[], int]) -> Iterator[MemoryRe
 
 
 def _rss_delta_mb() -> Iterator[MemoryResult]:
-    """Measure host resident memory across a block via ``psutil``."""
-    import psutil  # type: ignore[import-untyped]
+    """Measure host resident memory across a block via ``psutil``.
+
+    Raises:
+        ImportError: If ``psutil`` is not installed, naming the extra that installs it.
+    """
+    # Local import: psutil is an optional dependency, needed only by the host-memory reader.
+    try:
+        import psutil  # type: ignore[import-untyped]
+    except ImportError as err:
+        raise ImportError(
+            "measure_memory() reads host memory with psutil, which is not installed. "
+            "Install it with `pip install 'rfdetr[visual]'`."
+        ) from err
 
     gc.collect()
     process = psutil.Process()
     yield from _sampled_delta_mb(lambda: int(process.memory_info().rss))
 
 
-def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
-    """Measure device memory in use across a block via ``torch.cuda.mem_get_info``.
+def _cuda_free_delta_mb(device: torch.device) -> Iterator[MemoryResult]:
+    """Measure memory in use on *device* across a block via ``torch.cuda.mem_get_info``.
 
     Device-wide, unlike ``torch.cuda.memory_allocated()`` — it also captures allocations made outside PyTorch's own
     caching allocator, such as ONNX Runtime's CUDA execution provider or a TensorRT engine's own ``cudaMalloc`` calls.
@@ -215,19 +298,19 @@ def _cuda_free_delta_mb() -> Iterator[MemoryResult]:
     import torch
 
     def device_bytes_in_use() -> int:
-        torch.cuda.synchronize()
-        free, total = torch.cuda.mem_get_info()
+        torch.cuda.synchronize(device)
+        free, total = torch.cuda.mem_get_info(device)
         return int(total - free)
 
     yield from _sampled_delta_mb(device_bytes_in_use)
 
 
 @contextmanager
-def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
+def measure_memory(*, device: str | torch.device = "cpu") -> Iterator[MemoryResult]:
     """Measure the memory growth caused by the code inside a ``with`` block.
 
-    ``device="cuda"`` reads free-device-memory shrinkage via ``torch.cuda.mem_get_info()``; any
-    other value reads host resident-memory growth via ``psutil``. Bracket both the runtime's
+    A CUDA device reads that device's free-memory shrinkage via ``torch.cuda.mem_get_info()``; any
+    other device reads host resident-memory growth via ``psutil``. Bracket both the runtime's
     construction *and* its first inference call — several runtimes allocate lazily (an ONNX
     Runtime session grows its arena on first ``run``, an ExecuTorch CoreML program compiles on
     first ``execute``), so closing the block right after construction undercounts the real
@@ -239,10 +322,16 @@ def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
     few milliseconds, or one that never releases the GIL, can collect no samples at all.
 
     Args:
-        device: ``"cuda"`` selects the device-memory reader; any other value uses host RSS.
+        device: Device to measure, as a string or :class:`torch.device`. Any CUDA device — ``"cuda"``, ``"cuda:1"``,
+            ``torch.device("cuda", 1)`` — selects the device-memory reader for that device; any other device type
+            uses host RSS.
 
     Yields:
         A :class:`MemoryResult` filled in once the block exits.
+
+    Raises:
+        RuntimeError: If ``device`` is a string torch cannot parse as a device.
+        ImportError: On the host-memory path, if ``psutil`` is not installed (``pip install 'rfdetr[visual]'``).
 
     Note:
         Both figures are measurements, not guarantees, and neither is a per-runtime sandbox. In one
@@ -267,5 +356,518 @@ def measure_memory(*, device: str = "cpu") -> Iterator[MemoryResult]:
         >>> isinstance(mem.delta_mb, float)
         True
     """
-    reader = _cuda_free_delta_mb if device == "cuda" else _rss_delta_mb
-    yield from reader()
+    cuda_device = _cuda_device(device)
+    yield from (_rss_delta_mb() if cuda_device is None else _cuda_free_delta_mb(cuda_device))
+
+
+def _fmt_ms(result: BenchmarkResult | None) -> str:
+    """Format one :class:`BenchmarkResult` as ``"mean ± std"``, or ``"—"`` when the row has no scope for it.
+
+    Examples:
+        >>> _fmt_ms(None)
+        '—'
+        >>> _fmt_ms(BenchmarkResult("cpu", 10.0, 0.5))
+        '10.00 ± 0.50'
+    """
+    if result is None:
+        return "—"
+    return f"{result.mean_ms:.2f} ± {result.std_ms:.2f}"
+
+
+def _result_row(
+    format_label: str,
+    batch: int,
+    config: str,
+    forward: BenchmarkResult | None,
+    end2end: BenchmarkResult | None,
+    memory_mb: float | None,
+) -> dict[str, str | int | float]:
+    """Build one row of a cookbook's results table, keyed the same way across every export cookbook.
+
+    ``forward``/``end2end`` are per-call latency for the whole batch, so FPS is derived as
+    ``batch * 1000 / scope.mean_ms`` (images per second), not ``scope.fps`` (calls per second) — a batch-4 call
+    that takes 4x as long as batch-1 must still report the same throughput at both rows if the format scales
+    perfectly, and only the images/second column makes that comparison read correctly across batch sizes.
+
+    Args:
+        format_label: Row label, e.g. ``"ONNX"`` or ``"TensorRT (raw .trt engine)"``.
+        batch: Batch size this row was measured at.
+        config: Precision/backend/execution-provider string for this row, e.g. ``"CUDA EP"`` or ``"fp16 IR, CPU"``.
+        forward: Forward-only timing, or ``None`` if the format has no forward-only scope.
+        end2end: End-to-end (preprocess + forward + decode) timing, or ``None`` if the format has no end-to-end
+            scope (e.g. a forward-only micro-benchmark).
+        memory_mb: Device- or host-memory growth attributed to this row, or ``None`` if this row reuses an
+            already-measured number (see each cookbook's own memory-scope note for which rows do).
+
+    Returns:
+        A dict with keys ``Format``, ``Batch``, ``Config``, ``forward [ms]``, ``end2end [ms]``,
+        ``FPS [img/s] (end2end)``, ``Memory [MB]`` — one row for a :class:`pandas.DataFrame`.
+    """
+    scope = end2end or forward
+    if scope is None:
+        raise ValueError(f"_result_row({format_label!r}, batch={batch}) needs at least one of forward/end2end.")
+    fps = batch * scope.fps
+    return {
+        "Format": format_label,
+        "Batch": batch,
+        "Config": config,
+        "forward [ms]": _fmt_ms(forward),
+        "end2end [ms]": _fmt_ms(end2end),
+        "FPS [img/s] (end2end)": round(fps, 1),
+        "Memory [MB]": f"{memory_mb:.1f}" if memory_mb is not None else "—",
+    }
+
+
+def _tile_batch(single_nchw: np.ndarray[Any, Any], batch: int) -> np.ndarray[Any, Any]:
+    """Stack *batch* copies of one preprocessed ``(1, C, H, W)`` array into a ``(batch, C, H, W)`` array.
+
+    All *batch* copies are the same image — this measures throughput at a larger batch dimension, not batch diversity.
+    """
+    return np.concatenate([single_nchw] * batch, axis=0)
+
+
+def _decode_batch(
+    boxes: np.ndarray[Any, Any],
+    logits: np.ndarray[Any, Any],
+    image_size: tuple[int, int],
+    batch: int,
+    threshold: float,
+) -> None:
+    """Run :func:`~rfdetr.export._runtime.decode.decode_detections` over every image in a batched raw-output pair.
+
+    Discards the decoded detections — callers use this inside a :func:`~rfdetr.export._benchmark.measure_latency` thunk,
+    where only the wall-clock cost of decoding matters, not the result.
+    """
+    for i in range(batch):
+        decode_detections(boxes[i], logits[i], image_size, threshold=threshold)
+
+
+def _artifact_size_mb(*paths: Path) -> float:
+    """Total on-disk size of *paths* in megabytes, summing a directory's files recursively.
+
+    A single-file export (``.onnx``, ``.trt``, ``.pte``) is one path; a bundle export (OpenVINO's ``.xml`` + ``.bin``,
+    CoreML's ``.mlpackage`` directory) is passed as multiple paths or one directory path.
+    """
+    total_bytes = 0
+    for path in paths:
+        if path.is_dir():
+            total_bytes += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+        else:
+            total_bytes += path.stat().st_size
+    return total_bytes / 1e6
+
+
+#: Reported by :func:`cpu_brand` when the host is not macOS, or when the ``sysctl`` probe cannot run.
+_UNKNOWN_CPU_BRAND = "unknown CPU brand"
+
+
+def cpu_brand() -> str:
+    """CPU brand string as reported by macOS ``sysctl``, or a fixed placeholder when it cannot be read.
+
+    The per-hardware cookbooks print this in their Host cell, before any measurement runs, so a raised exception here
+    aborts the notebook on the first cell that matters. Two guards are needed rather than one: ``sysctl`` ships only on
+    Darwin, and ``subprocess.run(..., check=False)`` suppresses a non-zero *exit status* but not the
+    ``FileNotFoundError`` raised when the binary is missing from ``PATH`` entirely — so ``check=False`` alone still
+    crashes on the Linux and Windows hosts the CPU and mobile cookbooks claim to support.
+
+    Returns:
+        The trimmed brand string on macOS, or :data:`_UNKNOWN_CPU_BRAND` off Darwin, when the probe cannot be spawned,
+        or when it reports nothing.
+
+    Examples:
+        >>> isinstance(cpu_brand(), str)
+        True
+    """
+    if platform.system() != "Darwin":
+        return _UNKNOWN_CPU_BRAND
+    try:
+        probe = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return _UNKNOWN_CPU_BRAND
+    return probe.stdout.strip() or _UNKNOWN_CPU_BRAND
+
+
+def visualize_detections(detections: sv.Detections, image: Image.Image, save_path: Path | None = None) -> None:
+    """Annotate *detections* on *image* and display it inline (and optionally save it) in a notebook.
+
+    Falls back to :data:`~rfdetr.assets.coco_classes.COCO_CLASSES` for label text when *detections* carries no
+    ``class_name`` (e.g. a raw decoded output that never went through a class-name-aware decoder).
+
+    Args:
+        detections: Detections to draw, already thresholded by the caller.
+        image: The source image *detections* was decoded against.
+        save_path: When given, also saves the annotated image to this path.
+    """
+    if detections.class_id is None or detections.confidence is None:
+        raise ValueError("visualize_detections requires detections.class_id and detections.confidence to be set.")
+    names = detections.data.get("class_name") if detections.data else None
+    if names is None:
+        names = [COCO_CLASSES.get(int(c), str(c)) for c in detections.class_id]
+    labels = [f"{name} {conf:.2f}" for name, conf in zip(names, detections.confidence)]
+
+    annotated = sv.BoxAnnotator(thickness=3).annotate(scene=image.copy(), detections=detections)
+    annotated = sv.LabelAnnotator(text_scale=0.6, text_thickness=1, text_padding=4).annotate(
+        scene=annotated, detections=detections, labels=labels
+    )
+    if save_path is not None:
+        annotated.save(save_path)
+        print(f"Saved annotated image: {save_path}")
+    sv.plot_image(annotated)
+
+
+def parity(
+    ref_boxes: npt.ArrayLike,
+    ref_logits: npt.ArrayLike,
+    boxes: npt.ArrayLike,
+    logits: npt.ArrayLike,
+    min_score: float = 0.3,
+) -> str:
+    """Largest raw-output drift from a reference runtime, over the queries the reference scores above *min_score*.
+
+    Inputs are flattened to ``(queries, last_dim)`` first, so a batch-1 ``(1, Q, D)`` array and a ``(Q, D)`` array
+    compare the same way. Only queries whose reference sigmoid score exceeds *min_score* count: low-score queries are
+    discarded by decoding anyway, and their raw logits drift far more without changing any detection.
+
+    Args:
+        ref_boxes: Reference-runtime boxes.
+        ref_logits: Reference-runtime class logits.
+        boxes: Boxes of the runtime under test.
+        logits: Class logits of the runtime under test.
+        min_score: Sigmoid-score floor selecting which reference queries are compared.
+
+    Returns:
+        A one-line summary of the largest logit and box drift and how many queries it covers; when no reference query
+        clears *min_score* (an empty or low-confidence image) the line says drift was not measured instead of raising.
+
+    Examples:
+        >>> ref_logits = np.array([[3.0, -4.0], [-5.0, -6.0]])
+        >>> ref_boxes = np.zeros((2, 4))
+        >>> parity(ref_boxes, ref_logits, ref_boxes + 0.01, ref_logits + 0.5)
+        'max|Δlogit| 0.5000, max|Δbox| 0.01000 over 1 confident queries'
+        >>> parity(ref_boxes, ref_logits - 20, ref_boxes, ref_logits)
+        'no reference query scores above 0.3; drift not measured over 0 confident queries'
+    """
+    arrays = [np.asarray(a, dtype=np.float32) for a in (ref_boxes, ref_logits, boxes, logits)]
+    ref_boxes, ref_logits, boxes, logits = (a.reshape(-1, a.shape[-1]) for a in arrays)
+    confident = 1.0 / (1.0 + np.exp(-ref_logits.max(axis=1))) > min_score
+    if not confident.any():
+        return f"no reference query scores above {min_score}; drift not measured over 0 confident queries"
+    max_logit = float(np.abs(logits[confident] - ref_logits[confident]).max())
+    max_box = float(np.abs(boxes[confident] - ref_boxes[confident]).max())
+    return f"max|Δlogit| {max_logit:.4f}, max|Δbox| {max_box:.5f} over {int(confident.sum())} confident queries"
+
+
+#: Annotation archive for COCO 2017; ``instances_val2017.json`` is the only member the accuracy helpers read.
+_COCO_ANNOTATIONS_URL = "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"
+_COCO_VAL_ANNOTATIONS_MEMBER = "annotations/instances_val2017.json"
+#: Fixed origin of the val2017 JPEGs; image URLs are built from it, never from an annotation record's ``coco_url``.
+_COCO_VAL2017_IMAGE_URL = "http://images.cocodataset.org/val2017/"
+#: Socket timeout of each image request, in seconds: a stalled connection fails instead of hanging the cell.
+_DOWNLOAD_TIMEOUT_S = 60.0
+#: Score floor for mAP: low enough to keep the whole precision-recall curve, as ``RFDETR.evaluate`` does.
+_COCO_EVAL_THRESHOLD = 0.001
+
+
+@dataclass(frozen=True)
+class CocoValSubset:
+    """COCO val2017 images on disk, the annotation file, and the image IDs selected for evaluation.
+
+    Attributes:
+        images_dir: Directory holding the ``val2017`` JPEGs.
+        annotations_path: Path to ``instances_val2017.json``.
+        image_ids: Selected image IDs, in evaluation order.
+    """
+
+    images_dir: Path
+    annotations_path: Path
+    image_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CocoMapResult:
+    """Box mAP of one runtime on a COCO val2017 subset.
+
+    Attributes:
+        map50_95: COCO mAP averaged over IoU 0.50:0.95, in ``[0, 1]``.
+        map50: mAP at IoU 0.50, in ``[0, 1]``.
+        n_images: Number of images scored.
+    """
+
+    map50_95: float
+    map50: float
+    n_images: int
+
+
+def _download(url: str, dest: Path, timeout: float = _DOWNLOAD_TIMEOUT_S) -> None:
+    """Download *url* to *dest* only once the whole body has arrived; a separate function so tests can replace it.
+
+    The body is streamed into a ``.part`` sibling and moved onto *dest* with :func:`os.replace` after its size
+    matches ``Content-Length``. An interrupted, timed-out, or truncated transfer therefore never leaves a partial file
+    at *dest*, which the image cache would otherwise treat as finished on every later run.
+
+    Args:
+        url: Source URL.
+        dest: Final file path; parent directories are created.
+        timeout: Socket timeout in seconds, applied to the connection and to each read.
+
+    Raises:
+        OSError: If the request fails or times out (``urllib.error.URLError`` is an ``OSError``), or the body is
+            shorter than ``Content-Length``. The ``.part`` file is removed and *dest* is left untouched.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(f"{dest.name}.part")
+    try:
+        with urlopen(url, timeout=timeout) as response, part.open("wb") as file:
+            shutil.copyfileobj(response, file)
+            expected = response.headers.get("Content-Length")
+        actual = part.stat().st_size
+        if expected is not None and expected.isdigit() and actual != int(expected):
+            raise OSError(f"Truncated download for {url!r}: got {actual} bytes, expected {expected}.")
+        os.replace(part, dest)
+    finally:
+        with suppress(FileNotFoundError):
+            part.unlink()
+
+
+def _coco_image_path(images_dir: Path, file_name: object) -> Path:
+    """Return where the COCO image *file_name* is stored, refusing any name that would leave *images_dir*.
+
+    The annotation file travels over plain HTTP, so its ``file_name`` values are untrusted. Only a bare file name
+    that resolves to a direct child of *images_dir* is accepted: nested and absolute paths fail the bare-name check,
+    and ``..`` or the empty name, which pass it, fail the resolved-parent check.
+
+    Args:
+        images_dir: Directory that holds the ``val2017`` JPEGs.
+        file_name: The annotation record's ``file_name`` value.
+
+    Returns:
+        ``images_dir / file_name``.
+
+    Raises:
+        ValueError: If *file_name* is not a string naming a file directly inside *images_dir*.
+
+    Examples:
+        >>> _coco_image_path(Path("val2017"), "000000000139.jpg").name
+        '000000000139.jpg'
+        >>> _coco_image_path(Path("val2017"), "../evil.jpg")
+        Traceback (most recent call last):
+        ...
+        ValueError: Refusing COCO image file name '../evil.jpg': it must name a file directly inside val2017.
+    """
+    images_dir_resolved = images_dir.resolve()
+    if (
+        not isinstance(file_name, str)
+        or Path(file_name).name != file_name
+        or (images_dir_resolved / file_name).resolve().parent != images_dir_resolved
+    ):
+        raise ValueError(
+            f"Refusing COCO image file name {file_name!r}: it must name a file directly inside {images_dir}."
+        )
+    return images_dir / file_name
+
+
+def _pick_ids(image_ids: list[int], n_images: int | None, seed: int) -> list[int]:
+    """Choose *n_images* of the sorted *image_ids* with a seeded shuffle, or all of them when *n_images* is ``None``."""
+    if n_images is None:
+        return image_ids
+    if n_images > len(image_ids):
+        raise ValueError(f"Requested {n_images} images, but the split has only {len(image_ids)}.")
+    rng = np.random.default_rng(seed)
+    return [int(image_id) for image_id in rng.permutation(image_ids)[:n_images]]
+
+
+def select_coco_val_ids(annotations_path: Path, n_images: int | None = 500, seed: int = 0) -> list[int]:
+    """Pick a reproducible subset of COCO val2017 image IDs.
+
+    Args:
+        annotations_path: Path to ``instances_val2017.json``.
+        n_images: Number of images, or ``None`` for every image in the split.
+        seed: Shuffle seed. The same seed selects the same images on every machine.
+
+    Returns:
+        Image IDs: sorted when *n_images* is ``None``, otherwise the first *n_images* of a seeded shuffle.
+
+    Raises:
+        TypeError: If *n_images* is not an ``int`` (or ``None``).
+        ValueError: If *n_images* is below 1, or exceeds the number of images in the split.
+
+    Examples:
+        >>> import tempfile
+        >>> path = Path(tempfile.mkdtemp()) / "instances.json"
+        >>> _ = path.write_text(json.dumps({"images": [{"id": 3}, {"id": 1}, {"id": 2}]}))
+        >>> select_coco_val_ids(path, None)
+        [1, 2, 3]
+        >>> len(select_coco_val_ids(path, 2))
+        2
+        >>> select_coco_val_ids(path, 0)
+        Traceback (most recent call last):
+        ...
+        ValueError: n_images must be at least 1, or None for the whole split; got 0.
+    """
+    _check_n_images(n_images)
+    image_ids = sorted(image["id"] for image in json.loads(Path(annotations_path).read_text())["images"])
+    return _pick_ids(image_ids, n_images, seed)
+
+
+def _check_n_images(n_images: int | None) -> None:
+    """Refuse a non-integer or ``< 1`` count: ``0`` selects nothing, a negative one slices from the shuffle's end."""
+    if n_images is not None and (isinstance(n_images, bool) or not isinstance(n_images, int)):
+        raise TypeError(f"n_images must be an int or None; got {n_images!r}.")
+    if n_images is not None and n_images < 1:
+        raise ValueError(f"n_images must be at least 1, or None for the whole split; got {n_images}.")
+
+
+def fetch_coco_val2017(root: Path, n_images: int | None = 500, seed: int = 0) -> CocoValSubset:
+    """Download the COCO val2017 annotations and the selected images into *root*, skipping files already present.
+
+    Only the images in the subset are fetched, one by one from the fixed ``images.cocodataset.org/val2017/`` URL
+    (never from a record's ``coco_url``), so a 500-image subset avoids the full 780 MB image archive. The first run
+    downloads the 241 MB annotation archive and extracts all of it under ``root/annotations/``; the archive itself is
+    then deleted.
+
+    Args:
+        root: Directory that receives ``annotations/instances_val2017.json`` and ``val2017/``.
+        n_images: Number of images to select, or ``None`` for the full split.
+        seed: Selection seed passed to :func:`select_coco_val_ids`.
+
+    Returns:
+        The subset, ready for :func:`evaluate_coco_map`.
+
+    Raises:
+        ValueError: If *n_images* is below 1 or exceeds the split, or a selected record's ``file_name`` is not a bare
+            name inside ``val2017/``; raised before any image is downloaded.
+        OSError: If a download fails, times out, or arrives truncated (``urllib.error.URLError`` is an ``OSError``).
+
+    Examples:
+        Skipped when run as a doctest: it downloads the 241 MB annotation archive and 500 images.
+
+        >>> subset = fetch_coco_val2017(Path("coco"), n_images=500)  # doctest: +SKIP
+        >>> len(subset.image_ids)  # doctest: +SKIP
+        500
+    """
+    _check_n_images(n_images)
+    root = Path(root)
+    annotations_path = root / _COCO_VAL_ANNOTATIONS_MEMBER
+    if not annotations_path.exists():
+        # Imported here: ``rfdetr.datasets`` pulls in torch and torchvision, which this module otherwise keeps lazy.
+        from rfdetr.datasets._develop import _download_and_extract
+
+        _download_and_extract(_COCO_ANNOTATIONS_URL, root, is_complete=annotations_path.exists)
+    all_records = json.loads(annotations_path.read_text())["images"]  # parsed once: the file is ~450 MB
+    image_ids = _pick_ids(sorted(image["id"] for image in all_records), n_images, seed)
+    images_dir = root / "val2017"
+    selected = set(image_ids)
+    records = [image for image in all_records if image["id"] in selected]
+    # Validate every selected name up front, so one poisoned record stops the run before anything is written.
+    image_paths = [_coco_image_path(images_dir, record["file_name"]) for record in records]
+    missing = [path for path in image_paths if not path.exists()]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(lambda path: _download(_COCO_VAL2017_IMAGE_URL + quote(path.name), path), missing))
+    return CocoValSubset(images_dir=images_dir, annotations_path=annotations_path, image_ids=tuple(image_ids))
+
+
+def _coco_records(
+    output: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | sv.Detections,
+    image_id: int,
+    image_size: tuple[int, int],
+    num_select: int | None,
+    background_class_id: int | None,
+) -> list[dict[str, Any]]:
+    """Turn one image's runtime output into COCO detection records (``bbox`` in pixel ``xywh``)."""
+    if isinstance(output, sv.Detections):
+        if len(output) == 0:
+            return []
+        if output.confidence is None or output.class_id is None:
+            raise ValueError("Decoded detections need confidence and class_id to be scored.")
+        xyxy, scores, class_ids = output.xyxy, output.confidence, output.class_id
+    else:
+        boxes, logits = (np.asarray(array) for array in output)
+        if boxes.ndim == 3:
+            boxes, logits = boxes[0], logits[0]
+        decoded = decode_detections(
+            boxes,
+            logits,
+            image_size,
+            threshold=_COCO_EVAL_THRESHOLD,
+            num_select=num_select,
+            background_class_id=background_class_id,
+        )
+        xyxy, scores, class_ids = decoded.xyxy, decoded.confidence, decoded.class_id
+    return [
+        {
+            "image_id": image_id,
+            "category_id": int(class_id),
+            "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
+            "score": float(score),
+        }
+        for (x1, y1, x2, y2), score, class_id in zip(xyxy, scores, class_ids)
+    ]
+
+
+def evaluate_coco_map(
+    run: Callable[[Image.Image], tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | sv.Detections],
+    subset: CocoValSubset,
+    *,
+    num_select: int | None = None,
+    background_class_id: int | None = None,
+    progress: bool = True,
+) -> CocoMapResult:
+    """Score one runtime's box mAP on a COCO val2017 subset, one image at a time (batch 1).
+
+    *run* receives each image as an RGB PIL image and returns either the raw ``(dets, labels)`` arrays (normalized
+    ``cxcywh`` boxes and class logits, with or without a leading batch axis of one) or already-decoded
+    :class:`supervision.Detections` in pixel ``xyxy`` (the ``RFDETR.predict()`` path). Raw outputs are decoded with
+    :func:`~rfdetr.export._runtime.decode.decode_detections` at a 0.001 score floor.
+
+    Args:
+        run: The runtime under test, wrapped to take one PIL image.
+        subset: Images and annotations from :func:`fetch_coco_val2017`.
+        num_select: Query/class pairs kept per image when decoding raw outputs; ``None`` keeps one per query.
+        background_class_id: Class slot dropped when decoding raw outputs. ``None`` (default) suits the official
+            COCO checkpoints, whose sparse category IDs use every slot; the decoder's own default ``-1`` would drop
+            category 90.
+        progress: Whether to show a progress bar.
+
+    Returns:
+        mAP@0.50:0.95 and mAP@0.50 over the subset. Both are ``0.0``, with a logged warning, when the runtime produced
+        no detection on any image: the symptom of a reduced-precision runtime whose logits collapsed.
+
+    Raises:
+        ImportError: If ``faster-coco-eval`` is missing; the ``train`` extra (``pip install "rfdetr[train]"``) ships it.
+        ValueError: If *run* returns :class:`supervision.Detections` without ``confidence`` or ``class_id``, or the
+            annotation file names an image outside ``subset.images_dir``.
+
+    Examples:
+        Skipped when run as a doctest: it needs ``faster-coco-eval``, a fetched subset and a runtime to score.
+
+        >>> result = evaluate_coco_map(run, subset)  # doctest: +SKIP
+        >>> result.map50_95  # doctest: +SKIP
+        0.41
+    """
+    from faster_coco_eval import COCO, COCOeval_faster
+
+    coco_gt = COCO(str(subset.annotations_path))
+    records: list[dict[str, Any]] = []
+    for image_id in tqdm(subset.image_ids, desc="COCO mAP", disable=not progress):
+        file_name = coco_gt.loadImgs([image_id])[0]["file_name"]
+        with Image.open(_coco_image_path(subset.images_dir, file_name)) as image:
+            rgb = image.convert("RGB")
+        records += _coco_records(run(rgb), image_id, rgb.size, num_select, background_class_id)
+    if not records:
+        if subset.image_ids:
+            logger.warning(
+                f"evaluate_coco_map: the runtime produced no detections on any of {len(subset.image_ids)} images, so "
+                "mAP is reported as 0.0. A reduced-precision runtime can collapse the logits; check its precision."
+            )
+        return CocoMapResult(map50_95=0.0, map50=0.0, n_images=len(subset.image_ids))
+    # print_function: COCOeval logs its 12-line summary through ``logger.info``; only ``stats`` is needed here
+    evaluator = COCOeval_faster(coco_gt, coco_gt.loadRes(records), "bbox", print_function=lambda *_args: None)
+    evaluator.params.imgIds = list(subset.image_ids)
+    evaluator.evaluate()
+    evaluator.accumulate()
+    evaluator.summarize()
+    return CocoMapResult(
+        map50_95=float(evaluator.stats[0]), map50=float(evaluator.stats[1]), n_images=len(subset.image_ids)
+    )

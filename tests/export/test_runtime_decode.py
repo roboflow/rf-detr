@@ -14,8 +14,10 @@ that lets one query produce more than one detection, thresholding, and the empty
 from __future__ import annotations
 
 import numpy as np
+import torch
 
 from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.models.postprocess import PostProcess
 
 
 class TestDecodeDetections:
@@ -118,6 +120,28 @@ class TestDecodeDetections:
         decoded = decode_detections(boxes, logits, (10, 10), num_select=1, background_class_id=None)
 
         assert decoded.query_index.tolist() == [0]
+
+    def test_default_keeps_final_coco_slot_like_predict(self) -> None:
+        """With the default, slot 90 of a 91-slot COCO head survives and matches ``PostProcess`` (``predict()``).
+
+        Official COCO checkpoints keep every slot, and the final one is the real class 90. Excluding it by default would
+        silently drop those detections, so the decoder must agree with ``PostProcess`` on labels, scores and boxes.
+        """
+        boxes = np.array([[0.5, 0.5, 0.2, 0.2], [0.3, 0.3, 0.1, 0.1]], dtype=np.float32)
+        logits = np.full((2, 91), -9.0, dtype=np.float32)
+        logits[0, 90] = 9.0  # slot 90 is the top score
+        logits[1, 5] = 3.0
+
+        decoded = decode_detections(boxes, logits, (100, 50))
+
+        expected = PostProcess(num_select=2)(
+            {"pred_logits": torch.from_numpy(logits)[None], "pred_boxes": torch.from_numpy(boxes)[None]},
+            torch.tensor([[50, 100]]),
+        )[0]
+        keep = expected["scores"] > 0.3
+        assert decoded.class_id.tolist() == expected["labels"][keep].tolist() == [90, 5]
+        np.testing.assert_allclose(decoded.confidence, expected["scores"][keep].numpy(), rtol=1e-5)
+        np.testing.assert_allclose(decoded.xyxy, expected["boxes"][keep].numpy(), rtol=1e-5, atol=1e-4)
 
     def test_returns_empty_arrays_when_nothing_clears_threshold(self) -> None:
         """No surviving detection yields empty arrays, not ``None`` or a ragged shape.
