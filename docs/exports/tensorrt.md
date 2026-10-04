@@ -89,9 +89,9 @@ The larger models gain less: their global attention, which stays FP16, is a bigg
 
 !!! warning "Engine size on the T4"
 
-    On the T4 the INT8 engine is larger than the FP16 one for Large at batch 1 and for Nano at batch 8 and 32, where the RTX 5070 shows the opposite. The cause has not been diagnosed. Speed and accuracy are unaffected, but check the file size if disk or load time matters.
+    On the T4 the INT8 engine is larger than the FP16 one for Large at batch 1 (83 against 70 MB) and for Nano at batch 4, 8 and 32 (79, 120 and 366 MB against 65, 70 and 113 MB), where the RTX 5070 shows the opposite. The cause has not been diagnosed. What TensorRT's engine inspector shows on the T4: the layers' constants are the same at every batch (29 MB for INT8, 51 MB for FP16 on Nano), so it is not the weights; the bytes outside them grow by 10.3 MB per image of batch for INT8 against 1.5 MB for FP16, and by about 31 MB more than FP16 on Large at batch 1, so the cost follows the image size; and it does not change with INT8 attention switched off or with `builder_optimization_level=1`. Speed and accuracy are unaffected, but check the file size if disk or load time matters.
 
-The INT8 weights take 32 MB against FP16's 54 MB on Nano. On top of the weights, both engines store a block of zeros: TensorRT pads the 3-channel image of the FP16 patch embedding to 4 or 8 channels, picked per build, and keeps the added channels as a constant of 0.3 or 1.5 MB per image of batch. Two builds of the same graph can therefore differ by up to 1.2 MB per image, which is why the batch-32 sizes are ranges, and why an INT8 engine at batch 32 can come out larger than an FP16 one built separately.
+The INT8 weights take 32 MB against FP16's 54 MB on Nano. On the RTX 5070 both engines also store a block of zeros: TensorRT pads the 3-channel image of the FP16 patch embedding to 4 or 8 channels, picked per build, and keeps the added channels as a constant of 0.3 or 1.5 MB per image of batch. Two builds of the same graph can therefore differ by up to 1.2 MB per image, which is why the batch-32 sizes are ranges.
 
 The INT8 placement follows what was measured, not "quantize every matrix multiply":
 
