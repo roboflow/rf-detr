@@ -34,8 +34,8 @@ def _save_image(path: Path, *, mode: str = "RGB", size: tuple[int, int] = (12, 9
     Examples:
         >>> import tempfile
         >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     image = Image.open(_save_image(Path(tmp) / "a.png", mode="L", size=(5, 3)))
-        ...     (image.mode, image.size)
+        ...     with Image.open(_save_image(Path(tmp) / "a.png", mode="L", size=(5, 3))) as image:
+        ...         (image.mode, image.size)
         ('L', (5, 3))
     """
     pixels = np.random.default_rng(seed).integers(0, 256, (size[1], size[0], 3), dtype=np.uint8)
