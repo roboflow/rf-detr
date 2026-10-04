@@ -11,7 +11,7 @@ description: Overview of exporting RF-DETR models to ONNX, TensorRT, TFLite, Lit
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
     - Export to LiteRT (`.tflite`) straight from PyTorch with `litert-torch` — no ONNX or TensorFlow step
     - TensorRT conversion delivers the lowest latency on NVIDIA GPUs — 2.3 ms for Nano on a T4, TensorRT FP16, model only, batch 1 (the architecture headline on the [Benchmarks page](../learn/benchmarks.md); this page's own L4 end-to-end numbers below are a different measurement, see "Which latency number is this?")
-    - INT8 quantization is dynamic-range and needs no calibration data
+    - INT8 quantization: dynamic-range for TFLite (no calibration data), static for TensorRT (calibration data required; see [TensorRT INT8](tensorrt.md#int8))
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment

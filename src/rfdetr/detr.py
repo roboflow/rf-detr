@@ -2011,19 +2011,26 @@ class RFDETR:
                     and subject to change; upstream dependency instabilities
                     (``onnx2tf``, ``ai_edge_litert``, ``executorch``,
                     ``coremltools``, ``litert-torch``) may affect results.
-            quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``,
-                ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16
-                ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range INT8 model (INT8 weights,
-                float activations; needs no calibration data). ``format="litert"`` accepts only ``None`` /
-                ``"fp32"`` (it writes one float32 ``.tflite``) and raises ``NotImplementedError`` for the other
-                modes rather than silently ignoring them.
-            calibration_data: Ignored. Any value other than ``None`` raises a ``UserWarning`` and is never read, so a
-                missing path or a malformed array does not fail the export. No data could change the exported
-                ``.tflite`` models: ``quantization="int8"`` produces a dynamic-range model whose weight scales come
-                from the weights themselves, and fp32/fp16 involve no calibration.
-            max_images: Ignored along with *calibration_data*, whose image directory it would have capped. Defaults to
-                ``100``.
+            quantization: Quantization mode, read by the formats below and ignored by the others. Its meaning is per
+                format:
+
+                * ``format="tflite"`` — one of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``. ``None`` / ``"fp32"`` /
+                  ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range
+                  INT8 model (INT8 weights, float activations; needs no calibration data).
+                * ``format="tensorrt"`` — ``None`` (an FP16 or FP32 engine, as ``fp16`` says) or ``"int8"``: most of
+                  the backbone encoder and decoder run in INT8 and the rest in FP16 (placement in the TensorRT export
+                  guide), with activation ranges calibrated on *calibration_data*, which is then required. Detection
+                  models only, static batch, ``fp16=True``, TensorRT 10 or newer; the engine is named ``*_int8.trt``.
+                * ``format="litert"`` — accepts only ``None`` / ``"fp32"`` (it writes one float32 ``.tflite``) and
+                  raises ``NotImplementedError`` for the other modes rather than silently ignoring them.
+            calibration_data: Representative images for ``format="tensorrt"`` with ``quantization="int8"``, where it is
+                required and refused otherwise: a directory of images (preprocessed as :meth:`predict` does), a
+                ``.npy`` path, or an array shaped ``(N, C, H, W)`` already normalized that way. The activation ranges
+                come from these images, so they should look like the deployment data. ``format="tflite"`` ignores it
+                with a ``UserWarning`` and never reads it, because no data could change the exported ``.tflite``
+                models; the other formats ignore it.
+            max_images: Most images read from a *calibration_data* directory (the first ones by file name), for
+                ``format="tensorrt"`` with ``quantization="int8"``; ignored otherwise. Defaults to ``100``.
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
@@ -2103,14 +2110,22 @@ class RFDETR:
                 ``soc`` is missing; if the resolved export shape is not divisible by ``patch_size * num_windows``;
                 if ``coreml_precision``/``coreai_precision``/``openvino_precision``, or ``quantization`` for
                 ``format="tflite"``, is not one of their accepted values; if ``notes`` holds a non-finite float or a
-                circular reference, for a format that embeds it; or if ``format="tensorrt"`` with
-                ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+                circular reference, for a format that embeds it; if ``format="tensorrt"`` with
+                ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``; or if
+                ``format="tensorrt"`` gets a ``quantization`` other than ``None`` / ``"int8"``, ``calibration_data``
+                without ``"int8"``, or ``"int8"`` without ``calibration_data``, with a ``max_images`` that is not a
+                positive integer, with a ``calibration_data`` that is neither a path nor an ``(N, C, H, W)`` float
+                array, or combined with ``fp16=False``, ``dynamic_batch=True`` or ``backbone_only=True``. A
+                ``calibration_data`` path that does not exist is refused before the ONNX export; during the INT8
+                conversion, calibration data that yields no usable image or a non-finite range, and attention INT8
+                cannot be placed around, also raise.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
                 paths require a fixed batch size; if ``format="litert"`` is combined with a ``quantization``
-                other than ``None`` / ``"fp32"``; or if ``format="litert"`` is asked to export a keypoint
-                model (``backbone_only=True`` still converts).
+                other than ``None`` / ``"fp32"``; if ``format="litert"`` is asked to export a keypoint model
+                (``backbone_only=True`` still converts); or if ``format="tensorrt"`` with ``quantization="int8"`` is
+                asked to export a segmentation or keypoint model.
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
@@ -2121,9 +2136,10 @@ class RFDETR:
                 ``backend="qnn"``); also raised for ``format="tensorrt"`` with ``fp16=True`` on a
                 strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
-                ``fp16=False``. Each format's availability check runs before the model does; what it does not
-                cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package) is found
-                missing only during the conversion.
+                ``fp16=False``; and for ``format="tensorrt"`` with ``quantization="int8"`` without onnxruntime or
+                ``onnxconverter-common``, or on a TensorRT older than 10. Each format's availability check runs before
+                the model does; what it does not cover (a backend's extension, the TensorRT cast's packages, the INT8
+                TensorRT host checks, the Core AI runtime package) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """

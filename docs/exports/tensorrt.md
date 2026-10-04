@@ -12,7 +12,7 @@ If you want lower latency on NVIDIA GPUs, you can convert the exported ONNX mode
 
 ## Prerequisites
 
-- Install the TensorRT extra: `pip install rfdetr[tensorrt]` (provides `tensorrt`, `polygraphy`, `onnx`, and `onnxconverter-common`; the latter two cast the ONNX graph to FP16 on TensorRT 11+; no `trtexec` binary needed)
+- Install the TensorRT extra: `pip install rfdetr[tensorrt]` (provides `tensorrt`, `polygraphy`, `onnx`, `onnxconverter-common` and `onnxruntime-gpu`; `onnx` and `onnxconverter-common` cast the ONNX graph to FP16 on TensorRT 11+, and onnxruntime calibrates [INT8](#int8) engines; no `trtexec` binary needed)
 - A CUDA GPU (the engine is built for the local GPU architecture)
 - Export an ONNX model first (for example: `output/inference_model.onnx`)
 
@@ -28,7 +28,7 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="tensorrt")
 ```
 
-This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](advanced.md#export-parameters) — unless `output_name` is set).
+This exports `output/inference_model.onnx` first and then produces `output/inference_model_fp16.trt` (the `_fp16`/`_fp32`/`_int8` suffix always reflects the precision actually built — see `fp16` in [Export Parameters](advanced.md#export-parameters) — unless `output_name` is set).
 
 !!! note "Dynamic batch"
 
@@ -39,6 +39,73 @@ This exports `output/inference_model.onnx` first and then produces `output/infer
     ```
 
     **Why a single profile with `min=1`, not several.** The engine always builds with one TensorRT optimization profile spanning the full `1 .. max_batch_size` range, rather than several narrower profiles picked at runtime with `set_optimization_profile_async`. This is a deliberate trade-off, not a limitation: it keeps the export API and the runtime simple (one engine, one profile, no profile-selection logic in the caller), and the measured cost at the tuned `opt` batch is small (see the [changelog](https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md) for per-GPU numbers). A deployment that never serves batches below some floor — for example a DeepStream or Triton pipeline always fed a fixed batch of frames (see [#376](https://github.com/roboflow/rf-detr/issues/376)) — pays for optimizing kernels down to batch 1 even though it never uses them, foreclosing per-batch-band multi-profile support (`set_optimization_profile_async` plus several `Profile()` entries), which is TensorRT's own standard mitigation for the away-from-opt penalty. A `min_batch_size` (paired with `max_batch_size`) or a list of `opt_batch_sizes` each with its own profile may become configurable in a future release if a narrow-band deployment need arises; today, export one profile spanning the batches you plan to serve.
+
+## INT8
+
+Pass `quantization="int8"` and a directory of representative images to build an engine that runs most of the backbone encoder and decoder in INT8 and the rest in FP16:
+
+```python
+from rfdetr import RFDETRSmall
+
+model = RFDETRSmall(pretrain_weights="<path/to/checkpoint.pth>")
+
+model.export(format="tensorrt", quantization="int8", calibration_data="path/to/images", batch_size=8)
+```
+
+This writes `output/rfdetr-small_int8.trt` (next to the intermediate `output/rfdetr-small.onnx`). The export runs the first `max_images` (default `100`) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as `predict()` does, and records each quantized tensor's largest absolute value. Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. `calibration_data` also accepts a `.npy` path or an array shaped `(N, C, H, W)`, already normalized the way `predict()` normalizes; an integer array, raw pixels, is refused. Calibration runs the graph at the export's `batch_size`, so its host memory grows with the batch: about 9.5 GB for Nano at batch 32.
+
+Measured with TensorRT 11.3 on an RTX 5070 (sm_120) and a Tesla T4 (sm_75), calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from a captured CUDA graph and from back-to-back `execute_async_v3` calls with no synchronization in between. On the RTX 5070, Nano across batch sizes:
+
+| Batch | Precision | AP    | AP50  | Latency, CUDA graph | Latency, plain call | Engine    |
+| ----- | --------- | ----- | ----- | ------------------- | ------------------- | --------- |
+| 1     | FP16      | 48.03 | 67.10 | 0.922 ms            | 1.675 ms            | 62 MB     |
+| 1     | INT8      | 47.40 | 66.23 | 0.693 ms (1.33×)    | 1.582 ms (1.06×)    | 41 MB     |
+| 8     | FP16      | 48.02 | 67.11 | 0.497 ms            | 0.554 ms            | 73 MB     |
+| 8     | INT8      | 47.29 | 66.19 | 0.363 ms (1.37×)    | 0.426 ms (1.30×)    | 51 MB     |
+| 32    | FP16      | 48.03 | 67.12 | 0.482 ms            | 0.494 ms            | 68–108 MB |
+| 32    | INT8      | 47.30 | 66.18 | 0.338 ms (1.43×)    | 0.350 ms (1.41×)    | 49–87 MB  |
+
+Every model at batch 1, measured the same way:
+
+| Model  | AP, FP16 | AP, INT8      | Latency, CUDA graph      | Latency, plain call      | Engine, FP16 → INT8 |
+| ------ | -------- | ------------- | ------------------------ | ------------------------ | ------------------- |
+| Nano   | 48.03    | 47.40 (−0.63) | 0.922 → 0.693 ms (1.33×) | 1.675 → 1.582 ms (1.06×) | 62 → 41 MB          |
+| Small  | 52.79    | 52.18 (−0.61) | 1.432 → 1.157 ms (1.24×) | 2.221 → 1.998 ms (1.11×) | 67 → 45 MB          |
+| Medium | 54.69    | 53.84 (−0.85) | 1.625 → 1.370 ms (1.19×) | 2.536 → 2.412 ms (1.05×) | 71 → 48 MB          |
+| Large  | 56.52    | 56.02 (−0.50) | 2.000 → 1.820 ms (1.10×) | 2.806 → 2.682 ms (1.05×) | 68 → 51 MB          |
+
+The same on a Tesla T4, from a Colab notebook run (INT8 loses 0.55 to 0.85 AP, 1.0% to 1.6% of the FP16 AP, and is faster everywhere):
+
+| Model, batch | AP, FP16 | AP, INT8      | Latency, CUDA graph     | Latency, plain call     | Engine, FP16 → INT8 |
+| ------------ | -------- | ------------- | ----------------------- | ----------------------- | ------------------- |
+| Nano, 1      | 48.07    | 47.31 (−0.77) | 3.21 → 2.65 ms (1.21×)  | 3.26 → 2.68 ms (1.22×)  | 60 → 48 MB          |
+| Small, 1     | 52.83    | 52.23 (−0.60) | 5.31 → 4.60 ms (1.16×)  | 5.25 → 4.68 ms (1.12×)  | 64 → 59 MB          |
+| Medium, 1    | 54.66    | 53.80 (−0.85) | 6.71 → 5.76 ms (1.16×)  | 6.69 → 5.89 ms (1.14×)  | 69 → 67 MB          |
+| Large, 1     | 56.51    | 55.96 (−0.55) | 10.18 → 9.14 ms (1.11×) | 10.13 → 9.28 ms (1.09×) | 70 → 83 MB          |
+| Nano, 8      | 47.98    | 47.23 (−0.75) | 2.72 → 2.13 ms (1.28×)  | 2.72 → 2.16 ms (1.26×)  | 70 → 120 MB         |
+| Nano, 32     | 48.02    | 47.28 (−0.75) | 2.97 → 2.31 ms (1.28×)  | 2.98 → 2.33 ms (1.28×)  | 113 → 366 MB        |
+
+The larger models gain less: their global attention, which stays FP16, is a bigger share of the work, and Large keeps its windowed attention in FP16 as well (see below).
+
+!!! warning "Engine size on the T4"
+
+    On the T4 the INT8 engine is larger than the FP16 one for Large at batch 1 (83 against 70 MB) and for Nano at batch 4, 8 and 32 (79, 120 and 366 MB against 65, 70 and 113 MB), where the RTX 5070 shows the opposite. The cause has not been diagnosed. What TensorRT's engine inspector shows on the T4: the layers' constants are the same at every batch (29 MB for INT8, 51 MB for FP16 on Nano), so it is not the weights; the bytes outside them grow by 10.3 MB per image of batch for INT8 against 1.5 MB for FP16, and by about 31 MB more than FP16 on Large at batch 1, so the cost follows the image size; and it does not change with INT8 attention switched off or with `builder_optimization_level=1`. Speed and accuracy are unaffected, but check the file size if disk or load time matters.
+
+The INT8 weights take 32 MB against FP16's 54 MB on Nano. On the RTX 5070 both engines also store a block of zeros: TensorRT pads the 3-channel image of the FP16 patch embedding to 4 or 8 channels, picked per build, and keeps the added channels as a constant of 0.3 or 1.5 MB per image of batch. Two builds of the same graph can therefore differ by up to 1.2 MB per image, which is why the batch-32 sizes are ranges.
+
+The INT8 placement follows what was measured, not "quantize every matrix multiply":
+
+- **INT8:** every backbone MLP, the windowed backbone blocks' attention with its projections (up to 325 tokens; see below), and the decoder's cross-attention, feed-forward and reference-point layers. Q/DQ pairs carry FP16 scales on the FP16 graph, so every layer left unquantized stays FP16.
+- **FP16:** the projector, the two-stage proposal head and the detection heads (quantizing them cost accuracy and bought nothing), plus the attention blocks below.
+- **The patch embedding stays FP16.** TensorRT ran it in INT8 on the image padded to 32 channels and stored the 29 added zero channels in the engine, a constant the size of the batch. On Nano that made the engine 110 MB at batch 8 and 315 MB at batch 32, and INT8 1.21× instead of 1.37× faster than FP16 at batch 8. Every convolution whose input channels are not a multiple of 32 stays FP16.
+- **Attention is all INT8 or all FP16.** A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, which TensorRT fuses into one INT8 attention kernel: the windowed backbone blocks of Nano (145 tokens), Small (257) and Medium (325). 325 is the largest window measured to pay (Medium: 5% faster from a CUDA graph, about equal with a plain call, −0.28 AP); on Large's 485-token windows INT8 attention ran no faster and cost 1.0 AP, so Large keeps them FP16. Windows of 326 to 484 tokens are not measured and stay FP16. The global blocks (580 tokens on Nano) and the decoder self-attention keep projections and attention in FP16 too. A windowed block has `(resolution / patch_size / num_windows)² + 1` tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.
+
+Requirements and limits:
+
+- Detection models only. Segmentation and keypoint models raise `NotImplementedError`; export them with `quantization=None`.
+- A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer.
+- At batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay. Without one, INT8 gains only 1.05–1.11× (the plain-call column above).
+- Measured on one GPU. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.
 
 !!! note "Who consumes the `.trt` engine?"
 
