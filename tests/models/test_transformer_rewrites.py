@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -31,6 +31,8 @@ from rfdetr.models.transformer import (
     _module_call_is_plain,
     gen_sineembed_for_position,
 )
+from tests._markers import requires_cuda
+from tests.models._transformer_support import EAGER_CUDA, decoder_layer, gate_open, record_apply_calls
 
 #: Every ``_global*hook*`` name ``torch.nn.modules.module`` defines (torch 2.14). Only the forward, forward-pre,
 #: backward and backward-pre registries act inside ``Module.__call__``; the ``*_registration_hooks`` fire on
@@ -57,25 +59,6 @@ _GLOBAL_CALL_HOOK_REGISTRIES = [
     "_global_backward_pre_hooks",
 ]
 _MODULE_CALL_HOOK_REGISTRIES = ["_forward_hooks", "_forward_pre_hooks", "_backward_hooks", "_backward_pre_hooks"]
-
-
-def _training_decoder_layer() -> TransformerDecoderLayer:
-    """Build a small training-mode decoder layer with three query groups.
-
-    Examples:
-        >>> layer = _training_decoder_layer()
-        >>> layer.training, layer.group_detr
-        (True, 3)
-    """
-    return TransformerDecoderLayer(
-        d_model=16,
-        sa_nhead=4,
-        ca_nhead=4,
-        dim_feedforward=32,
-        dropout=0.0,
-        group_detr=3,
-        num_feature_levels=2,
-    ).train()
 
 
 def _linear_relu_inputs(dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -144,9 +127,20 @@ class TestLinearReLUAutograd:
 
         assert grads[1:] == (None, None)
 
+    def test_torch_ships_the_private_addmm_activation_op(self) -> None:
+        """``torch._addmm_activation`` exists on the installed torch, so op drift fails here instead of skipping tests.
+
+        ``_LinearReLU`` is built on this private op, and the CPU cases of its bitwise test skip when the op has no CPU
+        kernel. A torch release that renames or drops the op would silently turn those skips into the whole signal, so
+        this canary fails loudly instead.
+        """
+        assert hasattr(torch, "_addmm_activation"), (
+            "torch._addmm_activation is gone: _LinearReLU (models/transformer.py) is built on it and must be reworked"
+        )
+
 
 @pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@requires_cuda
 class TestNonFp32SourcesKeepThePreviousOps:
     """Autocast casts only fp32 matmul inputs, so a cast folded into a non-fp32 source would change the ops."""
 
@@ -157,10 +151,8 @@ class TestNonFp32SourcesKeepThePreviousOps:
         Autocast leaves an fp64 matmul input in fp64, so writing the sum in bf16 would hand the projections a dtype
         their fp64 weights reject; an fp16 source has no measured bitwise argument. Both keep the plain add.
         """
-        applied: list[object] = []
-        real_apply = _AddInDtype.apply
-        monkeypatch.setattr(_AddInDtype, "apply", lambda *args: (applied.append(args), real_apply(*args))[1])
-        layer = _training_decoder_layer().cuda()
+        applied = record_apply_calls(monkeypatch, _AddInDtype)
+        layer = decoder_layer().cuda()
         tensor = torch.randn(2, 6, 16, device="cuda", dtype=dtype)
         pos = torch.randn(2, 6, 16, device="cuda", dtype=dtype)
 
@@ -175,10 +167,8 @@ class TestNonFp32SourcesKeepThePreviousOps:
         Casting fp64 operands to bf16 would feed ``linear2``'s fp64 weight a bf16 activation, an error the plain path
         never raises because autocast does not cast fp64.
         """
-        applied: list[object] = []
-        real_apply = _LinearReLU.apply
-        monkeypatch.setattr(_LinearReLU, "apply", lambda *args: (applied.append(args), real_apply(*args))[1])
-        layer = _training_decoder_layer().cuda().double()
+        applied = record_apply_calls(monkeypatch, _LinearReLU)
+        layer = decoder_layer().cuda().double()
         tgt = torch.randn(2, 6, 16, device="cuda", dtype=torch.float64)
 
         with torch.autocast("cuda", dtype=torch.bfloat16):
@@ -208,13 +198,12 @@ class TestEagerCuda:
 
         assert _eager_cuda(Mock(spec=torch.Tensor, is_cuda=True)) is False
 
-    def test_is_false_on_a_rocm_build(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @patch("rfdetr.models.transformer._IS_HIP", new=True)
+    def test_is_false_on_a_rocm_build(self) -> None:
         """A ROCm (HIP) build keeps the previous ops although its AMD tensors report ``is_cuda``.
 
         The rewrites' speed and bitwise parity were measured on NVIDIA CUDA only.
         """
-        monkeypatch.setattr("rfdetr.models.transformer._IS_HIP", True)
-
         assert _eager_cuda(Mock(spec=torch.Tensor, is_cuda=True)) is False
 
     def test_is_false_inside_a_torch_func_transform(self) -> None:
@@ -237,25 +226,22 @@ class TestSineEmbeddingEligibility:
     Forcing ``_eager_cuda`` lets CPU exercise the routing; the rewrite's ops are device independent.
     """
 
+    @patch(EAGER_CUDA, new=gate_open)
     def test_even_dim_takes_the_interleaved_write(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Control: with the gate open an even ``dim`` takes the interleaved write, so the odd case below is real."""
-        applied: list[object] = []
-        real_apply = _InterleavedSinCos.apply
-        monkeypatch.setattr(_InterleavedSinCos, "apply", lambda *args: (applied.append(args), real_apply(*args))[1])
-        monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
+        applied = record_apply_calls(monkeypatch, _InterleavedSinCos)
 
         gen_sineembed_for_position(torch.rand(2, 8, 4), dim=6)
 
         assert len(applied) == 1
 
-    def test_odd_dim_keeps_the_plain_ops_and_their_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @patch(EAGER_CUDA, new=gate_open)
+    def test_odd_dim_keeps_the_plain_ops_and_their_error(self) -> None:
         """An odd ``dim`` raises the plain path's error instead of returning a wider embedding.
 
         The interleaved write builds ``ceil(dim / 2)`` frequencies, so an odd ``dim`` silently produced a different
         width on CUDA than the ``RuntimeError`` CPU raises for the same call.
         """
-        monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
-
         with pytest.raises(RuntimeError):
             gen_sineembed_for_position(torch.rand(2, 8, 4), dim=5)
 
@@ -290,46 +276,40 @@ class TestWeightSubclassesKeepTheModuleOps:
     so it must keep the previous ops. The CUDA gate is forced open to run the routing on CPU.
     """
 
+    @patch(EAGER_CUDA, new=gate_open)
     def test_ffn_with_plain_parameters_takes_the_epilogue(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Control: with the gate open, plain ``linear1`` parameters take the fused epilogue."""
-        applied: list[object] = []
-        real_apply = _LinearReLU.apply
-        monkeypatch.setattr(_LinearReLU, "apply", lambda *args: (applied.append(args), real_apply(*args))[1])
-        monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
-        layer = _training_decoder_layer()
+        applied = record_apply_calls(monkeypatch, _LinearReLU)
+        layer = decoder_layer()
 
         layer._ffn_hidden(torch.randn(2, 6, 16))
 
         assert len(applied) == 1
 
+    @patch(EAGER_CUDA, new=gate_open)
     @pytest.mark.parametrize("name", ["weight", "bias"])
     def test_ffn_with_a_subclass_parameter_keeps_the_two_ops(self, name: str, monkeypatch: pytest.MonkeyPatch) -> None:
         """A wrapped ``linear1`` weight or bias keeps ``relu(linear1(x))``."""
-        applied: list[object] = []
-        real_apply = _LinearReLU.apply
-        monkeypatch.setattr(_LinearReLU, "apply", lambda *args: (applied.append(args), real_apply(*args))[1])
-        monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
-        layer = _training_decoder_layer()
+        applied = record_apply_calls(monkeypatch, _LinearReLU)
+        layer = decoder_layer()
         setattr(layer.linear1, name, _subclass_parameter(getattr(layer.linear1, name)))
 
         layer._ffn_hidden(torch.randn(2, 6, 16))
 
         assert applied == []
 
-    def test_self_attention_with_plain_projections_is_eligible(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @patch(EAGER_CUDA, new=gate_open)
+    def test_self_attention_with_plain_projections_is_eligible(self) -> None:
         """Control: with the gate open, plain in-projection parameters are eligible for the grouped path."""
-        monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
-        layer = _training_decoder_layer()
+        layer = decoder_layer()
 
         assert layer._grouped_self_attention_eligible(torch.randn(2, 12, 16), None, None) is True
 
+    @patch(EAGER_CUDA, new=gate_open)
     @pytest.mark.parametrize("name", ["in_proj_weight", "in_proj_bias"])
-    def test_self_attention_with_a_subclass_projection_is_ineligible(
-        self, name: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_self_attention_with_a_subclass_projection_is_ineligible(self, name: str) -> None:
         """A wrapped packed in-projection keeps the ``self_attn`` module call."""
-        monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
-        layer = _training_decoder_layer()
+        layer = decoder_layer()
         setattr(layer.self_attn, name, _subclass_parameter(getattr(layer.self_attn, name)))
 
         assert layer._grouped_self_attention_eligible(torch.randn(2, 12, 16), None, None) is False
@@ -366,7 +346,7 @@ class TestPosEmbedForLinearHonoursOverrides:
 
     def test_delegates_to_an_instance_override(self) -> None:
         """A ``with_pos_embed`` assigned on the instance is honoured too, which a class check alone would miss."""
-        layer = _training_decoder_layer()
+        layer = decoder_layer()
         layer.with_pos_embed = lambda tensor, pos: tensor + 2 * pos  # type: ignore[method-assign,assignment]
         tensor, pos = torch.randn(2, 6, 16), torch.randn(2, 6, 16)
 
@@ -398,22 +378,19 @@ def _small_two_stage_transformer(hidden_dim: int = 16) -> Transformer:
     return transformer
 
 
-class TestReplacedRefPointHead:
-    """The sine-embedding dtype gate inspects ``ref_point_head`` only after confirming it is the built ``MLP``."""
+def test_replaced_ref_point_head_without_layers_runs_the_forward() -> None:
+    """A replacement head with no ``.layers`` (here a plain ``nn.Linear``) still runs, as it did before the rewrite.
 
-    def test_a_head_without_layers_runs_the_forward(self) -> None:
-        """A replacement head with no ``.layers`` (here a plain ``nn.Linear``) still runs, as it did before the rewrite.
+    Reading ``ref_point_head.layers[0]`` ahead of the ``MLP`` type check raised ``AttributeError`` on every device.
+    """
+    transformer = _small_two_stage_transformer().eval()
+    transformer.decoder.ref_point_head = nn.Linear(32, 16)
+    srcs, pos_embeds = [torch.randn(2, 16, 4, 4)], [torch.randn(2, 16, 4, 4)]
+    masks = [torch.zeros(2, 4, 4, dtype=torch.bool)]
 
-        Reading ``ref_point_head.layers[0]`` ahead of the ``MLP`` type check raised ``AttributeError`` on every device.
-        """
-        transformer = _small_two_stage_transformer().eval()
-        transformer.decoder.ref_point_head = nn.Linear(32, 16)
-        srcs, pos_embeds = [torch.randn(2, 16, 4, 4)], [torch.randn(2, 16, 4, 4)]
-        masks = [torch.zeros(2, 4, 4, dtype=torch.bool)]
+    hidden_states = transformer(srcs, masks, pos_embeds, torch.rand(3, 4), torch.randn(3, 16))[0]
 
-        hidden_states = transformer(srcs, masks, pos_embeds, torch.rand(3, 4), torch.randn(3, 16))[0]
-
-        assert hidden_states.shape[-1] == 16
+    assert hidden_states.shape[-1] == 16
 
 
 class TestModuleCallIsPlainFailsClosed:
@@ -461,18 +438,6 @@ class TestModuleCallIsPlainFailsClosed:
         assert _module_call_is_plain(linear) is False
 
 
-def test_torch_ships_the_private_addmm_activation_op() -> None:
-    """``torch._addmm_activation`` exists on the installed torch, so op drift fails here instead of skipping tests.
-
-    ``_LinearReLU`` is built on this private op, and the CPU cases of its bitwise test skip when the op has no CPU
-    kernel. A torch release that renames or drops the op would silently turn those skips into the whole signal, so this
-    canary fails loudly instead.
-    """
-    assert hasattr(torch, "_addmm_activation"), (
-        "torch._addmm_activation is gone: _LinearReLU (models/transformer.py) is built on it and must be reworked"
-    )
-
-
 @dataclass
 class _RoutedCalls:
     """Arguments the eager-rewrite entry points received while the CUDA gate was forced open on CPU."""
@@ -483,7 +448,7 @@ class _RoutedCalls:
 
 
 @pytest.fixture
-def bf16_gate(monkeypatch: pytest.MonkeyPatch) -> _RoutedCalls:
+def bf16_gate(monkeypatch: pytest.MonkeyPatch, forced_eager_cuda_gate: None) -> _RoutedCalls:
     """Force the eager-CUDA gate open with a bf16 autocast dtype on CPU and record what the rewrites receive.
 
     There is no autocast on CPU, so the spies assert routing only: each returns the fp32 value the plain ops give, which
@@ -511,8 +476,6 @@ def bf16_gate(monkeypatch: pytest.MonkeyPatch) -> _RoutedCalls:
         calls.sine_dtypes.append(out_dtype)
         return real_sine(pos_tensor, dim)
 
-    monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
-    monkeypatch.setattr("rfdetr.models.transformer._cuda_autocast_dtype", lambda: torch.bfloat16)
     monkeypatch.setattr(_AddInDtype, "apply", add_spy)
     monkeypatch.setattr(_LinearReLU, "apply", ffn_spy)
     monkeypatch.setattr("rfdetr.models.transformer.gen_sineembed_for_position", sine_spy)
@@ -535,7 +498,7 @@ def _run_forward_post(layer: TransformerDecoderLayer) -> torch.Tensor:
     """Run one ``forward_post`` of ``layer`` on a small CPU batch with two feature levels.
 
     Examples:
-        >>> tuple(_run_forward_post(_training_decoder_layer()).shape)
+        >>> tuple(_run_forward_post(decoder_layer()).shape)
         (2, 12, 16)
     """
     output = layer.forward_post(
@@ -574,7 +537,7 @@ def _run_decoder_with_pass_through_layer(modify_head: Callable[[nn.Module], nn.M
         >>> tuple(_run_decoder_with_pass_through_layer().shape)
         (1, 2, 12, 16)
     """
-    decoder = TransformerDecoder(_training_decoder_layer(), num_layers=1, d_model=16, lite_refpoint_refine=True)
+    decoder = TransformerDecoder(decoder_layer(), num_layers=1, d_model=16, lite_refpoint_refine=True)
     decoder.layers = nn.ModuleList([_PassThroughLayer()])
     if modify_head is not None:
         decoder.ref_point_head = modify_head(decoder.ref_point_head)
@@ -615,7 +578,7 @@ class TestAutocastFoldsAreTakenOnlyForPlainModules:
 
     def test_pos_embed_for_linear_folds_the_add_into_the_autocast_dtype(self, bf16_gate: _RoutedCalls) -> None:
         """Control: a training layer's fp32 positional sum is emitted in the autocast dtype by ``_AddInDtype``."""
-        layer = _training_decoder_layer()
+        layer = decoder_layer()
 
         layer._pos_embed_for_linear(torch.randn(2, 12, 16), torch.randn(2, 12, 16))
 
@@ -623,7 +586,7 @@ class TestAutocastFoldsAreTakenOnlyForPlainModules:
 
     def test_ffn_hidden_folds_the_epilogue_in_the_autocast_dtype(self, bf16_gate: _RoutedCalls) -> None:
         """Control: a plain ``linear1`` takes the ReLU epilogue with its operands cast to the autocast dtype."""
-        layer = _training_decoder_layer()
+        layer = decoder_layer()
 
         layer._ffn_hidden(torch.randn(2, 12, 16))
 
@@ -631,7 +594,7 @@ class TestAutocastFoldsAreTakenOnlyForPlainModules:
 
     def test_ffn_hidden_keeps_the_two_ops_for_a_linear_subclass(self, bf16_gate: _RoutedCalls) -> None:
         """A ``linear1`` that is a subclass of ``nn.Linear`` may override its call, so it keeps ``relu(linear1(x))``."""
-        layer = _training_decoder_layer()
+        layer = decoder_layer()
         _subclassed(layer.linear1)
 
         layer._ffn_hidden(torch.randn(2, 12, 16))
@@ -640,14 +603,14 @@ class TestAutocastFoldsAreTakenOnlyForPlainModules:
 
     def test_cross_attention_query_is_folded_for_the_plain_module(self, bf16_gate: _RoutedCalls) -> None:
         """Control: self- and cross-attention both take the folded positional add, so the cases below are real."""
-        _run_forward_post(_training_decoder_layer())
+        _run_forward_post(decoder_layer())
 
         assert [call[2] for call in bf16_gate.add] == [torch.bfloat16, torch.bfloat16]
 
     @pytest.mark.parametrize("path", ["cross_attn", "cross_attn.sampling_offsets", "cross_attn.attention_weights"])
     def test_cross_attention_query_keeps_the_plain_add_for_a_subclass(self, path: str, bf16_gate: _RoutedCalls) -> None:
         """A subclassed ``MSDeformAttn`` or query head may observe the query, so only self-attention keeps the fold."""
-        layer = _training_decoder_layer()
+        layer = decoder_layer()
         _subclassed(layer.get_submodule(path))
 
         _run_forward_post(layer)

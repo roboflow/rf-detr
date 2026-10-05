@@ -5,6 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for rfdetr.utilities.compiler — version-compatible compile, trace and CUDA autocast predicates."""
 
+from unittest.mock import patch
+
 import pytest
 import torch
 
@@ -39,14 +41,13 @@ class TestIsCompiling:
         """Returns False on plain eager execution with no monkeypatching involved."""
         assert is_compiling() is False
 
-    def test_uses_public_predicate_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @patch.object(torch.compiler, "is_compiling", new=lambda: True, create=True)
+    def test_uses_public_predicate_when_available(self) -> None:
         """Reflects torch.compiler.is_compiling when that public predicate is present.
 
         PyTorch >=2.3 exposes the public predicate directly on torch.compiler; when it is present, is_compiling must
         defer to it rather than touching the legacy Dynamo API.
         """
-        monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True, raising=False)
-
         assert is_compiling() is True
 
     def test_falls_back_to_dynamo_predicate_when_public_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,38 +62,34 @@ class TestIsCompiling:
         assert is_compiling() is True
 
 
-class TestIsTracing:
-    """is_tracing reports whether a ``torch.jit.trace`` is recording the current call."""
+def test_is_tracing_returns_true_inside_a_jit_trace() -> None:
+    """Returns True for code that runs while ``torch.jit.trace`` records it.
 
-    def test_returns_true_inside_a_jit_trace(self) -> None:
-        """Returns True for code that runs while ``torch.jit.trace`` records it.
+    The decoder rewrites step aside under tracing because the ONNX/TorchScript exporters expect the plain ops; a
+    predicate that stayed False inside a trace would bake a custom autograd function into the exported graph.
+    """
+    seen: list[bool] = []
 
-        The decoder rewrites step aside under tracing because the ONNX/TorchScript exporters expect the plain ops; a
-        predicate that stayed False inside a trace would bake a custom autograd function into the exported graph.
-        """
-        seen: list[bool] = []
+    def record(x: torch.Tensor) -> torch.Tensor:
+        seen.append(is_tracing())
+        return x * 2
 
-        def record(x: torch.Tensor) -> torch.Tensor:
-            seen.append(is_tracing())
-            return x * 2
+    torch.jit.trace(record, torch.ones(2), check_trace=False)
 
-        torch.jit.trace(record, torch.ones(2), check_trace=False)
-
-        assert seen == [True]
+    assert seen == [True]
 
 
 class TestCudaAutocastDtype:
     """cuda_autocast_dtype reports CUDA autocast's compute dtype, or None when it is off."""
 
-    def test_returns_the_compute_dtype_when_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @patch.object(torch, "is_autocast_enabled", new=lambda *args: True)
+    @patch.object(torch, "get_autocast_dtype", new=lambda device: torch.bfloat16, create=True)
+    def test_returns_the_compute_dtype_when_enabled(self) -> None:
         """Returns the dtype from ``torch.get_autocast_dtype("cuda")`` while CUDA autocast is on.
 
         This is the path every current torch takes; the CUDA graph runner keys captures on it and the decoder emits its
         folded casts in it.
         """
-        monkeypatch.setattr(torch, "is_autocast_enabled", lambda *args: True)
-        monkeypatch.setattr(torch, "get_autocast_dtype", lambda device: torch.bfloat16, raising=False)
-
         assert cuda_autocast_dtype() == torch.bfloat16
 
     def test_falls_back_to_the_torch_2_2_api(self, monkeypatch: pytest.MonkeyPatch) -> None:
