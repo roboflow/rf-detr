@@ -2783,6 +2783,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p>Public <code>rfdetr.export.benchmark</code> exposes <code>measure_latency</code>, <code>measure_memory</code>, <code>BenchmarkResult</code> and <code>MemoryResult</code>, the helpers the per-hardware export cookbooks use. (<a href="https://github.com/roboflow/rf-detr/pull/1585">#1585</a>)</p>
 </li>
+<li>
+<p><code>RFDETR.predict()</code> accepts a keyword-only <code>antialias</code> flag (default <code>False</code>, unchanged behaviour). Pass <code>antialias=True</code> for checkpoints trained with torchvision resizing; exported models still resize without antialiasing. On MPS with PyTorch older than 2.7, antialiased resizing runs on the CPU. (<a href="https://github.com/roboflow/rf-detr/pull/1525">#1525</a>)</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
