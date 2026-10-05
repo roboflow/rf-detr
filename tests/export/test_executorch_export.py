@@ -952,18 +952,26 @@ _EXECUTORCH_E2E_VARIANTS = [
 ]
 
 
-@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS, ids=["detection", "segmentation"])
-def exported(
-    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+def _export_variant(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory, **model_kwargs: Any
 ) -> tuple[Any, torch.Tensor, Path, Any]:
-    """Export RFDETRNano/RFDETRSegNano to a ``.pte`` once per variant and reuse across the parity checks."""
+    """Export the RF-DETR variant of *request* to a ``.pte`` and build its eager reference and example input.
+
+    Args:
+        request: Fixture request whose ``param`` is a ``(model class name, validate function)`` pair.
+        tmp_path_factory: Factory for the output directory.
+        **model_kwargs: Keyword arguments for the model constructor, such as ``pretrain_weights=None``.
+
+    Returns:
+        The eager model in export mode, an example input, the ``.pte`` path and the validate function.
+    """
     import rfdetr
 
     model_cls_name, validate_fn = request.param
     model_cls = getattr(rfdetr, model_cls_name)
     torch.manual_seed(42)
     out_dir = tmp_path_factory.mktemp(f"executorch_{model_cls_name.lower()}")
-    detector = model_cls(pretrain_weights=None)
+    detector = model_cls(**model_kwargs)
     pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="xnnpack", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
@@ -972,6 +980,26 @@ def exported(
     # ExecuTorch ignores input strides and reads the buffer as contiguous NCHW (see issue #1233).
     example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution).contiguous()
     return model, example, Path(pte_path), validate_fn
+
+
+@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS, ids=["detection", "segmentation"])
+def exported(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[Any, torch.Tensor, Path, Any]:
+    """Export RFDETRNano/RFDETRSegNano to a ``.pte`` once per variant and reuse across the parity checks."""
+    return _export_variant(request, tmp_path_factory, pretrain_weights=None)
+
+
+@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS, ids=["detection", "segmentation"])
+def exported_pretrained(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> tuple[Any, torch.Tensor, Path, Any]:
+    """Export the pretrained RFDETRNano/RFDETRSegNano checkpoints to a ``.pte`` once per variant.
+
+    Random weights give the two-stage query selection proposal scores that differ by less than float32 noise, so the
+    order of the selected queries, and with it their scores, can differ between eager PyTorch and the runtime.
+    """
+    return _export_variant(request, tmp_path_factory)
 
 
 @pytest.fixture(scope="module")
@@ -1152,7 +1180,7 @@ class TestExecutorchEndToEnd:
         )
 
     def test_preprocessed_image_detections_match_pytorch(
-        self, exported: tuple[Any, torch.Tensor, Path, Any], photo_asset: Path
+        self, exported_pretrained: tuple[Any, torch.Tensor, Path, Any], photo_asset: Path
     ) -> None:
         """Detections from an image fed through ``infer_transforms`` must match the eager forward.
 
@@ -1170,7 +1198,7 @@ class TestExecutorchEndToEnd:
 
         from rfdetr.export.benchmark import infer_transforms, post_process
 
-        model, example, pte_path, _ = exported
+        model, example, pte_path, _ = exported_pretrained
         resolution = int(example.shape[-1])
         image = Image.open(photo_asset).convert("RGB")
         tensor, _ = infer_transforms((resolution, resolution))(image, None)
