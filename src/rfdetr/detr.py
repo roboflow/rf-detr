@@ -168,8 +168,10 @@ class _CUDAGraphInferenceModel:
             device: CUDA device the graph is captured on.
 
         Raises:
-            RuntimeError: If CUDA Graph capture fails. A failed capture can leave CUDA random-number state unusable
-                for the rest of the process, so the message asks for a restart.
+            torch.cuda.OutOfMemoryError: If CUDA Graph capture runs out of device memory. The message advises a smaller
+                ``batch_size`` and notes that a process restart may be required.
+            RuntimeError: If CUDA Graph capture fails for any other reason. A failed capture can leave CUDA
+                random-number state unusable for the rest of the process, so the message asks for a restart.
         """
         self._model = model
         self._static_input = sample_input
@@ -186,10 +188,24 @@ class _CUDAGraphInferenceModel:
 
         self._graph = torch.cuda.CUDAGraph()
         try:
-            with torch.inference_mode(), torch.cuda.graph(self._graph):
+            # Capture on the warm-up stream, which lives on ``device``. Without ``stream=``, torch reuses one
+            # process-wide capture stream created on whichever device was current at the first capture.
+            # "thread_local" checks only this thread's CUDA calls for capture safety; the default "global" mode also
+            # errors on unsafe calls from other threads, e.g. a cudaMalloc by another model's concurrent predict().
+            with (
+                torch.inference_mode(),
+                torch.cuda.graph(self._graph, stream=warmup_stream, capture_error_mode="thread_local"),
+            ):
                 self._static_output = model(self._static_input)
             # An error that CUDA only reports at the completion fence gets the same restart instruction.
             torch.cuda.synchronize(device)
+        except torch.cuda.OutOfMemoryError as exc:
+            # Keep the OOM type so callers' OOM handlers still match; the fix is less memory, not another backend.
+            raise torch.cuda.OutOfMemoryError(
+                "CUDA ran out of memory while capturing compile_backend='cudagraph'. Call inference() with a smaller "
+                "batch_size or free device memory first. A failed capture can leave CUDA random-number state "
+                "unusable, so a process restart may be required."
+            ) from exc
         except Exception as exc:
             # On torch 2.9.1 a rejected capture leaves CUDA random ops raising "Offset increment outside graph capture"
             # for the rest of the process, so even the default backend cannot be set up again after it.
@@ -216,14 +232,31 @@ class _CUDAGraphInferenceModel:
         return value
 
     def __call__(self, value: torch.Tensor) -> Any:
-        """Copy one fixed-shape batch into the graph, replay it, and return owned outputs."""
+        """Copy one fixed-shape batch into the graph, replay it, and return owned outputs.
+
+        Raises:
+            ValueError: If ``value``'s shape, dtype or device differs from the captured input, which ``copy_`` would
+                otherwise silently broadcast or cast.
+        """
+        static_input = self._static_input
+        if (value.shape, value.dtype, value.device) != (static_input.shape, static_input.dtype, static_input.device):
+            raise ValueError(
+                f"compile_backend='cudagraph' was captured for input shape {tuple(static_input.shape)}, dtype "
+                f"{static_input.dtype}, device {static_input.device}; got shape {tuple(value.shape)}, dtype "
+                f"{value.dtype}, device {value.device}. Pass a matching input or call inference() again with the "
+                "batch_size and dtype you need."
+            )
         with self._lock, torch.inference_mode():
             stream = torch.cuda.current_stream(value.device)
             stream.wait_event(self._completed)
             self._static_input.copy_(value)
-            self._graph.replay()
-            output = self._clone_output(self._static_output)
-            self._completed.record(stream)
+            try:
+                self._graph.replay()
+                output = self._clone_output(self._static_output)
+            finally:
+                # Record after the clone attempt, even a failed one, so the next caller waits for this replay.
+                # Recording before the clone would let another stream's replay overwrite outputs still being read.
+                self._completed.record(stream)
         return output
 
 
@@ -1743,6 +1776,12 @@ class RFDETR:
             compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
                 preserves the existing trace path. ``"cudagraph"`` is CUDA-only and captures a frozen TorchScript
                 trace; its static input/output buffers increase device memory, and setup captures once before replay.
+                Freezing uses ``torch.jit.freeze``, deprecated since torch 2.5 along with TorchScript; its default
+                ``optimize_numerics=True`` passes do not strictly preserve numerics, so outputs are not guaranteed to
+                match the ``"torchscript"`` backend bit for bit.
+                Capture checks only the calling thread's CUDA calls, but entering it still synchronizes the device
+                and empties the process's cached CUDA and pinned host memory, so call ``inference()`` before
+                serving threads start.
                 ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode; it can reduce steady-state latency
                 but has a substantially higher one-time compilation cost and its device/operator support depends on the
                 installed PyTorch version.
@@ -1756,6 +1795,8 @@ class RFDETR:
             RuntimeError: If the base model has already been cleared by a previous inplace optimization, or if
                 ``compile_backend="cudagraph"`` fails to capture the model. A failed capture can leave CUDA
                 random-number state unusable, so restart the process before trying another backend.
+            torch.cuda.OutOfMemoryError: If ``compile_backend="cudagraph"`` runs out of device memory during
+                capture. Retry with a smaller ``batch_size``; a process restart may be required first.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -1860,6 +1901,9 @@ class RFDETR:
                             dummy_input,
                         )
                         if compile_backend == "cudagraph":
+                            # Retained from the benchmarked configuration: the latency and COCO val2017 parity results
+                            # recorded in CHANGELOG.md were measured on this frozen trace, and no other reason for
+                            # freezing is recorded. Dropping it requires re-running both measurements on a GPU.
                             inference_model = torch.jit.freeze(inference_model)
                             inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
                     else:

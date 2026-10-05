@@ -780,7 +780,7 @@ class TestCudaGraphInferenceModel:
         wrapper._static_output = torch.tensor([3.0])
         wrapper._graph = order.graph
         wrapper._completed = order.completed
-        value = Mock()
+        value = Mock(shape=order.static_input.shape, dtype=order.static_input.dtype, device=order.static_input.device)
 
         with (
             patch("rfdetr.detr.torch.cuda.current_stream", return_value=order.stream) as mock_current_stream,
@@ -798,6 +798,28 @@ class TestCudaGraphInferenceModel:
         ]
         assert torch.equal(result, wrapper._static_output)
         assert result.data_ptr() != wrapper._static_output.data_ptr()
+
+    @pytest.mark.parametrize(
+        ("batch", "size", "dtype", "device"),
+        [
+            (1, 4, "float16", "cpu"),
+            (2, 8, "float16", "cpu"),
+            (2, 4, "float32", "cpu"),
+            (2, 4, "float16", "meta"),
+        ],
+    )
+    def test_rejects_input_unlike_the_captured_one(self, batch: int, size: int, dtype: str, device: str) -> None:
+        """An input differing from the captured batch, size, dtype or device fails instead of being broadcast or cast.
+
+        ``copy_`` into the static buffer would replicate a smaller batch or cast float32 into a float16 graph, so a
+        direct ``model.model.inference_model`` caller would get plausible but wrong results without this check.
+        """
+        wrapper = detr_module._CUDAGraphInferenceModel.__new__(detr_module._CUDAGraphInferenceModel)
+        wrapper._static_input = torch.zeros(2, 3, 4, 4, dtype=torch.float16)
+        value = torch.zeros(batch, 3, size, size, dtype=getattr(torch, dtype), device=device)
+
+        with pytest.raises(ValueError, match=r"captured for input shape \(2, 3, 4, 4\), dtype torch\.float16"):
+            wrapper(value)
 
     @pytest.mark.gpu
     def test_replays_from_two_streams_keep_inputs_and_returned_outputs_separate(self) -> None:
@@ -830,6 +852,35 @@ class TestCudaGraphInferenceModel:
         assert torch.equal(first[1], torch.tensor([4.0], device=device))
         assert torch.equal(second[0], torch.tensor([6.0], device=device))
         assert torch.equal(second[1], torch.tensor([10.0], device=device))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+    def test_capture_on_second_device_replays_the_callers_input(self) -> None:
+        """A graph captured on cuda:1 after one on cuda:0 must compute on the caller's input, not the dummy.
+
+        The first capture on ``cuda:0`` is what would create torch's shared default capture stream on that device; the
+        later ``cuda:1`` capture must still record its own work and match eager outputs for a new input.
+        """
+        first_device = torch.device("cuda:0")
+        second_device = torch.device("cuda:1")
+        with torch.cuda.device(first_device):
+            first_module = torch.jit.trace(_TupleModule().eval().to(first_device), torch.zeros(1, device=first_device))
+            detr_module._CUDAGraphInferenceModel(first_module, torch.zeros(1, device=first_device), first_device)
+        with torch.cuda.device(second_device):
+            second_module = torch.jit.trace(
+                _TupleModule().eval().to(second_device), torch.zeros(1, device=second_device)
+            )
+            wrapper = detr_module._CUDAGraphInferenceModel(
+                second_module, torch.zeros(1, device=second_device), second_device
+            )
+        value = torch.tensor([5.0], device=second_device)
+        expected = _TupleModule()(value)
+
+        output = wrapper(value)
+
+        torch.cuda.synchronize(second_device)
+        assert torch.equal(output[0], expected[0])
+        assert torch.equal(output[1], expected[1])
 
     @pytest.mark.gpu
     def test_capture_failure_reports_restart_and_keeps_the_cause(self) -> None:
