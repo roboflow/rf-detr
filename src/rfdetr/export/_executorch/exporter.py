@@ -199,7 +199,8 @@ def _build_partitioner(backend: str) -> list[Any]:
         # macOS 27.0, COCO val2017, all 5000 images): 48.05 -> 45.06 mAP and 14.0 -> 18.4 ms p50. The default
         # path already runs the delegate in fp16 and already reaches the Neural Engine (verified from the
         # `com.apple.ane` unified log); the explicit specs additionally cast the weights, which is what costs
-        # the accuracy. Compute units are chosen by whoever loads the .pte, not baked in here.
+        # the accuracy. With no compute-unit spec, ExecuTorch's CoreMLBackend converts with ct.ComputeUnit.ALL
+        # (`compute_unit_from_compile_specs` fallback, applied in its `ct.convert` call at lowering time).
         return [CoreMLPartitioner()]
     # QNN uses _lower_qnn instead of this function; this raise is reached only if a new
     # backend is added to _VALID_BACKENDS without a corresponding branch above.
