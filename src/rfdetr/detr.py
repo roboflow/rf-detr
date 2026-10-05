@@ -11,6 +11,7 @@ import io
 import json
 import operator
 import os
+import re
 import tempfile
 import threading
 import warnings
@@ -28,6 +29,15 @@ import requests
 import torch
 import torchvision.transforms.functional as F  # noqa: N812
 from PIL import Image
+
+try:
+    # torchvision 0.29 deprecated these codecs for removal in favour of TorchCodec. Once they are gone, local files
+    # passed to predict() decode through Pillow instead of ``import rfdetr`` failing.
+    from torchvision.io import ImageReadMode, decode_image
+
+    _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = True
+except ImportError:
+    _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES, COCO_CLASSES
@@ -121,6 +131,70 @@ def _uint8_image_to_chw_view(image: np.ndarray[Any, Any]) -> torch.Tensor:
     return torch.from_numpy(image.transpose((2, 0, 1)))
 
 
+#: Byte offset of the bit depth in a PNG file: the 8-byte signature, then the IHDR chunk's length, type, width and
+#: height (4 bytes each).
+_PNG_BIT_DEPTH_OFFSET = 24
+
+
+def _decode_local_image(path: str) -> torch.Tensor | None:
+    """Decode a local JPEG or PNG directly into RGB ``uint8`` CHW storage.
+
+    Pillow remains the compatibility path for every other format and for files that torchvision
+    cannot decode. Restricting the fast path to these two measured formats also avoids changing
+    animated-image semantics: torchvision represents animated GIFs as a four-dimensional tensor,
+    while Pillow exposes the first frame.
+
+    This is separate from :func:`rfdetr.datasets.io_utils.decode_image`, which the dataset readers use:
+    torchvision is a core dependency and yields the CHW tensor ``predict()`` consumes, whereas that
+    function's ``simplejpeg`` fast path needs the ``[train]`` extra and returns HWC NumPy arrays.
+
+    The file is read into memory once. Pillow validates the header of that in-memory buffer and
+    torchvision decodes the same buffer, so a file changed on disk after the read cannot skip
+    Pillow's decompression-bomb limit. The cost is that the whole encoded file is in memory before
+    Pillow inspects its header, whereas opening the path with Pillow reads only the header; a file
+    that ends up on the Pillow path pays that read before Pillow opens it again.
+
+    Unlike Pillow, torchvision's bundled libjpeg and libpng print their messages about corrupt data
+    (``Corrupt JPEG data: ...``) straight to the process's standard error. torchvision offers no hook to
+    route them through ``logging``, and redirecting file descriptor 2 would affect the whole process,
+    so they are left as is.
+
+    Args:
+        path: Local image path.
+
+    Returns:
+        An RGB ``uint8`` CHW tensor, or ``None`` when the caller should use Pillow.
+
+    Raises:
+        Image.DecompressionBombError: If Pillow's header check rejects an oversized image.
+    """
+    if not _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE or Path(path).suffix.lower() not in {".jpeg", ".jpg", ".png"}:
+        return None
+    try:
+        stream = io.BytesIO(Path(path).read_bytes())
+        # Opening is lazy: Pillow validates the header (including its decompression-bomb limit),
+        # while torchvision still owns the expensive pixel decode below.
+        with Image.open(stream) as header:
+            if header.format not in {"JPEG", "PNG"} or getattr(header, "n_frames", 1) != 1:
+                return None
+            # torchvision 0.21+ decodes a 16-bit PNG to uint16 (older releases raise), and either way the result is
+            # rejected below, so read the bit depth first rather than pay for a full decode.
+            if header.format == "PNG" and stream.getbuffer()[_PNG_BIT_DEPTH_OFFSET] == 16:
+                return None
+        # ``getbuffer()`` exposes the stream's own storage, so torchvision decodes exactly the bytes Pillow validated.
+        # The view is also writable, which ``torch.frombuffer`` expects; it warns on a read-only ``bytes`` object.
+        decoded = decode_image(torch.frombuffer(stream.getbuffer(), dtype=torch.uint8), mode=ImageReadMode.RGB)
+    except (OSError, RuntimeError, DeprecationWarning, AttributeError):
+        # A missing or unreadable path and bytes Pillow cannot identify raise OSError, torchvision raises RuntimeError
+        # for bytes it cannot decode, and torch raises AttributeError when the image operators were not loaded.
+        # torchvision 0.29+ also warns on every call that its codecs are deprecated, which ``-W error`` turns into a
+        # raised DeprecationWarning. The caller then opens the path with Pillow, which reports each of those cases
+        # with its usual error.
+        return None
+    # Only 8-bit data may reach the uint8 widening in predict(); any other decode stays on the compatibility path.
+    return decoded if decoded.dtype == torch.uint8 else None
+
+
 def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """Widen a ``uint8`` CHW tensor to the default float dtype and scale it into ``[0, 1]``.
 
@@ -149,6 +223,26 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """
     widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
     return widened.div_(scale)
+
+
+def _mps_lacks_antialiased_resize() -> bool:
+    """Report whether the installed torch predates MPS support for antialiased bilinear resize.
+
+    ``aten::_upsample_bilinear2d_aa`` has no MPS kernel before torch 2.7 (pytorch/pytorch#141287 tracks it, and
+    #145581 is the PR it credits for 2.7); ``v2.7.0`` is the first tag whose ``native_functions.yaml`` dispatches it to
+    MPS. Delete this predicate and the CPU-resize branch in :meth:`RFDETR.predict` once the ``torch`` floor in
+    ``pyproject.toml`` reaches 2.7.
+
+    Returns:
+        ``True`` when ``torch.__version__`` is older than 2.7. An unparsable version string counts as modern, so
+        the MPS path is not detoured through the CPU on an unrecognised build.
+
+    Examples:
+        >>> isinstance(_mps_lacks_antialiased_resize(), bool)
+        True
+    """
+    match = re.match(r"(\d+)\.(\d+)", torch.__version__)
+    return match is not None and (int(match.group(1)), int(match.group(2))) < (2, 7)
 
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
@@ -2772,6 +2866,8 @@ class RFDETR:
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
+        *,
+        antialias: bool = False,
         **kwargs: Any,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Performs model inference on the input images.
@@ -2801,6 +2897,17 @@ class RFDETR:
                 ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level
                 metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
                 needed.
+            antialias:
+                Whether to use antialiasing during the inference resize. Match it to the resize the checkpoint was
+                trained with. Keep this ``False`` for checkpoints trained with the antialias-free Albumentations
+                pipeline, which is what the default CPU augmentation backend uses when ``rfdetr[augment]`` is
+                installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU
+                augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or
+                antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time
+                therefore decides which setting a default-trained checkpoint expects. Exported models and the
+                ``rfdetr.export`` runtime helpers always resize with ``antialias=False``, so results with
+                ``antialias=True`` will not match them unless the caller pre-resizes the image with antialiasing.
+                Defaults to ``False`` to preserve the existing inference behavior.
             **kwargs:
                 Additional keyword arguments.
 
@@ -2843,13 +2950,15 @@ class RFDETR:
             But with the default ``include_source_image=True``, capturing ``source_image`` from that same tensor
             still does its own separate, blocking ``.cpu()`` call earlier in the loop — so an already-CUDA tensor
             input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
-            that copy as well.
+            that copy as well. The exception is MPS with ``antialias=True`` on torch < 2.7, which has no MPS kernel
+            for antialiased resize: there the whole preprocessing path, including an MPS-resident tensor input, runs
+            on the CPU and the resized batch is transferred to the device once.
 
             Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.
-            PIL and uint8 NumPy images skip a redundant range scan because their byte-to-float conversion
-            guarantees values in ``[0, 1]`` for both. Any resulting ``ValueError`` is raised only after all inputs
-            have been inspected, so valid-shaped images later in a multi-image call still have their conversion and
-            transfer queued before an earlier validation failure raises.
+            PIL images, natively decoded local files and uint8 NumPy images skip a redundant range scan because
+            their byte-to-float conversion guarantees values in ``[0, 1]``. Any resulting ``ValueError`` is raised
+            only after all inputs have been inspected, so valid-shaped images later in a multi-image call still
+            have their conversion and transfer queued before an earlier validation failure raises.
 
         Raises:
             ValueError: If ``shape`` cannot be unpacked as a two-element sequence,
@@ -2908,18 +3017,36 @@ class RFDETR:
         # Built lazily on the first uint8 image, then shared by the rest of the batch.
         uint8_scale: torch.Tensor | None = None
 
+        # torch < 2.7 has no MPS kernel for antialiased bilinear resize (pytorch#141287, #145581). Keep the whole
+        # preprocessing path on CPU in that case, so an input is never moved to MPS only to come straight back for
+        # resizing. MPS-resident tensor inputs take the same detour (device -> CPU, then the resized batch back to
+        # MPS). From torch 2.7 on the MPS kernel exists and this stays False; once the torch floor reaches 2.7,
+        # delete this branch together with `_mps_lacks_antialiased_resize`.
+        resize_on_cpu = antialias and self.model.device.type == "mps" and _mps_lacks_antialiased_resize()
+        preprocess_device = torch.device("cpu") if resize_on_cpu else self.model.device
+
         for img_input in images:
             img: Any = img_input
+            decoded_local_file = False
             if isinstance(img, str):
                 if urlparse(img).scheme in ("http", "https"):
                     resp = requests.get(img, timeout=30)
                     resp.raise_for_status()
                     img = io.BytesIO(resp.content)
-                img = Image.open(img)
+                else:
+                    decoded = _decode_local_image(img)
+                    if decoded is not None:
+                        img = decoded
+                        decoded_local_file = True
+                if not decoded_local_file:
+                    img = Image.open(img)
 
-            range_known_valid = False
-            deferred_widen = False
-            if not isinstance(img, torch.Tensor):
+            range_known_valid = decoded_local_file
+            deferred_widen = decoded_local_file
+            if decoded_local_file:
+                if include_source_image:
+                    source_images.append(img.permute(1, 2, 0).numpy().copy())  # type: ignore[union-attr]
+            elif not isinstance(img, torch.Tensor):
                 # Auto-convert PIL images from any colour mode (L, LA, RGBA, P,
                 # etc.) to RGB before converting to tensor.  This matches the
                 # standard detector API contract: callers passing a file path or
@@ -2962,8 +3089,9 @@ class RFDETR:
                         tensor_source = img
                     # Keep the 1-byte-per-channel storage for now: the widening to float is
                     # deferred until after the host-to-device transfer below, so only a quarter of
-                    # the bytes cross the bus and the widen+divide run on the accelerator. The view
-                    # is already (C, H, W), so every shape check and error message below is
+                    # the bytes cross the bus and the widen+divide run on the accelerator (except MPS
+                    # with antialias=True on torch < 2.7, where preprocessing stays on the CPU). The
+                    # view is already (C, H, W), so every shape check and error message below is
                     # unchanged.
                     img = _uint8_image_to_chw_view(tensor_source)
                     deferred_widen = True
@@ -3009,14 +3137,14 @@ class RFDETR:
             # CPU tensor headed to an accelerator; pin_memory() raises on a tensor the caller already placed on the
             # accelerator (a legitimate tensor-input use to skip a host round-trip), and pinning buys nothing when
             # the target device is the CPU itself.
-            if img_tensor.device.type == "cpu" and self.model.device.type == "cuda":
+            if img_tensor.device.type == "cpu" and preprocess_device.type == "cuda":
                 img_tensor = img_tensor.pin_memory()
             # non_blocking only pays off (and is only safe without an explicit sync) when the destination is CUDA,
             # matching the transfer_batch_to_device() convention in training/module_data.py: a CUDA-tensor-input ->
             # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
             # reads of the tensor's data can observe an in-flight (partially written) copy.
-            non_blocking = self.model.device.type == "cuda"
-            img_tensor = img_tensor.to(self.model.device, non_blocking=non_blocking)
+            non_blocking = preprocess_device.type == "cuda"
+            img_tensor = img_tensor.to(preprocess_device, non_blocking=non_blocking)
             if deferred_widen:
                 if uint8_scale is None:
                     uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
@@ -3047,8 +3175,11 @@ class RFDETR:
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
-        # used by Albumentations during training — see issue #1203.
-        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=False) for t in processed_images])
+        # used by Albumentations during training — see issue #1203. The opt-in flag
+        # also supports checkpoints trained with torchvision or platform resizing.
+        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=antialias) for t in processed_images])
+        if resize_on_cpu:
+            batch_tensor = batch_tensor.to(self.model.device)
         batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
 
         if self._is_optimized_for_inference:
