@@ -64,7 +64,7 @@ Perform inference on an image using either the `rfdetr` package or the `inferenc
 
     `COCO_CLASSES` works for COCO-pretrained models (80 COCO classes, indexed 0-79). For fine-tuned models, use `detections.data["class_name"]` instead — it resolves class names from the checkpoint and works for both COCO and custom datasets.
 
-For repeated inference with the `rfdetr` package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. It keeps static input/output buffers on the GPU, so it uses more device memory than the default TorchScript backend. Outputs are cloned before they leave the graph, so predictions returned by an earlier call are not overwritten by the next one. The default stays `"torchscript"`:
+For repeated inference with the `rfdetr` package on CUDA, a fixed batch size, and a fixed resolution, the direct CUDA Graph backend records the TorchScript forward once and replays it. Capture allocates a graph-private memory pool holding the captured forward's intermediates plus the static input/output buffers; it persists for the graph's lifetime and scales with batch size, resolution and model, so this backend uses more device memory than the default TorchScript backend. The backend was measured on detection RF-DETR Nano at batch size 1; segmentation and keypoint models use the same path but are unmeasured, and replay/clone memory cost grows with masks and batch size. Outputs are cloned before they leave the graph, so predictions returned by an earlier call are not overwritten by the next one. The default stays `"torchscript"`:
 
 ```python
 model.inference(compile_backend="cudagraph", batch_size=1, dtype="float16")

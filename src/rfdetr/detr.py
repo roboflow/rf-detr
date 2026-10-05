@@ -1746,7 +1746,9 @@ class RFDETR:
         ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
         the model's current resolution. The default ``"torchscript"`` backend preserves the existing
         ``torch.jit.trace`` path. ``"cudagraph"`` freezes that trace and captures its fixed-shape CUDA work for direct
-        replay, cloning graph-owned outputs before returning them. ``"inductor"`` uses
+        replay, cloning graph-owned outputs before returning them. It is therefore TorchScript trace plus
+        ``torch.jit.freeze`` plus one directly replayed CUDA graph, not a separate compiler; ``"inductor"`` in
+        reduce-overhead mode also replays CUDA graphs, but of an Inductor-compiled model. ``"inductor"`` uses
         ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the dummy input twice before synchronizing the
         selected device so setup is paid inside this method instead of the first :meth:`predict` call. By default,
         optimization deep-copies the loaded model before exporting it so the original module remains available. Set
@@ -1775,7 +1777,9 @@ class RFDETR:
                 memory savings come only from clearing the base model reference rather than from dtype reduction.
             compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
                 preserves the existing trace path. ``"cudagraph"`` is CUDA-only and captures a frozen TorchScript
-                trace; its static input/output buffers increase device memory, and setup captures once before replay.
+                trace once during setup. It keeps a graph-private memory pool holding the captured forward's
+                intermediates, plus the static input/output buffers, for as long as the optimized model exists; that
+                device memory grows with batch size, resolution and model size.
                 Freezing uses ``torch.jit.freeze``, deprecated since torch 2.5 along with TorchScript; its default
                 ``optimize_numerics=True`` passes do not strictly preserve numerics, so outputs are not guaranteed to
                 match the ``"torchscript"`` backend bit for bit.
