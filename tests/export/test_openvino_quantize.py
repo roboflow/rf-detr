@@ -251,7 +251,9 @@ class TestOpenvinoInt8EndToEnd:
         """INT8 export of a tiny attention model writes an IR that compiles and runs on CPU."""
         openvino: Any = pytest.importorskip("openvino", reason="openvino not installed")
         pytest.importorskip("nncf", reason="nncf not installed; `pip install nncf` to run the INT8 export")
-        data = np.stack([np.sin(np.arange(192).reshape(3, 8, 8) * (index + 1)) for index in range(3)]).astype(np.float32)
+        data = np.stack([np.sin(np.arange(192).reshape(3, 8, 8) * (index + 1)) for index in range(3)]).astype(
+            np.float32
+        )
         config = OpenVINOConfig(output_dir=tmp_path, quantization="int8", calibration_data=data, verbose=False)
 
         xml_path = OpenVINOExporter(config)(_export_graph(_TinyAttention().eval()))

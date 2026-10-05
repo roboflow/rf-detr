@@ -142,17 +142,17 @@ def _graph(node_groups: list[list[object]], inputs: list[str], outputs: list[str
 def _matmul_chain(prefix: str, length: int) -> list[object]:
     """Build ``length`` chained ``MatMul`` nodes ``{prefix}0 ..
 
-{prefix}{length-1}`` reading ``x`` first. 
-    Args:
-        prefix: Node-name prefix; node ``i`` outputs ``{prefix}{i}_out``.
-        length: Number of nodes.
+    {prefix}{length-1}`` reading ``x`` first.
+        Args:
+            prefix: Node-name prefix; node ``i`` outputs ``{prefix}{i}_out``.
+            length: Number of nodes.
 
-    Returns:
-        The nodes, in topological order.
+        Returns:
+            The nodes, in topological order.
 
-    Examples:
-        >>> [n.name for n in _matmul_chain("m", 3)]
-        ['m0', 'm1', 'm2']
+        Examples:
+            >>> [n.name for n in _matmul_chain("m", 3)]
+            ['m0', 'm1', 'm2']
     """
     return [
         helper.make_node(
