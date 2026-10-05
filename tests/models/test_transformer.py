@@ -8,7 +8,7 @@
 import copy
 import io
 from collections.abc import Callable
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -4077,8 +4077,6 @@ class TestEagerRewritesOnTheProductionModel:
         # ``ref_point_head`` is the embedding's only consumer, so under autocast it is written in the compute dtype.
         assert {args[1] for args in calls["sine"]} == {autocast_dtype or torch.float32}
 
-    @patch.object(torch.backends.cuda.matmul, "allow_tf32", new=False)
-    @patch.object(torch.backends.cudnn, "allow_tf32", new=False)
     @pytest.mark.gpu
     @requires_cuda
     @pytest.mark.parametrize(
@@ -4098,6 +4096,10 @@ class TestEagerRewritesOnTheProductionModel:
         the folded positional add and the cast-once memory only run under it. This test needs a GPU and was written
         without one.
         """
+        # ``monkeypatch`` restores by assignment; ``patch.object`` undoes with ``delattr``, which torch's
+        # property-backed ``allow_tf32`` flags reject, so the flags would stay off for the rest of the worker.
+        monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", False)
+        monkeypatch.setattr(torch.backends.cudnn, "allow_tf32", False)
         torch.manual_seed(0)
         model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda")
         train_config = TrainConfig(dataset_dir="unused", drop_path=0.0)
@@ -4162,13 +4164,21 @@ class TestEagerRewritesOnTheProductionModel:
         for key, expected_term in expected_terms.items():
             assert torch.equal(actual_terms[key], expected_term), key
         assert actual_grads.keys() == expected_grads.keys()
+        violations: list[tuple[float, str, float, float]] = []
         for name, reference in expected_grads.items():
             difference_norm = (actual_grads[name] - reference).norm()
             # The absolute floor covers analytically zero gradients (attention key biases) whose residue is rounding
             # noise.
-            assert difference_norm <= grad_rtol * reference.norm() + 1e-9, (
-                f"{name}: ||diff|| {difference_norm:.3e} vs ||reference|| {reference.norm():.3e}"
-            )
+            bound = grad_rtol * reference.norm() + 1e-9
+            if difference_norm > bound:
+                violations.append(
+                    ((difference_norm / bound).item(), name, difference_norm.item(), reference.norm().item())
+                )
+        # Report every violating parameter: stopping at the first one hides the decoder gradients behind the backbone's.
+        assert not violations, "gradient mismatches, worst first (ratio = ||diff|| / bound):\n" + "\n".join(
+            f"{ratio:.3f} {name}: ||diff|| {diff:.3e} vs ||reference|| {ref:.3e}"
+            for ratio, name, diff, ref in sorted(violations, reverse=True)
+        )
 
     @pytest.mark.gpu
     @requires_cuda
