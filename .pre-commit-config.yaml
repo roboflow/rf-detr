@@ -17,7 +17,7 @@ repos:
       - id: check-toml
       - id: check-case-conflict
       - id: check-added-large-files
-        args: ["--maxkb=200", "--enforce-all"]
+        args: ["--maxkb=250", "--enforce-all"]
         exclude: uv.lock
       - id: detect-private-key
       - id: pretty-format-json
