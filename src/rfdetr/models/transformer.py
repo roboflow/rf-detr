@@ -162,15 +162,17 @@ class _LinearReLU(torch.autograd.Function):
     """``relu(x @ weight.T + bias)`` with the bias and the ReLU applied in the GEMM epilogue.
 
     ``torch._addmm_activation`` rounds ``acc + bias`` once and clamps, and ``round(max(0, y)) == max(0, round(y))`` for
-    any rounding that keeps sign and zero, so the forward is bitwise ``F.relu(F.linear(x, weight, bias))`` while the
-    separate ReLU pass over the ``[tokens, dim_feedforward]`` activation disappears. torch defines no derivative for the
-    fused op, so the backward runs the ops autograd runs for the two-op graph: ``threshold_backward`` on the saved
-    output, the two GEMMs ``AddmmBackward0`` issues for a row-major input and an ``nn.Linear`` weight
-    (``grad.mm(weight)``, and ``grad.t().mm(rows)``, which leaves the weight gradient contiguous like the parameter) and
-    the bias reduce, each skipped when its input needs no gradient. Only the input and the returned output are saved
-    (the flattened views are rebuilt in the backward), so the backward is itself differentiable and a double backward
-    (``create_graph=True``) gets every term the two-op graph gives. ``torch.utils.flop_counter.FlopCounterMode`` has no
-    formula for ``_addmm_activation``, so it undercounts ``linear1`` on a CUDA model in eager execution.
+    finite values under a rounding that keeps sign and zero, so for finite inputs the forward is bitwise
+    ``F.relu(F.linear(x, weight, bias))`` while the separate ReLU pass over the ``[tokens, dim_feedforward]`` activation
+    disappears. Parity for NaN and for the sign of a zero result (``-0.0``) is unverified on CUDA: the cuBLASLt epilogue
+    may differ from ``torch.relu`` there. torch defines no derivative for the fused op, so the backward runs the ops
+    autograd runs for the two-op graph: ``threshold_backward`` on the saved output, the two GEMMs ``AddmmBackward0``
+    issues for a row-major input and an ``nn.Linear`` weight (``grad.mm(weight)``, and ``grad.t().mm(rows)``, which
+    leaves the weight gradient contiguous like the parameter) and the bias reduce, each skipped when its input needs no
+    gradient. Only the input and the returned output are saved (the flattened views are rebuilt in the backward), so the
+    backward is itself differentiable and a double backward (``create_graph=True``) gets every term the two-op graph
+    gives. ``torch.utils.flop_counter.FlopCounterMode`` has no formula for ``_addmm_activation``, so it undercounts
+    ``linear1`` on a CUDA model in eager execution.
     """
 
     @staticmethod

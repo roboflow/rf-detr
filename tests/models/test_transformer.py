@@ -3503,6 +3503,31 @@ def test_linear_relu_is_bitwise_relu_of_linear_forward_and_backward(
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_linear_relu_matches_relu_of_linear_for_nan_inf_and_negative_zero_on_cuda() -> None:
+    """The epilogue ReLU treats NaN, infinities and the sign of zero like ``relu(linear)``.
+
+    Probe of what the ``_LinearReLU`` docstring leaves unverified: row 0 is NaN, row 1 mixes +-inf, row 2 is all zero
+    with a ``-0.0`` bias (so the pre-activation is -0.0). NaN is compared by mask, not payload; every other entry is
+    compared through its integer bit view, which tells -0.0 from +0.0 and +inf from -inf.
+    """
+    x = torch.randn(4, 32, device="cuda")
+    x[0] = float("nan")
+    x[1, :2] = torch.tensor([float("inf"), float("-inf")], device="cuda")
+    x[2] = 0.0
+    weight = torch.randn(64, 32, device="cuda") * 0.2
+    bias = torch.randn(64, device="cuda")
+    bias[:] = -0.0
+
+    expected = F.relu(F.linear(x, weight, bias))
+    actual = _LinearReLU.apply(x, weight, bias)
+
+    finite = ~expected.isnan()
+    assert torch.equal(actual.isnan(), expected.isnan())
+    assert torch.equal(actual[finite].view(torch.int32), expected[finite].view(torch.int32))
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.usefixtures("float32_matmul_precision")
 @pytest.mark.parametrize(
     "mode", [pytest.param("train", id="train"), pytest.param("inference", id="eval-inference-mode")]
