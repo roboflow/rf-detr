@@ -251,8 +251,9 @@ def _build_summary_renderable(
             table.add_row(
                 # A plain ``str`` cell is parsed as console markup, so a class name such as
                 # ``helmet[red]`` would lose its brackets, ``:dollar:`` would become an emoji,
-                # and ``sign[/]`` would raise ``MarkupError``. ``Text`` renders it verbatim.
-                Text(row["name"]),
+                # and ``sign[/]`` would raise ``MarkupError``. ``Text`` renders it verbatim; ``str()``
+                # keeps a non-``str`` name from a malformed annotation file (``None``) from raising.
+                Text(str(row["name"])),
                 _fmt(row["ap"]),
                 _fmt(row["ar"]),
                 _fmt(row["f1"]),
