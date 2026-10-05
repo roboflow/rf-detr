@@ -894,6 +894,29 @@ class TestMetricsTablePrinting:
         assert "(Epoch" in render_tables.call_args_list[0].args[1]
         assert render_tables.call_args_list[0].args[2] == "overall-1"
 
+    @pytest.mark.parametrize("name", ["sign[/]", "helmet[red]", "price:dollar:"])
+    @patch("rfdetr.training.callbacks.coco_eval._render_overall_merged", return_value="overall")
+    def test_terminal_prints_hostile_class_name_through_real_console(self, _mock_0, name: str) -> None:
+        """A class name that looks like Rich markup prints verbatim through a real console without aborting.
+
+        ``sign[/]`` used to raise ``MarkupError`` out of ``_print_metrics_tables``, which nothing between the callback
+        and Lightning catches, so the existing mocked-console tests could not see the training abort.
+        """
+        import io
+
+        from rich.console import Console
+
+        console = Console(file=io.StringIO(), width=200, color_system=None)
+        cb = COCOEvalCallback(in_notebook=False)
+        trainer = _make_trainer()
+        trainer.is_global_zero = True
+        per_class = [{"name": name, "ap": 0.5, "ar": 0.6, "f1": 0.55, "precision": 0.6, "recall": 0.5}]
+
+        with patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console):
+            cb._print_metrics_tables(trainer, "val", {"mAP": 0.1}, per_class)
+
+        assert name in console.file.getvalue()
+
     @patch("rfdetr.training.callbacks.coco_eval._get_rich_console")
     @patch("rfdetr.training.callbacks.coco_eval.logger.warning")
     @patch("rfdetr.training.callbacks.coco_eval._IS_RICH_AVAILABLE", False)
