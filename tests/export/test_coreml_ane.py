@@ -102,14 +102,55 @@ class TestCoreMLNeuralEngineLoad:
         assert all(np.isfinite(array).all() for array in runtime_arrays)
 
 
-#: Ops RF-DETR's graph is known to leave off the Neural Engine, all of them the two-stage query selection:
-#: ``topk`` itself plus the index expansion and gather that consume its result. They cost ~0.1% of the model's
-#: estimated work, so the budget below is about catching a *new* op joining them, not about their own cost.
-_ANE_UNSUPPORTED_OPS = frozenset({"ios16.topk", "ios16.gather_along_axis", "tile", "expand_dims"})
+#: Core ML specification version of an iOS15 ``mlprogram``. iOS16 is 7, and on the Neural Engine that program loses
+#: ~3 box AP at fp16 (45.06 against 48.04 for iOS15 on all 5000 COCO val2017 images, pretrained RFDETRNano, M3 Pro).
+_IOS15_SPEC_VERSION = 6
+
+
+@coreml_runtime_only
+@pytest.mark.integration
+@pytest.mark.e2e_coreml
+class TestCoreMLSpecificationVersion:
+    """The fp16 bundle must be the program generation whose Neural Engine results match eager."""
+
+    def test_fp16_export_is_an_ios15_program(
+        self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
+    ) -> None:
+        """A newer deployment target silently moves the ANE onto the program that costs accuracy.
+
+        ``tests/export/test_coreml_export.py::TestConvertDeploymentTarget`` pins the keyword; this pins what
+        coremltools makes of it, which is also what a bare ``None`` target would resolve to for this graph.
+        """
+        import coremltools as ct
+
+        mlpackage_path, _, _ = nano_fp16_export
+
+        assert ct.utils.load_spec(str(mlpackage_path)).specificationVersion == _IOS15_SPEC_VERSION
+
+    def test_fp16_export_returns_float32_outputs(
+        self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
+    ) -> None:
+        """An iOS 15 program returns float32 arrays; an iOS 16 one returned float16, which consumers may read as
+        such."""
+        import coremltools as ct
+
+        mlpackage_path, _, _ = nano_fp16_export
+        outputs = ct.utils.load_spec(str(mlpackage_path)).description.output
+
+        assert {output.type.multiArrayType.dataType for output in outputs} == {
+            ct.proto.FeatureTypes_pb2.ArrayFeatureType.FLOAT32
+        }
+
+
+#: Ops RF-DETR's graph is known to leave off the Neural Engine at iOS15 (spec 6, op names carry no ``ios16.`` prefix):
+#: the two-stage query selection (``topk`` plus the index expansion and gather that consume its result) and, on this
+#: opset, the two ``resample`` ops with the ``cast`` ops beside them. The budget below is about catching a *new* op
+#: joining them, not about their own cost.
+_ANE_UNSUPPORTED_OPS = frozenset({"topk", "gather_along_axis", "tile", "expand_dims", "cast", "resample"})
 
 #: Minimum share of estimated work Core ML must still schedule onto the ANE under ``CPU_AND_NE``. Measured at
-#: 0.999 for fp16 RFDETRNano, RFDETRSmall and RFDETRSegNano (pretrained), and for an untrained RFDETRNano, on an
-#: Apple M3 Pro running macOS 27.0.
+#: 0.997 to 0.999 for fp16 RFDETRNano, RFDETRSmall, RFDETRMedium and RFDETRSegNano (pretrained, iOS15) on an Apple M3
+#: Pro running macOS 27.0; the untrained RFDETRNano below clears the floor on the same machine.
 _MIN_ANE_COST_SHARE = 0.99
 
 
@@ -159,10 +200,10 @@ def _compute_plan(mlpackage_path: Path) -> Any:
 class TestCoreMLNeuralEngineFallbackBoundary:
     """The ANE fallback boundary documented in ``docs/exports/coreml.md`` must stay where it is."""
 
-    def test_only_two_stage_selection_ops_leave_the_neural_engine(
+    def test_only_known_ops_leave_the_neural_engine(
         self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
     ) -> None:
-        """No op outside the known two-stage selection island may lose Neural Engine support."""
+        """No op outside ``_ANE_UNSUPPORTED_OPS`` may lose Neural Engine support."""
         mlpackage_path, _, _ = nano_fp16_export
         plan = _compute_plan(mlpackage_path)
         operations = plan.model_structure.program.functions["main"].block.operations

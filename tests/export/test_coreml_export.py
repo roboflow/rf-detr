@@ -367,6 +367,27 @@ class TestResolveComputePrecision:
         assert exporter._resolve_compute_precision(api) is expected
 
 
+class TestConvertDeploymentTarget:
+    """``_build_mlmodel`` must hand ``coremltools.convert`` the iOS15 deployment target."""
+
+    def test_converts_for_ios15_so_the_neural_engine_runs_a_spec_6_program(self, tmp_path: Path) -> None:
+        """The target selects the program generation; spec 7 (iOS16) loses ~3 box AP on the Neural Engine.
+
+        Measured on an M3 Pro: pretrained RFDETRNano at fp16 under ``CPU_AND_NE`` scores 45.06 AP on all 5000 COCO
+        val2017 images at iOS16 and 48.04 at iOS15, against 48.03 for eager. ``tests/export/test_coreml_ane.py``
+        pins the resulting spec version on a real bundle; this test needs no coremltools.
+        """
+        target = mock.Mock()
+        convert = mock.Mock(return_value="mlmodel")
+        api = _CoreMLApi(convert=convert, target=target, float32="fp32-member", float16="fp16-member")
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
+
+        with mock.patch.object(exporter, "_export_program"), mock.patch.object(exporter, "_check_op_coverage"):
+            exporter._build_mlmodel(mock.Mock(), "fp16-member", api)
+
+        assert convert.call_args.kwargs["minimum_deployment_target"] is target.iOS15
+
+
 class TestExportCoremlBareDefaultNaming:
     """``variant_name=None`` + ``output_name=None`` combined with a non-default ``compute_precision`` (fp16).
 
