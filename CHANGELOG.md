@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Public `rfdetr.export.benchmark` exposes `measure_latency`, `measure_memory`, `BenchmarkResult` and `MemoryResult`, the helpers the per-hardware export cookbooks use. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
+- `RFDETR.predict()` accepts a keyword-only `antialias` flag (default `False`, unchanged behaviour). Pass `antialias=True` for checkpoints trained with torchvision resizing; exported models still resize without antialiasing. On MPS with PyTorch older than 2.7, antialiased resizing runs on the CPU. ([#1525](https://github.com/roboflow/rf-detr/pull/1525))
+
 ### Changed
 
 - YOLO split directories must stay inside the dataset root however they are reached. The containment rule applied only to paths declared in `data.yaml`, so a declared `train: images/train` pointing at mounted storage was refused while a `train/images` symlink to that same storage was read — the guard rejected by layout rather than by destination. Format detection and `is_valid_yolo_dataset` now refuse a conventional split directory resolving outside the root, and `build_roboflow_from_yolo` raises `ValueError` naming it. A dataset whose entire root is a symlink is unaffected, because containment resolves both sides; only an individual split escaping its own root is refused. ([#1570](https://github.com/roboflow/rf-detr/pull/1570))
