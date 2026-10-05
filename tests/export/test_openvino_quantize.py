@@ -121,7 +121,8 @@ class TestConfigValidation:
 
         The positive case for the refusal above: a caller who supplies data reaches the conversion.
         """
-        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, quantization="int8", calibration_data=tmp_path))
+        samples = np.zeros((1, 3, 8, 8), dtype=np.float32)
+        exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, quantization="int8", calibration_data=samples))
         assert exporter.config.quantization == "int8"
 
     @pytest.mark.parametrize("quantization", [None, "fp32"])

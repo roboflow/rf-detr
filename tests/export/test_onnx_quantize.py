@@ -234,9 +234,10 @@ class TestNodeSelection:
         # output must still be quantized, or the mode buys nothing.
         assert "projection" not in nodes_to_exclude(_attention_graph())
 
-    def test_excludes_nodes_within_head_depth_of_an_output(self) -> None:
-        # "values" is two hops from the graph output, so the head sweep reaches it.
-        assert "values" in nodes_to_exclude(_attention_graph())
+    def test_head_walk_stops_at_the_first_matmul_of_a_path(self) -> None:
+        # "values" feeds the head Gemm; the walk from the output ends at that Gemm, so a multiply behind it is
+        # not part of the head and stays quantizable.
+        assert "values" not in nodes_to_exclude(_attention_graph())
 
     def test_excludes_output_end_of_a_matmul_chain_but_not_its_start(self) -> None:
         """In a long chain of multiplies only a run at the output end is held back; the start stays quantizable."""
@@ -275,7 +276,7 @@ class TestNodeSelection:
     def test_softmax_without_a_producer_is_tolerated_and_excludes_nothing_far_away(self) -> None:
         """A Softmax reading a graph input has no producer to exclude; a distant multiply is still quantizable."""
         far = [helper.make_node("MatMul", ["x", "w"], ["far_out"], name="far")]
-        far_tail, far_end = _relu_tail("far_out", 8, "far_tail")
+        far_tail, far_end = _relu_tail("far_out", 11, "far_tail")  # beyond the bounded head walk
         attention = [helper.make_node("Softmax", ["external_scores"], ["probs"], name="attention")]
         graph = _graph([far, far_tail, attention], ["x", "external_scores"], [far_end, "probs"])
         assert "far" not in nodes_to_exclude(graph)
@@ -360,7 +361,8 @@ class TestConfigValidation:
             OnnxExporter(OnnxConfig(output_dir=tmp_path, quantization="int8"))
 
     def test_accepts_int8_with_calibration_data(self, tmp_path: Path) -> None:
-        exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, quantization="int8", calibration_data=tmp_path))
+        samples = np.zeros((1, 3, 8, 8), dtype=np.float32)
+        exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, quantization="int8", calibration_data=samples))
         assert exporter.config.quantization == "int8"
 
     @pytest.mark.parametrize("quantization", [None, "fp32"])
