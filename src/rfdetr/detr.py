@@ -11,6 +11,7 @@ import io
 import json
 import operator
 import os
+import re
 import tempfile
 import threading
 import warnings
@@ -149,6 +150,26 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """
     widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
     return widened.div_(scale)
+
+
+def _mps_lacks_antialiased_resize() -> bool:
+    """Report whether the installed torch predates MPS support for antialiased bilinear resize.
+
+    ``aten::_upsample_bilinear2d_aa`` has no MPS kernel before torch 2.7 (pytorch/pytorch#141287 tracks it, and
+    #145581 is the PR it credits for 2.7); ``v2.7.0`` is the first tag whose ``native_functions.yaml`` dispatches it to
+    MPS. Delete this predicate and the CPU-resize branch in :meth:`RFDETR.predict` once the ``torch`` floor in
+    ``pyproject.toml`` reaches 2.7.
+
+    Returns:
+        ``True`` when ``torch.__version__`` is older than 2.7. An unparseable version string counts as modern, so
+        the MPS path is not detoured through the CPU on an unrecognised build.
+
+    Examples:
+        >>> isinstance(_mps_lacks_antialiased_resize(), bool)
+        True
+    """
+    match = re.match(r"(\d+)\.(\d+)", torch.__version__)
+    return match is not None and (int(match.group(1)), int(match.group(2))) < (2, 7)
 
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
@@ -2890,10 +2911,11 @@ class RFDETR:
         # Built lazily on the first uint8 image, then shared by the rest of the batch.
         uint8_scale: torch.Tensor | None = None
 
-        # Older MPS builds do not implement antialiased resize. Keep the whole
-        # preprocessing path on CPU in that case, so an input is never moved to
-        # MPS only to come straight back for resizing.
-        resize_on_cpu = antialias and self.model.device.type == "mps"
+        # torch < 2.7 has no MPS kernel for antialiased bilinear resize (pytorch#141287, #145581). Keep the whole
+        # preprocessing path on CPU in that case, so an input is never moved to MPS only to come straight back for
+        # resizing. From torch 2.7 on the MPS kernel exists and this stays False; once the torch floor reaches 2.7,
+        # delete this branch together with `_mps_lacks_antialiased_resize`.
+        resize_on_cpu = antialias and self.model.device.type == "mps" and _mps_lacks_antialiased_resize()
         preprocess_device = torch.device("cpu") if resize_on_cpu else self.model.device
 
         for img_input in images:

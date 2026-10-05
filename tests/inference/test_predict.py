@@ -1582,6 +1582,7 @@ class TestPredictResizeMatchesTrainingInterpolation:
 
         with (
             patch("rfdetr.detr._move_model_context_to_device"),
+            patch("rfdetr.detr._mps_lacks_antialiased_resize", return_value=True),
             patch.object(torch.Tensor, "to", to_spy),
             patch.object(torch, "tensor", tensor_spy),
             patch("rfdetr.detr.F.resize", side_effect=resize_spy),
