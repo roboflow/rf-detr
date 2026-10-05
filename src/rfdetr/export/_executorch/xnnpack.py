@@ -73,6 +73,8 @@ def unmasked_attention(
     value = value.reshape(-1, value.shape[-2], value.shape[-1])
     weights = torch.softmax(torch.bmm(query, key.transpose(1, 2)), dim=-1)
     output = torch.bmm(weights, value).reshape(*batch, length, value.shape[-1])
+    if memory_order == sorted(memory_order):
+        return output
     # The operator returns its output in the memory order of the query, and the captured graph reshapes the output
     # as views of that memory, so the decomposition returns the same layout.
     restore = sorted(range(len(memory_order)), key=memory_order.__getitem__)

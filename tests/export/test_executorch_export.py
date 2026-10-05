@@ -1126,16 +1126,19 @@ class TestExecutorchEndToEnd:
         )
 
     def test_attention_runs_in_xnnpack(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
-        """No attention op may survive lowering as a portable kernel call.
+        """The attention kernels, and the portable calls that attention used to leave, must not run outside XNNPACK.
 
         ``F.scaled_dot_product_attention`` lowers to a softmax with ``eq``/``any``/``where`` guards and scalar
         multiplications, and ``nn.MultiheadAttention`` to linear layers that slice their weight at run time. XNNPACK
         runs none of these. ``decompose_attention`` and ``fold_constants`` in the lowering keep both in the delegate
-        (167 -> 107 ms on RFDETRNano, Xeon CPU); this guards that they stay wired in.
+        (167 -> 107 ms on RFDETRNano, Xeon CPU); this guards that they stay wired in. The two-stage query selection also
+        uses portable ``any``/``where``/``logical_not``, so the test checks the calls that only attention makes: the
+        guard ``eq``, the scalar ``mul``, the sliced-weight ``linear``, and the ``bmm`` and ``_softmax`` kernels.
         """
         _, _, pte_path, _ = exported
         portable_ops = _portable_kernel_call_names(pte_path)
-        attention_calls = [op for op in portable_ops if op.split(".")[0] in {"aten::eq", "aten::mul", "aten::linear"}]
+        attention_ops = {"aten::eq", "aten::mul", "aten::linear", "aten::bmm", "aten::_softmax"}
+        attention_calls = [op for op in portable_ops if op.split(".")[0] in attention_ops]
         assert not attention_calls, (
             f"{len(attention_calls)} portable attention kernel call(s) in {pte_path.name}: "
             f"{sorted(set(attention_calls))}"
