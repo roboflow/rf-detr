@@ -2008,7 +2008,7 @@ class RFDETR:
         patch_size: int | None = None,
         format: str = "onnx",
         quantization: str | None = None,
-        calibration_data: str | np.ndarray[Any, Any] | None = None,
+        calibration_data: str | Path | np.ndarray[Any, Any] | None = None,
         max_images: int = 100,
         *,
         backend: str | None = None,
@@ -2125,9 +2125,10 @@ class RFDETR:
                 and refused as missing there rather than defaulted.  Accepts:
 
                 * ``None`` — the default; no calibration data.
-                * A **directory path** (``str``) containing images, preprocessed exactly as :meth:`predict` does.
-                * A path (``str``) to a ``.npy`` file of shape ``(N, C, H, W)``, already normalized the way the model
-                  expects.
+                * A **directory path** (``str`` or :class:`~pathlib.Path`) containing images, preprocessed exactly as
+                  :meth:`predict` does.
+                * A path (``str`` or :class:`~pathlib.Path`) to a ``.npy`` file of shape ``(N, C, H, W)``, already
+                  normalized the way the model expects.
                 * A :class:`numpy.ndarray` with the same format.
 
                 The resulting activation ranges decide the INT8 model's accuracy, so the data must be representative of
@@ -2210,7 +2211,9 @@ class RFDETR:
 
         Returns:
             Path to the exported model file (``.onnx``, ``.tflite`` for both TFLite and LiteRT, ``.trt``,
-            ``.pte``, ``.mlpackage``, ``.aimodel`` or ``.xml`` for OpenVINO).
+            ``.pte``, ``.mlpackage``, ``.aimodel`` or ``.xml`` for OpenVINO).  With ``format="onnx"`` and
+            ``quantization="int8"`` it is the quantized ``{stem}_int8.onnx``; the FP32 ``{stem}.onnx`` it was derived
+            from is left beside it.
 
         Raises:
             ValueError: If ``format`` is unrecognized; if ``batch_size``, or ``max_batch_size`` when given, is not
@@ -2220,7 +2223,13 @@ class RFDETR:
                 if ``coreml_precision``/``coreai_precision``/``openvino_precision``, or ``quantization`` for
                 ``format="tflite"``, is not one of their accepted values; if ``notes`` holds a non-finite float or a
                 circular reference, for a format that embeds it; or if ``format="tensorrt"`` with
-                ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+                ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``; if
+                ``quantization`` is not a recognized mode for ``format="onnx"`` or ``format="openvino"`` (only
+                ``None``, ``"fp32"`` and ``"int8"`` are accepted there); if ``quantization="int8"`` is combined with
+                ``format="onnx"`` or ``format="openvino"`` and no ``calibration_data``; or, for those two INT8
+                requests, if ``calibration_data`` points to a missing path, a file that is not ``.npy``, an
+                image-less directory, or an array that is not ``(N, C, H, W)`` or does not match the graph's
+                input size.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
@@ -2233,13 +2242,15 @@ class RFDETR:
                 ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
                 ``backend="coreml"``, ``openvino`` for OpenVINO export,
                 ``rfdetr[litert]`` for LiteRT export,
+                ``onnxruntime`` for ``format="onnx"`` with ``quantization="int8"``, ``nncf`` for
+                ``format="openvino"`` with ``quantization="int8"``,
                 or an ExecuTorch source build against the QAIRT SDK for
                 ``backend="qnn"``); also raised for ``format="tensorrt"`` with ``fp16=True`` on a
                 strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
                 ``fp16=False``. Each format's availability check runs before the model does; what it does not
-                cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package) is found
-                missing only during the conversion.
+                cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package, ``onnxruntime``
+                or ``nncf`` for INT8) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
