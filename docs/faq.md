@@ -65,7 +65,7 @@ export ROBOFLOW_HOME=/mnt/shared/models
 
 If both are set, `RF_HOME` wins. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
 
-Published checkpoints download from `https://rfdetr.roboflowstatic.com`. On a network that only allows listed hosts, allow that one, or copy the files into the cache directory ahead of time: a cached file whose MD5 matches is never downloaded again.
+Published checkpoints download from `https://repo.roboflow.com/rfdetr`. On a network that only allows listed hosts, allow `repo.roboflow.com`, or copy the files into the cache directory ahead of time: a cached file whose MD5 matches is never downloaded again.
 
 ## What input resolutions are allowed?
 

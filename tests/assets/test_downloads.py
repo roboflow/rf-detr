@@ -229,7 +229,7 @@ class TestDownloadIntegration:
     @pytest.mark.parametrize("model", [pytest.param(m, id=m.filename) for m in ModelWeights])
     def test_all_models_download_from_weights_cdn(self, model: ModelWeightAsset) -> None:
         """Every built-in weight file is served from the RF-DETR weights CDN host."""
-        assert model.url.startswith("https://rfdetr.roboflowstatic.com/"), model.url
+        assert model.url.startswith("https://repo.roboflow.com/rfdetr/"), model.url
 
     def test_from_filename_bidirectional_lookup(self):
         """Test that from_filename correctly maps back to enum values."""
@@ -263,7 +263,7 @@ class TestDownloadIntegration:
         call_kwargs = mock_download.call_args[1]
 
         assert call_kwargs["filename"] == "rf-detr-base.pth"
-        assert call_kwargs["url"] == "https://rfdetr.roboflowstatic.com/rf-detr-base-coco.pth"
+        assert call_kwargs["url"] == "https://repo.roboflow.com/rfdetr/rf-detr-base-coco.pth"
         assert call_kwargs["expected_md5"] == "b4d3ce46099eaed50626ede388caf979"
 
 
