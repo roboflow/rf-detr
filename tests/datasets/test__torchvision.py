@@ -168,6 +168,51 @@ class TestTorchvisionTransformOutputs:
             torch.tensor([[[70.0, 25.0, 2.0], [90.0, 5.0, 2.0]]]),
         )
 
+    @pytest.mark.parametrize(
+        ("keypoints", "pairs", "expected"),
+        [
+            pytest.param(
+                [
+                    [[2.0, 1.0, 2.0], [7.0, 2.0, 2.0], [3.0, 3.0, 2.0], [6.0, 4.0, 2.0], [5.0, 5.0, 2.0]],
+                    [[1.0, 1.0, 2.0], [9.0, 2.0, 2.0], [4.0, 3.0, 2.0], [5.0, 4.0, 2.0], [8.0, 5.0, 2.0]],
+                ],
+                [0, 1, 2, 3],
+                [
+                    [[3.0, 2.0, 2.0], [8.0, 1.0, 2.0], [4.0, 4.0, 2.0], [7.0, 3.0, 2.0], [5.0, 5.0, 2.0]],
+                    [[1.0, 2.0, 2.0], [9.0, 1.0, 2.0], [5.0, 4.0, 2.0], [6.0, 3.0, 2.0], [2.0, 5.0, 2.0]],
+                ],
+                id="two-instances-two-pairs-one-unpaired-slot",
+            ),
+            pytest.param(
+                [[[0.0, 2.0, 2.0], [10.0, 3.0, 2.0]]],
+                [0, 1],
+                [[[0.0, 3.0, 2.0], [10.0, 2.0, 2.0]]],
+                id="edge-keypoints-swap-and-stay-visible",
+            ),
+            pytest.param(
+                [[[2.0, 1.0, 0.0], [7.0, 2.0, 2.0]]],
+                [0, 1],
+                [[[3.0, 2.0, 2.0], [0.0, 0.0, 0.0]]],
+                id="invisible-keypoint-is-zeroed-in-partner-slot",
+            ),
+        ],
+    )
+    def test_horizontal_flip_keypoint_pairs_and_visibility(
+        self, keypoints: list[list[list[float]]], pairs: list[int], expected: list[list[list[float]]]
+    ) -> None:
+        """Flip mirrors each keypoint to ``width - x``, then swaps paired slots and keeps invisible ones zeroed.
+
+        Covers several instances, a slot outside every pair, a swapped pair sitting on both vertical image
+        edges, and an invisible keypoint with non-zero coordinates that must not leak into its partner slot.
+        """
+        image = torch.zeros((1, 6, 10), dtype=torch.float32)
+        target = {"keypoints": torch.tensor(keypoints)}
+
+        _, transformed = RandomHorizontalFlip(p=1.0, keypoint_flip_pairs=pairs)(image, target)
+
+        assert transformed is not None
+        torch.testing.assert_close(transformed["keypoints"], torch.tensor(expected))
+
 
 class TestTrainExtraIsMinimal:
     """Dependency metadata keeps advanced augmentations outside the train extra."""
@@ -492,6 +537,7 @@ class TestEdgeCaseCoverage:
             (640.5, 10.0, False),
             (10.0, 480.5, False),
             (-0.5, 10.0, False),
+            (10.0, -0.5, False),
         ],
     )
     def test_mark_invisible_keypoints_keeps_points_on_image_edges(self, x: float, y: float, kept: bool) -> None:
@@ -503,6 +549,31 @@ class TestEdgeCaseCoverage:
 
         expected = keypoints if kept else torch.zeros_like(keypoints)
         torch.testing.assert_close(result, expected)
+
+    @pytest.mark.parametrize(
+        ("old_width", "new_width"),
+        [
+            pytest.param(600, 640, id="600-to-640"),
+            pytest.param(100, 432, id="100-to-432"),
+        ],
+    )
+    def test_resize_keeps_right_and_bottom_edge_keypoint_exact(self, old_width: int, new_width: int) -> None:
+        """A keypoint on the right and bottom image edge lands exactly on the resized edge and stays visible.
+
+        Scaling by a precomputed float32 ratio rounds ``x == old_width`` one ulp past ``new_width`` for these
+        size pairs (``600 -> 640`` gives 640.00006), which the edge-inclusive bounds check would clear.
+        """
+        old_height, new_height = 50, 64
+        image = Image.new("RGB", (old_width, old_height))
+        target = {
+            "keypoints": torch.tensor([[[float(old_width), float(old_height), 2.0]]]),
+            "orig_size": torch.tensor([old_height, old_width]),
+            "size": torch.tensor([old_height, old_width]),
+        }
+
+        _, out = Resize((new_height, new_width))(image, target)
+
+        torch.testing.assert_close(out["keypoints"], torch.tensor([[[float(new_width), float(new_height), 2.0]]]))
 
 
 class TestNonUniformMaskParity:
