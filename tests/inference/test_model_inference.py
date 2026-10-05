@@ -354,14 +354,20 @@ class TestModelInferenceCompile:
         with patch.object(model.model, "postprocess", wraps=model.model.postprocess) as cudagraph_postprocess:
             model.predict(image)
 
-        assert isinstance(model.model.inference_model, detr_module._CUDAGraphInferenceModel)
-        actual = cudagraph_postprocess.call_args.args[0]
-        expected = torchscript_postprocess.call_args.args[0]
+        inference_model = model.model.inference_model
+        assert isinstance(inference_model, detr_module._CUDAGraphInferenceModel)
         if dtype == torch.float16:
-            # Half precision on random weights reorders near-equal top-k queries between the two traces, so rows of
-            # boxes and masks differ although both backends compute the same set; compare the ordered scores only.
-            actual = {"pred_logits": actual["pred_logits"].flatten().sort().values}
-            expected = {"pred_logits": expected["pred_logits"].flatten().sort().values}
+            # Half precision on random weights flips near-tied top-k proposals between the two separate traces. Each
+            # decoder slot starts from its own learned query embedding, so a flip changes the logits themselves and
+            # not only their order; sorting cannot absorb it. Compare the graph with eager replay of the very module
+            # it captured, which is what the backend adds. The float32 case covers the predict() mapping.
+            static_input = inference_model._static_input.clone()
+            with torch.inference_mode():
+                expected = inference_model._model(static_input)
+                actual = inference_model(static_input)
+        else:
+            actual = cudagraph_postprocess.call_args.args[0]
+            expected = torchscript_postprocess.call_args.args[0]
         torch.testing.assert_close(actual, expected, rtol=tolerance, atol=tolerance)
 
     @pytest.mark.gpu
