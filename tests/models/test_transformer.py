@@ -7,7 +7,7 @@
 
 import copy
 import io
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from unittest.mock import Mock
 
 import numpy as np
@@ -2852,6 +2852,25 @@ def _reference_sineembed(pos_tensor: torch.Tensor, dim: int) -> torch.Tensor:
 _CUDA_MARKS = [pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")]
 
 
+@pytest.fixture(params=["highest", "high"])
+def float32_matmul_precision(request: pytest.FixtureRequest) -> Iterator[str]:
+    """Run a test under each float32 matmul precision a process can be left in, then restore the previous one.
+
+    ``"highest"`` is true fp32 and ``"high"`` allows TF32 GEMMs; ``build_trainer`` sets ``"high"`` for the process, so
+    production runs under it and a bitwise comparison of two fp32 GEMM routes must hold under both.
+
+    Examples:
+        Skipped because a pytest fixture has no standalone call (pytest injects ``request``):
+
+        >>> float32_matmul_precision  # doctest: +SKIP
+        <pytest_fixture(<function float32_matmul_precision at 0x...>)>
+    """
+    previous_precision = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision(request.param)
+    yield request.param
+    torch.set_float32_matmul_precision(previous_precision)
+
+
 def _cpu_addmm_activation_available(dtype: torch.dtype) -> bool:
     """Return whether ``torch._addmm_activation`` runs on CPU in ``dtype`` on the installed torch.
 
@@ -3450,14 +3469,22 @@ _LINEAR_RELU_CASES = [
 ]
 
 
+@pytest.mark.usefixtures("float32_matmul_precision")
+@pytest.mark.parametrize("dim_feedforward", [64, 63])
 @pytest.mark.parametrize(("device", "dtype"), _LINEAR_RELU_CASES)
-def test_linear_relu_is_bitwise_relu_of_linear_forward_and_backward(device: str, dtype: torch.dtype) -> None:
-    """The epilogue ReLU rounds once then clamps, which commutes with the clamp; the backward is autograd's."""
+def test_linear_relu_is_bitwise_relu_of_linear_forward_and_backward(
+    device: str, dtype: torch.dtype, dim_feedforward: int
+) -> None:
+    """The epilogue ReLU rounds once then clamps, which commutes with the clamp; the backward is autograd's.
+
+    The fp32 cases run under both float32 matmul precisions (production sets ``"high"``, TF32 GEMMs), and the odd
+    ``dim_feedforward`` is not a multiple of 8, the alignment cuBLASLt's fused epilogue prefers.
+    """
     torch.manual_seed(0)
     x = (torch.randn(3, 40, 32, device=device) * 3).to(dtype).requires_grad_(True)
-    weight = (torch.randn(64, 32, device=device) * 0.2).to(dtype).requires_grad_(True)
-    bias = torch.randn(64, device=device).to(dtype).requires_grad_(True)
-    grad_out = torch.randn(3, 40, 64, device=device).to(dtype)
+    weight = (torch.randn(dim_feedforward, 32, device=device) * 0.2).to(dtype).requires_grad_(True)
+    bias = torch.randn(dim_feedforward, device=device).to(dtype).requires_grad_(True)
+    grad_out = torch.randn(3, 40, dim_feedforward, device=device).to(dtype)
 
     expected = F.relu(F.linear(x, weight, bias))
     expected.backward(grad_out)
@@ -3476,6 +3503,7 @@ def test_linear_relu_is_bitwise_relu_of_linear_forward_and_backward(device: str,
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.usefixtures("float32_matmul_precision")
 @pytest.mark.parametrize(
     "mode", [pytest.param("train", id="train"), pytest.param("inference", id="eval-inference-mode")]
 )
@@ -3894,6 +3922,34 @@ def test_two_stage_group_selection_keeps_expand_then_cast_while_tracing(monkeypa
         transformer._two_stage_group_selection(memory, proposals, transformer.group_detr)
 
     assert cast_once_calls == []
+
+
+def test_two_stage_group_selection_routes_the_shared_memory_through_cast_then_expand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the eager-CUDA gate open and a bf16 autocast dtype, the fp32 memory is cast once, then expanded per group.
+
+    Runs on CPU by forcing the gate, so it asserts routing only: the spy hands back the fp32 expansion the plain path
+    builds, because without real autocast the batched GEMM downstream needs fp32 operands.
+    """
+    transformer = _build_two_stage_transformer_with_production_shaped_heads(
+        hidden_dim=16, num_queries=3, group_detr=2, num_classes=5, bbox_reparam=False
+    )
+    memory = torch.randn(2, 20, 16)
+    proposals = torch.rand(2, 20, 4)
+    routed: list[tuple[int, torch.dtype]] = []
+
+    def spy(x: torch.Tensor, groups: int, dtype: torch.dtype) -> torch.Tensor:
+        routed.append((groups, dtype))
+        return x.unsqueeze(0).expand(groups, *x.shape)
+
+    monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
+    monkeypatch.setattr("rfdetr.models.transformer._cuda_autocast_dtype", lambda: torch.bfloat16)
+    monkeypatch.setattr(_CastThenExpand, "apply", spy)
+
+    transformer._two_stage_group_selection(memory, proposals, transformer.group_detr)
+
+    assert routed == [(2, torch.bfloat16)]
 
 
 @pytest.mark.gpu

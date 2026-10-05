@@ -11,6 +11,8 @@ where it must step aside, and the autograd contract of the functions it runs ins
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from unittest.mock import Mock
 
 import pytest
@@ -20,6 +22,7 @@ from torch import nn
 
 from rfdetr.models.transformer import (
     Transformer,
+    TransformerDecoder,
     TransformerDecoderLayer,
     _AddInDtype,
     _eager_cuda,
@@ -456,3 +459,214 @@ class TestModuleCallIsPlainFailsClosed:
         monkeypatch.delattr(nn.Module, "_compiled_call_impl")
 
         assert _module_call_is_plain(linear) is False
+
+
+def test_torch_ships_the_private_addmm_activation_op() -> None:
+    """``torch._addmm_activation`` exists on the installed torch, so op drift fails here instead of skipping tests.
+
+    ``_LinearReLU`` is built on this private op, and the CPU cases of its bitwise test skip when the op has no CPU
+    kernel. A torch release that renames or drops the op would silently turn those skips into the whole signal, so this
+    canary fails loudly instead.
+    """
+    assert hasattr(torch, "_addmm_activation"), (
+        "torch._addmm_activation is gone: _LinearReLU (models/transformer.py) is built on it and must be reworked"
+    )
+
+
+@dataclass
+class _RoutedCalls:
+    """Arguments the eager-rewrite entry points received while the CUDA gate was forced open on CPU."""
+
+    add: list[tuple[object, ...]] = field(default_factory=list)
+    ffn: list[tuple[object, ...]] = field(default_factory=list)
+    sine_dtypes: list[torch.dtype | None] = field(default_factory=list)
+
+
+@pytest.fixture
+def bf16_gate(monkeypatch: pytest.MonkeyPatch) -> _RoutedCalls:
+    """Force the eager-CUDA gate open with a bf16 autocast dtype on CPU and record what the rewrites receive.
+
+    There is no autocast on CPU, so the spies assert routing only: each returns the fp32 value the plain ops give, which
+    keeps the fp32 consumers downstream of a bf16-folded rewrite valid, and ``_LinearReLU.apply`` is never run in bf16
+    because the CPU kernel of ``torch._addmm_activation`` for it depends on the torch build.
+
+    Examples:
+        Skipped because a pytest fixture has no standalone call (pytest injects ``monkeypatch``):
+
+        >>> bf16_gate  # doctest: +SKIP
+        _RoutedCalls(add=[], ffn=[], sine_dtypes=[])
+    """
+    calls = _RoutedCalls()
+    real_sine = gen_sineembed_for_position
+
+    def add_spy(tensor: torch.Tensor, pos: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        calls.add.append((tensor, pos, dtype))
+        return tensor + pos
+
+    def ffn_spy(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
+        calls.ffn.append((x, weight, bias))
+        return F.relu(F.linear(x, weight, bias)).float()
+
+    def sine_spy(pos_tensor: torch.Tensor, dim: int = 128, out_dtype: torch.dtype | None = None) -> torch.Tensor:
+        calls.sine_dtypes.append(out_dtype)
+        return real_sine(pos_tensor, dim)
+
+    monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
+    monkeypatch.setattr("rfdetr.models.transformer._cuda_autocast_dtype", lambda: torch.bfloat16)
+    monkeypatch.setattr(_AddInDtype, "apply", add_spy)
+    monkeypatch.setattr(_LinearReLU, "apply", ffn_spy)
+    monkeypatch.setattr("rfdetr.models.transformer.gen_sineembed_for_position", sine_spy)
+    return calls
+
+
+def _subclassed(module: nn.Module) -> nn.Module:
+    """Turn ``module`` into an instance of an empty subclass of its own type, keeping its parameters and children.
+
+    Examples:
+        >>> linear = nn.Linear(2, 2)
+        >>> type(_subclassed(linear)) is nn.Linear, isinstance(linear, nn.Linear)
+        (False, True)
+    """
+    module.__class__ = type(f"_Sub{type(module).__name__}", (type(module),), {})
+    return module
+
+
+def _run_forward_post(layer: TransformerDecoderLayer) -> torch.Tensor:
+    """Run one ``forward_post`` of ``layer`` on a small CPU batch with two feature levels.
+
+    Examples:
+        >>> tuple(_run_forward_post(_training_decoder_layer()).shape)
+        (2, 12, 16)
+    """
+    output = layer.forward_post(
+        torch.randn(2, 12, 16),
+        torch.randn(2, 20, 16),
+        query_pos=torch.randn(2, 12, 16),
+        reference_points=torch.rand(2, 12, 2, 4),
+        spatial_shapes=torch.tensor([[4, 4], [2, 2]]),
+        spatial_shapes_hw=[(4, 4), (2, 2)],
+        level_start_index=torch.tensor([0, 16]),
+    )
+    assert isinstance(output, torch.Tensor)
+    return output
+
+
+class _PassThroughLayer(nn.Module):
+    """A decoder layer that returns its input, so a decoder run exercises only the reference-point handling.
+
+    Examples:
+        >>> _PassThroughLayer()(torch.ones(1), torch.zeros(1), query_pos=None)
+        tensor([1.])
+    """
+
+    def forward(self, output: torch.Tensor, memory: torch.Tensor, **kwargs: object) -> torch.Tensor:
+        """Return ``output`` unchanged."""
+        return output
+
+
+def _run_decoder_with_pass_through_layer(modify_head: Callable[[nn.Module], nn.Module] | None = None) -> torch.Tensor:
+    """Run a one-layer decoder whose layer is a pass-through, optionally after ``modify_head(ref_point_head)``.
+
+    Args:
+        modify_head: Applied to ``ref_point_head`` (and its result installed as the head), or ``None`` to keep it.
+
+    Examples:
+        >>> tuple(_run_decoder_with_pass_through_layer().shape)
+        (1, 2, 12, 16)
+    """
+    decoder = TransformerDecoder(_training_decoder_layer(), num_layers=1, d_model=16, lite_refpoint_refine=True)
+    decoder.layers = nn.ModuleList([_PassThroughLayer()])
+    if modify_head is not None:
+        decoder.ref_point_head = modify_head(decoder.ref_point_head)
+    result = decoder(
+        torch.randn(2, 12, 16),
+        torch.randn(2, 20, 16),
+        refpoints_unsigmoid=torch.randn(2, 12, 4),
+        spatial_shapes=torch.tensor([[4, 4], [2, 2]]),
+        spatial_shapes_hw=[(4, 4), (2, 2)],
+        level_start_index=torch.tensor([0, 16]),
+        valid_ratios=torch.ones(2, 2, 2),
+    )
+    assert isinstance(result, torch.Tensor)
+    return result
+
+
+def _first_layer_subclassed(head: nn.Module) -> nn.Module:
+    """Return ``head`` after turning its first ``nn.Linear`` into an instance of a subclass.
+
+    Examples:
+        >>> head = nn.Module()
+        >>> head.layers = nn.ModuleList([nn.Linear(2, 2)])
+        >>> type(_first_layer_subclassed(head).layers[0]) is nn.Linear
+        False
+    """
+    _subclassed(head.layers[0])
+    return head
+
+
+class TestAutocastFoldsAreTakenOnlyForPlainModules:
+    """The cast-folding rewrites need the exact modules the layer builds; an ``isinstance`` check would admit
+    subclasses.
+
+    The CUDA gate is forced open with a bf16 autocast dtype so CPU runs the routing. Each negative case has a positive
+    control that takes the fold, so none can pass merely because the fold is never reached, and an ``isinstance`` in
+    place of a ``type(...) is`` check in the gate fails the negative case.
+    """
+
+    def test_pos_embed_for_linear_folds_the_add_into_the_autocast_dtype(self, bf16_gate: _RoutedCalls) -> None:
+        """Control: a training layer's fp32 positional sum is emitted in the autocast dtype by ``_AddInDtype``."""
+        layer = _training_decoder_layer()
+
+        layer._pos_embed_for_linear(torch.randn(2, 12, 16), torch.randn(2, 12, 16))
+
+        assert [call[2] for call in bf16_gate.add] == [torch.bfloat16]
+
+    def test_ffn_hidden_folds_the_epilogue_in_the_autocast_dtype(self, bf16_gate: _RoutedCalls) -> None:
+        """Control: a plain ``linear1`` takes the ReLU epilogue with its operands cast to the autocast dtype."""
+        layer = _training_decoder_layer()
+
+        layer._ffn_hidden(torch.randn(2, 12, 16))
+
+        assert [{operand.dtype for operand in call} for call in bf16_gate.ffn] == [{torch.bfloat16}]
+
+    def test_ffn_hidden_keeps_the_two_ops_for_a_linear_subclass(self, bf16_gate: _RoutedCalls) -> None:
+        """A ``linear1`` that is a subclass of ``nn.Linear`` may override its call, so it keeps ``relu(linear1(x))``."""
+        layer = _training_decoder_layer()
+        _subclassed(layer.linear1)
+
+        layer._ffn_hidden(torch.randn(2, 12, 16))
+
+        assert bf16_gate.ffn == []
+
+    def test_cross_attention_query_is_folded_for_the_plain_module(self, bf16_gate: _RoutedCalls) -> None:
+        """Control: self- and cross-attention both take the folded positional add, so the cases below are real."""
+        _run_forward_post(_training_decoder_layer())
+
+        assert [call[2] for call in bf16_gate.add] == [torch.bfloat16, torch.bfloat16]
+
+    @pytest.mark.parametrize("path", ["cross_attn", "cross_attn.sampling_offsets", "cross_attn.attention_weights"])
+    def test_cross_attention_query_keeps_the_plain_add_for_a_subclass(self, path: str, bf16_gate: _RoutedCalls) -> None:
+        """A subclassed ``MSDeformAttn`` or query head may observe the query, so only self-attention keeps the fold."""
+        layer = _training_decoder_layer()
+        _subclassed(layer.get_submodule(path))
+
+        _run_forward_post(layer)
+
+        assert len(bf16_gate.add) == 1
+
+    def test_sine_embedding_is_written_in_the_autocast_dtype_for_the_plain_head(self, bf16_gate: _RoutedCalls) -> None:
+        """Control: with a plain ``ref_point_head`` the fp32 reference embedding is requested in the autocast dtype."""
+        _run_decoder_with_pass_through_layer()
+
+        assert bf16_gate.sine_dtypes == [torch.bfloat16]
+
+    @pytest.mark.parametrize(
+        "modify_head", [pytest.param(_subclassed, id="mlp"), pytest.param(_first_layer_subclassed, id="first-linear")]
+    )
+    def test_sine_embedding_keeps_its_dtype_for_a_head_subclass(
+        self, modify_head: Callable[[nn.Module], nn.Module], bf16_gate: _RoutedCalls
+    ) -> None:
+        """A subclassed ``MLP`` or first ``nn.Linear`` may observe its input, so it receives the fp32 embedding."""
+        _run_decoder_with_pass_through_layer(modify_head)
+
+        assert bf16_gate.sine_dtypes == [None]
