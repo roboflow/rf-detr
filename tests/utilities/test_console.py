@@ -238,7 +238,23 @@ class TestBuildSummaryRenderable:
             console.print(result)
         assert "—" in capture.get()
 
-    @pytest.mark.parametrize("name", ["helmet[red]", "car [parked]", "sign[/]", "price:dollar:", r"a\[b]"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "helmet[red]",
+            "car [parked]",
+            "sign[/]",
+            "price:dollar:",
+            r"a\[b]",
+            "[bold]x[/bold]",
+            "[link=https://example.com]y[/link]",
+            "[[x]]",
+            "日本語",
+            "[",
+            "]",
+            "\\",
+        ],
+    )
     def test_class_name_renders_verbatim(self, name: str) -> None:
         """A class name is data, not Rich markup or an emoji code, so it prints exactly as written."""
         from rich.console import Console
@@ -248,6 +264,43 @@ class TestBuildSummaryRenderable:
         with console.capture() as capture:
             console.print(_build_summary_renderable("Val", "overall-text", per_class))
         assert name in capture.get()
+
+    @pytest.mark.parametrize("name", [None, 1234])
+    def test_non_str_class_name_renders_as_text(self, name: object) -> None:
+        """A non-``str`` class name is coerced to text instead of aborting the table render.
+
+        A COCO annotation file can carry ``"name": null`` or a number, and ``COCOEvalCallback`` passes it through
+        uncoerced, so ``Text`` must not be handed the raw value.
+        """
+        from rich.console import Console
+
+        per_class = [{"name": name, "ap": 0.5, "ar": 0.6, "f1": 0.55, "precision": 0.6, "recall": 0.5}]
+        console = Console(width=200, color_system=None)
+        with console.capture() as capture:
+            console.print(_build_summary_renderable("Val", "overall-text", per_class))
+        assert str(name) in capture.get()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "a\nb",
+            pytest.param("x" * 500, id="long-name"),
+            pytest.param("", id="empty-name"),
+        ],
+    )
+    def test_awkward_class_name_renders_without_error(self, name: str) -> None:
+        """Names Rich legitimately alters (newline split, truncation, empty) still render a table.
+
+        These cannot be asserted verbatim: a newline splits the cell and ``no_wrap=True`` truncates a long name, so
+        the contract is only that the render completes and prints the table.
+        """
+        from rich.console import Console
+
+        per_class = [{"name": name, "ap": 0.5, "ar": 0.6, "f1": 0.55, "precision": 0.6, "recall": 0.5}]
+        console = Console(width=200, color_system=None)
+        with console.capture() as capture:
+            console.print(_build_summary_renderable("Val", "overall-text", per_class))
+        assert "Per-class Metrics" in capture.get()
 
 
 # ---------------------------------------------------------------------------
