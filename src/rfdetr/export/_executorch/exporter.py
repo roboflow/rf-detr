@@ -60,6 +60,7 @@ from typing import Any, Literal, cast
 import torch
 from torch import nn
 
+from rfdetr.export._executorch.xnnpack import decompose_attention, fold_constants
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -476,6 +477,11 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
         # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
         exported_program = torch.export.export(model, (input_tensors,), strict=False)
+        if backend == "xnnpack":
+            # Unmasked attention and constant weight slices keep the encoder and decoder inside the delegate:
+            # 87 -> 57 partitions on RFDETRNano, 167 -> 107 ms on a Xeon (Haswell) CPU and 51 -> 34 ms on an
+            # Apple M4 Max CPU. CoreML runs these ops itself.
+            exported_program = fold_constants(decompose_attention(exported_program))
         # Imported in the non-QNN path only: the qnn backend never uses this transform, and
         # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
         # they never needed.

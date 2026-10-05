@@ -1096,6 +1096,22 @@ class TestExecutorchEndToEnd:
             "expected AddmmToLinearTransform to recombine them into aten.linear"
         )
 
+    def test_attention_runs_in_xnnpack(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
+        """No attention op may survive lowering as a portable kernel call.
+
+        ``F.scaled_dot_product_attention`` lowers to a softmax with ``eq``/``any``/``where`` guards and scalar
+        multiplications, and ``nn.MultiheadAttention`` to linear layers that slice their weight at run time. XNNPACK
+        runs none of these. ``decompose_attention`` and ``fold_constants`` in the lowering keep both in the delegate
+        (167 -> 107 ms on RFDETRNano, Xeon CPU); this guards that they stay wired in.
+        """
+        _, _, pte_path, _ = exported
+        portable_ops = _portable_kernel_call_names(pte_path)
+        attention_calls = [op for op in portable_ops if op.split(".")[0] in {"aten::eq", "aten::mul", "aten::linear"}]
+        assert not attention_calls, (
+            f"{len(attention_calls)} portable attention kernel call(s) in {pte_path.name}: "
+            f"{sorted(set(attention_calls))}"
+        )
+
     def test_pte_file_written(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """The exported artifact must be a non-empty ``.pte`` file."""
         _, _, pte_path, _ = exported
