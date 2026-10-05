@@ -11,6 +11,7 @@ import io
 import json
 import operator
 import os
+import re
 import tempfile
 import threading
 import warnings
@@ -198,6 +199,26 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """
     widened = chw.to(dtype=torch.get_default_dtype(), memory_format=torch.contiguous_format)
     return widened.div_(scale)
+
+
+def _mps_lacks_antialiased_resize() -> bool:
+    """Report whether the installed torch predates MPS support for antialiased bilinear resize.
+
+    ``aten::_upsample_bilinear2d_aa`` has no MPS kernel before torch 2.7 (pytorch/pytorch#141287 tracks it, and
+    #145581 is the PR it credits for 2.7); ``v2.7.0`` is the first tag whose ``native_functions.yaml`` dispatches it to
+    MPS. Delete this predicate and the CPU-resize branch in :meth:`RFDETR.predict` once the ``torch`` floor in
+    ``pyproject.toml`` reaches 2.7.
+
+    Returns:
+        ``True`` when ``torch.__version__`` is older than 2.7. An unparsable version string counts as modern, so
+        the MPS path is not detoured through the CPU on an unrecognised build.
+
+    Examples:
+        >>> isinstance(_mps_lacks_antialiased_resize(), bool)
+        True
+    """
+    match = re.match(r"(\d+)\.(\d+)", torch.__version__)
+    return match is not None and (int(match.group(1)), int(match.group(2))) < (2, 7)
 
 
 # ModelContext and _build_model_context are eagerly imported above (runtime use in get_model).
@@ -2797,6 +2818,8 @@ class RFDETR:
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
+        *,
+        antialias: bool = False,
         **kwargs: Any,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
         """Performs model inference on the input images.
@@ -2826,6 +2849,17 @@ class RFDETR:
                 ``key_points.data["source_image"]`` because Supervision ``KeyPoints`` currently has no collection-level
                 metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
                 needed.
+            antialias:
+                Whether to use antialiasing during the inference resize. Match it to the resize the checkpoint was
+                trained with. Keep this ``False`` for checkpoints trained with the antialias-free Albumentations
+                pipeline, which is what the default CPU augmentation backend uses when ``rfdetr[augment]`` is
+                installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU
+                augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or
+                antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time
+                therefore decides which setting a default-trained checkpoint expects. Exported models and the
+                ``rfdetr.export`` runtime helpers always resize with ``antialias=False``, so results with
+                ``antialias=True`` will not match them unless the caller pre-resizes the image with antialiasing.
+                Defaults to ``False`` to preserve the existing inference behavior.
             **kwargs:
                 Additional keyword arguments.
 
@@ -2868,7 +2902,9 @@ class RFDETR:
             But with the default ``include_source_image=True``, capturing ``source_image`` from that same tensor
             still does its own separate, blocking ``.cpu()`` call earlier in the loop — so an already-CUDA tensor
             input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
-            that copy as well.
+            that copy as well. The exception is MPS with ``antialias=True`` on torch < 2.7, which has no MPS kernel
+            for antialiased resize: there the whole preprocessing path, including an MPS-resident tensor input, runs
+            on the CPU and the resized batch is transferred to the device once.
 
             Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.
             PIL images, natively decoded local files and uint8 NumPy images skip a redundant range scan because
@@ -2932,6 +2968,14 @@ class RFDETR:
         pending_checks: list[tuple[torch.Tensor | bool, torch.Tensor | bool, bool, tuple[int, ...]]] = []
         # Built lazily on the first uint8 image, then shared by the rest of the batch.
         uint8_scale: torch.Tensor | None = None
+
+        # torch < 2.7 has no MPS kernel for antialiased bilinear resize (pytorch#141287, #145581). Keep the whole
+        # preprocessing path on CPU in that case, so an input is never moved to MPS only to come straight back for
+        # resizing. MPS-resident tensor inputs take the same detour (device -> CPU, then the resized batch back to
+        # MPS). From torch 2.7 on the MPS kernel exists and this stays False; once the torch floor reaches 2.7,
+        # delete this branch together with `_mps_lacks_antialiased_resize`.
+        resize_on_cpu = antialias and self.model.device.type == "mps" and _mps_lacks_antialiased_resize()
+        preprocess_device = torch.device("cpu") if resize_on_cpu else self.model.device
 
         for img_input in images:
             img: Any = img_input
@@ -2997,8 +3041,9 @@ class RFDETR:
                         tensor_source = img
                     # Keep the 1-byte-per-channel storage for now: the widening to float is
                     # deferred until after the host-to-device transfer below, so only a quarter of
-                    # the bytes cross the bus and the widen+divide run on the accelerator. The view
-                    # is already (C, H, W), so every shape check and error message below is
+                    # the bytes cross the bus and the widen+divide run on the accelerator (except MPS
+                    # with antialias=True on torch < 2.7, where preprocessing stays on the CPU). The
+                    # view is already (C, H, W), so every shape check and error message below is
                     # unchanged.
                     img = _uint8_image_to_chw_view(tensor_source)
                     deferred_widen = True
@@ -3044,14 +3089,14 @@ class RFDETR:
             # CPU tensor headed to an accelerator; pin_memory() raises on a tensor the caller already placed on the
             # accelerator (a legitimate tensor-input use to skip a host round-trip), and pinning buys nothing when
             # the target device is the CPU itself.
-            if img_tensor.device.type == "cpu" and self.model.device.type == "cuda":
+            if img_tensor.device.type == "cpu" and preprocess_device.type == "cuda":
                 img_tensor = img_tensor.pin_memory()
             # non_blocking only pays off (and is only safe without an explicit sync) when the destination is CUDA,
             # matching the transfer_batch_to_device() convention in training/module_data.py: a CUDA-tensor-input ->
             # CPU-model transfer with non_blocking=True races the copy — the CPU destination is never pinned, so
             # reads of the tensor's data can observe an in-flight (partially written) copy.
-            non_blocking = self.model.device.type == "cuda"
-            img_tensor = img_tensor.to(self.model.device, non_blocking=non_blocking)
+            non_blocking = preprocess_device.type == "cuda"
+            img_tensor = img_tensor.to(preprocess_device, non_blocking=non_blocking)
             if deferred_widen:
                 if uint8_scale is None:
                     uint8_scale = torch.tensor(255, device=img_tensor.device, dtype=torch.get_default_dtype())
@@ -3082,8 +3127,11 @@ class RFDETR:
 
         resize_to = list(shape) if shape is not None else [self.model.resolution, self.model.resolution]
         # antialias=False matches the antialias-free bilinear resize (cv2.INTER_LINEAR)
-        # used by Albumentations during training — see issue #1203.
-        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=False) for t in processed_images])
+        # used by Albumentations during training — see issue #1203. The opt-in flag
+        # also supports checkpoints trained with torchvision or platform resizing.
+        batch_tensor = torch.stack([F.resize(t, resize_to, antialias=antialias) for t in processed_images])
+        if resize_on_cpu:
+            batch_tensor = batch_tensor.to(self.model.device)
         batch_tensor = F.normalize(batch_tensor, self.means, self.stds)
 
         if self._is_optimized_for_inference:
