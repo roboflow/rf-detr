@@ -161,7 +161,7 @@ def _mps_lacks_antialiased_resize() -> bool:
     ``pyproject.toml`` reaches 2.7.
 
     Returns:
-        ``True`` when ``torch.__version__`` is older than 2.7. An unparseable version string counts as modern, so
+        ``True`` when ``torch.__version__`` is older than 2.7. An unparsable version string counts as modern, so
         the MPS path is not detoured through the CPU on an unrecognised build.
 
     Examples:
