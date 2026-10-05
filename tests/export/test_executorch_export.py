@@ -697,6 +697,7 @@ class TestExecuTorchExporterBody:
         return _fake_executorch_tree(
             {
                 "executorch.exir": {"to_edge_transform_and_lower": mock.MagicMock(return_value=edge)},
+                "executorch.exir.passes.constant_prop_pass": {"constant_prop_pass": mock.MagicMock()},
                 "executorch.backends.transforms.addmm_mm_to_linear": {"AddmmToLinearTransform": mock.MagicMock()},
                 "executorch.backends.xnnpack.partition.xnnpack_partitioner": {"XnnpackPartitioner": mock.MagicMock()},
                 "executorch.backends.apple.coreml.partition.coreml_partitioner": {
