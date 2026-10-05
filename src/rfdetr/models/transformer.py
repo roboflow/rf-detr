@@ -29,7 +29,9 @@ from rfdetr.models._types import BuilderArgs
 from rfdetr.models.heads.keypoints import ConditionalQueryInitializer
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.modules import MSDeformAttn
+from rfdetr.utilities.compiler import cuda_autocast_dtype as _cuda_autocast_dtype
 from rfdetr.utilities.compiler import is_compiling
+from rfdetr.utilities.compiler import is_tracing as _is_tracing
 
 
 def _tracer_absent() -> bool:
@@ -44,14 +46,38 @@ def _tracer_absent() -> bool:
     return False
 
 
-def _is_tracing() -> bool:
-    """Return whether a ``torch.jit.trace`` (ONNX/TorchScript export) is recording the current call.
+#: ROCm builds report AMD devices as ``cuda``. The decoder rewrites were measured (speed and bitwise parity) on NVIDIA
+#: CUDA only, so a HIP build keeps the previous ops.
+_IS_HIP = torch.version.hip is not None
+
+
+def _eager_cuda(tensor: Tensor) -> bool:
+    """Return whether ``tensor`` is on CUDA in eager execution, the only case the decoder rewrites are taken.
+
+    Every eager CUDA rewrite in this module gates on this one predicate, so a device or execution-mode policy is a
+    single edit; each call site adds its own module and dtype checks after it. ROCm (HIP) builds keep the plain ops
+    because the rewrites are unmeasured there. ``torch.compile`` and tracing keep them too: Inductor fuses them itself
+    and the exporters expect no custom autograd function. So does any ``torch.func`` transform (``vmap``, ``grad``,
+    ``jvp``, ...): the rewrites' autograd functions define no ``setup_context`` and would raise under one.
+
+    Args:
+        tensor: The input whose device decides eligibility.
+
+    Returns:
+        ``True`` for a CUDA tensor on a non-HIP build outside ``torch.compile``, tracing and ``torch.func`` transforms,
+        ``False`` otherwise.
 
     Examples:
-        >>> _is_tracing()
+        >>> _eager_cuda(torch.zeros(1))
         False
     """
-    return bool(torch.jit.is_tracing())  # type: ignore[attr-defined,no-untyped-call]
+    return (
+        tensor.is_cuda
+        and not _IS_HIP
+        and not is_compiling()
+        and not _is_tracing()
+        and not torch._C._are_functorch_transforms_active()
+    )
 
 
 def _safe_multinormalize(dim: int) -> int:
@@ -60,8 +86,12 @@ def _safe_multinormalize(dim: int) -> int:
 
 
 #: Hook registries ``Module.__call__`` consults around ``forward``; each also has a ``_global`` twin in
-#: ``torch.nn.modules.module`` that applies to every module.
+#: ``torch.nn.modules.module`` that applies to every module. These, the ``_global`` twins and the
+#: ``_compiled_call_impl`` that ``Module.compile()`` sets are the private torch state :func:`_module_call_is_plain`
+#: reads; a torch release that renames or drops any of them makes it return ``False``, never a silent ``True``.
 _MODULE_HOOK_ATTRS = ("_forward_hooks", "_forward_pre_hooks", "_backward_hooks", "_backward_pre_hooks")
+_GLOBAL_MODULE_HOOK_ATTRS = tuple(f"_global{name}" for name in _MODULE_HOOK_ATTRS)
+_MODULE_CALL_ATTRS = (*_MODULE_HOOK_ATTRS, "_compiled_call_impl")
 
 
 def _module_call_is_plain(*modules: nn.Module) -> bool:
@@ -70,13 +100,15 @@ def _module_call_is_plain(*modules: nn.Module) -> bool:
     Code that reads a module's parameters instead of calling the module stands in for the call only when
     ``Module.__call__`` adds nothing: no instance-level ``forward``, no ``compile()`` wrapper
     (``_compiled_call_impl``), and no forward, forward-pre, backward or backward-pre hook, whether registered on the
-    module or for every module through ``torch.nn.modules.module``.
+    module or for every module through ``torch.nn.modules.module``. The check fails closed: if any of those torch
+    attributes is missing, the call is not plain, so the caller keeps the module call.
 
     Args:
         *modules: The modules the caller would otherwise call.
 
     Returns:
-        ``True`` when none of them is overridden or observed, ``False`` otherwise.
+        ``True`` when none of them is overridden or observed, ``False`` otherwise or when an attribute the check reads
+        is missing.
 
     Examples:
         >>> linear = nn.Linear(2, 2)
@@ -87,34 +119,18 @@ def _module_call_is_plain(*modules: nn.Module) -> bool:
         False
         >>> handle.remove()
     """
-    if any(getattr(nn.modules.module, f"_global{name}", {}) for name in _MODULE_HOOK_ATTRS):
+    module_registry = nn.modules.module
+    if not all(hasattr(module_registry, name) for name in _GLOBAL_MODULE_HOOK_ATTRS):
         return False
-    return not any(
-        "forward" in module.__dict__
-        or getattr(module, "_compiled_call_impl", None) is not None
-        or any(getattr(module, name, {}) for name in _MODULE_HOOK_ATTRS)
+    if any(getattr(module_registry, name) for name in _GLOBAL_MODULE_HOOK_ATTRS):
+        return False
+    return all(
+        all(hasattr(module, name) for name in _MODULE_CALL_ATTRS)
+        and "forward" not in module.__dict__
+        and module._compiled_call_impl is None
+        and not any(getattr(module, name) for name in _MODULE_HOOK_ATTRS)
         for module in modules
     )
-
-
-def _cuda_autocast_dtype() -> torch.dtype | None:
-    """Return the CUDA autocast compute dtype, or ``None`` when CUDA autocast is off.
-
-    Works on every supported torch: ``is_autocast_enabled`` takes no device argument on 2.2, and
-    ``get_autocast_dtype`` replaced ``get_autocast_gpu_dtype`` later.
-
-    Examples:
-        >>> _cuda_autocast_dtype() is None
-        True
-    """
-    try:
-        enabled = torch.is_autocast_enabled("cuda")
-    except TypeError:  # PyTorch 2.2 accepts no device argument.
-        enabled = torch.is_autocast_enabled()
-    if not enabled:
-        return None
-    get_dtype = getattr(torch, "get_autocast_dtype", None)
-    return get_dtype("cuda") if get_dtype is not None else torch.get_autocast_gpu_dtype()
 
 
 class _AddInDtype(torch.autograd.Function):
@@ -123,7 +139,11 @@ class _AddInDtype(torch.autograd.Function):
     ``torch.add`` with a lower-precision ``out=`` computes in the promoted operand dtype and rounds once on the store,
     so the result is bitwise the two-step one. The backward mirrors the two-step graph as well: the cast's backward
     upcasts the incoming gradient, and the add hands it to both operands, casting it back for a lower-precision one —
-    that round trip returns the incoming bits, so ``grad.to(b.dtype)`` is it.
+    that round trip returns the incoming bits, so ``grad.to(b.dtype)`` is it. That holds for a single consumer of the
+    result. When it fans out (the self-attention query and key projections, or the two deformable-attention heads),
+    autograd sums the consumers' gradients in ``dtype`` before this backward upcasts them, where the two-step graph
+    upcasts each one and sums in full precision: the operand gradients carry one extra rounding to ``dtype`` (at most
+    half an ulp), while forward values and losses stay bitwise.
     """
 
     @staticmethod
@@ -144,26 +164,37 @@ class _LinearReLU(torch.autograd.Function):
     ``torch._addmm_activation`` rounds ``acc + bias`` once and clamps, and ``round(max(0, y)) == max(0, round(y))`` for
     any rounding that keeps sign and zero, so the forward is bitwise ``F.relu(F.linear(x, weight, bias))`` while the
     separate ReLU pass over the ``[tokens, dim_feedforward]`` activation disappears. torch defines no derivative for the
-    fused op, so the backward runs exactly the ops autograd runs for the two-op graph: ``threshold_backward`` on the
-    saved output, the two GEMMs of ``AddmmBackward0`` and the bias reduce.
+    fused op, so the backward runs the ops autograd runs for the two-op graph: ``threshold_backward`` on the saved
+    output, the two GEMMs ``AddmmBackward0`` issues for a row-major input and an ``nn.Linear`` weight
+    (``grad.mm(weight)``, and ``grad.t().mm(rows)``, which leaves the weight gradient contiguous like the parameter) and
+    the bias reduce, each skipped when its input needs no gradient. Only the input and the returned output are saved
+    (the flattened views are rebuilt in the backward), so the backward is itself differentiable and a double backward
+    (``create_graph=True``) gets every term the two-op graph gives. ``torch.utils.flop_counter.FlopCounterMode`` has no
+    formula for ``_addmm_activation``, so it undercounts ``linear1`` on a CUDA model in eager execution.
     """
 
     @staticmethod
     def forward(ctx: torch.autograd.function.FunctionCtx, x: Tensor, weight: Tensor, bias: Tensor) -> Tensor:
         rows = x.reshape(-1, x.shape[-1])
-        out = torch._addmm_activation(bias, rows, weight.t())
-        ctx.save_for_backward(rows, weight, out)
-        ctx.x_shape = x.shape  # type: ignore[attr-defined]
-        return out.view(*x.shape[:-1], weight.shape[0])
+        result = torch._addmm_activation(bias, rows, weight.t()).view(*x.shape[:-1], weight.shape[0])
+        # A saved tensor that is neither an input nor an output (such as ``rows``) is cut off from the graph, which
+        # silently drops its terms from a double backward; save ``x`` and ``result`` and rebuild the views instead.
+        ctx.save_for_backward(x, weight, result)
+        return result
 
     @staticmethod
-    def backward(ctx: torch.autograd.function.FunctionCtx, grad: Tensor) -> tuple[Tensor, Tensor, Tensor]:
-        rows, weight, out = ctx.saved_tensors  # type: ignore[attr-defined]
+    def backward(
+        ctx: torch.autograd.function.FunctionCtx, grad: Tensor
+    ) -> tuple[Tensor | None, Tensor | None, Tensor | None]:
+        x, weight, result = ctx.saved_tensors  # type: ignore[attr-defined]
+        needs_x, needs_weight, needs_bias = ctx.needs_input_grad  # type: ignore[attr-defined]
+        out = result.reshape(-1, result.shape[-1])
         grad_rows = grad.reshape(-1, grad.shape[-1])
         grad_pre = torch.ops.aten.threshold_backward(grad_rows, out, 0)
-        grad_x = grad_pre.mm(weight).view(ctx.x_shape)  # type: ignore[attr-defined]
-        grad_weight = rows.t().mm(grad_pre).t()
-        return grad_x, grad_weight, grad_pre.sum(0)
+        grad_x = grad_pre.mm(weight).view(x.shape) if needs_x else None
+        grad_weight = grad_pre.t().mm(x.reshape(-1, x.shape[-1])) if needs_weight else None
+        grad_bias = grad_pre.sum(0) if needs_bias else None
+        return grad_x, grad_weight, grad_bias
 
 
 def _additive_attn_mask(mask: Tensor | None, dtype: torch.dtype) -> Tensor | None:
@@ -247,7 +278,7 @@ def _sineembed_interleaved(pos_tensor: Tensor, dim: int, out_dtype: torch.dtype 
 
     Args:
         pos_tensor: Coordinates of shape ``(bs, n_query, 2)`` or ``(bs, n_query, 4)``, on CUDA.
-        dim: Embedding width per coordinate.
+        dim: Embedding width per coordinate; must be even (the caller routes odd widths to the plain ops).
         out_dtype: Dtype of the returned embedding, or ``None`` for ``pos_tensor.dtype``.
 
     Returns:
@@ -294,7 +325,8 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
     Returns:
         The embedding, ``(bs, n_query, dim * pos_tensor.shape[-1])``, in y, x[, w, h] order.
     """
-    if pos_tensor.is_cuda and not is_compiling() and not _is_tracing():
+    # An odd ``dim`` has no (sin, cos) pairing: the plain ops raise for it, the interleaved write would not.
+    if dim % 2 == 0 and _eager_cuda(pos_tensor):
         return _sineembed_interleaved(pos_tensor, dim, out_dtype)
     # n_query, bs, _ = pos_tensor.size()
     # sineembed_tensor = torch.zeros(n_query, bs, 256)
@@ -741,11 +773,11 @@ class Transformer(nn.Module):
         norm_bias = torch.stack([cast(nn.LayerNorm, m).bias for m in self.enc_output_norm])
         norm_eps = cast(nn.LayerNorm, self.enc_output_norm[0]).eps
 
-        compute_dtype = _cuda_autocast_dtype() if output_memory.is_cuda else None
-        if compute_dtype is None or compute_dtype == output_memory.dtype or is_compiling() or _is_tracing():
+        compute_dtype = _cuda_autocast_dtype() if _eager_cuda(output_memory) else None
+        if compute_dtype is None or output_memory.dtype != torch.float32 or compute_dtype == output_memory.dtype:
             memory_expanded = output_memory.unsqueeze(0).expand(group_detr, -1, -1, -1)
         else:
-            # Under autocast the batched GEMM casts its input: cast the shared memory once instead of its
+            # Under autocast the batched GEMM casts its fp32 input: cast the shared memory once instead of its
             # ``group_detr``-fold expansion, and let the backward sum the group gradients without upcasting.
             memory_expanded = cast(Tensor, _CastThenExpand.apply(output_memory, group_detr, compute_dtype))
         output_memory_all = _batched_group_linear(memory_expanded, enc_output_weight, enc_output_bias)
@@ -1327,21 +1359,25 @@ class TransformerDecoder(nn.Module):
                 assert valid_ratios is not None
                 refpoints_input = obj_center[:, :, None] * torch.cat([valid_ratios, valid_ratios], -1)[:, None]
                 # ``ref_point_head`` and its first Linear are the embedding's only consumers. When their calls are
-                # plain, autocast casts the input inside Linear, so producing it in the compute dtype is bitwise the
-                # same. Hooks, overrides, subclasses and compile wrappers keep the original fp32 module input.
-                first_ref_point_layer = self.ref_point_head.layers[0]
+                # plain, autocast casts an fp32 input inside Linear, so producing it in the compute dtype is bitwise
+                # the same. Hooks, overrides, subclasses, compile wrappers and non-fp32 references (autocast leaves
+                # fp64 alone) keep the original module input.
+                # ``.layers`` is read only after the type check: a replaced head need not have it.
+                ref_point_head = self.ref_point_head
                 ref_point_head_is_plain = (
-                    refpoints_input.is_cuda
-                    and not is_compiling()
-                    and not _is_tracing()
-                    and type(self.ref_point_head) is MLP
-                    and type(first_ref_point_layer) is nn.Linear
-                    and _module_call_is_plain(self.ref_point_head, first_ref_point_layer)
+                    _eager_cuda(refpoints_input)
+                    and type(ref_point_head) is MLP
+                    and type(ref_point_head.layers[0]) is nn.Linear
+                    and _module_call_is_plain(ref_point_head, ref_point_head.layers[0])
                 )
                 query_sine_embed = gen_sineembed_for_position(
                     refpoints_input[:, :, 0, :],
                     self.d_model // 2,
-                    out_dtype=(_cuda_autocast_dtype() if refpoints_input.is_cuda and ref_point_head_is_plain else None),
+                    out_dtype=(
+                        _cuda_autocast_dtype()
+                        if ref_point_head_is_plain and refpoints_input.dtype == torch.float32
+                        else None
+                    ),
                 )
 
             query_pos = self.ref_point_head(query_sine_embed)
@@ -1554,17 +1590,28 @@ class TransformerDecoderLayer(nn.Module):
     def _pos_embed_for_linear(self, tensor: Tensor, pos: Tensor | None) -> Tensor:
         """:meth:`with_pos_embed` for a sum whose only consumers are matmuls under autocast.
 
-        Autocast casts every matmul input to its compute dtype, so a full-precision sum that feeds nothing else is
-        written once by the add and read once more by the cast. When CUDA autocast is on, the training path emits the
-        sum in the compute dtype directly (:class:`_AddInDtype`, bitwise the same values, one kernel and half the
-        bytes). Eval, CPU, fp32 training, ``torch.compile`` and tracing keep the plain add.
+        Autocast casts fp32 matmul inputs to its compute dtype, so a full-precision sum that feeds nothing else is
+        written once by the add and read once more by the cast. When CUDA autocast is on and the sum is fp32, the
+        training path emits it in the compute dtype directly (:class:`_AddInDtype`, bitwise the same values, one kernel
+        and half the bytes). Eval, CPU, fp32 training, non-fp32 sums (autocast leaves fp64 alone), ``torch.compile`` and
+        tracing keep the plain add. Both callers feed the sum to two matmuls, so the ``tensor``/``pos`` gradients are
+        accumulated in the compute dtype before the upcast (one extra rounding, see :class:`_AddInDtype`); the forward
+        and the losses are unchanged.
         """
+        # An overridden ``with_pos_embed`` (subclass method or instance attribute) defines the sum; honour it.
+        if type(self).with_pos_embed is not TransformerDecoderLayer.with_pos_embed or "with_pos_embed" in self.__dict__:
+            return self.with_pos_embed(tensor, pos)
         if pos is None:
             return tensor
-        if not (self.training and tensor.is_cuda and tensor.shape == pos.shape) or is_compiling() or _is_tracing():
+        if not (self.training and _eager_cuda(tensor) and tensor.shape == pos.shape):
             return tensor + pos
         dtype = _cuda_autocast_dtype()
-        if dtype is None or tensor.dtype == dtype or pos.dtype not in (tensor.dtype, dtype):
+        if (
+            dtype is None
+            or tensor.dtype != torch.float32
+            or tensor.dtype == dtype
+            or pos.dtype not in (tensor.dtype, dtype)
+        ):
             return tensor + pos
         return cast(Tensor, _AddInDtype.apply(tensor, pos, dtype))
 
@@ -1572,26 +1619,27 @@ class TransformerDecoderLayer(nn.Module):
         """``self.activation(self.linear1(tgt))`` with the ReLU folded into the GEMM epilogue on CUDA.
 
         :class:`_LinearReLU` is bitwise the two-op result, so it is taken whenever ``linear1`` is the plain
-        ``nn.Linear`` the layer builds (exact type, bias, a call nothing overrides or observes, see
+        ``nn.Linear`` the layer builds (exact type, a bias, weight and bias that are exact ``nn.Parameter`` tensors so a
+        tensor subclass keeps ``F.linear``'s dispatch, a call nothing overrides or observes, see
         :func:`_module_call_is_plain`) and the activation is ReLU, in eager CUDA execution; other activations, CPU,
-        ``torch.compile`` and tracing keep the two ops. Under CUDA autocast the operands are cast to the compute dtype
-        first, exactly as autocast would cast them for ``linear``.
+        ``torch.compile`` and tracing keep the two ops. Under CUDA autocast fp32 operands are cast to the compute dtype
+        first, exactly as autocast casts them for ``linear``; other operand dtypes (autocast leaves fp64 alone) keep the
+        two ops.
         """
         linear1 = self.linear1
         if (
             self.activation is F.relu
-            and tgt.is_cuda
+            and _eager_cuda(tgt)
             and type(linear1) is nn.Linear
-            and linear1.bias is not None
+            and type(linear1.weight) is nn.Parameter
+            and type(linear1.bias) is nn.Parameter
             and _module_call_is_plain(linear1)
-            and not is_compiling()
-            and not _is_tracing()
         ):
             dtype = _cuda_autocast_dtype()
             if dtype is None:
                 if tgt.dtype == linear1.weight.dtype:
                     return cast(Tensor, _LinearReLU.apply(tgt, linear1.weight, linear1.bias))
-            else:
+            elif tgt.dtype == linear1.weight.dtype == linear1.bias.dtype == torch.float32:
                 with torch.autocast("cuda", enabled=False):
                     return cast(
                         Tensor,
@@ -1606,26 +1654,26 @@ class TransformerDecoderLayer(nn.Module):
 
         The explicit path reads ``in_proj_weight``/``in_proj_bias``/``out_proj`` and never calls the module, so it is
         limited to the plain ``nn.MultiheadAttention`` ``__init__`` builds (exact type, a call nothing overrides or
-        observes, see :func:`_module_call_is_plain`, packed projections with bias, no
-        ``bias_k``/``bias_v``/``add_zero_attn``), to training on CUDA with zero attention dropout and without masks (the
-        only configuration that regroups without changing seeded dropout masks), and to eager execution: under
-        ``torch.compile`` or tracing the module call is what Inductor and the exporters expect.
+        observes, see :func:`_module_call_is_plain`, packed projections with bias held in exact ``nn.Parameter`` tensors
+        so a tensor subclass keeps the module call, no ``bias_k``/``bias_v``/``add_zero_attn``), to training on CUDA
+        with zero attention dropout and without masks (the only configuration that regroups without changing seeded
+        dropout masks), and to eager execution: under ``torch.compile`` or tracing the module call is what Inductor and
+        the exporters expect.
         """
         attn = self.self_attn
         if type(attn) is not nn.MultiheadAttention:
             return False
-        if not _module_call_is_plain(attn):
-            return False
         if not self.training or tgt_mask is not None or tgt_key_padding_mask is not None:
             return False
-        if not tgt.is_cuda or tgt.dim() != 3 or tgt.shape[1] % self.group_detr != 0:
+        if not _eager_cuda(tgt) or tgt.dim() != 3 or tgt.shape[1] % self.group_detr != 0:
             return False
-        if is_compiling() or _is_tracing():
+        if not _module_call_is_plain(attn):
             return False
         return bool(
             attn.batch_first
             and attn._qkv_same_embed_dim
-            and attn.in_proj_bias is not None
+            and type(attn.in_proj_weight) is nn.Parameter
+            and type(attn.in_proj_bias) is nn.Parameter
             and attn.bias_k is None
             and attn.bias_v is None
             and not attn.add_zero_attn
@@ -1721,9 +1769,7 @@ class TransformerDecoderLayer(nn.Module):
         cross_attn = self.cross_attn
         cross_attn_query_is_plain = (
             self.training
-            and tgt.is_cuda
-            and not is_compiling()
-            and not _is_tracing()
+            and _eager_cuda(tgt)
             and type(cross_attn) is MSDeformAttn
             and type(cross_attn.sampling_offsets) is nn.Linear
             and type(cross_attn.attention_weights) is nn.Linear
