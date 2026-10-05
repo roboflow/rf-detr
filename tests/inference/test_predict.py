@@ -1512,28 +1512,175 @@ class TestPredictResizeMatchesTrainingInterpolation:
     Training/validation uses Albumentations ``Resize`` (cv2 bilinear, no
     antialiasing). torchvision's ``F.resize`` defaults to antialiased
     bilinear, which drifts bbox/confidence values relative to the
-    pretrained checkpoints' reference preprocessing. ``predict()`` must
-    disable antialiasing to match the training resize.
+    pretrained checkpoints' reference preprocessing. ``predict()`` defaults to
+    ``antialias=False`` to preserve that behaviour and export parity, and
+    ``antialias=True`` opts in for checkpoints trained with antialiased resizing.
     """
 
-    def test_predict_resize_disables_antialias(self) -> None:
-        """``predict()`` calls ``F.resize`` with ``antialias=False``."""
-        from unittest.mock import patch
-
-        import torchvision.transforms.functional as F  # noqa: N812
-
+    @pytest.mark.parametrize(
+        ("predict_kwargs", "expected_antialias"),
+        [
+            pytest.param({}, False, id="default"),
+            pytest.param({"antialias": False}, False, id="explicit-off"),
+            pytest.param({"antialias": True}, True, id="opt-in"),
+        ],
+    )
+    def test_predict_resize_antialias_flag(self, predict_kwargs: dict[str, bool], expected_antialias: bool) -> None:
+        """``predict()`` passes the requested ``antialias`` flag to ``F.resize``; the default is ``False``."""
         model = _DummyRFDETR()
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
         with patch("rfdetr.detr.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img)
+            model.predict(img, **predict_kwargs)
 
-        assert mock_resize.call_args.kwargs.get("antialias") is False, (
-            "predict() must resize with antialias=False to match the antialias-free "
-            "bilinear resize (cv2.INTER_LINEAR) used during training. Antialiasing "
-            "on drifts bbox/confidence values away from the pretrained checkpoints' "
-            "reference preprocessing."
+        assert mock_resize.call_args.kwargs.get("antialias") is expected_antialias, (
+            "predict() must resize with antialias=False by default (the #1203 contract: the antialias-free "
+            "bilinear resize, cv2.INTER_LINEAR, used during training and by exported models) and honour "
+            "an explicit antialias request."
         )
+
+    def test_predict_antialias_changes_resize_and_matches_reference(self) -> None:
+        """``antialias=True`` feeds the model an antialiased resize that differs from the default one."""
+        model = _DummyRFDETR()
+        resolution = model.model.resolution
+        # A one-pixel checkerboard several times larger than the resolution, where antialiasing visibly averages.
+        board = ((np.indices((resolution * 4, resolution * 4)).sum(axis=0) % 2) * 255).astype(np.uint8)
+        images = [
+            PIL.Image.fromarray(np.stack([board] * 3, axis=-1)),
+            PIL.Image.fromarray(np.stack([board[:, : resolution * 3]] * 3, axis=-1)),
+        ]
+        model_inputs: list[torch.Tensor] = []
+
+        def capture_model_input(_module: torch.nn.Module, args: tuple[torch.Tensor, ...]) -> None:
+            """Capture the normalized batch delivered to the model boundary.
+
+            Examples:
+                This test-local closure requires the enclosing capture list.
+                >>> capture_model_input(torch.nn.Identity(), (torch.zeros(1, 3, 28, 28),))  # doctest: +SKIP
+            """
+            model_inputs.append(args[0].detach().clone())
+
+        model_module = model.model.model
+        assert model_module is not None
+        with model_module.register_forward_pre_hook(capture_model_input):
+            model.predict(images)
+            model.predict(images, antialias=True)
+
+        default_batch, antialiased_batch = model_inputs
+        reference = torch.stack(
+            [F.resize(F.to_tensor(image), [resolution, resolution], antialias=True) for image in images]
+        )
+        reference = F.normalize(reference, model.means, model.stds)
+        assert not torch.allclose(default_batch, antialiased_batch, atol=1e-3)
+        torch.testing.assert_close(antialiased_batch, reference)
+
+
+class TestPredictMpsAntialiasFallback:
+    """``predict()`` resize placement for a model whose device is MPS.
+
+    No MPS hardware is needed: transfers to ``mps`` are recorded and simulated on the CPU, and the torch-version
+    predicate that gates the fallback is patched, so both branches run on any installed torch.
+    """
+
+    @pytest.mark.parametrize(
+        ("antialias", "mps_lacks_kernel", "expected_events", "expected_transfer_shapes"),
+        [
+            pytest.param(
+                True,
+                True,
+                ["resize", "resize", "mps-transfer", "mps-tensor"],
+                [(2, 3, 28, 28)],
+                id="antialias-old-torch-resizes-on-cpu",
+            ),
+            pytest.param(
+                True,
+                False,
+                ["mps-transfer", "mps-transfer", "resize", "resize", "mps-tensor"],
+                [(3, 80, 100), (3, 48, 64)],
+                id="antialias-new-torch-resizes-on-mps",
+            ),
+            pytest.param(
+                False,
+                True,
+                ["mps-transfer", "mps-transfer", "resize", "resize", "mps-tensor"],
+                [(3, 80, 100), (3, 48, 64)],
+                id="no-antialias-resizes-on-mps",
+            ),
+        ],
+    )
+    def test_mps_resize_placement(
+        self,
+        antialias: bool,
+        mps_lacks_kernel: bool,
+        expected_events: list[str],
+        expected_transfer_shapes: list[tuple[int, ...]],
+    ) -> None:
+        """Only antialiasing on an MPS-kernel-less torch resizes on CPU, then moves one batch to MPS."""
+        model = _DummyRFDETR()
+        model.model.device = torch.device("mps")
+        # Two sizes so a per-image transfer cannot pass for a single batch transfer.
+        images = [
+            PIL.Image.new("RGB", (100, 80), color=(64, 64, 64)),
+            PIL.Image.new("RGB", (64, 48), color=(32, 32, 32)),
+        ]
+        real_to = torch.Tensor.to
+        real_tensor = torch.tensor
+        real_resize = F.resize
+        resize_antialias: list[object] = []
+        transfer_shapes: list[tuple[int, ...]] = []
+        events: list[str] = []
+
+        def to_spy(self: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record a transfer to ``mps`` and keep the tensor on the CPU.
+
+            Examples:
+                This test-local closure requires the captured real ``Tensor.to``.
+                >>> to_spy(torch.zeros(1, 3, 4, 4), torch.device("mps"))  # doctest: +SKIP
+            """
+            target = args[0] if args else kwargs.get("device")
+            if isinstance(target, torch.device) and target.type == "mps":
+                transfer_shapes.append(tuple(self.shape))
+                events.append("mps-transfer")
+                return self
+            return real_to(self, *args, **kwargs)
+
+        def tensor_spy(data: object, **kwargs: object) -> torch.Tensor:
+            """Record a tensor constructed on ``mps`` and build it on the CPU instead.
+
+            Examples:
+                This test-local closure requires the captured real ``torch.tensor``.
+                >>> tensor_spy([[48, 64]], device=torch.device("mps"))  # doctest: +SKIP
+            """
+            device = kwargs.get("device")
+            if isinstance(device, torch.device) and device.type == "mps":
+                events.append("mps-tensor")
+                kwargs["device"] = torch.device("cpu")
+            return real_tensor(data, **kwargs)
+
+        def resize_spy(tensor: torch.Tensor, *args: object, **kwargs: object) -> torch.Tensor:
+            """Record each resize and the ``antialias`` flag it received, then run the real resize.
+
+            Examples:
+                This test-local closure requires the captured real ``F.resize``.
+                >>> resize_spy(torch.zeros(3, 8, 8), [4, 4], antialias=False).shape  # doctest: +SKIP
+                torch.Size([3, 4, 4])
+            """
+            events.append("resize")
+            resize_antialias.append(kwargs.get("antialias"))
+            return real_resize(tensor, *args, **kwargs)
+
+        with (
+            patch("rfdetr.detr._move_model_context_to_device"),
+            patch("rfdetr.detr._mps_lacks_antialiased_resize", return_value=mps_lacks_kernel),
+            patch.object(torch.Tensor, "to", to_spy),
+            patch.object(torch, "tensor", tensor_spy),
+            patch("rfdetr.detr.F.resize", side_effect=resize_spy),
+        ):
+            model.predict(images, antialias=antialias)
+
+        assert resize_antialias == [antialias, antialias]
+        assert events == expected_events
+        assert transfer_shapes == expected_transfer_shapes
 
 
 class TestPredictPatchSize:
