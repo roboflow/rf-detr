@@ -19,7 +19,7 @@ from torch.utils.hooks import RemovableHandle
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
-from rfdetr.models.lwdetr import build_model
+from rfdetr.models.lwdetr import build_criterion_from_config, build_model, build_model_from_config
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
@@ -30,11 +30,14 @@ from rfdetr.models.transformer import (
     _AddInDtype,
     _CastThenExpand,
     _InterleavedSinCos,
+    _is_tracing,
     _LinearReLU,
     _module_call_is_plain,
+    _sineembed_interleaved,
     gen_encoder_output_proposals,
     gen_sineembed_for_position,
 )
+from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor, _bilinear_grid_sample
 
 
@@ -2848,8 +2851,48 @@ def _reference_sineembed(pos_tensor: torch.Tensor, dim: int) -> torch.Tensor:
 #: Marks for a case that needs CUDA: excluded from the CPU job, skipped without a GPU.
 _CUDA_MARKS = [pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")]
 
-#: ``device`` values for a test whose CUDA case runs a different implementation than the CPU one.
-_CPU_AND_CUDA = ["cpu", pytest.param("cuda", marks=_CUDA_MARKS)]
+
+def _cpu_addmm_activation_available(dtype: torch.dtype) -> bool:
+    """Return whether ``torch._addmm_activation`` runs on CPU in ``dtype`` on the installed torch.
+
+    ``_LinearReLU`` is built on this private op, whose CPU kernels are not part of torch's documented surface, so the
+    CPU cases of its test are collected only where the op exists.
+
+    Examples:
+        >>> isinstance(_cpu_addmm_activation_available(torch.float32), bool)
+        True
+    """
+    try:
+        torch._addmm_activation(
+            torch.zeros(2, dtype=dtype), torch.zeros(2, 2, dtype=dtype), torch.zeros(2, 2, dtype=dtype)
+        )
+    except (AttributeError, RuntimeError, NotImplementedError):
+        return False
+    return True
+
+
+def _interleaved_sineembed(
+    pos_tensor: torch.Tensor, dim: int = 128, out_dtype: torch.dtype | None = None
+) -> torch.Tensor:
+    """Call the CUDA-eager ``_sineembed_interleaved`` kernel directly, with ``gen_sineembed_for_position``'s defaults.
+
+    The kernel is plain torch ops plus a custom autograd function, so it also runs on CPU, where the public function
+    never takes it.
+
+    Examples:
+        >>> _interleaved_sineembed(torch.zeros(1, 2, 4), dim=4).shape
+        torch.Size([1, 2, 16])
+    """
+    return _sineembed_interleaved(pos_tensor, dim, out_dtype)
+
+
+#: ``(device, sine-embedding function)`` pairs. On CPU the public function takes the plain ops, so the kernel is also
+#: called directly there; on CUDA the public function takes the kernel itself.
+_SINEEMBED_ROUTES = [
+    pytest.param("cpu", gen_sineembed_for_position, id="cpu-plain"),
+    pytest.param("cpu", _interleaved_sineembed, id="cpu-interleaved-kernel"),
+    pytest.param("cuda", gen_sineembed_for_position, id="cuda-public", marks=_CUDA_MARKS),
+]
 
 #: Every hook ``Module.__call__`` runs around ``forward``, as ``(module, hook) -> handle``: the four per-module
 #: kinds and the four registered for all modules through ``torch.nn.modules.module``.
@@ -2865,24 +2908,26 @@ _MODULE_HOOK_REGISTRARS: dict[str, Callable[[nn.Module, Callable[..., object]], 
 }
 
 
-@pytest.mark.parametrize("device", _CPU_AND_CUDA)
+@pytest.mark.parametrize(("device", "sineembed"), _SINEEMBED_ROUTES)
 @pytest.mark.parametrize("box_width", [2, 4])
 @pytest.mark.parametrize("dim", [4, 128])
 def test_gen_sineembed_for_position_is_bitwise_the_interleaved_slice_formulation(
-    box_width: int, dim: int, device: str
+    box_width: int, dim: int, device: str, sineembed: Callable[..., torch.Tensor]
 ) -> None:
     """Dividing by the ``dim // 2`` distinct frequencies once must reproduce every bit of the strided-slice
     version: the even and odd entries of ``dim_t`` are the same float, so the angles are the same values."""
     pos_tensor = torch.rand(3, 517, box_width, dtype=torch.float32, device=device)
 
-    actual = gen_sineembed_for_position(pos_tensor, dim=dim)
+    actual = sineembed(pos_tensor, dim=dim)
 
     assert actual.shape == (3, 517, box_width * dim)
     assert torch.equal(actual, _reference_sineembed(pos_tensor, dim))
 
 
-@pytest.mark.parametrize("device", _CPU_AND_CUDA)
-def test_gen_sineembed_for_position_backward_matches_reference(device: str) -> None:
+@pytest.mark.parametrize(("device", "sineembed"), _SINEEMBED_ROUTES)
+def test_gen_sineembed_for_position_backward_matches_reference(
+    device: str, sineembed: Callable[..., torch.Tensor]
+) -> None:
     """The contiguous formulation changes the summation order of the coordinate gradient, nothing else."""
     pos_tensor = torch.rand(2, 64, 4, dtype=torch.float64, device=device)
     grad_out = torch.randn(2, 64, 4 * 32, dtype=torch.float64, device=device)
@@ -2890,7 +2935,7 @@ def test_gen_sineembed_for_position_backward_matches_reference(device: str) -> N
     actual_input = pos_tensor.clone().requires_grad_(True)
 
     _reference_sineembed(expected_input, 32).backward(grad_out)
-    gen_sineembed_for_position(actual_input, dim=32).backward(grad_out)
+    sineembed(actual_input, dim=32).backward(grad_out)
 
     assert expected_input.grad is not None and actual_input.grad is not None
     torch.testing.assert_close(actual_input.grad, expected_input.grad, rtol=1e-12, atol=1e-12)
@@ -2924,20 +2969,30 @@ def test_add_in_dtype_is_bitwise_the_add_then_cast_graph(dtype: torch.dtype, pos
     assert torch.equal(pos.grad, expected_grads[1])
 
 
-def _decoder_layer(dropout: float = 0.0) -> TransformerDecoderLayer:
-    """A small three-group decoder layer in training mode.
+def _decoder_layer(
+    dropout: float = 0.0, *, d_model: int = 16, heads: int = 4, group_detr: int = 3
+) -> TransformerDecoderLayer:
+    """A small decoder layer in training mode, three groups of 4-head 16-wide attention by default.
+
+    Args:
+        dropout: Dropout probability of the layer.
+        d_model: Embedding width; must be divisible by ``heads``.
+        heads: Head count of both the self- and the cross-attention.
+        group_detr: Number of query groups.
 
     Examples:
         >>> _decoder_layer().group_detr
         3
+        >>> _decoder_layer(d_model=12, heads=1, group_detr=1).self_attn.num_heads
+        1
     """
     return TransformerDecoderLayer(
-        d_model=16,
-        sa_nhead=4,
-        ca_nhead=4,
+        d_model=d_model,
+        sa_nhead=heads,
+        ca_nhead=heads,
         dim_feedforward=32,
         dropout=dropout,
-        group_detr=3,
+        group_detr=group_detr,
         num_feature_levels=2,
     ).train()
 
@@ -2993,15 +3048,35 @@ def _module_path_self_attention(
     return torch.cat(tgt2.split(bs, dim=0), dim=1)
 
 
-def test_grouped_self_attention_is_bitwise_the_module_path() -> None:
+@pytest.mark.parametrize(
+    ("group_detr", "batch", "queries_per_group", "heads", "d_model"),
+    [
+        pytest.param(3, 2, 4, 4, 16, id="baseline"),
+        pytest.param(1, 2, 4, 4, 16, id="single-group"),
+        pytest.param(3, 1, 4, 4, 16, id="single-image"),
+        pytest.param(3, 2, 1, 4, 16, id="one-query-per-group"),
+        pytest.param(3, 2, 4, 1, 16, id="single-head"),
+        pytest.param(3, 2, 4, 4, 12, id="width-not-a-multiple-of-8"),
+        pytest.param(13, 2, 5, 8, 32, id="many-groups-odd-queries"),
+        pytest.param(1, 1, 1, 1, 8, id="all-singletons"),
+    ],
+)
+def test_grouped_self_attention_is_bitwise_the_module_path(
+    group_detr: int, batch: int, queries_per_group: int, heads: int, d_model: int
+) -> None:
     """Projections on the ungrouped layout plus a batch-major view must reproduce the group-major ``cat``
     path bit for bit in the forward and in the input gradients: every kernel sees the same rows in a
     different order. The weight gradients reduce over those rows, so their summation order changes;
-    they are checked to fp32 rounding here and bitwise on CUDA in the GPU test."""
-    layer = _decoder_layer()
-    tgt = torch.randn(2, 12, 16, requires_grad=True)
-    query_pos = torch.randn(2, 12, 16, requires_grad=True)
-    grad_out = torch.randn(2, 12, 16)
+    they are checked to fp32 rounding here and bitwise on CUDA in the GPU test.
+
+    The group count, batch size, queries per group, head count and width each take their singleton or an
+    odd value in turn, since the regrouping views are where a boundary shape would go wrong.
+    """
+    layer = _decoder_layer(group_detr=group_detr, heads=heads, d_model=d_model)
+    num_queries = group_detr * queries_per_group
+    tgt = torch.randn(batch, num_queries, d_model, requires_grad=True)
+    query_pos = torch.randn(batch, num_queries, d_model, requires_grad=True)
+    grad_out = torch.randn(batch, num_queries, d_model)
 
     expected = _module_path_self_attention(layer, tgt, query_pos)
     expected.backward(grad_out)
@@ -3021,7 +3096,10 @@ def test_grouped_self_attention_is_bitwise_the_module_path() -> None:
         assert torch.equal(actual_grad, expected_grad)
     for expected_grad, actual_grad in zip(expected_param_grads, actual_param_grads, strict=True):
         assert expected_grad is not None and actual_grad is not None
-        torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-6, atol=1e-6)
+        # Reassociating a sum of ``batch * num_queries`` fp32 terms moves it by rounding proportional to the
+        # gradient's own magnitude, which grows with the row count, so the bound scales with the largest entry.
+        atol = 1e-6 + 1e-6 * float(expected_grad.abs().max())
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-6, atol=atol)
 
 
 def test_grouped_self_attention_uses_a_view_for_the_regrouping() -> None:
@@ -3065,6 +3143,7 @@ class _MultiheadAttentionSubclass(nn.MultiheadAttention):
         "dropout",
         "indivisible_queries",
         "compiling",
+        "tracing",
         "no_in_proj_bias",
         "add_bias_kv",
         "add_zero_attn",
@@ -3105,6 +3184,8 @@ def test_grouped_self_attention_eligibility_falls_back_to_the_module_call(
         tgt = torch.randn(2, 11, 16, device=device)
     elif case == "compiling":
         monkeypatch.setattr("rfdetr.models.transformer.is_compiling", lambda: True)
+    elif case == "tracing":
+        monkeypatch.setattr("rfdetr.models.transformer._is_tracing", lambda: True)
     elif case == "no_in_proj_bias":
         layer.self_attn = nn.MultiheadAttention(16, 4, bias=False, batch_first=True).to(device)
     elif case == "add_bias_kv":
@@ -3136,6 +3217,10 @@ def test_forward_post_grouped_path_matches_module_path_on_cuda(
     autocast_dtype: torch.dtype | None, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
     """On CUDA in training the explicit path is taken, and ``forward_post`` returns the module path's bits.
+
+    The oracle turns off every eager rewrite of the layer (grouped self-attention, the folded positional add and the
+    fused FFN epilogue) and the gradients of every layer parameter, not only the self-attention ones, are compared, so
+    ``linear1``, ``linear2``, the norms and ``cross_attn`` are checked against the two-op graph under autocast too.
 
     Shapes follow RF-DETR Nano's decoder (256-wide, 8 heads, 13 groups of 300 queries) at batch 2, so the kernels
     exercised are the ones training runs. The gradients are compared with tolerances: the weight gradients reduce over
@@ -3172,6 +3257,9 @@ def test_forward_post_grouped_path_matches_module_path_on_cuda(
             monkeypatch.setattr(
                 TransformerDecoderLayer, "_pos_embed_for_linear", TransformerDecoderLayer.with_pos_embed
             )
+            monkeypatch.setattr(
+                TransformerDecoderLayer, "_ffn_hidden", lambda self, tgt: self.activation(self.linear1(tgt))
+            )
         else:
             monkeypatch.undo()
         layer.zero_grad(set_to_none=True)
@@ -3189,7 +3277,7 @@ def test_forward_post_grouped_path_matches_module_path_on_cuda(
         assert isinstance(out, torch.Tensor)
         out.backward(grad_out.to(out.dtype))
         assert tgt_in.grad is not None
-        grads = [tgt_in.grad.clone(), *(p.grad.clone() for p in layer.self_attn.parameters() if p.grad is not None)]
+        grads = [tgt_in.grad.clone(), *(p.grad.clone() for p in layer.parameters() if p.grad is not None)]
         return out.detach(), grads
 
     assert layer._grouped_self_attention_eligible(tgt, None, None) is True
@@ -3343,23 +3431,33 @@ def test_cross_attention_observers_keep_the_full_precision_query(
     assert observed_dtypes == [torch.float32]
 
 
-@pytest.mark.gpu
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-@pytest.mark.parametrize(
-    "dtype",
-    [
-        pytest.param(torch.float32, id="fp32"),
-        pytest.param(torch.bfloat16, id="bf16"),
-        pytest.param(torch.float16, id="fp16"),
-    ],
-)
-def test_linear_relu_is_bitwise_relu_of_linear_forward_and_backward(dtype: torch.dtype) -> None:
+#: ``(device, dtype)`` cases of ``_LinearReLU``: CUDA always, and CPU in every dtype for which
+#: the private ``torch._addmm_activation`` op exists on the installed torch, so a CPU job gets a signal on the op's
+#: drift across the supported torch range without failing where the op has no CPU kernel.
+_LINEAR_RELU_CASES = [
+    pytest.param(
+        device,
+        dtype,
+        id=f"{device}-{name}",
+        marks=_CUDA_MARKS
+        if device == "cuda"
+        else pytest.mark.skipif(
+            not _cpu_addmm_activation_available(dtype), reason="torch._addmm_activation has no CPU kernel"
+        ),
+    )
+    for device in ("cpu", "cuda")
+    for name, dtype in (("fp32", torch.float32), ("bf16", torch.bfloat16), ("fp16", torch.float16))
+]
+
+
+@pytest.mark.parametrize(("device", "dtype"), _LINEAR_RELU_CASES)
+def test_linear_relu_is_bitwise_relu_of_linear_forward_and_backward(device: str, dtype: torch.dtype) -> None:
     """The epilogue ReLU rounds once then clamps, which commutes with the clamp; the backward is autograd's."""
     torch.manual_seed(0)
-    x = (torch.randn(3, 40, 32, device="cuda") * 3).to(dtype).requires_grad_(True)
-    weight = (torch.randn(64, 32, device="cuda") * 0.2).to(dtype).requires_grad_(True)
-    bias = torch.randn(64, device="cuda").to(dtype).requires_grad_(True)
-    grad_out = torch.randn(3, 40, 64, device="cuda").to(dtype)
+    x = (torch.randn(3, 40, 32, device=device) * 3).to(dtype).requires_grad_(True)
+    weight = (torch.randn(64, 32, device=device) * 0.2).to(dtype).requires_grad_(True)
+    bias = torch.randn(64, device=device).to(dtype).requires_grad_(True)
+    grad_out = torch.randn(3, 40, 64, device=device).to(dtype)
 
     expected = F.relu(F.linear(x, weight, bias))
     expected.backward(grad_out)
@@ -3430,6 +3528,7 @@ def test_ffn_hidden_is_bitwise_the_two_op_path_on_cuda(
             "linear_subclass",
             "no_bias",
             "compiling",
+            "tracing",
         )
     ]
     + ["cpu"],
@@ -3470,6 +3569,8 @@ def test_ffn_hidden_falls_back_to_the_two_op_path(
         layer.linear1 = nn.Linear(16, 32, bias=False).to(device)
     elif case == "compiling":
         monkeypatch.setattr("rfdetr.models.transformer.is_compiling", lambda: True)
+    elif case == "tracing":
+        monkeypatch.setattr("rfdetr.models.transformer._is_tracing", lambda: True)
 
     out = layer._ffn_hidden(tgt)
 
@@ -3559,7 +3660,7 @@ def test_forward_post_keeps_the_module_call_that_a_feature_observes(
     assert len(grouped) == (0 if target == "self_attn" or is_global else 1)
 
 
-@pytest.mark.parametrize("device", _CPU_AND_CUDA)
+@pytest.mark.parametrize(("device", "sineembed"), _SINEEMBED_ROUTES)
 @pytest.mark.parametrize(
     "out_dtype",
     [
@@ -3568,19 +3669,23 @@ def test_forward_post_keeps_the_module_call_that_a_feature_observes(
         pytest.param(torch.float16, id="fp16"),
     ],
 )
-def test_gen_sineembed_for_position_out_dtype_is_bitwise_the_cast_result(out_dtype: torch.dtype, device: str) -> None:
+def test_gen_sineembed_for_position_out_dtype_is_bitwise_the_cast_result(
+    out_dtype: torch.dtype, device: str, sineembed: Callable[..., torch.Tensor]
+) -> None:
     """Rounding each sin/cos once equals casting the full-precision embedding of the previous formulation."""
     pos_tensor = torch.rand(2, 300, 4, device=device)
 
-    embedded = gen_sineembed_for_position(pos_tensor, dim=128, out_dtype=out_dtype)
+    embedded = sineembed(pos_tensor, dim=128, out_dtype=out_dtype)
 
     assert embedded.dtype == out_dtype
     assert torch.equal(embedded, _reference_sineembed(pos_tensor, 128).to(out_dtype))
 
 
-@pytest.mark.parametrize("device", _CPU_AND_CUDA)
+@pytest.mark.parametrize(("device", "sineembed"), _SINEEMBED_ROUTES)
 @pytest.mark.parametrize("out_dtype", [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float16, id="fp16")])
-def test_gen_sineembed_for_position_out_dtype_backward_is_the_two_op_graph(out_dtype: torch.dtype, device: str) -> None:
+def test_gen_sineembed_for_position_out_dtype_backward_is_the_two_op_graph(
+    out_dtype: torch.dtype, device: str, sineembed: Callable[..., torch.Tensor]
+) -> None:
     """The interleaved write's backward is ``grad * cos`` and ``-(grad * sin)`` from the upcast gradient."""
     pos_tensor = torch.rand(2, 64, 4, device=device)
     grad_out = torch.randn(2, 64, 4 * 32, device=device).to(out_dtype)
@@ -3589,10 +3694,32 @@ def test_gen_sineembed_for_position_out_dtype_backward_is_the_two_op_graph(out_d
 
     reference = _reference_sineembed(expected_input, 32).to(out_dtype)
     reference.backward(grad_out)
-    gen_sineembed_for_position(actual_input, dim=32, out_dtype=out_dtype).backward(grad_out)
+    sineembed(actual_input, dim=32, out_dtype=out_dtype).backward(grad_out)
 
     assert expected_input.grad is not None and actual_input.grad is not None
     torch.testing.assert_close(actual_input.grad, expected_input.grad, rtol=1e-5, atol=1e-5)
+
+
+def test_is_tracing_is_true_only_while_torch_jit_trace_records() -> None:
+    """``_is_tracing`` reports a real ``torch.jit.trace`` recording, not just the monkeypatched stand-in.
+
+    The fallback tests for the eager CUDA rewrites switch tracing on by replacing ``_is_tracing`` with a constant, which
+    keeps passing if the real predicate stops reporting a trace (a torch change, or a swapped-in call). This CPU canary
+    ties that stand-in to the real thing: the predicate is ``False`` in plain eager execution and ``True`` while a
+    function is being traced.
+    """
+    seen: list[bool] = []
+
+    def probe(x: torch.Tensor) -> torch.Tensor:
+        """Record ``_is_tracing()`` on every call and return ``x + 1`` so the traced graph has a real op."""
+        seen.append(_is_tracing())
+        return x + 1
+
+    outside = _is_tracing()
+    torch.jit.trace(probe, (torch.zeros(1),), check_trace=False)
+
+    assert outside is False
+    assert seen == [True]
 
 
 @pytest.mark.parametrize(
@@ -3648,6 +3775,29 @@ def test_gen_sineembed_for_position_off_cuda_keeps_the_previous_graph_bitwise_in
     assert torch.equal(actual, expected)
     assert expected_input.grad is not None and actual_input.grad is not None
     assert torch.equal(actual_input.grad, expected_input.grad)
+
+
+@pytest.mark.parametrize("width", [3, 5])
+def test_gen_sineembed_for_position_rejects_a_last_dimension_other_than_2_or_4(width: int) -> None:
+    """The public function documents boxes of width 2 or 4 and raises ``ValueError`` for any other last dimension.
+
+    Widths 3 and 5 are the smallest ones the plain path can read far enough into (it indexes coordinates 0 and 1 before
+    checking the width, so widths 0 and 1 fail there with ``IndexError`` instead).
+    """
+    pos_tensor = torch.rand(1, 2, width)
+
+    with pytest.raises(ValueError, match=rf"Unknown pos_tensor shape\(-1\):{width}"):
+        gen_sineembed_for_position(pos_tensor, dim=8)
+
+
+@pytest.mark.parametrize("width", [0, 1, 3, 5])
+def test_sineembed_interleaved_rejects_a_last_dimension_other_than_2_or_4(width: int) -> None:
+    """The interleaved CUDA-eager kernel checks the width before reading any coordinate, so every bad width is a
+    ``ValueError`` (the function is runnable on CPU, which is what lets this guard be tested without a GPU)."""
+    pos_tensor = torch.rand(1, 2, width)
+
+    with pytest.raises(ValueError, match=rf"Unknown pos_tensor shape\(-1\):{width}"):
+        _sineembed_interleaved(pos_tensor, 8, None)
 
 
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float16, id="fp16")])
@@ -3827,3 +3977,187 @@ def test_every_eager_decoder_rewrite_is_taken_by_the_production_model_on_cuda(
     assert {key: len(taken) for key, taken in calls.items()} == {key: passes * n for key, n in per_pass.items()}
     # ``ref_point_head`` is the embedding's only consumer, so under autocast it is written in the compute dtype.
     assert {args[1] for args in calls["sine"]} == {autocast_dtype or torch.float32}
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.parametrize(
+    ("autocast_dtype", "grad_rtol"),
+    [pytest.param(None, 1e-4, id="fp32"), pytest.param(torch.bfloat16, 1e-2, id="bf16")],
+)
+def test_nano_loss_terms_are_bitwise_and_gradients_match_with_the_eager_rewrites_on_and_off(
+    autocast_dtype: torch.dtype | None, grad_rtol: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real Nano forward plus criterion gives the same outputs and loss terms with every rewrite on or replaced.
+
+    The rewrites are bitwise the ops they replace in the forward, so the outputs and every loss term must be equal bit
+    for bit. The gradients are compared per parameter with a scale-aware norm bound instead: the deformable-attention
+    and flash-attention backward kernels are not deterministic on their own, and the rewrites reorder weight-gradient
+    sums. The bound is ``grad_rtol`` of the reference gradient's norm (a wrong gradient is off by far more); bf16 rounds
+    each of those sums to eight bits, hence the looser constant. Autocast is a case because the folded positional add
+    and the cast-once memory only run under it. This test needs a GPU and was written without one.
+    """
+    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", False)
+    monkeypatch.setattr(torch.backends.cudnn, "allow_tf32", False)
+    torch.manual_seed(0)
+    model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda")
+    train_config = TrainConfig(dataset_dir="unused", drop_path=0.0)
+    model = build_model_from_config(model_config, train_config).cuda().train()
+    criterion, _ = build_criterion_from_config(model_config, train_config)
+    criterion = criterion.cuda()
+    samples = NestedTensor(
+        torch.randn(2, 3, 256, 256, device="cuda"), torch.zeros(2, 256, 256, dtype=torch.bool, device="cuda")
+    )
+    targets = [
+        {"labels": torch.tensor([1], device="cuda"), "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.3]], device="cuda")},
+        {
+            "labels": torch.tensor([0, 2], device="cuda"),
+            "boxes": torch.tensor([[0.3, 0.4, 0.2, 0.2], [0.7, 0.6, 0.3, 0.1]], device="cuda"),
+        },
+    ]
+    fused_calls: list[object] = []
+    real_apply = _LinearReLU.apply
+
+    def run(rewrites_on: bool) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        with monkeypatch.context() as patch:
+            if rewrites_on:
+                patch.setattr(_LinearReLU, "apply", lambda *args: (fused_calls.append(args), real_apply(*args))[1])
+            else:
+                patch.setattr(
+                    TransformerDecoderLayer, "_grouped_self_attention_eligible", lambda *_args, **_kwargs: False
+                )
+                patch.setattr(TransformerDecoderLayer, "_pos_embed_for_linear", TransformerDecoderLayer.with_pos_embed)
+                patch.setattr(
+                    TransformerDecoderLayer, "_ffn_hidden", lambda self, tgt: self.activation(self.linear1(tgt))
+                )
+                patch.setattr(
+                    _CastThenExpand, "apply", lambda x, groups, dtype: x.unsqueeze(0).expand(groups, *x.shape).to(dtype)
+                )
+                patch.setattr(
+                    _InterleavedSinCos,
+                    "apply",
+                    lambda angle, dtype: torch.stack((angle.sin(), angle.cos()), -1).to(dtype),
+                )
+            model.zero_grad(set_to_none=True)
+            torch.manual_seed(1)
+            with torch.autocast("cuda", dtype=autocast_dtype or torch.bfloat16, enabled=autocast_dtype is not None):
+                outputs = model(samples, targets)
+            losses = criterion(outputs, targets)
+            total = sum(losses[key] * weight for key, weight in criterion.weight_dict.items() if key in losses)
+            total.backward()
+            terms = {"pred_logits": outputs["pred_logits"].detach(), "pred_boxes": outputs["pred_boxes"].detach()}
+            terms.update({key: value.detach() for key, value in losses.items()})
+            terms["total"] = total.detach()
+            return terms, {name: p.grad.clone() for name, p in model.named_parameters() if p.grad is not None}
+
+    expected_terms, expected_grads = run(rewrites_on=False)
+    assert fused_calls == []
+    actual_terms, actual_grads = run(rewrites_on=True)
+
+    assert fused_calls, "the rewrites never ran, so the comparison would not test them"
+    assert actual_terms.keys() == expected_terms.keys()
+    for key, expected_term in expected_terms.items():
+        assert torch.equal(actual_terms[key], expected_term), key
+    assert actual_grads.keys() == expected_grads.keys()
+    for name, reference in expected_grads.items():
+        difference_norm = (actual_grads[name] - reference).norm()
+        # The absolute floor covers analytically zero gradients (attention key biases) whose residue is rounding noise.
+        assert difference_norm <= grad_rtol * reference.norm() + 1e-9, (
+            f"{name}: ||diff|| {difference_norm:.3e} vs ||reference|| {reference.norm():.3e}"
+        )
+
+
+class _AutocastRewriteBlock(nn.Module):
+    """Smallest module that runs the two autocast-only rewrites, :class:`_AddInDtype` and :class:`_CastThenExpand`.
+
+    A fp32 activation is added to a bf16 projection and rounded once to bf16, and the same fp32 activation is cast once
+    to bf16 and expanded over ``groups``; ``rewrites=False`` computes both with the plain two-op graphs they replace.
+    The forward takes ``NestedTensor`` and ``targets`` like ``LWDETR`` so ``CudaGraphTrainingRunner`` can capture it.
+
+    Examples:
+        >>> block = _AutocastRewriteBlock()
+        >>> samples = NestedTensor(torch.zeros(2, 4, 8), torch.zeros(2, 4, dtype=torch.bool))
+        >>> with torch.autocast("cpu", dtype=torch.bfloat16):
+        ...     block(samples)["pred"].shape
+        torch.Size([3, 2, 4, 8])
+    """
+
+    def __init__(self, width: int = 8, groups: int = 3, rewrites: bool = True) -> None:
+        super().__init__()
+        self.scale = nn.Parameter(torch.rand(width) + 0.5)
+        self.pos_proj = nn.Linear(width, width)
+        self.mix = nn.Linear(width, width)
+        self.groups = groups
+        self.rewrites = rewrites
+
+    def forward(self, samples: NestedTensor, targets: object = None) -> dict[str, torch.Tensor]:
+        """Return the mixed bf16 sum plus the group-expanded bf16 copy of the scaled activation."""
+        del targets
+        x = samples.tensors
+        activation = x * self.scale
+        pos = self.pos_proj(x)
+        if self.rewrites:
+            summed = _AddInDtype.apply(activation, pos, torch.bfloat16)
+            memory = _CastThenExpand.apply(activation, self.groups, torch.bfloat16)
+        else:
+            summed = (activation + pos).to(torch.bfloat16)
+            memory = activation.unsqueeze(0).expand(self.groups, *activation.shape).to(torch.bfloat16)
+        return {"pred": self.mix(summed).unsqueeze(0) + memory}
+
+
+def _assert_within_norm_bound(actual: torch.Tensor, expected: torch.Tensor, rel_tol: float, name: str) -> None:
+    """Assert ``||actual - expected||`` is at most ``rel_tol`` of ``||expected||`` (plus a tiny absolute floor).
+
+    Unlike an element-wise tolerance this separates kernel rounding noise on a large entry from a wrong value on a
+    small one: a stale or aliased tensor is off by a large fraction of the norm, rounding noise is not.
+
+    Examples:
+        >>> _assert_within_norm_bound(torch.ones(4), torch.ones(4) * 1.001, 1e-2, "ones")
+        >>> _assert_within_norm_bound(torch.ones(4), torch.zeros(4), 1e-2, "ones")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        AssertionError: ones: ||diff|| 2.000e+00 vs ||expected|| 0.000e+00...
+    """
+    difference_norm = (actual.float() - expected.float()).norm()
+    expected_norm = expected.float().norm()
+    assert difference_norm <= rel_tol * expected_norm + 1e-9, (
+        f"{name}: ||diff|| {difference_norm:.3e} vs ||expected|| {expected_norm:.3e}"
+    )
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+def test_autocast_only_rewrites_match_the_two_op_graph_under_cuda_graph_replay() -> None:
+    """Captured and replayed on new inputs, ``_AddInDtype`` and ``_CastThenExpand`` keep the two-op graph's values.
+
+    The capture tests in ``test_cuda_graph_step.py`` run without autocast, and the production-model capture case only
+    checks that the loss is finite. Here a minimal module around the two autocast-only rewrites is captured once and
+    replayed twice on different inputs, each time against an eager run of the plain two-op graph; a stale saved tensor
+    or an aliased output buffer shows as an error of order one. bf16 capture and eager pick different kernels, so the
+    bound is a few percent of the norm rather than the fp32 ``1e-4`` of the full-Nano fp32 test. Needs a GPU; written
+    without one.
+    """
+    torch.manual_seed(0)
+    reference = _AutocastRewriteBlock(rewrites=False).cuda().train()
+    graphed = copy.deepcopy(reference)
+    graphed.rewrites = True
+    runner = CudaGraphTrainingRunner(graphed)
+
+    def run_once() -> None:
+        samples = NestedTensor(torch.randn(2, 8, 8, device="cuda"), torch.zeros(2, 8, dtype=torch.bool, device="cuda"))
+        reference.zero_grad(set_to_none=True)
+        graphed.zero_grad(set_to_none=True)
+        with torch.autocast("cuda", dtype=torch.bfloat16, cache_enabled=True):
+            expected = reference(samples)["pred"]
+            actual = runner(samples)["pred"]
+        expected.float().square().sum().backward()
+        actual.float().square().sum().backward()
+        _assert_within_norm_bound(actual, expected, 3e-2, "pred")
+        for (name, parameter), expected_parameter in zip(graphed.named_parameters(), reference.parameters()):
+            assert parameter.grad is not None and expected_parameter.grad is not None, name
+            _assert_within_norm_bound(parameter.grad, expected_parameter.grad, 3e-2, f"grad of {name}")
+
+    run_once()  # captures
+    run_once()  # replays on new values
+    run_once()
+
+    assert len(runner._graphed_cache) == 1
