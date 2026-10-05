@@ -1560,6 +1560,20 @@ class TestExportRejectsBeforeForwardPass:
             pytest.param(
                 "coreml", {"coreml_precision": "int8"}, ValueError, "compute_precision must be", id="coreml-precision"
             ),
+            pytest.param(
+                "tensorrt",
+                {"trt_timing_cache": ""},
+                ValueError,
+                "non-empty file path",
+                id="tensorrt-timing-cache-empty",
+            ),
+            pytest.param(
+                "tensorrt",
+                {"trt_timing_cache": "cache/"},
+                ValueError,
+                "names a directory",
+                id="tensorrt-timing-cache-directory",
+            ),
             pytest.param("onnx", {"notes": float("nan")}, ValueError, "notes", id="notes-nan"),
             pytest.param("tflite", {"notes": float("nan")}, ValueError, "notes", id="tflite-notes-nan"),
             pytest.param("tensorrt", {"notes": float("nan")}, ValueError, "notes", id="tensorrt-notes-nan"),

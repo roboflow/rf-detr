@@ -15,6 +15,7 @@ and checks runtime parity — mirroring the CoreML and ExecuTorch export suites.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 import re
 import sys
@@ -1207,7 +1208,11 @@ class TestTimingCache:
     def test_an_existing_cache_is_loaded_and_saved_back(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dynamic_batch: bool
     ) -> None:
-        """A cache file that exists seeds the build, and the same file receives the merged result."""
+        """A cache file that exists seeds the build, and the same file receives the merged result.
+
+        The exporter probes the file before the build to refuse an unwritable cache, and that probe must leave the
+        timings a user already collected untouched; emptying them would silently throw the warm cache away.
+        """
         network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384) if dynamic_batch else (1, 3, 384, 384)))
         captured = _patch_polygraphy_chain_recording(monkeypatch, network)
         cache = tmp_path / "engine.cache"
@@ -1218,6 +1223,7 @@ class TestTimingCache:
 
         assert captured["config"]["load_timing_cache"] == str(cache)
         assert captured["build"] == {"save_timing_cache": str(cache)}
+        assert cache.read_bytes() == b"previous timings"
 
     def test_a_missing_cache_is_saved_but_not_loaded(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """The first use has no file yet: loading it would only make Polygraphy warn about a missing cache."""
@@ -1228,6 +1234,38 @@ class TestTimingCache:
 
         assert "load_timing_cache" not in captured["config"]
         assert captured["build"] == {"save_timing_cache": str(cache)}
+
+    @pytest.mark.parametrize("dynamic_batch", [False, True])
+    def test_the_keywords_handed_to_polygraphy_exist_in_its_api(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dynamic_batch: bool
+    ) -> None:
+        """Every keyword the exporter passes with a timing cache is one the installed Polygraphy accepts.
+
+        The recording stub takes any keyword, so a keyword Polygraphy renamed or removed would leave the CPU suite green
+        while only a GPU run broke. The keywords the exporter really passes are recorded for a fixed-batch and a
+        dynamic-batch build (the latter adds a profile next to the cache), then checked against the signatures of the
+        real ``CreateConfig`` and ``engine_from_network``. Skipped where Polygraphy does not import.
+        """
+        trt_backend = pytest.importorskip("polygraphy.backend.trt", exc_type=ImportError)
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384) if dynamic_batch else (1, 3, 384, 384)))
+        captured = _patch_polygraphy_chain_recording(monkeypatch, network)
+        cache = tmp_path / "engine.cache"
+        cache.write_bytes(b"previous timings")
+        config = TensorRTConfig(fp16=False, dynamic_batch=dynamic_batch, max_batch_size=4, timing_cache=cache)
+
+        TensorRTExporter(config).build_engine("model.onnx")
+
+        # ``CreateConfig`` forwards most of its options to a base class through ``**kwargs``, so collect them all.
+        create_config_keywords = {
+            name
+            for cls in trt_backend.CreateConfig.__mro__
+            if cls is not object and "__init__" in vars(cls)
+            for name in inspect.signature(vars(cls)["__init__"]).parameters
+        }
+        build_keywords = set(inspect.signature(trt_backend.engine_from_network).parameters)
+        assert "load_timing_cache" in captured["config"], "the exporter no longer loads the cache it was given"
+        assert set(captured["config"]) <= create_config_keywords, "CreateConfig does not accept every keyword passed"
+        assert set(captured["build"]) <= build_keywords, "engine_from_network does not accept every keyword passed"
 
     @pytest.mark.parametrize(
         "value", [pytest.param("", id="empty"), pytest.param(b"engine.cache", id="bytes"), 3, True]
