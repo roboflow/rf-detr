@@ -2769,6 +2769,7 @@ class RFDETR:
         shape: tuple[int, int] | None = None,
         patch_size: int | None = None,
         include_source_image: bool = True,
+        *,
         antialias: bool = False,
         **kwargs: Any,
     ) -> Detections | KeyPoints | list[Detections | KeyPoints]:
@@ -2800,10 +2801,16 @@ class RFDETR:
                 metadata field. Defaults to ``True``. Set to ``False`` to reduce memory use when source images are not
                 needed.
             antialias:
-                Whether to use antialiasing during the inference resize. Keep this ``False`` for checkpoints trained
-                with the antialias-free Albumentations pipeline. Set it to ``True`` for checkpoints trained with
-                torchvision, older RF-DETR releases, or antialiased platform preprocessing. Defaults to ``False`` to
-                preserve the existing inference behavior.
+                Whether to use antialiasing during the inference resize. Match it to the resize the checkpoint was
+                trained with. Keep this ``False`` for checkpoints trained with the antialias-free Albumentations
+                pipeline, which is what the default CPU augmentation backend uses when ``rfdetr[augment]`` is
+                installed. Set it to ``True`` for checkpoints trained with torchvision resizing: the Kornia/GPU
+                augmentation backend, the CPU backend without ``rfdetr[augment]``, older RF-DETR releases, or
+                antialiased platform preprocessing. Whether ``rfdetr[augment]`` was installed at training time
+                therefore decides which setting a default-trained checkpoint expects. Exported models and the
+                ``rfdetr.export`` runtime helpers always resize with ``antialias=False``, so results with
+                ``antialias=True`` will not match them unless the caller pre-resizes the image with antialiasing.
+                Defaults to ``False`` to preserve the existing inference behavior.
             **kwargs:
                 Additional keyword arguments.
 
@@ -2846,7 +2853,9 @@ class RFDETR:
             But with the default ``include_source_image=True``, capturing ``source_image`` from that same tensor
             still does its own separate, blocking ``.cpu()`` call earlier in the loop — so an already-CUDA tensor
             input alone does not make the call fully round-trip-free. Pass ``include_source_image=False`` to avoid
-            that copy as well.
+            that copy as well. The exception is MPS with ``antialias=True`` on torch < 2.7, which has no MPS kernel
+            for antialiased resize: there the whole preprocessing path, including an MPS-resident tensor input, runs
+            on the CPU and the resized batch is transferred to the device once.
 
             Tensor and non-uint8 NumPy range checks and every input's shape check are evaluated before inference.
             PIL and uint8 NumPy images skip a redundant range scan because their byte-to-float conversion
@@ -2913,7 +2922,8 @@ class RFDETR:
 
         # torch < 2.7 has no MPS kernel for antialiased bilinear resize (pytorch#141287, #145581). Keep the whole
         # preprocessing path on CPU in that case, so an input is never moved to MPS only to come straight back for
-        # resizing. From torch 2.7 on the MPS kernel exists and this stays False; once the torch floor reaches 2.7,
+        # resizing. MPS-resident tensor inputs take the same detour (device -> CPU, then the resized batch back to
+        # MPS). From torch 2.7 on the MPS kernel exists and this stays False; once the torch floor reaches 2.7,
         # delete this branch together with `_mps_lacks_antialiased_resize`.
         resize_on_cpu = antialias and self.model.device.type == "mps" and _mps_lacks_antialiased_resize()
         preprocess_device = torch.device("cpu") if resize_on_cpu else self.model.device
