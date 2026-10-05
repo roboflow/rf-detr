@@ -269,6 +269,10 @@ tests = [
   # instead of silently skipping.
   "onnx>=1.16.0,<2.0",
   "onnxconverter-common",
+  # tests/export/test_onnx_quantize.py runs quantize_int8 end to end on a synthetic graph, which needs the runtime
+  # that collects the activation ranges. Same 3.10 split as the [onnx] extra: 1.24+ ships no cp310 wheels.
+  "onnxruntime<1.24; python_version < '3.11'",
+  "onnxruntime; python_version >= '3.11'",
   "tomli>=2.0; python_version < '3.11'",
   # Generates the synthetic COCO fixtures in tests/conftest.py (replaced rfdetr.datasets.synthetic).
   # Pinned exactly: the project is pre-1.0 and only publishes dev releases, so a range would drift.
