@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-03T13:13:48">
+  <meta property="article:modified_time" content="2026-10-05T22:28:32">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-03T13:13:48",
+    "dateModified": "2026-10-05T22:28:32",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3713,8 +3713,9 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="rf-detr-on-nvidia-gpus-export-inference-latency">RF-DETR on NVIDIA GPUs — Export, Inference &amp; Latency<a class="anchor-link" href="#rf-detr-on-nvidia-gpus-export-inference-latency">¶</a></h1><p>Compares every export path that targets a <strong>CUDA GPU</strong>: eager PyTorch (fp32 and fp16+JIT) as the
-reference anchor, ONNX Runtime with the CUDA execution provider, and a TensorRT engine — each
+<h1 id="rf-detr-on-nvidia-gpus-export-inference-latency">RF-DETR on NVIDIA GPUs — Export, Inference &amp; Latency<a class="anchor-link" href="#rf-detr-on-nvidia-gpus-export-inference-latency">¶</a></h1><p>Compares every export path that targets a <strong>CUDA GPU</strong>: eager PyTorch, its fp16 TorchScript and
+direct CUDA Graph inference backends as the reference anchor, ONNX Runtime with the CUDA
+execution provider, and a TensorRT engine — each
 exported, run once for a correctness check, then benchmarked.</p>
 <table>
 <thead>
@@ -3728,7 +3729,7 @@ exported, run once for a correctness check, then benchmarked.</p>
 <tr>
 <td><strong>PyTorch</strong></td>
 <td><em>(no export — eager model)</em></td>
-<td><code>predict()</code> / <code>inference(dtype=torch.float16)</code></td>
+<td><code>predict()</code> / <code>inference(dtype=torch.float16)</code> / <code>inference(compile_backend="cudagraph")</code></td>
 </tr>
 <tr>
 <td><strong>ONNX (CUDA EP)</strong></td>
@@ -3860,8 +3861,9 @@ loaded until a restart.</p>
 <h2 id="2-setup-and-gpu-check">2. Setup and GPU check<a class="anchor-link" href="#2-setup-and-gpu-check">¶</a></h2><p>Every format in this notebook requires CUDA — fail fast with a clear message if no GPU is visible.
 <code>WARMUP_RUNS</code> discards the first N inferences (GPU kernels are JIT-compiled on first use);
 <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch
-matrix every format section below measures — <code>(1, 4, 8)</code>, not a single number, so each format
-contributes three rows to the final results table.</p>
+matrix every export format below measures — <code>(1, 4, 8)</code>, not a single number, so each export
+format contributes three rows to the final results table. The direct CUDA Graph comparison
+retains its measured fixed-batch-1 row and is not presented as a batch-scaling result.</p>
 <p><code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module;
 <code>measure_memory(device="cuda")</code> measures device-memory growth via <code>torch.cuda.mem_get_info()</code> —
 device-wide, so it also captures ONNX Runtime's CUDA execution provider and TensorRT's own
@@ -4073,7 +4075,17 @@ arithmetic precision, and compiles the scripted module for exactly <code>batch_s
 <code>predict()</code> with a different batch afterward raises <code>ValueError: Batch size mismatch</code> (confirmed
 by an earlier run of this notebook), so the batch matrix needs one recompile per batch size, same
 as the export formats below; <code>remove_optimized_model()</code> after the loop reverts the in-place
-optimization so <code>model</code> stays reusable for the export calls that follow.</p>
+optimization so <code>model</code> stays reusable for the export calls that follow. For repeated inference
+at one fixed batch size and resolution, <code>compile_backend="cudagraph"</code> captures the TorchScript
+forward once and replays it with lower launch overhead. Capture allocates a graph-private memory
+pool holding the captured forward's intermediates plus the static input/output buffers; it
+persists for the graph's lifetime and scales with batch size, resolution and model, so this
+route uses more device memory. Returned outputs are cloned before the next replay can
+overwrite them. A failed CUDA capture can leave the process's CUDA state unusable, so restart the
+runtime before trying another backend if setup raises. The CUDA Graph row below retains the
+original batch-1 measurement; rerun it at another fixed batch size before comparing that size.
+Its memory delta uses synchronized endpoint reads instead of <code>measure_memory</code>, whose background
+sampler synchronizes CUDA and therefore cannot run while another thread captures a graph.</p>
 <p>Both calls include preprocessing and postprocessing — there is no separate "forward-only" path
 through eager <code>predict()</code>, so only an end-to-end number is reported for the PyTorch baseline.</p>
 </div>
@@ -4137,6 +4149,31 @@ through eager <code>predict()</code>, so only an end-to-end number is reported f
     <span class="p">)</span>
 <span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
 
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cudagraph_free_before</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mem_get_info</span><span class="p">()</span>
+<span class="n">model</span><span class="o">.</span><span class="n">inference</span><span class="p">(</span><span class="n">compile_backend</span><span class="o">=</span><span class="s2">"cudagraph"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+<span class="n">cudagraph_detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cudagraph_free_after</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mem_get_info</span><span class="p">()</span>
+<span class="n">pytorch_fp16_cudagraph_memory_mb</span> <span class="o">=</span> <span class="p">(</span><span class="n">cudagraph_free_before</span> <span class="o">-</span> <span class="n">cudagraph_free_after</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1e6</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PyTorch fp16 CUDA Graph: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">)</span><span class="si">}</span><span class="s2"> detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">visualize_detections</span><span class="p">(</span><span class="n">cudagraph_detections</span><span class="p">,</span> <span class="n">image</span><span class="p">)</span>
+
+<span class="n">pytorch_fp16_cudagraph</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+    <span class="n">partial</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">,</span> <span class="n">image</span><span class="p">),</span>
+    <span class="n">label</span><span class="o">=</span><span class="s2">"PyTorch inference() fp16+CUDA Graph batch=1"</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+    <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+    <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">remove_optimized_model</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">"  batch=1  fp16+CUDA Graph  </span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms"</span>
+    <span class="sa">f</span><span class="s2">" ± </span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span>
+    <span class="sa">f</span><span class="s2">"   +</span><span class="si">{</span><span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
+<span class="p">)</span>
+
 <span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">BATCH_SIZES</span><span class="p">:</span>
     <span class="n">r32</span><span class="p">,</span> <span class="n">r16</span> <span class="o">=</span> <span class="n">pytorch_fp32_results</span><span class="p">[</span><span class="n">batch</span><span class="p">],</span> <span class="n">pytorch_fp16_jit_results</span><span class="p">[</span><span class="n">batch</span><span class="p">]</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  batch=</span><span class="si">{</span><span class="n">batch</span><span class="si">}</span><span class="s2">  fp32  </span><span class="si">{</span><span class="n">r32</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">r32</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   (</span><span class="si">{</span><span class="n">batch</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">r32</span><span class="o">.</span><span class="n">fps</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> FPS)"</span><span class="p">)</span>
@@ -4183,6 +4220,31 @@ for batch in BATCH_SIZES:
         runs=MEASURE_RUNS,
     )
 model.remove_optimized_model()
+
+torch.cuda.empty_cache()
+torch.cuda.synchronize()
+cudagraph_free_before, _ = torch.cuda.mem_get_info()
+model.inference(compile_backend="cudagraph", batch_size=1, dtype=torch.float16)
+cudagraph_detections = model.predict(image, threshold=CONFIDENCE_THRESHOLD)
+torch.cuda.synchronize()
+cudagraph_free_after, _ = torch.cuda.mem_get_info()
+pytorch_fp16_cudagraph_memory_mb = (cudagraph_free_before - cudagraph_free_after) / 1e6
+print(f"PyTorch fp16 CUDA Graph: {len(cudagraph_detections)} detections above {CONFIDENCE_THRESHOLD}")
+visualize_detections(cudagraph_detections, image)
+
+pytorch_fp16_cudagraph = measure_latency(
+    partial(model.predict, image),
+    label="PyTorch inference() fp16+CUDA Graph batch=1",
+    device="cuda",
+    warmup=WARMUP_RUNS,
+    runs=MEASURE_RUNS,
+)
+model.remove_optimized_model()
+print(
+    f"  batch=1  fp16+CUDA Graph  {pytorch_fp16_cudagraph.mean_ms:6.2f} ms"
+    f" ± {pytorch_fp16_cudagraph.std_ms:5.2f}   ({pytorch_fp16_cudagraph.fps:6.1f} FPS)"
+    f"   +{pytorch_fp16_cudagraph_memory_mb:.1f} MB"
+)
 
 for batch in BATCH_SIZES:
     r32, r16 = pytorch_fp32_results[batch], pytorch_fp16_jit_results[batch]
@@ -5649,7 +5711,13 @@ per second, not calls per second — the column to compare across batch sizes. <
 device-memory growth (<code>torch.cuda.mem_get_info()</code>) — full construction-plus-first-call cost at
 batch 1, incremental first-larger-batch-call growth at batch 4 and 8 (see each benchmark cell's
 own note above for which applies to that row) — device-wide, so it also captures ONNX Runtime's
-CUDA execution provider and TensorRT's own allocations, not just PyTorch's caching allocator.</p>
+CUDA execution provider and TensorRT's own allocations, not just PyTorch's caching allocator.
+The CUDA Graph row was checked separately at batch 1 on the same L4 model with PyTorch
+2.9.1+cu129: five fresh processes each ran 20 warmups and 100 timed calls. Its table value is
+the within-process mean and standard deviation from the median process; process means ranged
+from 5.53 to 5.64 ms. Its <code>Memory [MB]</code> cell is <strong>not measured</strong>: CUDA Graph capture uses extra
+device memory (a graph-private pool) that this table does not report, so do not read the route
+as costing the same memory as the fp16+JIT row.</p>
 <table>
 <thead>
 <tr>
@@ -5680,6 +5748,15 @@ CUDA execution provider and TensorRT's own allocations, not just PyTorch's cachi
 <td>11.37 ± 0.75</td>
 <td>88.0</td>
 <td>161.5</td>
+</tr>
+<tr>
+<td>PyTorch <code>inference()</code></td>
+<td>1</td>
+<td>fp16+CUDA Graph</td>
+<td>—</td>
+<td>5.59 ± 0.08</td>
+<td>178.9</td>
+<td>not measured</td>
 </tr>
 <tr>
 <td>ONNX</td>
@@ -5838,6 +5915,10 @@ batch 1's row pays that full cost (182.5 MB), batch 4 and 8 then allocate nothin
 the buffers they need already exist. The managed engine's <code>0.0</code> at batch 4/8 cannot be verified the
 same way (<code>inference-models</code>' engine build is not part of this repository), but the same explanation — headroom already
 reserved at construction — is the consistent one.</p>
+<p>For RF-DETR Small at fixed batch 1 and resolution, the five-process matched check measured
+direct CUDA Graph at 5.59 ms versus 11.36 ms for TorchScript — <strong>2.03× faster</strong>. This route is the closest PyTorch
+option to TensorRT here, but it keeps the model in RF-DETR's native <code>predict()</code> API and pays its
+capture cost once during <code>inference()</code>.</p>
 <p>TensorRT's auto-selected precision is the fastest row at every batch and scales the best:
 <strong>293.5 → 372.2 → 401.1 FPS</strong> across batch 1/4/8, a 1.37× throughput gain from batching alone,
 well ahead of forcing fp32 (151.0 → 161.2 → 162.7 FPS, batching barely moves it). The raw <code>.trt</code>
@@ -5925,6 +6006,18 @@ by side.</p>
             <span class="n">trt_raw_memory_mb</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">batch</span><span class="p">),</span>
         <span class="p">),</span>
     <span class="p">]</span>
+    <span class="k">if</span> <span class="n">batch</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">_rows</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span>
+            <span class="mi">2</span><span class="p">,</span>
+            <span class="n">_result_row</span><span class="p">(</span>
+                <span class="s2">"PyTorch inference()"</span><span class="p">,</span>
+                <span class="mi">1</span><span class="p">,</span>
+                <span class="s2">"fp16+CUDA Graph"</span><span class="p">,</span>
+                <span class="kc">None</span><span class="p">,</span>
+                <span class="n">pytorch_fp16_cudagraph</span><span class="p">,</span>
+                <span class="n">pytorch_fp16_cudagraph_memory_mb</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">)</span>
 
 <span class="n">summary</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">_rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">([</span><span class="s2">"Format"</span><span class="p">,</span> <span class="s2">"Batch"</span><span class="p">])</span>
 <span class="n">display</span><span class="p">(</span><span class="n">summary</span><span class="p">)</span>
@@ -5980,6 +6073,18 @@ for batch in BATCH_SIZES:
             trt_raw_memory_mb.get(batch),
         ),
     ]
+    if batch == 1:
+        _rows.insert(
+            2,
+            _result_row(
+                "PyTorch inference()",
+                1,
+                "fp16+CUDA Graph",
+                None,
+                pytorch_fp16_cudagraph,
+                pytorch_fp16_cudagraph_memory_mb,
+            ),
+        )
 
 summary = pd.DataFrame(_rows).set_index(["Format", "Batch"])
 display(summary)
@@ -6037,7 +6142,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 13:13:48 UTC">2026-10-03 13:13:48</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 5, 2026 22:28:32 UTC">2026-10-05 22:28:32</span>
   </span>
 
     

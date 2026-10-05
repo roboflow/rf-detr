@@ -2784,6 +2784,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Public <code>rfdetr.export.benchmark</code> exposes <code>measure_latency</code>, <code>measure_memory</code>, <code>BenchmarkResult</code> and <code>MemoryResult</code>, the helpers the per-hardware export cookbooks use. (<a href="https://github.com/roboflow/rf-detr/pull/1585">#1585</a>)</p>
 </li>
 <li>
+<p><code>RFDETR.inference(compile_backend="cudagraph")</code> adds an opt-in direct CUDA Graph replay backend for fixed batch size and resolution. It freezes the TorchScript trace, captures its forward once, and clones graph-owned outputs so later calls cannot overwrite earlier results; the default remains <code>"torchscript"</code>, and <code>compile=True</code> on a non-CUDA device raises <code>ValueError</code>. On one NVIDIA L4 VM with RF-DETR Nano, FP16, batch 1, and the public PIL-image <code>predict()</code> path, seven sequential fresh-process paired runs reduced median end-to-end latency from 9.719 ms to 3.884 ms (60.03% lower, 2.50x throughput; paired throughput range 2.43-2.57x). Total setup took a 7.37 s median and graph capture added 29.1 MiB of allocated CUDA memory over the retained trace in the benchmark. One full COCO val2017 pass produced exactly the same AP/AP50 (0.480240/0.671360), with 1.5 million ranked detections per arm; its descriptive, single-process median <code>predict()</code> latency was 9.887 ms versus 4.051 ms. (<a href="https://github.com/roboflow/rf-detr/pull/1547">#1547</a>)</p>
+</li>
+<li>
 <p><code>RFDETR.predict()</code> accepts a keyword-only <code>antialias</code> flag (default <code>False</code>, unchanged behaviour). Pass <code>antialias=True</code> for checkpoints trained with torchvision resizing; exported models still resize without antialiasing. On MPS with PyTorch older than 2.7, antialiased resizing runs on the CPU. (<a href="https://github.com/roboflow/rf-detr/pull/1525">#1525</a>)</p>
 </li>
 </ul>
