@@ -359,6 +359,8 @@ GitHub Actions workflows in `.github/workflows/`:
 
 **Concurrency:** PRs cancel in-progress runs on new pushes
 
+**Pretrained weights cache:** Jobs that build pretrained models set `RF_HOME` to `${{ github.workspace }}/.rfdetr-weights` and restore one cross-OS Actions cache entry keyed on the git blob hash of `src/rfdetr/assets/model_weights.py` plus the installed `rfdetr_plus` version. Only the ubuntu / Python 3.13 leg of `try-all-models` (`ci-integrations.yml`) writes it, on push to `develop`, and that leg skips the restore so the real download and MD5 check stay covered; every other job only restores. Keep the key format identical across `ci-integrations.yml`, `ci-tests-gpu.yml` and `ci-legacy-checkpoints.yml`, and never save it from a PR run.
+
 ## Additional Resources
 
 - **Documentation:** https://rfdetr.roboflow.com

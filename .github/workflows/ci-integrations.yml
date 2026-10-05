@@ -26,6 +26,14 @@ jobs:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.13"]
     timeout-minutes: 15
+    env:
+      # Pretrained weights go to a directory inside the workspace rather than ~/.roboflow/models: a workspace-relative
+      # cache path is what lets the single cache entry below restore on every OS (enableCrossOsArchive).
+      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
+      # One leg owns the weights cache. On push to develop it skips the restore, so the real download and MD5 check
+      # keep running against the live URLs, and then saves what it downloaded. Every other run only restores, so PR
+      # runs never write cache entries that would evict each other.
+      WEIGHTS_CACHE_WRITER: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' }}
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -42,8 +50,46 @@ jobs:
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip')
         run: uv pip install -e .[plus]
 
+      - name: 🔑 Compute model weights cache key
+        id: weights-key
+        shell: bash
+        # Keyed on the weights registry and on the installed rfdetr_plus, which registers the XLarge/2XLarge weights.
+        # The registry's git blob hash is used instead of hashFiles() because it does not change with the line endings
+        # of a Windows checkout. ci-tests-gpu.yml, the openvino/litert export-parity rows below and
+        # ci-legacy-checkpoints.yml restore this entry, so keep the key format in sync with them.
+        run: |
+          registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)
+          plus=$(python -c "from importlib.metadata import version; print(version('rfdetr_plus'))")
+          echo "key=rfdetr-weights-${registry}-plus-${plus}" >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Restore cached model weights
+        if: env.WEIGHTS_CACHE_WRITER != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rfdetr-weights
+          key: ${{ steps.weights-key.outputs.key }}
+          enableCrossOsArchive: true
+
       - name: 🔎 Smoke-test model instantiation, downloads, and inference
         run: python tests/run_smoke_all_models.py
+
+      - name: 🔎 Check whether the model weights are already cached
+        id: weights-cached
+        if: env.WEIGHTS_CACHE_WRITER == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rfdetr-weights
+          key: ${{ steps.weights-key.outputs.key }}
+          enableCrossOsArchive: true
+          lookup-only: true
+
+      - name: 💾 Save model weights cache
+        if: env.WEIGHTS_CACHE_WRITER == 'true' && steps.weights-cached.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rfdetr-weights
+          key: ${{ steps.weights-key.outputs.key }}
+          enableCrossOsArchive: true
 
       - name: Minimize uv cache
         run: uv cache prune --ci
@@ -67,6 +113,9 @@ jobs:
       group: pytest-${{ matrix.format }}${{ matrix.extra_plus }}-${{ matrix.python-version }}-${{ matrix.os || 'ubuntu-latest' }}-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 30
+    env:
+      # Same weights directory as try-all-models, so the openvino/litert rows can restore its cache entry.
+      RF_HOME: ${{ github.workspace }}/.rfdetr-weights
     strategy:
       fail-fast: false
       matrix:
@@ -116,6 +165,24 @@ jobs:
           version: "0.9.26"
           python-version: ${{ matrix.python-version }}
           activate-environment: true
+
+      # Only the openvino and litert parity tests build pretrained models (nano, seg-nano, keypoint); every other
+      # row uses pretrain_weights=None. Their files are a subset of the try-all-models cache entry, so any
+      # rfdetr_plus version saved for this weights registry will do (prefix match).
+      - name: 🔑 Compute model weights cache key
+        id: weights-key
+        if: matrix.format == 'openvino' || matrix.format == 'litert'
+        run: echo "registry=$(git rev-parse HEAD:src/rfdetr/assets/model_weights.py)" >> "$GITHUB_OUTPUT"
+
+      - name: 📦 Restore cached model weights
+        if: matrix.format == 'openvino' || matrix.format == 'litert'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rfdetr-weights
+          key: rfdetr-weights-${{ steps.weights-key.outputs.registry }}
+          restore-keys: |
+            rfdetr-weights-${{ steps.weights-key.outputs.registry }}-
+          enableCrossOsArchive: true
 
       - name: 🚀 Install Packages (${{ matrix.format }}${{ matrix.extra_plus }} extra)
         if: ${{ !matrix.extra_group }}
@@ -220,7 +287,7 @@ jobs:
   tensorrt-parity:
     name: TensorRT parity
     # TensorRT engine build + runtime inference need a real GPU + CUDA driver, so unlike the CPU
-    # integration jobs this runs on the self-hosted GPU runner (same as ci-tests-gpu.yml).
+    # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml).
     runs-on: Roboflow-GPU-VM-Runner
     timeout-minutes: 25
     concurrency:

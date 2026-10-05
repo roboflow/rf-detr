@@ -53,7 +53,7 @@ jobs:
 
       - name: 🤗 Cache Hugging Face hub (DINOv2 backbone weights)
         # These GitHub-hosted runners are ephemeral, so every job otherwise re-downloads the DINOv2 encoder weights
-        # cold; the self-hosted GPU runner (ci-tests-gpu.yml) keeps its own disk between runs and needs no cache.
+        # cold. (The GPU runner used by ci-tests-gpu.yml is ephemeral too: it gets a fresh VM for every job.)
         # Shared across the whole OS/Python matrix (no matrix values in the key): the cached files are backbone
         # weights and configs, identical regardless of interpreter or, in practice, OS. The key is content-addressed
         # on the encoder configs so it busts automatically if a config changes which Hugging Face revision is used.
