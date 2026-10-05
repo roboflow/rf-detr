@@ -257,7 +257,9 @@ def _build_coco_val_subset(
         "annotations": [ann for ann in payload["annotations"] if ann["image_id"] in kept_ids],
         "categories": payload["categories"],
     }
-    (subset_ann_dir / "instances_val2017.json").write_text(json.dumps(subset_payload))
+    output_path = subset_ann_dir / "instances_val2017.json"
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(subset_payload, f, separators=(",", ":"), ensure_ascii=True)
     return dest_dir
 
 

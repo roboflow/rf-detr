@@ -49,10 +49,13 @@ INT8 quantization
 ``quantization="int8"`` produces a **dynamic-range** INT8 model (INT8 weights, float activations, roughly 4x smaller
 than FP32, no calibration data needed), built from the ``onnx2tf`` SavedModel.
 
-Static (full-integer) INT8 is not supported and raises ``ValueError``: RF-DETR's transformer activations do not survive
-8-bit post-training quantization.  Because dynamic-range quantization derives its weight scales from the weights
-themselves, *calibration_data* cannot change the INT8 artifact — TFLite only consumes representative data through
-``representative_dataset``, which this path never sets.
+Static (full-integer) INT8 is not supported and raises ``ValueError``: TFLite's full-integer mode gives every
+activation a per-tensor 8-bit scale, which RF-DETR's transformer activations are not expected to survive (no
+TFLite full-integer measurement exists in this repo yet — this is the current best understanding, not a proven
+fact).  That is a limit of this mode, not of 8-bit post-training quantization in general — see :doc:`the TFLite
+export docs </exports/tflite>` for how other toolchains handle it.  Because dynamic-range quantization derives
+its weight scales from the weights themselves, *calibration_data* cannot change the INT8 artifact — TFLite only
+consumes representative data through ``representative_dataset``, which this path never sets.
 
 Note:
     The resulting ``.tflite`` model expects the same input normalization as the ONNX model: ImageNet mean/std
@@ -77,6 +80,7 @@ import os
 import sys
 import sysconfig
 import threading
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generator, cast
@@ -88,6 +92,7 @@ from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import is_installed
 
 logger = get_logger()
 
@@ -485,6 +490,27 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
     return out_path
 
 
+#: How to install the TFLite stack. Every requirement of the ``[tflite]`` extra carries a Python 3.12 marker, so the
+#: extra installs nothing on another interpreter, and the hint says so.
+_TFLITE_INSTALL_HINT = 'Install it with: pip install "rfdetr[tflite]" (the extra installs on Python 3.12 only).'
+
+
+def _check_tf_keras_available() -> None:
+    """Verify that ``tf_keras`` is installed, without importing it.
+
+    onnx2tf's converter imports ``tf_keras`` (from ``onnx2tf.utils.common_functions``) but lists it only in its optional
+    ``tensorflow`` extra, next to TensorFlow, so ``pip install onnx2tf tensorflow`` leaves it out and the conversion
+    fails once the ONNX stage is done. A metadata probe rather than an import: Keras need not load before the
+    conversion. A ``tf_keras`` already in ``sys.modules`` counts as installed without the probe, which would reject a
+    module that carries no ``__spec__``.
+
+    Raises:
+        ImportError: If ``tf_keras`` is not installed.
+    """
+    if sys.modules.get("tf_keras") is None and not is_installed("tf_keras"):
+        raise ImportError(f"TFLite export requires tf-keras, which onnx2tf does not install. {_TFLITE_INSTALL_HINT}")
+
+
 def _check_onnx2tf_available() -> None:
     """Verify that a compatible ``onnx2tf`` package is importable.
 
@@ -498,8 +524,7 @@ def _check_onnx2tf_available() -> None:
         import onnx2tf  # noqa: F401
     except ImportError as exc:
         raise ImportError(
-            "onnx2tf is not installed. TFLite export requires the tflite extra. "
-            "Install it with: pip install rfdetr[tflite]"
+            f"onnx2tf is not installed. TFLite export requires the tflite extra. {_TFLITE_INSTALL_HINT}"
         ) from exc
 
     from importlib.metadata import PackageNotFoundError as _PkgNotFound
@@ -852,8 +877,8 @@ class TFLiteConfig(ExportConfig):
     Attributes:
         opset_version: ONNX opset the intermediate graph targets.
         quantization: Quantization mode; ``"int8"`` additionally writes a dynamic-range model.
-        calibration_data: Data written to a scratch file beside the artifacts but not consumed by the conversion.
-        max_images: Maximum images read from a *calibration_data* directory.
+        calibration_data: Ignored, with a ``UserWarning`` at construction; never read, so it cannot fail the export.
+        max_images: Ignored along with *calibration_data*, whose directory it would have capped.
     """
 
     opset_version: int = 17
@@ -882,7 +907,9 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
     """Export to TFLite by running an ONNX export first and converting its output with ``onnx2tf``.
 
     Owning the ONNX stage is what makes the TensorFlow preload correct: it has to happen before anything imports
-    ONNX's C extension, and that is this exporter's first statement rather than a special case in the caller.
+    ONNX's C extension. ``RFDETR.export`` preloads TensorFlow through the registry's ``preimport``, before this module
+    is imported, and :meth:`check_dependencies`, which ``Exporter.__call__`` runs before :meth:`_convert`, preloads
+    it too, first, so an exporter called on a graph directly is covered as well.
 
     Examples:
         Requires the optional ``onnx2tf`` dependency and a prepared graph, so this is documentation only
@@ -903,11 +930,67 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
     }
     format = "tflite"
     display_name = "TFLite"
-    supports_dynamic_batch = True
+    supports_dynamic_batch = False
+    dynamic_batch_reason = (
+        "(onnx2tf fails on the dynamic-batch graph: an Add of a constant, likely the position embedding, against the"
+        " dynamic-shaped encoder input reports mismatched dimensions). Export one .tflite per batch size instead."
+    )
     supports_notes = True
     experimental = True
     experimental_note = "Upstream dependency instabilities (onnx2tf, ai_edge_litert) may affect results."
     pip_extra = "tflite"
+
+    def _check_capabilities(self) -> None:
+        """Refuse an unrecognized quantization mode before the ONNX stage runs, not after it.
+
+        Raises:
+            ValueError: If the configured *quantization* is not a recognized mode.
+        """
+        super()._check_capabilities()
+        if self.config.quantization not in _VALID_QUANTIZATIONS:
+            raise ValueError(
+                f"Unsupported quantization mode {self.config.quantization!r}. "
+                f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}. "
+                "Static / full-integer INT8 is not supported; 'int8' is dynamic-range."
+            )
+        if self.config.calibration_data is not None:
+            # A warning, not a refusal: the keyword is kept for a future static-INT8 path. Emitted last, so a refused
+            # configuration never warns first. stacklevel=4 skips this frame, Exporter.__init__ and RFDETR.export, to
+            # point at the caller. Overriding __init__ instead would add a frame under the base class's own
+            # stacklevel=3 warnings and misattribute them.
+            warnings.warn(
+                "`calibration_data` has no effect on the exported .tflite models: INT8 is dynamic-range (weights only, "
+                "no activation calibration) and fp32/fp16 involve no calibration. This argument is ignored.",
+                UserWarning,
+                stacklevel=4,
+            )
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify TensorFlow, ``tf_keras``, ``onnx`` and ``onnx2tf``, loading TensorFlow first so it comes before ONNX.
+
+        Only the top-level ``onnx2tf`` package is imported here, which defines lazy wrappers and nothing else.
+        ``onnx2tf.onnx2tf`` seeds ``random``/``numpy`` and silences every warning when it is imported, so it is left to
+        :meth:`_prepare_onnx2tf`, after the forward pass and the ONNX stage.
+
+        Raises:
+            ImportError: If TensorFlow, ``tf_keras`` or ``onnx`` is not installed, or ``onnx2tf`` cannot be imported or
+                is below 2.4.0.
+        """
+        from rfdetr.export._backend import check_onnx_available, preload_tensorflow_before_onnx
+
+        preload_tensorflow_before_onnx()
+        # onnx2tf lists TensorFlow as an optional extra, so it imports fine without it; its conversion does not run.
+        # The preload above has just tried the import, so an absent module means TensorFlow is not installed.
+        if sys.modules.get("tensorflow") is None:
+            raise ImportError(
+                f"TFLite export requires TensorFlow, which onnx2tf does not install. {_TFLITE_INSTALL_HINT}"
+            )
+        _check_tf_keras_available()
+        # check_onnx_available() imports onnx itself, lazily, only when called here -- after TensorFlow's preload
+        # above, so the ordering preload_tensorflow_before_onnx() exists to protect still holds.
+        check_onnx_available(_TFLITE_INSTALL_HINT, stage="TFLite export")
+        _check_onnx2tf_available()
 
     def _convert(self, graph: ExportGraph) -> Path:
         """Export to ONNX, convert to TFLite, and return the converted artifact's path.
@@ -918,13 +1001,9 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         Returns:
             Path to the primary ``.tflite`` artifact.
         """
-        from rfdetr.export._backend import preload_tensorflow_before_onnx
-
-        # Must run before anything imports onnx's C extension: onnx and TensorFlow share weakly-exported Abseil
-        # symbols, and the wrong load order deadlocks the conversion. This is why OnnxExporter is imported below
-        # rather than at module scope — that import pulls in onnx.
-        preload_tensorflow_before_onnx()
-
+        # Exporter.__call__ ran check_dependencies, which loads TensorFlow before anything imports onnx's C extension:
+        # onnx and TensorFlow share weakly-exported Abseil symbols, and the wrong load order deadlocks the conversion.
+        # This is why OnnxExporter is imported here rather than at module scope — that import pulls in onnx.
         from rfdetr.export._onnx.exporter import OnnxExporter
 
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
@@ -952,10 +1031,8 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             otherwise the fp32 file.
 
         Raises:
-            FileNotFoundError: If *onnx_path* does not exist or the configured
-                *calibration_data* points to a missing file.
+            FileNotFoundError: If *onnx_path* does not exist.
             ImportError: If ``onnx2tf`` is not installed.
-            ValueError: If the configured *quantization* is not a recognized mode.
             RuntimeError: If the conversion fails.
 
         Note:
@@ -1010,38 +1087,35 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         return self._resolve_primary_output(output_dir, model_stem)
 
     def _validate_onnx_source(self, onnx_path: Path) -> None:
-        """Reject a missing source model or an unrecognized quantization mode.
+        """Reject a missing source model.
 
         Args:
             onnx_path: Path to the source ``.onnx`` file.
 
         Raises:
             FileNotFoundError: If *onnx_path* is not an existing file.
-            ValueError: If the configured *quantization* is not a recognized mode.
         """
         if not onnx_path.is_file():
             raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
 
-        if self.config.quantization not in _VALID_QUANTIZATIONS:
-            raise ValueError(
-                f"Unsupported quantization mode {self.config.quantization!r}. "
-                f"Choose from: {sorted(q for q in _VALID_QUANTIZATIONS if q is not None)}. "
-                "Static / full-integer INT8 is not supported; 'int8' is dynamic-range."
-            )
-
     def _prepare_onnx2tf(self) -> None:
-        """Load TensorFlow ahead of ONNX, verify ``onnx2tf``, and import the submodules the patches target.
+        """Load TensorFlow ahead of ONNX, verify ``tf_keras``/``onnx2tf``, and import the patched submodules.
 
         Raises:
-            ImportError: If ``onnx2tf`` cannot be imported or is below 2.4.0.
+            ImportError: If ``tf_keras`` is not installed, or ``onnx2tf`` cannot be imported or is below 2.4.0.
         """
         # Load TensorFlow before the GridSample rewrite below imports onnx: a wrong load order makes
-        # TensorFlow's SavedModel restore deadlock (see preload_tensorflow_before_onnx).  _convert()
-        # already calls this before its ONNX stage; repeating it here covers direct convert_onnx() calls.
+        # TensorFlow's SavedModel restore deadlock (see preload_tensorflow_before_onnx).  check_dependencies(), which
+        # Exporter.__call__ runs, already calls this before the ONNX stage; repeating it here covers direct
+        # convert_onnx() calls.
         from rfdetr.export._backend import preload_tensorflow_before_onnx
 
         preload_tensorflow_before_onnx()
 
+        # Same order as check_dependencies(): tf_keras before onnx2tf, since the import below
+        # (onnx2tf.utils.common_functions) is what actually imports tf_keras — a direct convert_onnx()
+        # call never runs check_dependencies() and would otherwise hit tf_keras's unguarded ImportError.
+        _check_tf_keras_available()
         _check_onnx2tf_available()
 
         # Force-import onnx2tf submodules so that _patch_validation_download()
@@ -1082,28 +1156,19 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
             return onnx_path
 
     def _prepare_calibration(self, onnx_path: Path, output_dir: Path) -> Path:
-        """Write the ``.npy`` onnx2tf's conditional validation hook reads, and note when INT8 ignores it.
+        """Write the generated ``.npy`` onnx2tf's conditional validation hook reads.
+
+        The configured *calibration_data* is ignored (:meth:`_check_capabilities` warned about it at construction), so
+        it is never read or validated here: the hook always gets random data shaped like the model input.
 
         Args:
             onnx_path: Path to the ``.onnx`` file the input shape is read from.
-            output_dir: Directory a generated or reformatted ``.npy`` is written to.
+            output_dir: Directory the generated ``.npy`` is written to.
 
         Returns:
             Path to the ``.npy`` calibration data file.
-
-        Raises:
-            FileNotFoundError: If the configured *calibration_data* is a path that does not exist, or a
-                directory with no supported images.
         """
-        if self.config.calibration_data is not None and self.config.quantization == "int8":
-            logger.info(
-                "The provided calibration data has no effect on the generated INT8 model: "
-                "dynamic-range quantization does not use it."
-            )
-
-        return _prepare_calibration_data(
-            onnx_path, self.config.calibration_data, output_dir, max_images=self.config.max_images
-        )
+        return _prepare_calibration_data(onnx_path, None, output_dir, max_images=self.config.max_images)
 
     def _run_onnx2tf(self, onnx_path: Path, output_dir: Path, calib_npy_path: Path) -> None:
         """Run ``onnx2tf.convert`` under the three process-global patches the conversion needs.

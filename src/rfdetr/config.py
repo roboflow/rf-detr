@@ -10,7 +10,7 @@ import importlib
 import json
 import os
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Literal, Optional, TypeAlias
@@ -265,6 +265,154 @@ def _detect_device() -> str:
 
 
 DEVICE: str = _detect_device()
+
+
+def _cuda_supports_native_bf16(device: torch.device | int | None = None) -> bool:
+    """Return whether a CUDA device runs bfloat16 natively rather than through emulation.
+
+    This is the test ``torch.cuda.is_bf16_supported(including_emulation=False)`` applies in PyTorch 2.4+ (compute
+    capability 8.0 or newer, and every ROCm device), but for any device instead of only the current one, and on every
+    supported PyTorch version. ``torch.cuda.is_bf16_supported()`` itself also counts emulated bfloat16, so it returns
+    ``True`` on pre-Ampere GPUs such as the T4 and V100, which have no bfloat16 tensor cores; emulated bfloat16 there
+    runs slower than float16 and even float32.
+
+    Args:
+        device: CUDA device to check. ``None`` checks the current device.
+
+    Returns:
+        ``True`` when CUDA is available and the device supports bfloat16 natively.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with patch("torch.cuda.is_available", return_value=False):
+        ...     _cuda_supports_native_bf16()
+        False
+    """
+    if not torch.cuda.is_available():
+        return False
+    if torch.version.hip:
+        return True
+    return torch.cuda.get_device_capability(device)[0] >= 8
+
+
+def _cuda_training_device_indices(devices: int | str | Sequence[int]) -> list[int]:
+    """Return the CUDA device indices a Lightning ``devices`` value trains on.
+
+    Lightning reads ``devices`` as a count (``2``, ``"2"``), explicit indices (``[1]``, ``"0,2"``), or every visible
+    device (``"auto"``, ``-1``). ``RFDETR.train(device="cuda:1")`` forwards ``devices=[1]``.
+
+    ``"auto"`` and ``-1`` therefore mean *every* visible device, never some idle subset of them, and the callers read
+    that set conservatively — every selected GPU has to qualify. That is deliberate: Lightning gives the whole set to
+    the run and precision must be identical across DDP ranks, which one rank cannot decide for another. The cost is
+    that a single pre-Ampere GPU anywhere in a mixed host keeps an ``amp_dtype="auto"`` run (and the bf16-only paths
+    that follow from it) in fp16; naming the fast GPUs explicitly (``devices=[1]``) is how a caller opts out.
+
+    Indices this host cannot see are dropped, so every returned index is safe to hand to a per-device probe such as
+    ``torch.cuda.get_device_capability``: an over-count (``devices=4`` on a two-GPU host) or an out-of-range explicit
+    index otherwise reaches that probe and trips a bare internal ``assert`` there, replacing Lightning's own named
+    misconfiguration error with an opaque ``AssertionError``.
+
+    The two ways of selecting nothing are left as they fall out — ``devices=0`` reads as the every-visible-device case
+    and ``devices=[]`` returns an empty list — because neither reaches here in practice: Lightning rejects both while
+    validating its own ``devices`` value, before any precision is resolved. Nothing downstream depends on which way
+    they lean, so neither is special-cased.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        The visible device indices, in the order given. Empty when no requested index is visible, which on a host
+        without CUDA is every form.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with patch("torch.cuda.device_count", return_value=4):
+        ...     _cuda_training_device_indices([1]), _cuda_training_device_indices("0,2")
+        ([1], [0, 2])
+        >>> with patch("torch.cuda.device_count", return_value=2):
+        ...     _cuda_training_device_indices(2), _cuda_training_device_indices(4)
+        ([0, 1], [0, 1])
+    """
+    visible = range(torch.cuda.device_count())
+    if not isinstance(devices, (int, str)):
+        return [int(index) for index in devices if int(index) in visible]
+    if isinstance(devices, str):
+        devices_name = devices.strip().lower()
+        if "," in devices_name:
+            return [int(entry) for entry in devices_name.split(",") if entry.strip() and int(entry) in visible]
+        devices = int(devices_name) if devices_name.isdigit() else -1
+    if devices > 0:
+        return [index for index in range(devices) if index in visible]
+    return list(visible)
+
+
+def _cuda_native_bf16_on_devices(devices: int | str | Sequence[int]) -> bool:
+    """Return whether every CUDA device a Lightning ``devices`` value trains on runs bfloat16 natively.
+
+    ``amp_dtype="auto"`` trains in bf16 only when this is ``True``. The trainer's precision and the
+    ``batch_size="auto"`` probe both take their answer from here, so the probe measures the dtype the run uses.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        ``True`` when every selected device supports bfloat16 natively. When ``devices`` selects no visible device,
+        the current device is checked.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> capability = {0: (8, 0), 1: (7, 5)}
+        >>> with (
+        ...     patch("torch.cuda.is_available", return_value=True),
+        ...     patch("torch.version.hip", None),
+        ...     patch("torch.cuda.device_count", return_value=2),
+        ...     patch("torch.cuda.get_device_capability", side_effect=lambda index=None: capability[index or 0]),
+        ... ):
+        ...     _cuda_native_bf16_on_devices([0]), _cuda_native_bf16_on_devices(2)
+        (True, False)
+    """
+    indices: list[int | None] = list(_cuda_training_device_indices(devices)) or [None]
+    return all(_cuda_supports_native_bf16(index) for index in indices)
+
+
+def _cuda_bf16_supported_on_devices(devices: int | str | Sequence[int]) -> bool:
+    """Return whether the CUDA devices a Lightning ``devices`` value trains on can run bfloat16 at all.
+
+    This is the wider question ``torch.cuda.is_bf16_supported()`` answers — native bfloat16 *or* emulation — asked for
+    the devices a run trains on instead of only the current one. An explicit ``amp_dtype="bf16"`` is honoured on
+    emulated bfloat16 (with a warning), so its gate needs this test rather than the stricter
+    :func:`_cuda_native_bf16_on_devices`; reading the same device set is what keeps the gate and that warning from
+    disagreeing on a mixed-GPU host.
+
+    Only the native half of the question is answered per device. Whether *emulated* bfloat16 is available is left to
+    PyTorch's own probe of the current device, because answering it per index means materialising a bfloat16 tensor on
+    every selected GPU, creating a CUDA context on each of them in the parent process.
+
+    Args:
+        devices: The ``devices`` value passed to the Lightning ``Trainer``.
+
+    Returns:
+        ``True`` when bfloat16 is usable on the selected devices, natively or through emulation.
+
+    Examples:
+        >>> from unittest.mock import patch
+        >>> with (
+        ...     patch("torch.cuda.is_available", return_value=True),
+        ...     patch("torch.version.hip", None),
+        ...     patch("torch.cuda.device_count", return_value=2),
+        ...     patch("torch.cuda.get_device_capability", return_value=(7, 5)),
+        ...     patch("torch.cuda.is_bf16_supported", return_value=True),
+        ... ):
+        ...     _cuda_bf16_supported_on_devices([1])
+        True
+    """
+    if not torch.cuda.is_available():
+        # Checked here rather than left to the probe below: torch.cuda.is_bf16_supported() reads torch.version.hip
+        # before torch.cuda.is_available(), so on a ROCm build with no visible GPU the bare call answers True.
+        return False
+    return _cuda_native_bf16_on_devices(devices) or torch.cuda.is_bf16_supported()
+
+
 _OPTIMIZER_MANAGED_KWARGS = {"params", "lr", "weight_decay", "fused"}
 
 
@@ -526,7 +674,9 @@ class ModelConfig(BaseConfig):
             final batch or a different ``TrainConfig.eval_batch_size``, recompiles once) and the default
             IA-BCE detection losses run layer-batched in one compiled function. Target packing and
             assignment stay eager, and every other configuration, including segmentation and keypoint
-            models, keeps its dynamic model compile and eager per-layer losses. Defaults to ``False``.
+            models, keeps its dynamic model compile and eager per-layer losses. Detection training on one BF16
+            CUDA device with ``TrainConfig.use_ema=True`` also runs gradient clipping, AdamW and the EMA update
+            as one Triton pass; the advanced training guide lists the exact conditions. Defaults to ``False``.
         cuda_graphs: Capture and replay the single-GPU detection training forward with CUDA
             graphs. Removes kernel-launch gaps, so it pays at small batch sizes; at large batch
             sizes it matches eager and ``compile`` is the better lever. Combined with
@@ -1178,8 +1328,10 @@ class TrainConfig(BaseConfig):
             "_resolve_amp_dtype for the deprecated ModelConfig.amp fold-in. "
             "None disables autocast (full fp32). "
             "On TPU, 'auto' and 'bf16' select XLA's bf16-true precision. "
-            "Elsewhere, 'auto' selects bf16-mixed on Ampere+ CUDA, fp16 otherwise. "
-            "'bf16' selects bfloat16 (falls back to fp16 with a warning if unsupported). "
+            "Elsewhere, 'auto' selects bf16-mixed on CUDA GPUs with native bf16 (Ampere and newer) and fp16 otherwise, "
+            "including pre-Ampere GPUs such as the T4 and V100, where bf16 is only emulated. "
+            "'bf16' selects bfloat16 (with a warning where it is only emulated; falls back to fp16 with a warning if "
+            "unsupported). "
             "'fp16' selects fp16 on supported CUDA/MPS backends. "
             "Explicit XLA uses full fp32 until CPU/GPU PJRT BF16 execution is verified. "
             "'fp8' uses Lightning's Transformer Engine precision plugin and requires a supported NVIDIA GPU; "
@@ -1292,11 +1444,13 @@ class TrainConfig(BaseConfig):
     notes: Optional[Any] = Field(
         default=None,
         description=(
-            "User-defined provenance metadata embedded in best-model .pth checkpoints "
-            "under checkpoint['args']['notes'] and in exported ONNX files under the "
-            "'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
-            "(string, dict, list, int, float, bool). String values are stored verbatim; "
-            "all other types are JSON-encoded."
+            "User-defined provenance metadata embedded in best-model .pth and Lightning .ckpt "
+            "checkpoints under checkpoint['args']['notes'], and in exported ONNX/Core AI files "
+            "under the 'rfdetr_notes' metadata property. Accepts any JSON-serialisable value "
+            "(string, dict, list, int, float, bool). Checkpoints store the value as-is; a "
+            "Lightning .ckpt additionally replaces a value a weights-only torch.load cannot "
+            "read with its repr() (and warns) so Trainer.fit(ckpt_path=...) can still resume. "
+            "ONNX/Core AI exports store string values verbatim and JSON-encode all other types."
         ),
     )
 
@@ -1333,7 +1487,11 @@ class TrainConfig(BaseConfig):
     # Promoted from populate_args() — PTL migration (T4-2).
     # device is intentionally absent: PTL auto-detects accelerator via Trainer(accelerator="auto").
     accelerator: str = "auto"
-    clip_max_norm: float = 0.1
+    # ge=0.0 keeps 0.0 as the documented "clipping off" value while rejecting negatives at
+    # construction time. Both consumers gate clipping behind ``> 0`` —
+    # RFDETRModelModule._clip_manual_optimization_gradients and FusedAdamWEMA (which maps any non-positive norm to
+    # math.inf) — so a negative value would otherwise train unclipped for the whole run without raising or warning.
+    clip_max_norm: float = Field(default=0.1, ge=0.0)
     seed: int | None = None
     sync_bn: bool = False
     # strategy maps to PTL Trainer(strategy=...). Common values: "auto", "ddp",

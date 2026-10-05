@@ -19,8 +19,8 @@ import importlib
 import json
 import logging
 import os
+import stat
 import sys
-import tempfile
 import threading
 import warnings
 from pathlib import Path
@@ -445,8 +445,17 @@ class TestRFDETRTrainPTL:
         mcls.assert_called_once_with(mock_self.model_config, config)
         dmcls.assert_called_once_with(mock_self.model_config, config)
 
-    def test_batch_size_auto_calls_resolver_with_expected_context(self, tmp_path, patch_lit):
-        """Auto-batch resolver receives model context, model config, and train config."""
+    @pytest.mark.parametrize(
+        ("train_kwargs", "expected_devices"),
+        [
+            pytest.param({}, None, id="no-device"),
+            pytest.param({"device": "cuda:1"}, [1], id="cuda-1"),
+        ],
+    )
+    def test_batch_size_auto_calls_resolver_with_expected_context(
+        self, tmp_path, patch_lit, train_kwargs: dict[str, str], expected_devices: list[int] | None
+    ):
+        """Auto-batch resolver receives model context, model config, train config, and the GPUs the run trains on."""
         mock_self = _make_rfdetr_self(tmp_path, batch_size="auto")
         auto_result = AutoBatchResult(
             safe_micro_batch=2,
@@ -461,13 +470,14 @@ class TestRFDETRTrainPTL:
             p_bt,
             patch("rfdetr.training.auto_batch.resolve_auto_batch_config", return_value=auto_result) as mock_resolve,
         ):
-            RFDETR.train(mock_self)
+            RFDETR.train(mock_self, **train_kwargs)
 
         config = mock_self.get_train_config.return_value
         mock_resolve.assert_called_once_with(
             model_context=mock_self.model,
             model_config=mock_self.model_config,
             train_config=config,
+            devices=expected_devices,
         )
 
 
@@ -540,6 +550,37 @@ class TestRFDETRTrainPTLAbsorption:
             result = RFDETR.train(mock_self)
         assert result is None
 
+    def test_shifted_class_names_raise_before_fit(self, tmp_path: Path, patch_lit: tuple[Any, ...]) -> None:
+        """A class_names read from every category of a Roboflow export stops the run before it leaves any trace.
+
+        The datamodule's ``setup("fit")`` hook rejects the same list, but PTL's ``_call_setup_hook`` starts each
+        configured logger's experiment before calling that hook, so waiting for it leaves an orphan crashed wandb/MLflow
+        run behind — and the start-of-run ``training_config.json`` has already recorded the list.
+        """
+        annotations = tmp_path / "ds" / "train"
+        annotations.mkdir(parents=True)
+        (annotations / "_annotations.coco.json").write_text(
+            json.dumps(
+                {
+                    "categories": [
+                        {"id": 1, "name": "animals", "supercategory": "none"},
+                        {"id": 2, "name": "cat", "supercategory": "animals"},
+                        {"id": 3, "name": "dog", "supercategory": "animals"},
+                    ],
+                    "annotations": [{"category_id": 2}, {"category_id": 3}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        mock_self = _make_rfdetr_self(tmp_path, dataset_file="roboflow", class_names=["animals", "cat", "dog"])
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+
+        with p_mod, p_dm, p_bt, pytest.raises(ValueError, match="'animals'"):
+            RFDETR.train(mock_self)
+
+        mock_bt.return_value.fit.assert_not_called()
+        assert not (Path(mock_self.get_train_config().output_dir) / "training_config.json").exists()
+
     def test_save_dataset_grids_true_calls_grid_saver(self, tmp_path, patch_lit):
         """save_dataset_grids=True triggers DatasetGridSaver.save_grid() for train and val."""
         mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
@@ -611,6 +652,31 @@ class TestRFDETRTrainPTLAbsorption:
             RFDETR.train(mock_self)
 
         mock_saver_cls.assert_not_called()
+
+    def test_dataset_setup_failure_aborts_instead_of_becoming_a_grid_warning(
+        self, tmp_path: Path, patch_lit: tuple[Any, ...]
+    ) -> None:
+        """A ``setup("fit")`` failure propagates as itself rather than as a failed grid render.
+
+        Building the datasets is fatal to ``trainer.fit()`` regardless, so catching it here used to report the real
+        cause — an unusable dataset, or a rejected ``class_names`` — as "failed to save dataset grids", then let
+        ``fit()`` raise the same thing again.
+        """
+        mock_self = _make_rfdetr_self(tmp_path, save_dataset_grids=True)
+        p_mod, p_dm, p_bt, _mcls, _dmcls, mock_bt = patch_lit
+        mock_saver_cls = MagicMock(name="DatasetGridSaver")
+        _dmcls.return_value.setup.side_effect = ValueError("dataset is unusable")
+
+        with (
+            p_mod,
+            p_dm,
+            p_bt,
+            patch("rfdetr.datasets.save_grids.DatasetGridSaver", mock_saver_cls),
+            pytest.raises(ValueError, match="dataset is unusable"),
+        ):
+            RFDETR.train(mock_self)
+
+        mock_bt.return_value.fit.assert_not_called()
 
     def test_save_dataset_grids_failure_does_not_abort_training(self, tmp_path, patch_lit):
         """A save_grid() failure must not abort training — trainer.fit() must still be called."""
@@ -912,6 +978,7 @@ class TestConvertLegacyCheckpoint:
 
         class _FakeModule:
             model_config = SimpleNamespace(positional_encoding_size=36)
+            train_config = SimpleNamespace(optimizer="torch.optim.AdamW")
 
         fake = _FakeModule()
         original_state_dict = dict(ckpt["state_dict"])  # copy before mutation
@@ -952,6 +1019,7 @@ class _FakeModule:
     """Minimal object supporting attribute assignment for on_load_checkpoint tests."""
 
     model_config = SimpleNamespace(positional_encoding_size=36)
+    train_config = SimpleNamespace(optimizer="torch.optim.AdamW")
 
 
 class TestOnLoadCheckpoint:
@@ -2008,6 +2076,29 @@ class TestSaveTrainingConfig:
             self._run_train_capturing_pre_fit(tmp_path, patch_lit, dataset_class_names=[_UnserializableValue()])
         assert _count_config_write_warnings(caplog.records) == 1
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
+    def test_training_config_json_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
+        """training_config.json gets the mode ``open()`` would give it, not the temp file's owner-only ``0o600``."""
+        output_dir = tmp_path / "out"
+        _save_training_config(_make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"])
+        assert stat.S_IMODE((output_dir / "training_config.json").stat().st_mode) == 0o666 & ~process_umask
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.usefixtures("process_umask")  # the default 0o022, so both modes differ from a fresh file's 0o644
+    @pytest.mark.parametrize("mode", [0o600, 0o640], ids=oct)
+    def test_rewritten_training_config_json_keeps_existing_mode(self, tmp_path: Path, mode: int) -> None:
+        """Rewriting training_config.json keeps the earlier copy's permission bits, as ``open()`` would."""
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        config_path = output_dir / "training_config.json"
+        config_path.write_text("{}")
+        config_path.chmod(mode)
+        _save_training_config(_make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"])
+        # The content check guards against a swallowed write failure leaving the old file, and its mode, untouched.
+        rewritten = _read_training_config(str(config_path))
+        assert (rewritten["class_names"], stat.S_IMODE(config_path.stat().st_mode)) == (["cat"], mode)
+
     def test_torn_write_keeps_prior_training_config_intact(self, tmp_path: Path) -> None:
         """A write that fails partway through must not corrupt the previously saved good copy.
 
@@ -2022,12 +2113,13 @@ class TestSaveTrainingConfig:
         config_path = output_dir / "training_config.json"
         prior_payload = {"marker": "prior-good-copy", "run": 1}
         config_path.write_text(json.dumps(prior_payload))
-        real_named_temporary_file = tempfile.NamedTemporaryFile
+        real_fdopen = os.fdopen
+        test_thread = threading.current_thread()
 
         def _torn_temporary_file(*args: Any, **kwargs: Any) -> Any:
-            handle = real_named_temporary_file(*args, **kwargs)
-            if str(kwargs.get("dir")) != str(output_dir):
-                return handle
+            handle = real_fdopen(*args, **kwargs)
+            if threading.current_thread() is not test_thread:
+                return handle  # The patch is process-wide; only the save under test gets the torn write.
             real_write = handle.write
 
             def _torn_write(data: str) -> int:
@@ -2038,7 +2130,7 @@ class TestSaveTrainingConfig:
             handle.write = _torn_write
             return handle
 
-        with patch("tempfile.NamedTemporaryFile", side_effect=_torn_temporary_file):
+        with patch("os.fdopen", side_effect=_torn_temporary_file):
             _save_training_config(
                 _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), ["cat"]
             )
@@ -2063,12 +2155,12 @@ class TestSaveTrainingConfig:
         payload_b = ["bb"] * 100  # much longer serialized payload than payload_a
         a_paused = threading.Event()
         b_done = threading.Event()
-        real_named_temporary_file = tempfile.NamedTemporaryFile
+        real_fdopen = os.fdopen
         errors: list[BaseException] = []
 
         def _paced_temporary_file(*args: Any, **kwargs: Any) -> Any:
-            handle = real_named_temporary_file(*args, **kwargs)
-            if str(kwargs.get("dir")) != str(output_dir) or threading.current_thread().name != "writer-a":
+            handle = real_fdopen(*args, **kwargs)
+            if threading.current_thread().name != "writer-a":
                 return handle
             real_write = handle.write
 
@@ -2087,20 +2179,18 @@ class TestSaveTrainingConfig:
 
         def _writer_a() -> None:
             try:
-                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
-                    _save_training_config(
-                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_a
-                    )
+                _save_training_config(
+                    _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_a
+                )
             except BaseException as exc:
                 errors.append(exc)
 
         def _writer_b() -> None:
             try:
                 assert a_paused.wait(timeout=5), "writer a did not pause in time"
-                with patch("tempfile.NamedTemporaryFile", side_effect=_paced_temporary_file):
-                    _save_training_config(
-                        _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_b
-                    )
+                _save_training_config(
+                    _make_train_config(tmp_path, output_dir=str(output_dir)), _make_model_config(), payload_b
+                )
             except BaseException as exc:
                 errors.append(exc)
             finally:
@@ -2108,10 +2198,14 @@ class TestSaveTrainingConfig:
 
         thread_a = threading.Thread(target=_writer_a, name="writer-a")
         thread_b = threading.Thread(target=_writer_b, name="writer-b")
-        thread_a.start()
-        thread_b.start()
-        thread_a.join(timeout=10)
-        thread_b.join(timeout=10)
+        # One patch, entered and left by this thread around both writers' whole lifetime: entering and leaving it from
+        # each writer would nest it across threads, and an out-of-order exit would restore the wrong os.fdopen. The
+        # thread-name check in _paced_temporary_file keeps the pacing to writer "a".
+        with patch("os.fdopen", side_effect=_paced_temporary_file):
+            thread_a.start()
+            thread_b.start()
+            thread_a.join(timeout=10)
+            thread_b.join(timeout=10)
 
         assert not thread_a.is_alive(), "writer a did not finish in time"
         assert not thread_b.is_alive(), "writer b did not finish in time"

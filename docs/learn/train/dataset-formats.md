@@ -11,9 +11,9 @@ RF-DETR supports training on datasets in two popular formats: **COCO** and **YOL
 When you call `model.train(dataset_dir=<path>)`, RF-DETR checks the following:
 
 1. **COCO format**: Looks for `train/_annotations.coco.json`
-2. **YOLO format**: Looks for `data.yaml` (or `data.yml`) and `train/images/` directory
+2. **YOLO format**: Looks for `data.yaml` (or `data.yml`) and a training image directory resolved from its split paths or the `train/images/` fallback
 
-If neither format is detected, an error is raised with instructions on what's expected.
+COCO takes precedence when both formats are present. If neither format is detected, an error is raised with instructions on what's expected.
 
 !!! tip "Roboflow Export"
 
@@ -104,7 +104,9 @@ Each `_annotations.coco.json` file contains:
 | `annotations` | List of object annotations linking images to categories               |
 | `bbox`        | Bounding box in `[x, y, width, height]` format (top-left corner)      |
 | `area`        | Area of the bounding box                                              |
-| `iscrowd`     | 0 for individual objects, 1 for crowd regions                         |
+| `iscrowd`     | 0 for individual objects, 1 for crowd regions (see below)             |
+
+Crowd regions (`iscrowd: 1`) are not training targets. In validation and test mAP, a detection on a crowd region of its class is ignored, as in pycocotools; `val/F1` ignores it only when its IoU with the crowd is at least 0.5 — measured against the crowd box for detection models, and against the crowd mask for segmentation models. This applies to loose-file COCO datasets loaded through the `RFDETRDataModule`; WebDataset shards do not score crowd regions (see [WebDataset Shards](#webdataset-shards-sequential-io) below), and neither does a hand-built `Trainer.validate(model, dataloaders=...)` call with no datamodule attached — both fall back to scoring crowd detections as false positives.
 
 ### Segmentation Annotations
 
@@ -233,6 +235,8 @@ dataset/
         └── ...
 ```
 
+The YAML split paths also support layouts such as `images/train` with `labels/train`, and `images/val` with `labels/val`. An optional `path` sets the base for these paths; relative bases are resolved from the dataset root, and a relative base that is not a directory under the root is ignored in favour of the root itself, so a stock Ultralytics file whose `path` repeats the dataset directory name works unchanged. YAML paths must resolve within the dataset root. Without usable YAML split paths, RF-DETR falls back to `train/images` and `valid/images` (or `val/images`), with matching `labels` directories. Class discovery requires both training and validation directories; the test split is optional.
+
 ### data.yaml Configuration
 
 The `data.yaml` file at the root of your dataset directory defines the class names:
@@ -250,11 +254,12 @@ val: valid/images
 test: test/images
 ```
 
-| Field                  | Description                                        |
-| ---------------------- | -------------------------------------------------- |
-| `names`                | List of class names (0-indexed)                    |
-| `nc`                   | Number of classes                                  |
-| `train`, `val`, `test` | Paths to image directories (relative to data.yaml) |
+| Field                  | Description                                                          |
+| ---------------------- | -------------------------------------------------------------------- |
+| `names`                | List of class names (0-indexed)                                      |
+| `nc`                   | Number of classes                                                    |
+| `train`, `val`, `test` | Paths to image directories (relative to `path`, or the dataset root) |
+| `path`                 | Optional base directory for split paths                              |
 
 !!! note "Alternative format"
 
@@ -267,7 +272,11 @@ test: test/images
       2: bird
     ```
 
-    Both formats are supported.
+    Both formats are supported. Dictionary keys may be integers or quoted numeric strings (for example, `"0"`). Class IDs must be unique after numeric conversion and form a contiguous range starting at `0`; names are ordered by numeric ID.
+
+!!! warning "Zero-padded numeric keys in the dictionary format"
+
+    Two-digit zero padding (e.g. `08`) works correctly, but three-digit-or-more zero padding does not: under YAML 1.1, an unquoted key like `010` is parsed as the octal integer 8, colliding with `008`. Quote such keys (`"010"`) or drop the leading-zero padding (`10`) to avoid this.
 
 ### Label File Format
 
@@ -478,6 +487,8 @@ Shard visiting order is shuffled, and samples are shuffled again in a reservoir 
 ### Not covered
 
 Keypoint training rejects `dataset_file="webdataset"` with an explicit error. Its label space is inferred from a whole parsed COCO annotation file, which a shard index does not carry — use `coco`, `roboflow` or `yolo` for keypoints. Detection and segmentation splits are supported.
+
+Validation and test metrics on shards do not score crowd regions (`iscrowd: 1`): a detection on one counts as a false positive, where the loose-file `coco` loader ignores it as pycocotools does. Evaluate from the loose-file split when comparing against COCO numbers.
 
 ---
 

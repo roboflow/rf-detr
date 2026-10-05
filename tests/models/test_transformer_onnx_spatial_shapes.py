@@ -11,6 +11,9 @@ export) emitted a ``ScatterND`` that fed a shape tensor, which TensorRT rejects 
 compute a shape tensor"). The constant-baking ``torch.as_tensor`` alternative avoids the ScatterND but regresses the
 symbolic trace back to a baked constant.
 
+Under ``torch.compile`` neither form is used: ``spatial_shapes`` is stacked from one 0-d tensor per size, which keeps
+the sizes symbolic so a single graph serves every multi-scale resolution.
+
 The Transformer is shared by detection, segmentation and keypoint models, so a single low-level export here covers the
 spatial_shapes path for all of them.
 """
@@ -424,7 +427,7 @@ def test_level_start_index_correctness_two_levels() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tests: torch.compile takes the Python-int branch (Dynamo polyfills _shape_as_tensor)
+# Tests: torch.compile stacks 0-d tensors per size (Dynamo polyfills _shape_as_tensor)
 # ---------------------------------------------------------------------------
 
 

@@ -9,7 +9,9 @@
 """This tool provides performance benchmarks by using ONNX Runtime and TensorRT to run inference on a given model with
 the COCO validation set.
 
-It offers reliable measurements of inference latency using ONNX Runtime or TensorRT on the device.
+It offers reliable measurements of inference latency using ONNX Runtime or TensorRT on the device. For timing any other
+callable — one export runtime, one batch size — use :func:`measure_latency` and :func:`measure_memory`, which the export
+cookbooks use for every row they report.
 """
 
 import importlib
@@ -24,18 +26,15 @@ from PIL import Image
 from torch import Tensor
 from tqdm.auto import tqdm
 
-try:
-    import tensorrt as trt
-except ImportError:
-    trt = None
-
-try:
-    import pycuda.driver as cuda
-except ImportError:
-    cuda = None
-
+from rfdetr.export._benchmark import BenchmarkResult as BenchmarkResult
+from rfdetr.export._benchmark import MemoryResult as MemoryResult
+from rfdetr.export._benchmark import measure_latency as measure_latency
+from rfdetr.export._benchmark import measure_memory as measure_memory
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
 from rfdetr.utilities.logger import get_logger
+
+# The public surface is the timing API only; the LW-DETR CLI helpers below stay importable by name but are not exported.
+__all__ = ["BenchmarkResult", "MemoryResult", "measure_latency", "measure_memory"]
 
 logger = get_logger()
 
@@ -320,7 +319,7 @@ def main(
         coco_evaluator = CocoEvaluator(COCO(coco_gt), ["bbox"])
     else:
         coco_evaluator = None
-    time_profile = TimeProfiler()
+    time_profile = TimeProfiler(device=f"cuda:{device}")
 
     if path.endswith(".onnx"):
         import onnxruntime as nxrun

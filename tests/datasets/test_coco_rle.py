@@ -243,6 +243,33 @@ class TestConvertCocoClassWithRle:
         """
         return {"image_id": 1, "annotations": annotations}
 
+    def _make_box_only_annotation(self, category_id: int = 0) -> dict:
+        """Build an annotation with no ``segmentation`` key at all (a pure box-only entry).
+
+        Example:
+            >>> annotation = TestConvertCocoClassWithRle()._make_box_only_annotation()
+            >>> "segmentation" in annotation
+            False
+        """
+        annotation = self._make_annotation([], category_id=category_id)
+        del annotation["segmentation"]
+        return annotation
+
+    def _make_annotations_from_roles(self, roles: list) -> list:
+        """Build one annotation per role: ``"box"`` = no segmentation key, ``"poly"`` = a real polygon.
+
+        Example:
+            >>> anns = TestConvertCocoClassWithRle()._make_annotations_from_roles(["box", "poly"])
+            >>> [("segmentation" in a) for a in anns]
+            [False, True]
+        """
+        return [
+            self._make_box_only_annotation(category_id=i)
+            if role == "box"
+            else self._make_annotation(_make_polygon(_make_reference_mask()), category_id=i)
+            for i, role in enumerate(roles)
+        ]
+
     def test_rle_masks_included_in_target(self) -> None:
         """ConvertCoco with include_masks=True should handle RLE segmentations."""
         ref_mask = _make_reference_mask()
@@ -280,6 +307,84 @@ class TestConvertCocoClassWithRle:
 
         assert target["masks"].shape == (2, _H, _W)
         assert target["labels"].tolist() == [0, 1]
+
+    @pytest.mark.parametrize(
+        "roles",
+        [
+            pytest.param(["box", "poly"], id="box-only-first"),
+            pytest.param(["poly", "box"], id="box-only-last"),
+            pytest.param(["box", "box", "poly"], id="three-annotations-poly-last"),
+        ],
+    )
+    def test_box_only_annotation_keeps_other_masks_regardless_of_order(self, roles: list) -> None:
+        """A box-only annotation must not drop the masks of segmented siblings, in any position.
+
+        Pins order-independence beyond the original two-annotation, box-only-first case: every mask slot's non-emptiness
+        must match its role (``box`` -> empty, ``poly`` -> non-empty), regardless of how many box-only annotations
+        precede or follow the segmented one.
+        """
+        annotations = self._make_annotations_from_roles(roles)
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target(annotations))
+
+        expected_nonempty = [role == "poly" for role in roles]
+        assert target["masks"].shape == (len(roles), _H, _W)
+        assert target["masks"].flatten(1).any(dim=1).tolist() == expected_nonempty
+
+    def test_all_box_only_masks_match_box_count(self) -> None:
+        """An image with zero segmented annotations still gets one mask per kept box.
+
+        Pins the invariant the class docstring declares (``masks`` and ``boxes`` share N) for the
+        branch a gated mask build left untested: no annotation in the image carries a
+        ``segmentation`` key at all.
+        """
+        annotations = [self._make_box_only_annotation(category_id=0), self._make_box_only_annotation(category_id=1)]
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target(annotations))
+
+        assert target["masks"].shape[0] == target["boxes"].shape[0]
+        assert target["masks"].shape == (2, _H, _W)
+        assert not target["masks"].any()
+
+    def test_degenerate_box_filtered_leaves_box_only_survivor_aligned(self) -> None:
+        """The ``keep`` filter must drop a degenerate segmented box without misaligning masks.
+
+        One annotation has a zero-height bbox (dropped by the keep filter) and carries a real segmentation; the
+        surviving annotation is box-only. Pins that ``masks[keep]`` and ``boxes[keep]`` stay index-aligned when the
+        *first* annotation, not the second, is the one removed.
+        """
+        degenerate = self._make_annotation(_make_polygon(_make_reference_mask()), category_id=0)
+        degenerate["bbox"] = [30, 20, 0, 0]
+        survivor = self._make_box_only_annotation(category_id=1)
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target([degenerate, survivor]))
+
+        assert target["boxes"].shape[0] == 1
+        assert target["masks"].shape[0] == 1
+        assert target["labels"].tolist() == [1]
+        assert not target["masks"].any()
+
+    def test_crowd_segmented_annotation_excluded_before_mask_build(self) -> None:
+        """An ``iscrowd=1`` segmented annotation must never reach the mask-building predicate.
+
+        Crowd filtering happens before boxes/masks are built at all (``coco.py:783``) — a distinct code path from the
+        ``keep`` filter in the case above. The surviving box-only annotation's mask must not be polluted by the dropped
+        crowd annotation's segmentation.
+        """
+        crowd = self._make_annotation(_make_polygon(_make_reference_mask()), category_id=0)
+        crowd["iscrowd"] = 1
+        survivor = self._make_box_only_annotation(category_id=1)
+
+        converter = ConvertCoco(include_masks=True)
+        _, target = converter(_IMAGE, self._make_target([crowd, survivor]))
+
+        assert target["boxes"].shape[0] == 1
+        assert target["masks"].shape[0] == 1
+        assert target["labels"].tolist() == [1]
+        assert not target["masks"].any()
 
     def test_no_masks_without_flag(self) -> None:
         """RLE annotations should not produce masks when include_masks=False."""

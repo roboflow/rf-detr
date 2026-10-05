@@ -23,13 +23,13 @@ Note:
     and returns float16 tensors.
 
 Note:
-    Converting only needs ``coreai-torch`` (macOS 26+ on Apple silicon, or Linux x86-64, Python 3.11-3.13). Loading
+    Converting only needs ``coreai-torch`` (macOS 26+ on Apple silicon, or Linux x86-64, Python 3.11-3.14). Loading
     and running the ``.aimodel`` needs the Core AI runtime, which ships with iOS, iPadOS and macOS 27.
 """
 
 from __future__ import annotations
 
-import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,7 +39,7 @@ import torch
 from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
 from rfdetr.export._coreai.decompositions import coreai_decomposition_table
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
-from rfdetr.export.base import ExportConfig, Exporter
+from rfdetr.export.base import ExportConfig, Exporter, serialize_notes
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import get_version
@@ -71,7 +71,7 @@ def _check_coreai_torch_available(*, raise_error: bool = True) -> bool:
     if not _IS_COREAI_TORCH_AVAILABLE:
         if raise_error:
             raise ImportError(
-                "Core AI export requires `coreai-torch` (Python 3.11-3.13)."
+                "Core AI export requires `coreai-torch` (Python 3.11-3.14)."
                 ' Install it with: pip install "rfdetr[coreai]"'
             )
         return False
@@ -112,6 +112,27 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
     experimental_note = "The .aimodel runs on iOS, iPadOS and macOS 27 or later."
     pip_extra = "coreai"
 
+    def _check_capabilities(self) -> None:
+        """Refuse an unrecognized *precision* before the forward pass.
+
+        An empty *precision* counts as unset (float32), as it always has.
+
+        Raises:
+            ValueError: If *precision* is set to anything but ``"float32"`` or ``"float16"``.
+        """
+        super()._check_capabilities()
+        if (self.config.precision or "float32") not in _PRECISIONS:
+            raise ValueError(f"precision must be 'float32', 'float16', or None, got {self.config.precision!r}")
+
+    @classmethod
+    def check_dependencies(cls) -> None:
+        """Verify ``coreai-torch`` is installed.
+
+        Raises:
+            ImportError: If ``coreai-torch`` is not installed.
+        """
+        _check_coreai_torch_available()
+
     def _convert(self, graph: ExportGraph) -> Path:
         """Write the ``.aimodel`` asset and return its path.
 
@@ -124,19 +145,28 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
         Raises:
             ImportError: If ``coreai-torch``, or the ``coreai`` runtime package the asset metadata comes from,
                 is not installed.
-            ValueError: If the configured precision is not ``"float32"`` or ``"float16"``.
             RuntimeError: If ``torch.export`` or the Core AI conversion fails. Writing the asset is not covered:
                 a failing ``save_asset`` raises whatever the Core AI runtime raises.
         """
         _check_coreai_torch_available()
         dtype, precision_token = self._resolve_precision()
+        if dtype == torch.float16 and "keypoints" in graph.output_names:
+            # A warning, not a refusal: the asset is correct on the CPU and the GPU. stacklevel=4 skips this frame,
+            # Exporter.__call__ and RFDETR.export, to point at the caller.
+            warnings.warn(
+                "A float16 keypoint .aimodel terminates the process when Core AI runs it on the Neural Engine, which "
+                "iOS and iPadOS choose for float16 by default. Export keypoint models in float32 (the default), or "
+                "load this asset with a CPU or GPU compute preference.",
+                UserWarning,
+                stacklevel=4,
+            )
         output_dir = Path(self.config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{self._export_name(precision_token, backbone_only=graph.backbone_only)}.aimodel"
         if self.config.verbose:
             logger.info(f"Exporting model to Core AI format: {output_path}")
         # Built first: it imports the `coreai` runtime distribution, which `_check_coreai_torch_available` does not
-        # cover. A missing one must not surface only after a full trace, conversion and optimize().
+        # cover. A missing one must not surface only after a full trace and conversion.
         metadata = self._asset_metadata()
         program = self._build_program(graph, dtype)
         program.save_asset(output_path, metadata=metadata)
@@ -147,15 +177,8 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
 
         Returns:
             ``(dtype, token)``, float32 when no precision was configured.
-
-        Raises:
-            ValueError: If the precision is neither ``"float32"`` nor ``"float16"``.
         """
-        precision = self.config.precision or "float32"
-        try:
-            return _PRECISIONS[precision]
-        except KeyError:
-            raise ValueError(f"precision must be 'float32', 'float16', or None, got {precision!r}") from None
+        return _PRECISIONS[self.config.precision or "float32"]
 
     def _export_name(self, precision_token: str, *, backbone_only: bool) -> str:
         """Resolve the artifact's filename stem.
@@ -225,7 +248,8 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
             dtype: Dtype the graph is traced in.
 
         Returns:
-            The optimized ``coreai`` program, ready for ``save_asset``.
+            The ``coreai`` program, ready for ``save_asset``. ``to_coreai()`` runs the optimization passes itself
+            since coreai-torch 0.4.3, which removed the separate ``AIProgram.optimize()``.
 
         Raises:
             ImportError: If a lazily imported part of the Core AI stack fails to load.
@@ -249,7 +273,6 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
                     )
                     .to_coreai()
                 )
-            program.optimize()
         except (ImportError, NotImplementedError, ValueError):
             raise
         except Exception as exc:
@@ -270,7 +293,6 @@ class CoreAIExporter(Exporter[CoreAIConfig]):
         rfdetr_version = get_version()
         if rfdetr_version is not None:
             metadata.set_custom("rfdetr_version", rfdetr_version)
-        notes = self.config.notes
-        if notes is not None:
-            metadata.set_custom("rfdetr_notes", notes if isinstance(notes, str) else json.dumps(notes, allow_nan=False))
+        if self.config.notes is not None:
+            metadata.set_custom("rfdetr_notes", serialize_notes(self.config.notes))
         return metadata

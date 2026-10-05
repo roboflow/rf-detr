@@ -289,7 +289,7 @@ Tests marked with `@pytest.mark.gpu` are excluded from CPU CI workflows and run 
 
 **Use dedicated markers for integration-only CI jobs:**
 
-Mark tests that require an optional integration dependency with both the shared `@pytest.mark.integration` marker and a registered `e2e_<integration>` marker in `pyproject.toml`. The dedicated workflow must select the specific marker (for example, `pytest -m e2e_onnxruntime`) rather than a test-file path; generic CPU collection excludes only `integration`, keeping its marker expression short while dedicated jobs retain their precise contracts.
+Mark tests that require an optional integration dependency with both the shared `@pytest.mark.integration` marker and a registered `e2e_<integration>` marker in `pyproject.toml`, named after the pip extra it needs (for example, `e2e_onnx` for the `[onnx]` extra). The dedicated workflow must select the specific marker (for example, `pytest -m e2e_onnx`) rather than a test-file path; generic CPU collection excludes only `integration`, keeping its marker expression short while dedicated jobs retain their precise contracts.
 
 ### CI Testing
 

@@ -24,6 +24,7 @@ import pytest
 import torch
 
 from rfdetr import RFDETR, RFDETRNano
+from rfdetr.detr import _device_move_lock
 
 
 def _num_classes(dataset_dir: Path) -> int:
@@ -161,6 +162,49 @@ def _mock_trainer() -> Any:
     trainer.test.return_value = [{"test/mAP_50_95": 0.0}]
     trainer.validate.return_value = [{"val/mAP_50_95": 0.0}]
     return trainer
+
+
+class _LockTrackingLiveModel(torch.nn.Module):
+    """Live-module stand-in that records the device-move lock state at every ``.to()`` call instead of moving.
+
+    Parameter-free on purpose: the deferred restore in ``evaluate()``'s ``finally`` then finds nothing left to move,
+    so the recorded calls are exactly the outbound transplant move this stand-in is here to observe.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lock_held: list[bool] = []
+
+    def to(self, *args: Any, **kwargs: Any) -> "_LockTrackingLiveModel":
+        """Record whether the device-move lock was held, without performing any move."""
+        self.lock_held.append(_device_move_lock(self).locked())
+        return self
+
+
+def test_evaluate_moves_the_live_model_under_the_device_move_lock(tmp_path: Path) -> None:
+    """``evaluate()``'s move of the live weights to CPU for the transplant must hold that module's move lock.
+
+    The transplant frees accelerator memory for the freshly built eval module by moving the *live* module — the one
+    ``predict()`` runs on — to CPU. That is the same in-place parameter rewrite the deferred first-use move performs, so
+    a thread reaching its first ``predict()`` must not be able to run it concurrently.
+    """
+    live_model = _LockTrackingLiveModel()
+    mock_self = MagicMock()
+    mock_self.model.model = live_model
+    # Anything but "cpu": the transplant's CPU move is skipped for a model that already lives there.
+    mock_self.model.device = torch.device("meta")
+    trainer = _mock_trainer()
+
+    with (
+        patch("rfdetr.training.RFDETRModelModule"),
+        patch("rfdetr.training.RFDETRDataModule"),
+        patch("rfdetr.training.build_trainer", return_value=trainer),
+    ):
+        RFDETR.evaluate(mock_self, dataset_dir=str(tmp_path), split="test", output_dir=str(tmp_path / "o"))
+
+    assert live_model.lock_held == [True], (
+        f"expected one live-model move, taken under the module's move lock, got lock states {live_model.lock_held!r}"
+    )
 
 
 class TestEvaluateSplitDispatch:
@@ -470,12 +514,18 @@ def test_train_then_from_checkpoint_then_evaluate(synthetic_shape_dataset_dir: P
     ``KeyError``. All other tests in this module build the state-dict transplant against an untrained in-memory model;
     this is the only one that exercises a real checkpoint round trip (train → save → reload as a new instance →
     evaluate), the exact case the issue asked for.
+
+    ``resolution=224`` (the synthetic fixture's own image size, so no resize upscaling) shrinks the backbone forward
+    pass to about a third of the default 384px FLOPs; the round-trip only needs finite, present metric keys, not a
+    representative resolution. The 600s timeout (vs. the suite's 420s default) is headroom for this real train+
+    checkpoint+reload+evaluate path on a slow CPU runner, not a promise this test needs that long normally.
     """
     output_dir = tmp_path / "train_output"
     model = RFDETRNano(
         pretrain_weights=None,
         num_classes=_num_classes(synthetic_shape_dataset_dir),
         device="cpu",
+        resolution=224,
     )
     model.train(
         dataset_dir=str(synthetic_shape_dataset_dir),

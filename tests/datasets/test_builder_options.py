@@ -136,7 +136,7 @@ def _call_roboflow_coco_builder(
 @patch("rfdetr.datasets.yolo.YoloDetection", return_value=MagicMock())
 @patch("rfdetr.datasets.yolo.make_coco_transforms")
 @patch("rfdetr.datasets.yolo.make_coco_transforms_square_div_64")
-@patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs")
+@patch("rfdetr.datasets.yolo._resolve_yolo_split_dirs_with_notes")
 @patch("rfdetr.datasets.yolo.Path")
 def _call_yolo_builder(
     args: Any,
@@ -163,7 +163,7 @@ def _call_yolo_builder(
         True
     """
     mock_path.return_value.exists.return_value = True
-    mock_resolve_split_dirs.return_value = (MagicMock(), MagicMock())
+    mock_resolve_split_dirs.return_value = ((MagicMock(), MagicMock()), ())
     mock_square.return_value = mock_plain.return_value = MagicMock()
     build_roboflow_from_yolo("train", args, resolution=resolution)
 
