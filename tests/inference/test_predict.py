@@ -868,6 +868,22 @@ class TestPredictUint8Conversion:
         assert detr_module._decode_local_image(str(image_path)) is None
         decode.assert_called_once()
 
+    def test_predict_local_file_uses_pillow_without_torchvision_image_decode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once torchvision drops its deprecated image codecs, a local file must still predict through Pillow."""
+        image_path = tmp_path / "image.png"
+        expected = np.full((17, 29, 3), (1, 127, 255), dtype=np.uint8)
+        PIL.Image.fromarray(expected).save(image_path)
+        decode = MagicMock()
+        monkeypatch.setattr(detr_module, "_IS_TORCHVISION_IMAGE_DECODE_AVAILABLE", False)
+        monkeypatch.setattr(detr_module, "decode_image", decode)
+
+        detections = _DummyRFDETR().predict(str(image_path), include_source_image=True)
+
+        decode.assert_not_called()
+        np.testing.assert_array_equal(detections.metadata["source_image"], expected)
+
     @pytest.mark.parametrize(
         ("filename", "image_format", "animated"),
         [
@@ -946,7 +962,7 @@ class TestPredictUint8Conversion:
 
         # Whichever of the two reads comes first, the second one sees a different file if it touches the path.
         monkeypatch.setattr(PIL.Image, "open", replace_file_after(PIL.Image.open))
-        monkeypatch.setattr(detr_module, "read_file", replace_file_after(detr_module.read_file))
+        monkeypatch.setattr(Path, "read_bytes", replace_file_after(Path.read_bytes))
 
         decoded = detr_module._decode_local_image(str(image_path))
 
@@ -969,7 +985,7 @@ class TestPredictUint8Conversion:
 
     @pytest.mark.parametrize("kind", ["missing", "empty", "directory"])
     def test_predict_unreadable_local_path_raises_the_error_pillow_raises(self, tmp_path: Path, kind: str) -> None:
-        """A path torchvision cannot read must fail with the exception Pillow raises for that same path."""
+        """A path the native route cannot read must fail with the exception Pillow raises for that same path."""
         image_path = tmp_path / f"{kind}.png"
         if kind == "empty":
             image_path.write_bytes(b"")
@@ -992,14 +1008,12 @@ class TestPredictUint8Conversion:
         model = _DummyRFDETR()
 
         with (
-            patch("rfdetr.detr.read_file", wraps=detr_module.read_file) as read_spy,
             patch("rfdetr.detr.decode_image", wraps=detr_module.decode_image) as decode_spy,
             # Pillow may read the header, but must not decode the pixels the native decoder already returned.
             patch("PIL.ImageFile.ImageFile.load", side_effect=AssertionError("Pillow decoded the pixels")),
         ):
             detections = model.predict(str(image_path), include_source_image=include_source_image)
 
-        read_spy.assert_called_once_with(str(image_path))
         decode_spy.assert_called_once()
         assert isinstance(decode_spy.call_args.args[0], torch.Tensor)
         assert decode_spy.call_args.kwargs == {"mode": detr_module.ImageReadMode.RGB}
