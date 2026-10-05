@@ -26,7 +26,7 @@ from typing import Any
 
 from numpy.typing import NDArray
 
-from rfdetr.export._runtime.calibration import calibration_batches
+from rfdetr.export._runtime.calibration import calibration_batches, warn_if_too_few_samples
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -102,6 +102,7 @@ def quantize_int8(
     )
     if not batches:
         raise ValueError("Calibration data produced no samples.")
+    warn_if_too_few_samples(len(batches))
 
     logger.info(f"Quantizing OpenVINO IR to INT8 from {len(batches)} calibration samples")
     # subset_size defaults to 300; left unset NNCF warns that the dataset is smaller than it wanted and the number
