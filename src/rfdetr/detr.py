@@ -2146,15 +2146,17 @@ class RFDETR:
                 non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
             trt_timing_cache: File in which TensorRT keeps the kernel timings it measures while building an engine, for
                 ``format="tensorrt"``.  A build loads the file when it exists and writes the merged timings back, so a
-                later build of the same architecture at the same precision and batch profile, on the same GPU and
+                later build with the same layer shapes at the same precision and batch profile, on the same GPU and
                 TensorRT version, skips the search it already did.  The timings depend on the layers' shapes, not the
                 weights, so a re-export with new weights reuses them for every layer whose shape did not change.  A
-                cache made at another precision or for the dynamic-batch profile saved little in measurements.  A
-                relative path is relative to the working directory, not to *output_dir*.  A cache written by another
-                TensorRT major version, or an empty or damaged file, does not stop the build: TensorRT logs an error,
-                builds as if there were no cache, and the file gets this build's timings.  ``None`` (default) reads
-                and writes no file.  Ignored for every other format; passing a non-``None`` value there emits a
-                ``UserWarning`` instead of silently doing nothing.
+                cache from a matching dynamic-batch build helps too; reuse between a static and a dynamic profile, or
+                across precisions, was not measured.  A relative path is relative to the working directory, not to
+                *output_dir*.  A cache written by another TensorRT major version, or an empty or damaged file, does
+                not stop the build: TensorRT logs an error, builds as if there were no cache, and the file gets this
+                build's timings.  A failed cache write does fail the export, and the built engine is not saved
+                (Polygraphy writes the cache before the engine is returned); the engine can simply be rebuilt.
+                ``None`` (default) reads and writes no file.  Ignored for every other format; passing a non-``None``
+                value there emits a ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
