@@ -560,8 +560,8 @@ class TestEdgeCaseCoverage:
     def test_resize_keeps_right_and_bottom_edge_keypoint_exact(self, old_width: int, new_width: int) -> None:
         """A keypoint on the right and bottom image edge lands exactly on the resized edge and stays visible.
 
-        Scaling by a precomputed float32 ratio rounds ``x == old_width`` one ulp past ``new_width`` for these
-        size pairs (``600 -> 640`` gives 640.00006), which the edge-inclusive bounds check would clear.
+        Scaling by a precomputed float32 ratio rounds ``x == old_width`` one ulp past ``new_width`` for these size pairs
+        (``600 -> 640`` gives 640.00006), which the edge-inclusive bounds check would clear.
         """
         old_height, new_height = 50, 64
         image = Image.new("RGB", (old_width, old_height))
