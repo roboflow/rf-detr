@@ -18,6 +18,7 @@ from torch import nn
 
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
+from rfdetr.export._runtime.calibration_checks import check_calibration_data
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -123,15 +124,17 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 
     def _check_capabilities(self) -> None:
-        """Refuse an unrecognized *precision* or quantization mode, or an INT8 request with nothing to calibrate on.
+        """Refuse an unrecognized *precision* or quantization mode, or an INT8 request that cannot calibrate.
 
-        All three are judged before the forward pass. Static INT8 derives its activation ranges from the data it is
+        All of these are judged before the forward pass. Static INT8 derives its activation ranges from the data it is
         shown, so missing calibration data is a refusal rather than a default: absent or out-of-domain data produces
-        a model that loads, runs, and is quietly wrong.
+        a model that loads, runs, and is quietly wrong. What can be judged from the configuration alone -- a path that
+        does not exist, a directory without images, a file that is not ``.npy``, an array that is not rank 4 -- is
+        judged here too.
 
         Raises:
             ValueError: If *precision* is not ``"float32"``, ``"float16"``, or ``None``; if *quantization* is not a
-                recognized mode; or if it is ``"int8"`` without *calibration_data*.
+                recognized mode; or if it is ``"int8"`` without usable *calibration_data*.
         """
         super()._check_capabilities()
         if self.config.precision not in (None, "float32", "float16"):
@@ -147,6 +150,8 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
                 "or a preprocessed array. Static quantization reads activation ranges from this data, so there is "
                 "no meaningful default."
             )
+        if self.config.quantization == "int8":
+            check_calibration_data(self.config.calibration_data)
 
     @classmethod
     def check_dependencies(cls) -> None:
@@ -187,17 +192,24 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     def _resolve_export_name(self, *, backbone_only: bool) -> str:
         """Resolve the filename stem the ``.xml`` and its companion ``.bin`` share.
 
+        ``quantization="int8"`` appends ``_int8`` so the quantized IR does not overwrite the FP32 one a previous export
+        wrote under the same name -- NNCF changes the activation arithmetic, which is the kind of detail the filename
+        encodes. An *output_name* is written verbatim, so a caller who gives one owns the collision.
+        ``openvino_precision`` stays out of the name: it only picks how weights are stored.
+
         Args:
             backbone_only: Whether the graph is a backbone-only export.
 
         Returns:
             The artifact name, without extension.
         """
-        stem, _ = resolve_export_stem(
+        stem, is_custom = resolve_export_stem(
             self.config.variant_name,
             self.config.output_name,
             default="backbone_model" if backbone_only else "inference_model",
         )
+        if self.config.quantization == "int8" and not is_custom:
+            stem = f"{stem}_int8"
         return append_backbone_marker(
             stem,
             backbone_only=backbone_only,

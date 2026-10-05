@@ -27,6 +27,7 @@ from rfdetr.export._backend import check_onnx_available as _check_onnx_available
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export._onnx.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
+from rfdetr.export._runtime.calibration_checks import check_calibration_data
 from rfdetr.export.base import ExportConfig, Exporter, serialize_notes, shared_settings
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -994,15 +995,18 @@ class OnnxExporter(Exporter[OnnxConfig]):
     pip_extra = "onnx"
 
     def _check_capabilities(self) -> None:
-        """Reject a quantization mode this format does not write, or an INT8 request with nothing to calibrate on.
+        """Reject a quantization mode this format does not write, or an INT8 request that cannot calibrate.
 
         Static INT8 derives its activation ranges from the data it is shown, so missing calibration data is a
         refusal rather than a default: random or absent data produces a model that loads, runs, and is quietly
         wrong. This is the opposite of TFLite's dynamic-range ``"int8"``, where calibration data is genuinely
-        unused.
+        unused. What can be judged from the configuration alone -- a path that does not exist, a directory without
+        images, a file that is not ``.npy``, an array that is not rank 4 -- is judged here too, so it fails before the
+        forward pass instead of after the trace.
 
         Raises:
-            ValueError: If *quantization* is not a recognized mode, or is ``"int8"`` without *calibration_data*.
+            ValueError: If *quantization* is not a recognized mode, or is ``"int8"`` without usable
+                *calibration_data*.
         """
         super()._check_capabilities()
         if self.config.quantization not in VALID_QUANTIZATIONS:
@@ -1016,6 +1020,8 @@ class OnnxExporter(Exporter[OnnxConfig]):
                 "or a preprocessed array. Static quantization reads activation ranges from this data, so there is "
                 "no meaningful default."
             )
+        if self.config.quantization == "int8":
+            check_calibration_data(self.config.calibration_data)
 
     @classmethod
     def check_dependencies(cls) -> None:
