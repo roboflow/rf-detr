@@ -1217,9 +1217,10 @@ class TestExecutorchEndToEnd:
         runtime_scores = post_process({"dets": runtime_boxes, "labels": runtime_logits}, target_sizes)[0]["scores"]
 
         max_diff = (eager_scores - runtime_scores).abs().max().item()
-        # Scores agree to fp32 delegate noise once the input is contiguous. Against the non-contiguous
-        # input this asserted 1.4e-2 with the random weights used here, where the untrained score range
-        # is compressed; on a pretrained model the same fault drops every real detection below threshold.
+        # Scores agree to fp32 delegate noise once the input is contiguous: about 1e-5 on the pretrained
+        # checkpoints. Against the non-contiguous input of issue #1233, a random-weight model, whose score range
+        # is compressed, asserted 1.4e-2; on the pretrained model the same fault drops every real detection below
+        # threshold.
         assert max_diff < 1e-3, f"ExecuTorch detections diverge from PyTorch: max abs score diff {max_diff}"
 
 
