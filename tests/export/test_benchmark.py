@@ -12,7 +12,7 @@ import threading
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import Mock, call
 
 import numpy as np
@@ -26,7 +26,6 @@ from rfdetr.export._benchmark import (
     BenchmarkResult,
     _artifact_size_mb,
     _decode_batch,
-    _enable_notebook_inline_matplotlib,
     _measure_cuda,
     _result_row,
     _sampled_delta_mb,
@@ -34,6 +33,7 @@ from rfdetr.export._benchmark import (
     cpu_brand,
     measure_latency,
     measure_memory,
+    parity,
     visualize_detections,
 )
 
@@ -61,16 +61,17 @@ class TestMeasureLatency:
         order: list[str] = []
         start = Mock()
         end = Mock()
-        start.record.side_effect = lambda: order.append("start")
-        end.record.side_effect = lambda: order.append("end")
+        start.record.side_effect = lambda _stream: order.append("start")
+        end.record.side_effect = lambda _stream: order.append("end")
         start.elapsed_time.side_effect = [1.0, 3.0]
         event_factory = Mock(side_effect=[start, end])
-        synchronize = Mock(side_effect=lambda: order.append("sync"))
+        synchronize = Mock(side_effect=lambda _device: order.append("sync"))
         call = Mock(side_effect=lambda: order.append("call"))
         monkeypatch.setattr(torch.cuda, "Event", event_factory)
         monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+        monkeypatch.setattr(torch.cuda, "current_stream", Mock())
 
-        mean_ms, std_ms = _measure_cuda(call, warmup=2, runs=2)
+        mean_ms, std_ms = _measure_cuda(call, warmup=2, runs=2, device=torch.device("cuda"))
 
         assert order == [
             "call",
@@ -92,6 +93,76 @@ class TestMeasureLatency:
         assert [call.args for call in start.elapsed_time.call_args_list] == [(end,), (end,)]
         assert mean_ms == pytest.approx(2.0)
         assert std_ms == pytest.approx(1.0)
+
+    def test_cuda_events_and_synchronize_target_the_requested_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Events record on the requested device's stream and every synchronize targets that same device.
+
+        With ``"cuda:1"`` while GPU 0 is current, bare ``synchronize()`` and default-stream events would time GPU 0's
+        idle stream instead of the work launched on GPU 1.
+        """
+        device = torch.device("cuda", 1)
+        stream = Mock()
+        current_stream = Mock(return_value=stream)
+        synchronize = Mock()
+        event = Mock()
+        event.elapsed_time.return_value = 1.0
+        monkeypatch.setattr(torch.cuda, "Event", Mock(return_value=event))
+        monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+        monkeypatch.setattr(torch.cuda, "current_stream", current_stream)
+
+        _measure_cuda(Mock(), warmup=1, runs=1, device=device)
+
+        assert synchronize.call_args_list == [call(device), call(device)]
+        assert current_stream.call_args_list == [call(device)]
+        assert event.record.call_args_list == [call(stream), call(stream)]
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cuda",
+            "cuda:0",
+            pytest.param(torch.device("cuda", 1), id="torch-device-cuda-1"),
+        ],
+    )
+    def test_any_cuda_device_selects_the_cuda_event_timer(
+        self, device: str | torch.device, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every CUDA spelling routes to the CUDA-event timer with the parsed device.
+
+        ``"cuda:0"`` used to miss an exact ``== "cuda"`` match and fall through to the wall-clock timer, which returns
+        after the asynchronous kernel launch and reports a falsely low latency.
+        """
+        measure_cuda = Mock(return_value=(1.0, 0.0))
+        monkeypatch.setattr("rfdetr.export._benchmark._measure_cuda", measure_cuda)
+        fn = Mock()
+
+        measure_latency(fn, label="gpu", device=device, warmup=0, runs=1)
+
+        measure_cuda.assert_called_once_with(fn, 0, 1, torch.device(device))
+
+    @pytest.mark.parametrize("device", ["cpu", "mps", pytest.param(torch.device("cpu"), id="torch-device-cpu")])
+    def test_non_cuda_device_selects_the_wall_clock_timer(
+        self, device: str | torch.device, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Any non-CUDA device, string or ``torch.device``, times with ``perf_counter``.
+
+        Non-CUDA runtimes block the calling thread, so there is no stream to synchronize and the wall clock is exact.
+        """
+        wall_clock = Mock(return_value=(1.0, 0.0))
+        monkeypatch.setattr("rfdetr.export._benchmark._measure_wall_clock", wall_clock)
+        fn = Mock()
+
+        measure_latency(fn, label="host", device=device, warmup=0, runs=1)
+
+        wall_clock.assert_called_once_with(fn, 0, 1)
+
+    def test_unparseable_device_string_is_rejected(self) -> None:
+        """A device string torch cannot parse raises instead of silently timing with the wall clock.
+
+        A typo such as ``"gpu"`` previously took the wall-clock path and reported a launch-only number.
+        """
+        with pytest.raises(RuntimeError, match="device string: gpu"):
+            measure_latency(Mock(), label="typo", device="gpu", warmup=0, runs=1)
 
     @pytest.mark.parametrize(
         ("warmup", "runs"),
@@ -208,6 +279,18 @@ class TestMeasureMemory:
 
         assert result.delta_mb == pytest.approx(0.0)
 
+    def test_host_path_without_psutil_names_the_extra(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Entering the host-memory block without ``psutil`` raises an ``ImportError`` naming ``rfdetr[visual]``.
+
+        ``measure_memory`` is public through ``rfdetr.export.benchmark``, while ``psutil`` is not a core dependency, so
+        a plain install must learn which extra to add instead of hitting a bare ``ModuleNotFoundError``.
+        """
+        monkeypatch.setitem(sys.modules, "psutil", None)
+
+        with pytest.raises(ImportError, match=r"pip install 'rfdetr\[visual\]'"):
+            with measure_memory():
+                pass
+
     def test_cuda_reads_device_bytes_in_use_with_synchronization(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The CUDA path derives bytes-in-use from ``mem_get_info`` and synchronizes before reading.
 
@@ -216,7 +299,7 @@ class TestMeasureMemory:
         """
         synchronize = Mock()
         monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
-        monkeypatch.setattr(torch.cuda, "mem_get_info", Mock(side_effect=lambda: (26_000_000, 50_000_000)))
+        monkeypatch.setattr(torch.cuda, "mem_get_info", Mock(return_value=(26_000_000, 50_000_000)))
 
         with measure_memory(device="cuda") as result:
             pass
@@ -231,13 +314,31 @@ class TestMeasureMemory:
         an untouched default.
         """
         monkeypatch.setattr(torch.cuda, "synchronize", Mock())
-        monkeypatch.setattr(torch.cuda, "mem_get_info", Mock(side_effect=lambda: (17_000_000, 30_000_000)))
+        monkeypatch.setattr(torch.cuda, "mem_get_info", Mock(return_value=(17_000_000, 30_000_000)))
 
         with pytest.raises(RuntimeError, match="benchmark block failed"):
             with measure_memory(device="cuda") as result:
                 raise RuntimeError("benchmark block failed")
 
         assert result.delta_mb == pytest.approx(0.0)
+
+    def test_cuda_device_index_reaches_synchronize_and_mem_get_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``"cuda:1"`` takes the device reader and reads and synchronizes GPU 1, not the current device.
+
+        An exact ``== "cuda"`` match used to send ``"cuda:1"`` to the host RSS reader, which never sees device memory; a
+        bare ``mem_get_info()`` would read whichever GPU happens to be current.
+        """
+        device = torch.device("cuda", 1)
+        synchronize = Mock()
+        mem_get_info = Mock(return_value=(10_000_000, 20_000_000))
+        monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+        monkeypatch.setattr(torch.cuda, "mem_get_info", mem_get_info)
+
+        with measure_memory(device="cuda:1"):
+            pass
+
+        assert {recorded.args for recorded in mem_get_info.call_args_list} == {(device,)}
+        assert {recorded.args for recorded in synchronize.call_args_list} == {(device,)}
 
 
 class TestResultRow:
@@ -416,46 +517,6 @@ class TestCpuBrand:
         assert cpu_brand() == "unknown CPU brand"
 
 
-class TestEnableNotebookInlineMatplotlib:
-    """Check IPython detection and the inline-backend magics it enables.
-
-    Every case injects a synthetic ``IPython`` module into ``sys.modules`` instead of importing
-    or patching the real package: the real IPython, first-imported inside a torch-loaded
-    pytest-xdist worker on this platform, intermittently SIGABRTs at interpreter teardown with a
-    native ``recursive_mutex lock failed`` error — reproduced in isolation (~1 in 3 runs) and never
-    on unrelated tests in this file, so it is specific to that first real import, not a logic bug.
-    A fake module sidesteps the real import path entirely and is deterministic on every platform.
-    """
-
-    def test_noop_when_ipython_is_not_installed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Outside a notebook/IPython kernel, the ``ImportError`` path is a silent no-op."""
-        monkeypatch.setitem(sys.modules, "IPython", None)
-
-        _enable_notebook_inline_matplotlib()
-
-    def test_noop_when_ipython_installed_but_no_active_shell(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A plain Python process has IPython importable but no active shell, so ``get_ipython()`` returns ``None``."""
-        fake_ipython = ModuleType("IPython")
-        fake_ipython.get_ipython = Mock(return_value=None)  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "IPython", fake_ipython)
-
-        _enable_notebook_inline_matplotlib()
-
-    def test_enables_inline_backend_when_ipython_shell_is_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Inside an active IPython shell, both documented magics are invoked in order."""
-        shell = Mock()
-        fake_ipython = ModuleType("IPython")
-        fake_ipython.get_ipython = Mock(return_value=shell)  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "IPython", fake_ipython)
-
-        _enable_notebook_inline_matplotlib()
-
-        assert shell.run_line_magic.call_args_list == [
-            call("matplotlib", "inline"),
-            call("config", "InlineBackend.close_figures = True"),
-        ]
-
-
 class TestVisualizeDetections:
     """Check detection annotation, label sourcing, and optional saving."""
 
@@ -532,3 +593,35 @@ class TestVisualizeDetections:
 
         assert save_path.is_file()
         assert str(save_path) in capsys.readouterr().out
+
+
+class TestParity:
+    """Check the raw-output drift summary against a reference runtime."""
+
+    def test_reports_drift_over_confident_queries_only(self) -> None:
+        """A drifting low-score query is excluded; only the confident query's drift is reported."""
+        ref_logits = np.array([[3.0, -4.0], [-5.0, -6.0]])
+        ref_boxes = np.zeros((2, 4))
+        logits = ref_logits + np.array([[0.5, 0.5], [9.0, 9.0]])
+
+        summary = parity(ref_boxes, ref_logits, ref_boxes + 0.01, logits)
+
+        assert summary == "max|Δlogit| 0.5000, max|Δbox| 0.01000 over 1 confident queries"
+
+    def test_flattens_leading_batch_axis(self) -> None:
+        """A batch-1 ``(1, Q, D)`` input compares like the ``(Q, D)`` one."""
+        ref_logits = np.array([[[3.0, -4.0]]])
+        ref_boxes = np.zeros((1, 1, 4))
+
+        assert parity(ref_boxes, ref_logits, ref_boxes, ref_logits) == (
+            "max|Δlogit| 0.0000, max|Δbox| 0.00000 over 1 confident queries"
+        )
+
+    def test_reports_not_measured_when_no_reference_query_is_confident(self) -> None:
+        """An empty or low-confidence image gives a readable summary instead of a ``max()`` of an empty array."""
+        ref_logits = np.full((1, 3, 2), -9.0)
+        ref_boxes = np.zeros((1, 3, 4))
+
+        summary = parity(ref_boxes, ref_logits, ref_boxes, ref_logits)
+
+        assert summary == "no reference query scores above 0.3; drift not measured over 0 confident queries"
