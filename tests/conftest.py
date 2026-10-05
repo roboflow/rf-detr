@@ -4,6 +4,7 @@
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Generator
@@ -54,6 +55,30 @@ def reset_random_seeds() -> None:
     seed_all()
 
 
+@pytest.fixture
+def process_umask(request: pytest.FixtureRequest) -> Generator[int, None, None]:
+    """Set the process umask for one test and restore the previous one afterwards, even if the test fails.
+
+    Defaults to ``0o022``; parametrize indirectly to pick another value. Yields the umask in effect.
+
+    Examples:
+        A fixture, so this is documentation rather than a doctest:
+
+        ```python
+        @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
+        def test_new_file_mode(tmp_path: Path, process_umask: int) -> None:
+            (tmp_path / "file").touch()
+            assert stat.S_IMODE((tmp_path / "file").stat().st_mode) == 0o666 & ~process_umask
+        ```
+    """
+    umask = getattr(request, "param", 0o022)
+    previous_umask = os.umask(umask)
+    try:
+        yield umask
+    finally:
+        os.umask(previous_umask)
+
+
 def sparsify_category_ids(annotations_path: Path) -> None:
     """Re-encode a COCO JSON in place so category ids are sparse instead of consecutive.
 
@@ -95,7 +120,7 @@ def sparsify_category_ids(annotations_path: Path) -> None:
     annotations_path.write_text(json.dumps(content))
 
 
-def build_synthetic_dataset(dataset_dir: Path, task: str) -> None:
+def build_synthetic_dataset(dataset_dir: Path, task: str, num_images: int = 100) -> None:
     """Generate a Roboflow-style synthetic COCO dataset in ``dataset_dir``.
 
     ``generate_dataset`` writes ``train``/``val`` splits; rf-detr's readers expect ``train``/``valid``/
@@ -105,18 +130,19 @@ def build_synthetic_dataset(dataset_dir: Path, task: str) -> None:
     Args:
         dataset_dir: Existing directory the dataset is written into.
         task: ``"detection"`` for boxes only, ``"segmentation"`` to also emit polygon annotations.
+        num_images: Images across the train and valid splits (80/20).
 
     Examples:
         >>> from pathlib import Path
         >>> from tempfile import TemporaryDirectory
         >>> with TemporaryDirectory() as tmp:
-        ...     build_synthetic_dataset(Path(tmp), task="detection")
+        ...     build_synthetic_dataset(Path(tmp), task="detection", num_images=10)
         ...     sorted(p.name for p in Path(tmp).iterdir())
         ['test', 'train', 'valid']
     """
     generate_dataset(
         output_dir=dataset_dir,
-        num_images=100,
+        num_images=num_images,
         fmt="coco",
         task=task,
         class_mode="shape",

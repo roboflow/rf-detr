@@ -7,11 +7,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
-import tempfile
 from collections import OrderedDict
 from typing import Any
 
+from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -158,7 +159,7 @@ def strip_checkpoint(
     ``lr_schedulers`` when present so the stripped checkpoint can still be used directly with
     ``trainer.fit(ckpt_path=...)``.
 
-    Overwrites the file atomically so a partial write cannot corrupt it.
+    Overwrites the file atomically so a partial write cannot corrupt it, keeping the permission bits it already had.
 
     Args:
         checkpoint: Path to the ``.pth`` checkpoint file to strip in place.
@@ -218,15 +219,18 @@ def strip_checkpoint(
         new_state_dict.update(extra_metadata)
     # Create the temp file in the destination directory so os.replace stays on the same filesystem (atomic).
     checkpoint_dir = os.path.dirname(os.path.abspath(os.fspath(checkpoint)))
-    with tempfile.NamedTemporaryFile(dir=checkpoint_dir, delete=False) as tmp_file:
-        tmp_path = tmp_file.name
+    tmp_fd, tmp_path = _mkstemp_default_mode(checkpoint_dir)
     try:
+        os.close(tmp_fd)
         torch.save(new_state_dict, tmp_path)
         # Atomic replace avoids leaving a partially written checkpoint on save failures/interruption.
-        os.replace(tmp_path, checkpoint)
+        _replace_keeping_mode(tmp_path, checkpoint)
     finally:
+        # Best-effort: after a successful replace the temp path is gone; after a failure it is stray, and a failed
+        # removal must not replace the error that got us here.
         if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
 
 
 def clean_state_dict(state_dict: dict[str, Any]) -> OrderedDict[str, Any]:

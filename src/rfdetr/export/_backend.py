@@ -115,7 +115,7 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
         >>> _resolve_export_backend("onnx", None, None)
         (None, None)
     """
-    if format not in _EXPORT_FORMATS:
+    if not isinstance(format, str) or format not in _EXPORT_FORMATS:
         raise ValueError(f"Unsupported export format {format!r}. Choose from: {sorted(_EXPORT_FORMATS)}.")
 
     if format not in _BACKEND_FORMATS:
@@ -163,6 +163,44 @@ def _resolve_export_backend(format: str, backend: str | None, soc: str | None) -
     return backend, soc
 
 
+def check_onnx_available(
+    install_hint: str = 'Install with: pip install "rfdetr[onnx]"', *, stage: str = "ONNX export"
+) -> None:
+    """Raise the install hint when ``onnx`` is missing.
+
+    ``torch.onnx.export`` needs ``onnx`` too, but reports it only once the whole trace has run, without the hint. The
+    TFLite and TensorRT exporters, which export through the ONNX stage, check it with this too — from here rather than
+    from :mod:`rfdetr.export._onnx.exporter` so that neither format has to reach into another format's module (and its
+    eager ``onnx`` import) just to run this probe.
+
+    ``onnx`` is imported here rather than read from a module-level binding, which is fixed once first imported: a user
+    who installs it after a refused export and retries in the same process (a notebook) would otherwise be refused by
+    this check until they restart it. Only an ``onnx`` that is not installed gets the hint; an installed one that
+    fails to import (a broken native extension, say) raises its own error unchanged.
+
+    Args:
+        install_hint: The sentence that tells the user what to install. A format that exports through the ONNX stage
+            names its own extra, which installs ``onnx`` along with everything else the format needs.
+        stage: The export stage to name in the message. A caller exporting through the ONNX stage on the way to its
+            own format (TFLite, TensorRT) passes its own label so the message doesn't misname ONNX as the culprit.
+
+    Raises:
+        ImportError: If ``onnx`` is not installed, or, unchanged, if an installed ``onnx`` fails to import.
+    """
+    try:
+        importlib.import_module("onnx")
+    except ModuleNotFoundError as error:
+        if error.name != "onnx":
+            raise
+        raise ImportError(f"{stage} dependencies are missing (onnx). {install_hint}") from error
+
+
+#: Whether the onnx-before-TensorFlow import-order warning has already been logged in this process. The order it
+#: reports cannot be repaired once both libraries are loaded, so repeating it on every preload — up to four times in
+#: one TFLite export — only buries the first one.
+_ONNX_ORDER_WARNED = False
+
+
 def _onnx_imported_before_tensorflow() -> bool:
     """Report whether ``onnx`` entered ``sys.modules`` ahead of ``tensorflow``.
 
@@ -196,16 +234,19 @@ def preload_tensorflow_before_onnx() -> None:
 
     When ONNX wins that race, TensorFlow's executor blocks in ``absl::Notification::WaitForNotification()`` while
     restoring the SavedModel bundle and is never woken, hanging the export at 0% CPU with no traceback and no
-    ``.tflite``.  ``format="tflite"`` reaches ``onnx2tf`` only after a full ONNX export, so ONNX always wins unless
-    TensorFlow is preloaded here.  See https://github.com/roboflow/rf-detr/issues/1322 for the measured comparison.
+    ``.tflite``.  ``format="tflite"`` reaches ``onnx2tf``'s converter module (``onnx2tf.onnx2tf``) only after a full
+    ONNX export, so ONNX always wins unless TensorFlow is preloaded here.  See
+    https://github.com/roboflow/rf-detr/issues/1322 for the measured comparison.
 
     Importing ``onnx`` *after* TensorFlow is safe, so the warning below is keyed on the relative order of the two
-    imports (:func:`_onnx_imported_before_tensorflow`) rather than on ``onnx`` merely being imported.
+    imports (:func:`_onnx_imported_before_tensorflow`) rather than on ``onnx`` merely being imported.  A TFLite export
+    preloads several times, and the order it reports is the same every time, so the warning is logged once per process.
 
     Note:
         Does not re-import TensorFlow when it is already loaded, and stays silent when TensorFlow is not installed —
-        the actionable missing-dependency error is raised later, by
-        :func:`~rfdetr.export._tflite.exporter._check_onnx2tf_available`.
+        on the export path, the actionable missing-dependency error is raised by
+        :meth:`~rfdetr.export._tflite.exporter.TFLiteExporter.check_dependencies`; a direct
+        :meth:`~rfdetr.export._tflite.exporter.TFLiteExporter.convert_onnx` call checks only ``onnx2tf``.
 
     Examples:
         >>> preload_tensorflow_before_onnx()  # returns when the top-level tensorflow package is unavailable
@@ -220,7 +261,9 @@ def preload_tensorflow_before_onnx() -> None:
                 raise
             return
 
-    if onnx_won_the_race:
+    global _ONNX_ORDER_WARNED
+    if onnx_won_the_race and not _ONNX_ORDER_WARNED:
+        _ONNX_ORDER_WARNED = True
         logger.warning(
             "onnx was imported before TensorFlow. Both statically link Abseil and export its symbols weakly, so "
             "TensorFlow can block forever while restoring the SavedModel bundle during TFLite conversion. That order "
