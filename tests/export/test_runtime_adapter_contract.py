@@ -424,7 +424,10 @@ class TestExecuTorchRuntimeAdapter:
 class TestCoreMLRuntimeAdapter:
     """Check native CoreML output ordering and device policy."""
 
-    def test_cpu_run_uses_spec_output_order(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("device", ["cpu", "cpu_and_gpu"])
+    def test_compute_policy_and_spec_output_order(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, device: str
+    ) -> None:
         """Position mappings follow the model spec despite dictionary order."""
         path = tmp_path / "model.mlpackage"
         path.mkdir()
@@ -449,7 +452,7 @@ class TestCoreMLRuntimeAdapter:
             "dets": boxes,
         }
         coreml = SimpleNamespace(
-            ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu"),
+            ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu", CPU_AND_GPU="cpu_and_gpu"),
             models=SimpleNamespace(MLModel=Mock(return_value=session)),
         )
         monkeypatch.setitem(sys.modules, "coremltools", coreml)
@@ -461,19 +464,19 @@ class TestCoreMLRuntimeAdapter:
             outputs={"pred_boxes": 0, "pred_logits": 1},
         )
 
-        runtime = load_runtime(path, metadata, device="cpu")
+        runtime = load_runtime(path, metadata, device=device)
         result = runtime.run(torch.zeros(1, 3, 8, 8))
 
         assert result["pred_boxes"].shape == (1, 2, 4)
         assert np.shares_memory(result["pred_boxes"].numpy(), boxes)
         assert result["pred_logits"].shape == (1, 2, 3)
-        coreml.models.MLModel.assert_called_once_with(str(path), compute_units="cpu")
+        coreml.models.MLModel.assert_called_once_with(str(path), compute_units=device)
 
     def test_explicit_ane_is_refused(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """CoreML cannot guarantee an ANE-only execution request."""
         path = tmp_path / "model.mlpackage"
         path.mkdir()
-        coreml = SimpleNamespace(ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu"))
+        coreml = SimpleNamespace(ComputeUnit=SimpleNamespace(ALL="all", CPU_ONLY="cpu", CPU_AND_GPU="cpu_and_gpu"))
         monkeypatch.setitem(sys.modules, "coremltools", coreml)
         monkeypatch.setattr("rfdetr.export._runtime.adapters.platform.system", lambda: "Darwin")
         metadata = _metadata(

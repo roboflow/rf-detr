@@ -1535,8 +1535,9 @@ class TestPredictResizeMatchesTrainingInterpolation:
             pytest.param({"antialias": True}, True, id="opt-in"),
         ],
     )
+    @pytest.mark.parametrize("stream", [False, True])
     def test_predict_resize_antialias_flag(
-        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool
+        self, predict_kwargs: dict[str, bool], expected_antialias: bool, use_facade: bool, stream: bool
     ) -> None:
         """``predict()`` passes the requested ``antialias`` flag to ``F.resize``; the default is ``False``."""
         native_model = _DummyRFDETR()
@@ -1544,7 +1545,7 @@ class TestPredictResizeMatchesTrainingInterpolation:
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
 
         with patch("rfdetr._prediction.F.resize", wraps=F.resize) as mock_resize:
-            model.predict(img, **predict_kwargs)
+            list(model.predict([img], stream=stream, **predict_kwargs))
 
         assert mock_resize.call_args.kwargs.get("antialias") is expected_antialias, (
             "predict() must resize with antialias=False by default (the #1203 contract: the antialias-free "
