@@ -125,6 +125,9 @@ def _filter_per_instance_fields(target: Dict[str, Any], keep: torch.Tensor, boxe
 def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """Clear keypoints that are invisible or outside the image.
 
+    Keypoints use continuous coordinates, so both image edges are inside: ``0 <= x <= width`` and
+    ``0 <= y <= height``. A horizontal flip maps ``x = 0`` to ``x = width`` and keeps such a point visible.
+
     Args:
         keypoints: Keypoint tensor of shape ``(N, K, 3)``.
         height: Image height.
@@ -137,7 +140,10 @@ def _mark_invisible_keypoints(keypoints: torch.Tensor, height: int, width: int) 
         return keypoints
     visible = keypoints[..., 2] > 0
     inside = (
-        (keypoints[..., 0] >= 0) & (keypoints[..., 0] < width) & (keypoints[..., 1] >= 0) & (keypoints[..., 1] < height)
+        (keypoints[..., 0] >= 0)
+        & (keypoints[..., 0] <= width)
+        & (keypoints[..., 1] >= 0)
+        & (keypoints[..., 1] <= height)
     )
     invalid = ~(visible & inside)
     if not invalid.any():
@@ -423,8 +429,10 @@ class Resize:
             )
         if "keypoints" in target_out:
             keypoints = target_out["keypoints"].float().clone()
-            keypoints[..., 0] = keypoints[..., 0] * ratio_width
-            keypoints[..., 1] = keypoints[..., 1] * ratio_height
+            # Multiply, then divide: an edge point (x == old_width) maps to exactly new_width. Multiplying by the
+            # precomputed float ratio can round one ulp past it in float32 and get the point cleared as outside.
+            keypoints[..., 0] = keypoints[..., 0] * new_width / old_width
+            keypoints[..., 1] = keypoints[..., 1] * new_height / old_height
             keypoints = _mark_invisible_keypoints(keypoints, new_height, new_width)
             target_out["keypoints"] = keypoints
         if "area" in target_out:
@@ -492,6 +500,10 @@ class RandomHorizontalFlip:
         :func:`_apply_to_boxes`) and adds the manual keypoint mirror + visibility handling +
         flip-pair swap on top.
 
+        Keypoints use continuous coordinates: the centre of pixel ``i`` is ``i + 0.5``, the same convention as
+        boxes. A flipped keypoint therefore lands at ``width - x``, not ``width - 1 - x``, which would assume
+        integer pixel centres.
+
     Args:
         p: Flip probability.
         keypoint_flip_pairs: Flat even-length list of index pairs ``(left_i, right_i, ...)`` to swap on horizontal flip.
@@ -537,7 +549,8 @@ class RandomHorizontalFlip:
         if "keypoints" in target_out:
             keypoints = target_out["keypoints"].clone()
             visible = keypoints[..., 2] > 0
-            keypoints[..., 0] = (width - 1) - keypoints[..., 0]
+            # Continuous coordinates, same as the box flip: width - x, not width - 1 - x (integer pixel centres).
+            keypoints[..., 0] = width - keypoints[..., 0]
             invisible = (~visible).unsqueeze(-1)  # (N, K, 1) for masked_fill on (N, K, 3)
             keypoints[..., :2] = keypoints[..., :2].masked_fill(invisible, 0.0)
             if self.keypoint_flip_pairs:
