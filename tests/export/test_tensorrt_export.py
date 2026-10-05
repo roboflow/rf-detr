@@ -1312,8 +1312,10 @@ class TestTimingCache:
         assert captured == {"config": {}, "build": {}}
 
     def test_a_path_ending_in_a_separator_is_refused_when_the_exporter_is_built(self, tmp_path: Path) -> None:
-        """``out/cache/`` names a directory; that is plain from the value, so it is refused before any work on the
-        model."""
+        """A path ending in a separator is refused when the exporter is built, before any work on the model.
+
+        ``out/cache/`` names a directory, and that is plain from the value alone, so no filesystem access is needed.
+        """
         with pytest.raises(ValueError, match=r"trt_timing_cache.*names a directory"):
             TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=str(tmp_path / "cache") + os.sep))
 
@@ -1321,8 +1323,11 @@ class TestTimingCache:
     def test_a_link_to_a_missing_file_is_refused_before_anything_is_built(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Polygraphy would create the file at the link's target after the build; a missing target folder would lose
-        it."""
+        """A symbolic link to a missing file is refused before the build, not after it.
+
+        Polygraphy would create the file at the link's target after the build, and a missing target folder would lose
+        the timings.
+        """
         captured = _patch_polygraphy_chain_recording(monkeypatch)
         link = tmp_path / "engine.cache"
         link.symlink_to(tmp_path / "unmounted" / "engine.cache")
