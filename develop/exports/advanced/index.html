@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T16:07:19">
+  <meta property="article:modified_time" content="2026-10-06T18:49:53">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T16:07:19",
+    "dateModified": "2026-10-06T18:49:53",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3120,6 +3120,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>Largest batch a dynamic TensorRT engine accepts. Required when <code>format="tensorrt"</code> and <code>dynamic_batch=True</code>: the engine gets one optimization profile spanning batch <code>1 .. max_batch_size</code>, tuned for <code>batch_size</code>. Ignored for every other format.</td>
 </tr>
 <tr>
+<td><code>trt_hardware_compatibility</code></td>
+<td><code>None</code></td>
+<td>Ask TensorRT for an engine that other GPUs may run: <code>"ampere_plus"</code> (NVIDIA Ampere, compute capability 8.x, and newer; build on one of them) or <code>"same_compute_capability"</code> (GPUs with the building GPU's compute capability). <code>None</code> builds for the building GPU only. Not supported on Jetson or DriveOS. A level your TensorRT lacks raises <code>ValueError</code>. See <a href="../tensorrt/#portable-engines">TensorRT Export</a>. Only used when <code>format="tensorrt"</code>; a non-<code>None</code> value for any other format emits a <code>UserWarning</code>.</td>
+</tr>
+<tr>
+<td><code>trt_version_compatible</code></td>
+<td><code>False</code></td>
+<td>Ask TensorRT for an engine that other releases of the same TensorRT major version may load (it worked between 11.2 and 11.3). Needs TensorRT's lean runtime package, such as <a href="https://pypi.org/project/tensorrt-lean-cu13-libs/"><code>tensorrt-lean-cu13-libs</code></a>; without it the export raises <code>ImportError</code>. A TensorRT 11 engine then needs <code>engine_host_code_allowed=True</code> in <code>TRTInference</code>. See <a href="../tensorrt/#portable-engines">TensorRT Export</a>. Only used when <code>format="tensorrt"</code>; <code>True</code> for any other format emits a <code>UserWarning</code>.</td>
+</tr>
+<tr>
 <td><code>trt_timing_cache</code></td>
 <td><code>None</code></td>
 <td>File that keeps the kernel timings TensorRT measures while building an engine. A build loads it when it exists and writes the merged timings back, so rebuilding the same model at the same precision and batch profile, on the same GPU and TensorRT version, skips most of the search. A directory raises <code>ValueError</code> and an unwritable location <code>OSError</code>, before the engine is built. See <a href="../tensorrt/#reuse-the-timing-cache">TensorRT Export</a>. Only used when <code>format="tensorrt"</code>; a non-<code>None</code> value for any other format emits a <code>UserWarning</code>.</td>
@@ -3147,7 +3157,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>output_name</code></td>
 <td><code>None</code></td>
-<td>Full filename override (without extension). Takes precedence over the model's variant name and suppresses the <code>_fp32</code>/<code>_fp16</code>/<code>_{backend}</code> detail suffix — see <a href="../basics/#output-files">Output Files</a>.</td>
+<td>Full filename override (without extension). Takes precedence over the model's variant name and suppresses the detail suffix (precision, backend, TensorRT portability) — see <a href="../basics/#output-files">Output Files</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -3342,7 +3352,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 16:07:19 UTC">2026-10-06 16:07:19</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 18:49:53 UTC">2026-10-06 18:49:53</span>
   </span>
 
     
