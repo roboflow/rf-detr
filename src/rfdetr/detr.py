@@ -2214,11 +2214,11 @@ class RFDETR:
         fp16: bool = True,
         max_batch_size: int | None = None,
         notes: object = None,
+        output_name: str | None = None,
         trt_timing_cache: str | os.PathLike[str] | None = None,
         coreml_precision: str | None = None,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
-        output_name: str | None = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
