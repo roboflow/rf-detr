@@ -157,16 +157,6 @@ RF-DETR achieves state-of-the-art results in both object detection and instance 
 
 > Keypoint benchmarks report AP<sub>50:95</sub> (OKS-based); this is the standard COCO keypoint comparison metric.
 
-### Atto, Femto and Pico (Detection)
-
-<img alt="RF100-VL accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/atto_femto_pico/rf100vl_accuracy_vs_t4_latency.png" />
-
-<img alt="COCO accuracy vs T4 latency: RF-DETR Atto, Femto and Pico against DEIMv2 Atto, Femto and Pico and YOLO26-N" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/atto_femto_pico/coco_accuracy_vs_t4_latency.png" />
-
-RF-DETR Atto, Femto and Pico extend the detection lineup below Nano, at 1.0 to 1.7 ms on a T4, and are Pareto-optimal in accuracy and latency against DEIMv2 and YOLO26-N on RF100-VL and COCO.
-
-DEIMv2 training and timing protocol: [benchmarks page](https://github.com/roboflow/rf-detr/blob/develop/docs/learn/benchmarks.md#atto-femto-and-pico-detection)
-
 ### NAS on the Roboflow Platform
 
 <img alt="RF100-VL accuracy-latency Pareto chart showing RF-DETR NAS trained on the Roboflow platform outperforming the paper NAS and named configs" src="https://raw.githubusercontent.com/roboflow/rf-detr/develop/docs/assets/nas_two_source_comparison_100_test_only.svg" />
