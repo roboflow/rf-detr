@@ -6,9 +6,9 @@
 """Image preprocessing shared by the export inference helpers.
 
 Every exported format consumes the same tensor: ImageNet-normalised float32 at the model's spatial resolution, resized
-with :meth:`rfdetr.detr.RFDETR.predict`'s exact convention. Only the memory layout differs -- ONNX, OpenVINO and
-ExecuTorch take NCHW, while TFLite takes NHWC because ``onnx2tf`` transposes at export time. That transpose is the
-caller's job; this module produces NCHW.
+with :meth:`rfdetr.detr.RFDETR.predict`'s default convention (``antialias=False``). Only the memory layout differs --
+ONNX, OpenVINO and ExecuTorch take NCHW, while TFLite takes NHWC because ``onnx2tf`` transposes at export time. That
+transpose is the caller's job; this module produces NCHW.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def preprocess_to_nchw(
 ) -> NDArray[np.float32]:
     """Resize and normalise a PIL image to a ``(1, C, H, W)`` float32 NCHW tensor.
 
-    Resizes with ``RFDETR.predict()``'s exact convention -- bilinear, half-pixel centers,
+    Resizes with ``RFDETR.predict()``'s default convention -- bilinear, half-pixel centers,
     ``antialias=False`` -- via ``torchvision`` when importable (bit-exact parity) or the pure-NumPy
     :func:`~rfdetr.export._resize._bilinear_resize_half_pixel` otherwise (float32 op-order noise only). PIL resize is
     not used: both its BILINEAR and BICUBIC filters apply adaptive antialiasing when downscaling and diverge from
@@ -60,8 +60,8 @@ def preprocess_to_nchw(
     std_list = [IMAGENET_STD[i % 3] for i in range(channels)]
 
     with contextlib.suppress(ImportError):
-        # Match predict() exactly: torchvision to_tensor -> resize(antialias=False) -> normalize.
-        # antialias=False mirrors detr.py's predict(); torchvision's float-tensor default is True.
+        # Match predict()'s default convention: torchvision to_tensor -> resize(antialias=False) -> normalize.
+        # antialias=False mirrors predict()'s default (``antialias=False``); torchvision's float-tensor default is True.
         import torch
         import torchvision.transforms.functional as _F  # noqa: N812
 
@@ -71,7 +71,7 @@ def preprocess_to_nchw(
             t = _F.normalize(t, mean_list, std_list)
         return np.asarray(t.unsqueeze(0).cpu().numpy(), dtype=np.float32)
 
-    # Torch-free fallback: same antialias-free half-pixel bilinear as predict(), in NumPy.
+    # Torch-free fallback: same antialias-free half-pixel bilinear as predict()'s default, in NumPy.
     arr = np.asarray(pil_img, dtype=np.float32) / 255.0
     if arr.ndim == 2:  # "L" -> (H, W); needs (H, W, 1)
         arr = arr[:, :, np.newaxis]
