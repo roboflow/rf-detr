@@ -1396,6 +1396,35 @@ class TestFromCheckpointPEPlusModels:
             with pytest.raises(ImportError, match="predates it"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
 
+    def test_older_plus_upgrade_hint_chains_the_missing_symbol_error(
+        self, monkeypatch, platform_models, tmp_path: Path
+    ) -> None:
+        """The upgrade hint keeps the lookup error that explains why the PE model is missing."""
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+        ckpt = {"args": {"pretrain_weights": "rf-detr-nano.pth", "num_classes": 80}, "model_name": "RFDETRAtto"}
+
+        with patch("rfdetr.detr.torch.load", return_value=ckpt):
+            with pytest.raises(ImportError, match="predates it") as raised:
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert isinstance(raised.value.__cause__, ImportError)
+        assert "RFDETRAtto" in str(raised.value.__cause__)
+
+    def test_upgrade_hint_chains_a_broken_pe_import(self, monkeypatch, platform_models, tmp_path: Path) -> None:
+        """A PE import that failed for another reason stays reachable through the upgrade hint's cause chain.
+
+        Without it, a broken rfdetr_plus dependency reads as an outdated install and the real failure is lost.
+        """
+        broken = ImportError("broken dependency")
+        monkeypatch.setattr(platform_models, "_PLUS_PE_IMPORT_ERROR", broken)
+        self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
+
+        with patch("rfdetr.detr.torch.load", return_value=_ns("rf-detr-femto.pth")):
+            with pytest.raises(ImportError, match="predates it") as raised:
+                RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+        assert raised.value.__cause__.__cause__ is broken
+
     def test_older_plus_still_resolves_xlarge(self, monkeypatch, platform_models, tmp_path: Path) -> None:
         fakes = self._install(monkeypatch, platform_models, ("RFDETRXLarge", "RFDETR2XLarge"))
         ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRXLarge"}
