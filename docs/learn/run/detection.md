@@ -4,14 +4,17 @@ description: Run RF-DETR object detection on images, video, and streams. Nano to
 
 # Run an RF-DETR Object Detection Model
 
-RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.
+RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone (a PE-Core-T backbone for Atto, Femto and Pico). The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.
 
 ## Pre-trained Checkpoints
 
-RF-DETR offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0. XLarge and 2XLarge (marked with △) are provided by the [`rfdetr_plus`](https://github.com/roboflow/rf-detr-plus) extension (`pip install rfdetr[plus]`) under the Platform Model License 1.0 and require a Roboflow account.
+RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0. Atto, Femto, Pico, XLarge and 2XLarge (marked with △) are provided by the [`rfdetr_plus`](https://github.com/roboflow/rf-detr-plus) extension (`pip install rfdetr[plus]`) under the Platform Model License 1.0 and require a Roboflow account.
 
 | Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
+|  A   |    `RFDETRAtto` △     | `rfdetr-atto`           |         49.4         |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
+|  F   |    `RFDETRFemto` △    | `rfdetr-femto`          |         55.9         |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
+|  P   |    `RFDETRPico` △     | `rfdetr-pico`           |         60.2         |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
 |  N   |     `RFDETRNano`      | `rfdetr-nano`           |         67.6         |          48.4           |     2.3      |    30.5    |  384x384   | Apache 2.0 |
 |  S   |     `RFDETRSmall`     | `rfdetr-small`          |         72.1         |          53.0           |     3.5      |    32.1    |  512x512   | Apache 2.0 |
 |  M   |    `RFDETRMedium`     | `rfdetr-medium`         |         73.6         |          54.7           |     4.4      |    33.7    |  576x576   | Apache 2.0 |

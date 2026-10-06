@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `rfdetr.RFDETRAtto`, `rfdetr.RFDETRFemto` and `rfdetr.RFDETRPico`: real-time detection models with a PE-Core-T backbone, provided by `rfdetr_plus` like the XLarge models (`pip install "rfdetr[plus]"`, Platform Model License 1.0). `RFDETR.from_checkpoint()` resolves their checkpoints; an outdated `rfdetr_plus` raises an upgrade hint, and a broken `rfdetr_plus` install no longer blocks loading core checkpoints.
+
+- `rfdetr.models.backbone.register_backbone(encoder, backbone_cls)`: an extension package can provide a non-DINOv2 encoder for a `ModelConfig.encoder` name by subclassing `Backbone` and overriding `_build_encoder`. A registered encoder that defines `set_export_shape(shape)` gets its position embeddings frozen for export, like DINOv2.
+
+- `ModelConfig.dim_feedforward` (default `2048`) sets the decoder feed-forward width.
+
+- `RFDETRModelModule(..., load_encoder_weights=False)` skips fetching the encoder's upstream pretrained weights when every weight is replaced right after construction; the default `True` keeps the previous behaviour. `RFDETR.evaluate()` passes it.
+
 - Public `rfdetr.export.inference` exposes `TRTInference`, `load_executorch_method`, `preprocess_to_nchw`, `decode_detections` and `DecodedDetections` next to `OpenVINOInference`; each resolves lazily, so importing the module does not require an optional runtime. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
 - Public `rfdetr.export.benchmark` exposes `measure_latency`, `measure_memory`, `BenchmarkResult` and `MemoryResult`, the helpers the per-hardware export cookbooks use. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
@@ -25,6 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Static INT8 post-training quantization for `format="onnx"` and `format="openvino"`, via `quantization="int8"` plus a required `calibration_data` (a directory of representative images, a `.npy` file of shape `(N, C, H, W)`, or an equivalent array). ONNX writes `{name}_int8.onnx` beside the FP32 graph it was derived from; OpenVINO compresses the IR with NNCF (`pip install nncf`, deliberately outside the `[openvino]` extra) before writing it. Unlike TFLite's dynamic-range `"int8"`, which ignores calibration data, static quantization reads activation ranges from it, so omitting it is refused rather than defaulted. Only `MatMul`/`Gemm` run in 8-bit: attention-score multiplies, the detection heads, normalization, softmax and the surrounding elementwise math stay in float, and the quantized ops' outputs are not requantized. Measured on a 500-image COCO val2017 subset, ONNX Runtime's default op coverage instead costs 9.65 mAP on `RFDETRNano` and 12.14 on `RFDETRSmall`, against 2.65 and 2.67 for this configuration, and is also slower — the conversions around non-matmul ops cost more than the 8-bit kernels save. Expect roughly 3x smaller artifacts and ~1.4x faster CPU inference at batch 1, at a real accuracy cost worth measuring on your own data.
 
 ### Changed
+
+- The `rfdetr[plus]` extra now requires `rfdetr_plus>=1.1.0` (was `>=1.0.1`). An older `rfdetr_plus` that is already installed still works for the XLarge models, because the PE models are imported in their own block.
+
+- `build_backbone` now forwards `ModelDefaults.force_no_pretrain` to the encoder builder. A caller that already passed `defaults=ModelDefaults(force_no_pretrain=True)` used to get DINOv2's upstream encoder weights anyway and now gets randomly initialised encoder weights, with `pretrain_weights` handled separately as before. The default `False` leaves every other caller unchanged.
 
 - `quantization` for `format="onnx"` and `format="openvino"` is now checked: a value other than `None`, `"fp32"` or `"int8"` raises `ValueError` instead of being ignored, and `quantization="int8"` without `calibration_data` raises instead of silently exporting FP32. ONNX `quantization="int8"` returns `{stem}_int8.onnx`, written beside the FP32 `{stem}.onnx`, rather than the FP32 path. OpenVINO `quantization="int8"` writes `{stem}_int8.xml`/`.bin` so it no longer overwrites the FP32 IR; an explicit `output_name` is still used verbatim.
 
@@ -62,6 +74,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - `format="coreml"` with `coreml_precision="float16"` no longer loses about 3 box AP on the Apple Neural Engine. The bundle was converted for iOS 16, whose program runs the deformable-attention `resample` on the Neural Engine in fp16; it is now converted for iOS 15, where that op stays on the CPU, which also matches what the ExecuTorch CoreML delegate lowers. Measured on an Apple M3 Pro (macOS 27.0.1, pretrained models, all 5000 COCO val2017 images) under `CPU_AND_NE`: `RFDETRNano` 45.06 → 48.04 AP (eager 48.03) and `RFDETRSmall` 50.70 → 52.76 AP (eager 52.80); `CPU_AND_GPU` was already unaffected, and fp32 scores 48.03 on `RFDETRNano` either way. The cost is single-image latency on the Neural Engine, `RFDETRNano` fp16 under `CPU_AND_NE` (p50, batch 1): 10.8 → 12.7 ms back to back and 18.3 → 24.9 ms with 200 ms between passes; `RFDETRSegNano` 18.1 → 20.3 ms and 30.4 → 38.8 ms (the pairs were measured in the same session). Bundles now declare iOS 15 / macOS 12 as the minimum OS, down from iOS 16 / macOS 13; the output dtype change this brings is listed under Breaking Changes. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
+- `RFDETR.evaluate()` no longer downloads DINOv2 pretrained weights when it rebuilds `RFDETRBase` or the deprecated `Large`, nor a registered encoder's upstream weights, so offline evaluation of those models works.
 
 - Class names in the per-class metrics table printed after validation and test are no longer interpreted as Rich markup or emoji codes. Each name was passed to Rich as a plain string, which Rich parses as console markup and emoji codes, so `helmet[red]` printed as `helmet`, `car [parked]` as `car`, `price:dollar:` with an emoji in place of `:dollar:`, and a name containing a stray closing tag such as `sign[/]` raised `rich.errors.MarkupError` out of `COCOEvalCallback`, ending training at the first evaluated validation epoch. A non-string class name, such as `null` in an annotation file, is printed as text instead of raising. ([#1598](https://github.com/roboflow/rf-detr/pull/1598))
 
