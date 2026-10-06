@@ -9,6 +9,7 @@ import contextlib
 import importlib
 import io
 import json
+import ntpath
 import operator
 import os
 import re
@@ -52,6 +53,9 @@ from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categorie
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
+
+# The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
+from rfdetr.platform import _PLUS_EXPORTS
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
@@ -377,13 +381,6 @@ __all__ = ["RFDETR", "ModelContext", *_VARIANT_EXPORTS]
 _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRLargeDeprecated", "RFDETRSeg"})
 _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
     class_symbol for class_symbol in _VARIANT_EXPORTS if class_symbol not in _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS
-)
-_CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = (
-    "RFDETRXLarge",
-    "RFDETR2XLarge",
-    "RFDETRAtto",
-    "RFDETRFemto",
-    "RFDETRPico",
 )
 _CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("keypoint-preview", "RFDETRKeypointPreview"),
@@ -1027,7 +1024,7 @@ class RFDETR:
             try:
                 import rfdetr.platform.models as platform_models
 
-                for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS:
+                for class_symbol in sorted(_PLUS_EXPORTS):
                     try:
                         plus_obj = getattr(platform_models, class_symbol)
                     except ImportError:
@@ -1051,7 +1048,8 @@ class RFDETR:
             except ImportError as ex:
                 _plus_import_error = ex
             if _plus_import_error is not None:
-                logger.warning(
+                # Every from_checkpoint call retries the import; report the broken install once per process.
+                logger.warning_once(
                     "rfdetr_plus is installed but failed to import (%s); plus model checkpoints cannot be loaded.",
                     _plus_import_error,
                 )
@@ -1149,14 +1147,15 @@ class RFDETR:
         if weights_name in {"", "none", "null"}:
             weights_name = os.path.basename(os.fspath(path)).lower()
             _filename_fallback = True
-        # A directory such as "rf-detr-pico/" names no model.
-        weights_file = os.path.basename(weights_name)
+        # A directory such as "rf-detr-pico/" names no model. ntpath splits on both "/" and "\", so a Windows-style
+        # path recorded in the checkpoint (e.g. "c:\models\rf-detr-pico\rf-detr-nano.pth") also drops its directories.
+        weights_file = ntpath.basename(weights_name)
 
         if model_cls is None:
             # Guard: plus-only checkpoints should raise an actionable install error
             # when rfdetr_plus is missing, regardless of whether class inference
             # relies on model_name (new format) or pretrain_weights (legacy format).
-            plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
+            plus_by_model_name = normalized_name in _PLUS_EXPORTS
             plus_by_weights_name = (
                 "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
             ) or any(name in weights_file for name, _ in _CHECKPOINT_PLUS_STEM_ENTRIES)

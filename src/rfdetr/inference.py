@@ -167,14 +167,16 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
     if model_config.num_channels != 3:
         import copy
 
-        backbone = cast(Backbone, nn_model.backbone[0])
-        encoder = backbone.encoder
-        # Channel adaptation rewrites DINOv2's patch embedding.
-        if not isinstance(encoder, DinoV2):
+        # Channel adaptation rewrites DINOv2's patch embedding. Dispatch on the encoder name, as
+        # Backbone._build_encoder does: with backbone_lora the encoder is a PEFT wrapper, not a DinoV2 instance.
+        if model_config.encoder.split("_")[0] != "dinov2":
             raise ValueError(
                 f"num_channels={model_config.num_channels} is supported for DINOv2 encoders only, "
-                f"not {type(encoder).__name__} (encoder={model_config.encoder!r})."
+                f"not encoder={model_config.encoder!r}."
             )
+        backbone = cast(Backbone, nn_model.backbone[0])
+        # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
+        encoder = cast(DinoV2, backbone.encoder)
         proj = encoder.encoder.embeddings.patch_embeddings.projection
         new_proj = copy.deepcopy(proj)
         new_proj.in_channels = model_config.num_channels

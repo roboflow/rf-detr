@@ -27,9 +27,9 @@ import pytest
 import torch
 
 from rfdetr.config import PretrainWeightsCompatibilityWarning
-from rfdetr.detr import RFDETR
+from rfdetr.detr import _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES, _CHECKPOINT_PLUS_STEM_ENTRIES, RFDETR
 from rfdetr.detr import logger as detr_logger
-from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE, _PLUS_EXPORTS
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.utilities.state_dict import strip_checkpoint
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSmall
@@ -1346,11 +1346,22 @@ class TestFromCheckpointPEPlusModels:
 
         assert result is mock_cls.return_value
 
+    @pytest.mark.parametrize(
+        "pretrain_weights",
+        [
+            pytest.param("/models/rf-detr-pico/rf-detr-nano.pth", id="posix-path"),
+            pytest.param(r"c:\models\rf-detr-pico\rf-detr-nano.pth", id="windows-path"),
+        ],
+    )
     @pytest.mark.parametrize("plus", ["current", "older", "missing"])
     def test_release_stem_in_a_directory_name_does_not_match(
-        self, monkeypatch, platform_models, tmp_path: Path, plus: str
+        self, monkeypatch, platform_models, tmp_path: Path, plus: str, pretrain_weights: str
     ) -> None:
-        """``/models/rf-detr-pico/rf-detr-nano.pth`` is a Nano checkpoint, whichever rfdetr_plus is installed."""
+        """A Nano file inside an ``rf-detr-pico`` directory is a Nano checkpoint, whichever rfdetr_plus is installed.
+
+        The checkpoint records the path it was trained from, so a Windows run stores backslash separators; the stem scan
+        must strip those directories too, on every host.
+        """
         if plus == "missing":
             import rfdetr.platform
 
@@ -1360,7 +1371,7 @@ class TestFromCheckpointPEPlusModels:
             self._install(monkeypatch, platform_models, (*pe_symbols, "RFDETRXLarge", "RFDETR2XLarge"))
 
         result, mock_cls = _call_from_checkpoint(
-            _ns("/models/rf-detr-pico/rf-detr-nano.pth"), tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano"
+            _ns(pretrain_weights), tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano"
         )
 
         assert result is mock_cls.return_value
@@ -1466,6 +1477,24 @@ class TestFromCheckpointPEPlusModels:
         assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
         assert excinfo.value.__cause__.name == "timm"
 
+    def test_broken_plus_import_warns_once(
+        self, broken_plus_import, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """Loading core checkpoints repeatedly with a broken rfdetr_plus logs the import failure only once.
+
+        Each ``from_checkpoint`` call retries the plus import, so a plain warning would repeat on every load of a loop.
+        """
+        ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRNano"}
+        monkeypatch.setattr(detr_logger, "propagate", True)
+        monkeypatch.setattr(detr_logger, "_warned_once", set())
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+            _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+
+        messages = [record.message for record in caplog.records if "failed to import" in record.message]
+        assert len(messages) == 1, messages
+
     @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
     def test_without_plus_raises_install_hint(self, monkeypatch, platform_models, tmp_path: Path, model_name) -> None:
         import rfdetr.platform
@@ -1476,6 +1505,36 @@ class TestFromCheckpointPEPlusModels:
         with patch("rfdetr.detr.torch.load", return_value=ckpt):
             with pytest.raises(ImportError, match="rfdetr_plus package"):
                 RFDETR.from_checkpoint(tmp_path / "ckpt.pth")
+
+
+class TestPlusExportsSingleSource:
+    """Every plus-model lookup reads the one ``rfdetr.platform._PLUS_EXPORTS`` set instead of a hand-synced copy."""
+
+    def test_modules_share_the_platform_set(self) -> None:
+        """``rfdetr``, ``rfdetr.platform.models`` and ``rfdetr.detr`` hold the very same set object.
+
+        A module that redefines its own copy drifts the next time a plus model is added, which is how only two of the
+        five plus symbols ended up covered by tests.
+        """
+        import rfdetr
+        import rfdetr.detr
+        import rfdetr.platform.models as platform_models
+
+        assert rfdetr._PLUS_EXPORTS is _PLUS_EXPORTS
+        assert platform_models._PLUS_EXPORTS is _PLUS_EXPORTS
+        assert rfdetr.detr._PLUS_EXPORTS is _PLUS_EXPORTS
+
+    @pytest.mark.parametrize(
+        "class_symbol",
+        sorted({symbol for _, symbol in (*_CHECKPOINT_PLUS_MODEL_MAP_ENTRIES, *_CHECKPOINT_PLUS_STEM_ENTRIES)}),
+    )
+    def test_checkpoint_tables_name_only_plus_exports(self, class_symbol: str) -> None:
+        """Each class a plus checkpoint-name or release-stem entry resolves to is a listed plus export.
+
+        ``from_checkpoint`` only fetches the symbols in the set from ``rfdetr.platform.models``, so an entry naming
+        anything else could never resolve to its plus class.
+        """
+        assert class_symbol in _PLUS_EXPORTS
 
 
 class TestPlatformModelsPEExports:

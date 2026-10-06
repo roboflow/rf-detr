@@ -6,17 +6,9 @@
 
 from typing import Any
 
-from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
+from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE, _PLUS_EXPORTS
 
 __all__: list[str] = []
-
-_PLUS_EXPORTS = {
-    "RFDETR2XLarge",
-    "RFDETRXLarge",
-    "RFDETRAtto",
-    "RFDETRFemto",
-    "RFDETRPico",
-}
 
 _UPGRADE_MSG = (
     "{name} is not available in the installed rfdetr_plus package, which predates it."
@@ -34,6 +26,9 @@ if _IS_RFDETR_PLUS_AVAILABLE:
         "RFDETRXLarge",
     ]
 
+    # A separate block, not part of the import above: the `rfdetr[plus]` floor (`rfdetr_plus>=1.0.1` in
+    # pyproject.toml) admits rfdetr_plus releases that ship the XLarge models but predate the PE models, so this
+    # import can fail even though rfdetr_plus is installed, and that must not hide the XLarge models.
     try:
         from rfdetr_plus.models import (
             RFDETRAtto,

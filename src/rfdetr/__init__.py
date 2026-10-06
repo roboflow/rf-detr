@@ -43,6 +43,7 @@ if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
 
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
+from rfdetr.platform import _PLUS_EXPORTS
 from rfdetr.variants import (
     RFDETRBase,  # DEPRECATED # noqa: F401
     RFDETRKeypointPreview,
@@ -84,7 +85,6 @@ def from_checkpoint(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
 
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
 _LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trainer"})
-_PLUS_EXPORTS = frozenset({"RFDETR2XLarge", "RFDETRXLarge", "RFDETRAtto", "RFDETRFemto", "RFDETRPico"})
 
 # Legacy module aliases removed in v1.9.0; imports raise a migration-hint ImportError.
 _REMOVE_IN_VERSION_1_9 = {
