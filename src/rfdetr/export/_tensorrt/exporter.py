@@ -39,6 +39,7 @@ from rfdetr.export._tensorrt.metadata import (
     build_engine_metadata,
     gpu_facts,
     is_engine_description,
+    is_rfdetr_description,
     serialized_engine_facts,
     sidecar_path,
     write_engine_metadata,
@@ -880,6 +881,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
 
         Raises:
             ImportError: If ``tensorrt`` or ``polygraphy`` is not installed, before the ONNX export runs.
+            FileExistsError: If ``metadata`` is set and the description's path holds something this exporter did not
+                write, before the engine is built.
             OSError: If ``metadata`` is set and the description cannot be written; the engine has been built by then.
         """
         from rfdetr.export._onnx.exporter import OnnxExporter
@@ -891,11 +894,38 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
         # custom output_name does not silently produce an engine indistinguishable from a full-detector one.
         output_name = onnx_path.stem if graph.backbone_only and self.config.output_name else self.config.output_name
+        if self.config.metadata:
+            self._refuse_to_replace_a_foreign_file(str(onnx_path), output_name)
         logger.info("Converting ONNX model to TensorRT engine")
         engine_path = self.build_engine(str(onnx_path), output_name=output_name, _describe=self.config.metadata)
         if self.config.metadata:
             self._write_metadata(graph, engine_path)
         return engine_path
+
+    def _refuse_to_replace_a_foreign_file(self, onnx_path: str, output_name: str | None) -> None:
+        """Refuse a description that would replace a file this exporter did not write, before the engine is built.
+
+        ``.json`` is a generic extension, so ``<engine>.json`` may be a label map or a deployment manifest of the user's
+        own, and the description would replace it without a word. Asked here rather than at the write, so the refusal
+        does not come after a build that can take minutes. The path is the one the requested precision gives; a lean
+        TensorRT wheel that falls back from FP16 to FP32 writes beside an ``_fp32`` engine instead, which this does not
+        look at.
+
+        Args:
+            onnx_path: The ONNX file the engine is built from.
+            output_name: The engine's file name without extension, as :meth:`build_engine` receives it.
+
+        Raises:
+            FileExistsError: If anything other than a description an RF-DETR export wrote is at the description's
+                path, a directory or a dangling link included.
+        """
+        target = sidecar_path(self._engine_path(onnx_path, fp16_used=self.config.fp16, output_name=output_name))
+        if os.path.lexists(target) and not is_rfdetr_description(target):
+            raise FileExistsError(
+                f"{target} already exists and was not written by an RF-DETR TensorRT export, so trt_metadata=True "
+                "would replace it with the engine's description. Rename or remove it, or pick another output_name; "
+                "the TensorRT engine was not built."
+            )
 
     def _write_metadata(self, graph: ExportGraph, engine_path: str) -> None:
         """Write the ``<engine>.json`` sidecar for the engine :meth:`build_engine` just wrote.

@@ -17,7 +17,6 @@ import hashlib
 import itertools
 import json
 import os
-import shutil
 import stat
 import sys
 import types
@@ -32,11 +31,14 @@ from PIL import Image
 from rfdetr.detr import RFDETR
 from rfdetr.export._runtime.preprocess import IMAGENET_MEAN, IMAGENET_STD, preprocess_to_nchw
 from rfdetr.export._tensorrt import exporter as tensorrt_export
+from rfdetr.export._tensorrt import metadata as tensorrt_metadata
 from rfdetr.export._tensorrt.exporter import TensorRTConfig, TensorRTExporter
 from rfdetr.export._tensorrt.metadata import (
     METADATA_SCHEMA_VERSION,
     build_engine_metadata,
     gpu_facts,
+    is_engine_description,
+    is_rfdetr_description,
     serialized_engine_facts,
     sidecar_path,
     write_engine_metadata,
@@ -140,8 +142,48 @@ def _raise_os_error(*_args: object, **_kwargs: object) -> None:
     raise OSError("disk full")
 
 
-#: A description an earlier export of the same name left behind: the checks recognize one by its ``schema_version``.
-_EARLIER_DESCRIPTION = '{"schema_version": 1, "batch": {"dynamic": true}}'
+#: A description an earlier export of the same name left behind. It carries the keys every description has, so both
+#: the stale-description warning (``schema_version``) and the write's ownership check (``rfdetr_version`` and
+#: ``engine`` too) recognize it.
+_EARLIER_DESCRIPTION = (
+    '{"schema_version": 1, "rfdetr_version": "1.0.0", "engine": {"size": 1, "sha256": "0"}, "batch": {"dynamic": true}}'
+)
+
+#: A JSON file of the user's own that happens to have an engine's name.
+_FOREIGN_JSON = '{"labels": ["cat", "dog"]}'
+
+
+def _umask() -> int:
+    """Read the process umask, which can only be read by setting it, so it is set straight back.
+
+    Returns:
+        The umask.
+
+    Examples:
+        >>> 0 <= _umask() <= 0o777
+        True
+    """
+    current = os.umask(0)
+    os.umask(current)
+    return current
+
+
+def _padded_description(size: int) -> bytes:
+    """Build a description of exactly *size* bytes, padded with a long ``notes`` string.
+
+    Args:
+        size: The length of the result in bytes.
+
+    Returns:
+        UTF-8 JSON holding a ``schema_version``.
+
+    Examples:
+        >>> content = _padded_description(64)
+        >>> len(content), json.loads(content)["schema_version"]
+        (64, 1)
+    """
+    head, tail = b'{"schema_version": 1, "notes": "', b'"}'
+    return head + b"x" * (size - len(head) - len(tail)) + tail
 
 
 def _raise_keyboard_interrupt(*_args: object) -> None:
@@ -381,6 +423,88 @@ class TestSerializedEngineFacts:
         }
 
 
+class TestIsEngineDescription:
+    """Looking at the ``.json`` beside an engine never crashes or blocks the export, whatever sits there."""
+
+    def test_json_nested_too_deeply_to_parse_is_not_a_description(self, tmp_path: Path) -> None:
+        """``json.loads`` raises ``RecursionError`` on deep nesting, which is not an ``OSError`` or a ``ValueError``.
+
+        The check runs right after a build that can take minutes, on a default export too, so a hostile file of the
+        engine's name must come out as "not a description" rather than as a crash.
+        """
+        path = tmp_path / "model.json"
+        path.write_text("[" * 200_000)
+
+        assert is_engine_description(path) is False
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            pytest.param(os.mkdir, id="directory"),
+            pytest.param(
+                getattr(os, "mkfifo", None),
+                id="named pipe",
+                marks=pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX-only"),
+            ),
+        ],
+    )
+    def test_a_path_that_is_not_a_regular_file_is_not_read(self, tmp_path: Path, make: object) -> None:
+        """Opening a named pipe for reading blocks until a writer appears, so only a regular file is opened.
+
+        A directory with the engine's name is not a description either, and must not be mistaken for one.
+        """
+        path = tmp_path / "model.json"
+        make(path)
+
+        assert is_engine_description(path) is False
+
+    @pytest.mark.parametrize(("size", "expected"), [(1 << 20, True), ((1 << 20) + 1, False)])
+    def test_a_file_is_read_only_up_to_one_mebibyte(self, tmp_path: Path, size: int, expected: bool) -> None:
+        """A description is a few kilobytes; a larger file of the same name is not loaded just to learn it is not one.
+
+        The pair pins the boundary: a description of exactly 1 MiB is still recognized, one byte more is not read.
+        """
+        path = tmp_path / "model.json"
+        path.write_bytes(_padded_description(size))
+
+        assert is_engine_description(path) is expected
+
+
+class TestIsRfdetrDescription:
+    """Only a file carrying the keys every description this exporter writes has may be replaced by a new one."""
+
+    def test_a_description_this_exporter_wrote_is_recognized(self, tmp_path: Path) -> None:
+        """What :func:`write_engine_metadata` writes passes the check, so a re-export replaces its own description."""
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+
+        assert is_rfdetr_description(write_engine_metadata(engine, _metadata())) is True
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param('{"schema_version": 1}', id="schema_version only"),
+            pytest.param('{"schema_version": 1, "rfdetr_version": "1.0.0"}', id="no engine"),
+            pytest.param('{"schema_version": 1, "engine": {}}', id="no rfdetr_version"),
+            pytest.param('[{"schema_version": 1, "rfdetr_version": "1.0.0", "engine": {}}]', id="not an object"),
+            pytest.param("[" * 200_000, id="nested too deeply"),
+        ],
+    )
+    def test_a_file_without_all_the_keys_is_not_ours(self, tmp_path: Path, content: str) -> None:
+        """A versioned JSON document of another tool carries ``schema_version`` too, so that key alone is not enough.
+
+        Each case misses one of ``schema_version``, ``rfdetr_version`` and ``engine``, or is not a JSON object at all.
+        """
+        path = tmp_path / "model.json"
+        path.write_text(content)
+
+        assert is_rfdetr_description(path) is False
+
+    def test_a_directory_is_not_ours(self, tmp_path: Path) -> None:
+        """A folder with the description's name is not something an export wrote."""
+        assert is_rfdetr_description(tmp_path) is False
+
+
 class TestWriteEngineMetadata:
     """The sidecar is written next to the engine, atomically, readable by whoever can read the engine."""
 
@@ -447,31 +571,79 @@ class TestWriteEngineMetadata:
 
         assert stat.S_IMODE(path.stat().st_mode) == 0o640
 
-    @pytest.mark.skipif(not hasattr(os, "chown"), reason="POSIX ownership")
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX ownership")
     def test_the_sidecar_takes_the_engines_group(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """A service that reads the engine through its group must be able to read the description the same way."""
         engine = tmp_path / "model.trt"
         engine.write_bytes(b"engine")
-        calls: list[tuple[str, int, int]] = []
-        monkeypatch.setattr(os, "chown", lambda path, uid, gid: calls.append((Path(path).parent.name, uid, gid)))
+        calls: list[tuple[int, int]] = []
+        monkeypatch.setattr(os, "fchown", lambda descriptor, uid, gid: calls.append((uid, gid)))
 
         write_engine_metadata(engine, _metadata())
 
-        assert calls == [(tmp_path.name, -1, engine.stat().st_gid)]
+        assert calls == [(-1, engine.stat().st_gid)]
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
-    @pytest.mark.parametrize("refused", ["copymode", "chown"])
+    def test_the_engines_mode_is_set_before_any_content_is_written(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The temporary file is created with the umask's mode, which can be wider than an owner-only engine's.
+
+        Its mode is changed while it is still empty, so the description is never on disk readable by more users than the
+        engine, not even for the moment between the write and the change.
+        """
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+        engine.chmod(0o600)
+        sizes: list[int] = []
+        real_fchmod = os.fchmod
+        monkeypatch.setattr(
+            os,
+            "fchmod",
+            lambda descriptor, mode: (sizes.append(os.fstat(descriptor).st_size), real_fchmod(descriptor, mode))[1],
+        )
+
+        path = write_engine_metadata(engine, _metadata())
+
+        assert sizes == [0]
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.parametrize("refused", ["fchmod", "fchown"])
     def test_a_filesystem_that_refuses_the_permission_change_still_gets_the_description(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refused: str
     ) -> None:
         """ExFAT, some SMB shares, or a group the user is not in; the description is worth more than its permissions."""
         engine = tmp_path / "model.trt"
         engine.write_bytes(b"engine")
-        monkeypatch.setattr(shutil if refused == "copymode" else os, refused, _raise_os_error)
+        monkeypatch.setattr(os, refused, _raise_os_error)
 
         path = write_engine_metadata(engine, _metadata())
 
         assert json.loads(path.read_text())["schema_version"] == 1
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_a_refused_permission_change_leaves_a_readable_mode_and_warns_with_it(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Without the engine's mode the file keeps the umask's mode, as ``open`` gives a new file, not owner-only.
+
+        A service reading the engine as another user may still be unable to read it, so the warning names the mode the
+        file was written with, which a debug-level message would hide.
+        """
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+        engine.chmod(0o640)
+        warnings: list[str] = []
+        monkeypatch.setattr(tensorrt_metadata.logger, "warning", lambda message, *args: warnings.append(message % args))
+        monkeypatch.setattr(os, "fchmod", _raise_os_error)
+
+        path = write_engine_metadata(engine, _metadata())
+
+        mode = 0o666 & ~_umask()
+        assert stat.S_IMODE(path.stat().st_mode) == mode
+        assert len(warnings) == 1
+        assert f"{mode:#o}" in warnings[0]
 
     def test_the_temporary_file_is_written_in_the_sidecars_directory(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -513,16 +685,16 @@ class TestWriteEngineMetadata:
         first, second = tmp_path / "a.trt", tmp_path / "b.trt"
         first.write_bytes(b"engine a")
         second.write_bytes(b"engine b")
-        real_copymode = shutil.copymode
+        real_replace = os.replace
         interleaved: list[bool] = []
 
-        def copymode_after_the_other_writer(source: object, destination: object, **kwargs: object) -> None:
+        def replace_after_the_other_writer(source: str, destination: str) -> None:
             if not interleaved:
                 interleaved.append(True)
                 write_engine_metadata(second, _metadata(precision="fp32"))
-            real_copymode(source, destination, **kwargs)
+            real_replace(source, destination)
 
-        monkeypatch.setattr(shutil, "copymode", copymode_after_the_other_writer)
+        monkeypatch.setattr(os, "replace", replace_after_the_other_writer)
 
         write_engine_metadata(first, _metadata(precision="fp16"))
 
@@ -925,6 +1097,75 @@ class TestExporterWritesMetadata:
 
         with pytest.raises(RuntimeError, match="build_engine"):
             exporter._write_metadata(_graph(), engine)
+
+    @pytest.mark.parametrize(
+        "place",
+        [
+            pytest.param(lambda path: path.write_text(_FOREIGN_JSON), id="a JSON file of the user's own"),
+            pytest.param(lambda path: path.write_text('{"schema_version": 2}'), id="another tool's versioned JSON"),
+            pytest.param(Path.mkdir, id="a directory"),
+        ],
+    )
+    def test_a_file_the_export_did_not_write_is_refused_before_the_build(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, place: object
+    ) -> None:
+        """``.json`` is a generic extension, so ``<engine>.json`` can be a label map or a manifest of the user's own.
+
+        The description would replace it without a word, so the export refuses, and does so before the build, which can
+        take minutes, rather than after it.
+        """
+        engines = _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        place(tmp_path / "m_fp32.json")
+
+        with pytest.raises(FileExistsError, match=r"m_fp32\.json.*(rename|remove).*output_name"):
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph())
+
+        assert engines == []
+
+    def test_a_refused_file_is_left_as_it_was(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The refusal touches nothing: the user's file keeps its content."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        foreign = tmp_path / "m_fp32.json"
+        foreign.write_text(_FOREIGN_JSON)
+
+        with pytest.raises(FileExistsError):
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph())
+
+        assert foreign.read_text() == _FOREIGN_JSON
+
+    def test_the_file_checked_is_the_one_a_custom_output_name_gives(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """With ``output_name`` the description is ``<output_name>.json``, so that is the file the check looks at."""
+        engines = _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        (tmp_path / "mine.json").write_text(_FOREIGN_JSON)
+
+        with pytest.raises(FileExistsError, match=r"mine\.json"):
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True, output_name="mine"))._convert(_graph())
+
+        assert engines == []
+
+    def test_a_description_an_earlier_export_wrote_is_replaced(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Re-exporting under the same name replaces the earlier description, as it always did."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        (tmp_path / "m_fp32.json").write_text(_EARLIER_DESCRIPTION)
+
+        engine = Path(TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph()))
+
+        assert json.loads(engine.with_suffix(".json").read_text())["batch"] == {"dynamic": False, "size": 1}
+
+    def test_a_file_of_the_users_own_is_not_checked_when_no_description_is_asked_for(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The default export writes no ``.json``, so a file of that name is no reason to refuse it."""
+        engines = _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        (tmp_path / "m_fp32.json").write_text(_FOREIGN_JSON)
+
+        TensorRTExporter(TensorRTConfig(fp16=False))._convert(_graph())
+
+        assert len(engines) == 1
 
     @pytest.mark.parametrize("value", ["yes", 1, None])
     def test_metadata_must_be_a_bool(self, value: object) -> None:
