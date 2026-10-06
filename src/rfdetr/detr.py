@@ -2356,7 +2356,8 @@ class RFDETR:
                 ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
                 Also raised for ``format="tensorrt"`` when ``trt_hardware_compatibility`` is neither ``None``,
                 ``"ampere_plus"`` nor ``"same_compute_capability"``, when ``trt_version_compatible`` is not a
-                ``bool``, or when the installed TensorRT has no hardware compatibility level of the requested name.
+                ``bool``, when the installed TensorRT has no hardware compatibility level of the requested name, or
+                when ``trt_hardware_compatibility="ampere_plus"`` is asked of a CUDA device older than Ampere.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those

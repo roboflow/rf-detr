@@ -15,6 +15,7 @@ and checks runtime parity — mirroring the CoreML and ExecuTorch export suites.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import re
 import sys
 import types
@@ -1424,6 +1425,18 @@ class TestPortableEngines:
 
         assert captured["config"] == {"fp16": False, "version_compatible": True}
 
+    def test_the_installed_polygraphy_create_config_accepts_the_portability_keywords(self) -> None:
+        """The real ``CreateConfig`` still takes the two keywords the exporter passes for portable engines.
+
+        The unit tests above record whatever keyword the exporter passes, so a Polygraphy release that renamed one would
+        go unnoticed there; this reads the installed signature instead.
+        """
+        create_config = pytest.importorskip("polygraphy.backend.trt").CreateConfig
+
+        parameters = inspect.signature(create_config).parameters
+
+        assert {"version_compatible", "hardware_compatibility_level"} <= parameters.keys()
+
     @pytest.mark.parametrize("dynamic_batch", [False, True])
     def test_both_settings_reach_the_builder_next_to_the_profile(
         self, monkeypatch: pytest.MonkeyPatch, dynamic_batch: bool
@@ -1460,6 +1473,59 @@ class TestPortableEngines:
             exporter.build_engine("model.onnx")
 
         assert captured == {"config": {}, "build": {}}
+
+    def test_ampere_plus_is_refused_on_a_pre_ampere_gpu(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A GPU older than Ampere cannot build ``ampere_plus``; the refusal names its compute capability.
+
+        TensorRT itself fails only inside the build, after the forward pass and the ONNX export; the check reads the
+        current CUDA device first, so a Turing card (7.5) is turned away before any of that.
+        """
+        monkeypatch.setitem(
+            sys.modules, "tensorrt", _tensorrt_with_hardware_levels("11.3.0.99", AMPERE_PLUS="ampere-plus-level")
+        )
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (7, 5))
+
+        with pytest.raises(ValueError, match=r"ampere_plus.*compute capability 7\.5"):
+            TensorRTExporter(TensorRTConfig(hardware_compatibility="ampere_plus")).check_environment()
+
+    @pytest.mark.parametrize(
+        ("level", "capability"),
+        [
+            pytest.param("ampere_plus", (8, 0), id="ampere_plus-on-ampere"),
+            pytest.param("ampere_plus", (12, 0), id="ampere_plus-on-blackwell"),
+            pytest.param("same_compute_capability", (7, 5), id="same_compute_capability-on-turing"),
+        ],
+    )
+    def test_the_gpu_check_passes_where_the_level_can_be_built(
+        self, monkeypatch: pytest.MonkeyPatch, level: str, capability: tuple[int, int]
+    ) -> None:
+        """Ampere and newer pass ``ampere_plus``, and ``same_compute_capability`` has no minimum GPU at all."""
+        monkeypatch.setitem(
+            sys.modules,
+            "tensorrt",
+            _tensorrt_with_hardware_levels(
+                "11.3.0.99", AMPERE_PLUS="ampere-plus-level", SAME_COMPUTE_CAPABILITY="same-cc-level"
+            ),
+        )
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: capability)
+
+        TensorRTExporter(TensorRTConfig(hardware_compatibility=level)).check_environment()
+
+    def test_ampere_plus_is_not_checked_against_a_gpu_on_a_host_without_cuda(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a visible CUDA device there is no capability to compare, so the request is let through."""
+        monkeypatch.setitem(
+            sys.modules, "tensorrt", _tensorrt_with_hardware_levels("11.3.0.99", AMPERE_PLUS="ampere-plus-level")
+        )
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.cuda, "get_device_capability", _cannot_load)
+
+        TensorRTExporter(TensorRTConfig(hardware_compatibility="ampere_plus")).check_environment()
 
     @pytest.mark.parametrize("level", [pytest.param("", id="empty"), "AMPERE_PLUS", "ampere", "none", 3, True])
     def test_an_unknown_hardware_level_is_refused(self, level: object) -> None:
@@ -1526,19 +1592,28 @@ class TestPortableEngines:
 
         assert lean_runtime == []
 
-    @pytest.mark.parametrize(("version", "warned"), [("10.16.1.11", True), ("11.3.0.99", False)])
-    def test_version_compatibility_warns_where_it_was_not_seen_to_work(
-        self, monkeypatch: pytest.MonkeyPatch, version: str, warned: bool
+    def test_version_compatibility_warns_before_the_forward_pass_where_it_was_not_seen_to_work(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """It was verified between TensorRT 11 releases only, and a TensorRT 10 build says so instead of implying it."""
-        _patch_polygraphy_chain_recording(monkeypatch)
-        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt(version, has_fp16_flag=True))
-        warnings: list[str] = []
-        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: warnings.append(message % args))
+        """A TensorRT 10 request is warned about from ``check_environment``, which runs before the model does.
 
-        TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).build_engine("model.onnx")
+        It was verified between TensorRT 11 releases only; warning from the build instead would reach the user only
+        after the forward pass and the ONNX export had already been paid for.
+        """
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=True))
 
-        assert len([message for message in warnings if "verified between TensorRT 11" in message]) == int(warned)
+        with pytest.warns(UserWarning, match=r"verified between TensorRT 11.*TensorRT 10\.16\.1\.11"):
+            TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).check_environment()
+
+    def test_version_compatibility_does_not_warn_on_tensorrt_11(
+        self, monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        """Between TensorRT 11 releases the mode was seen to work, so the request goes through without a warning."""
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("11.3.0.99", has_fp16_flag=True))
+
+        TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).check_environment()
+
+        assert [str(w.message) for w in recwarn if "verified between TensorRT 11" in str(w.message)] == []
 
     def test_the_lean_runtime_package_is_imported_before_the_library_is_probed(
         self, monkeypatch: pytest.MonkeyPatch, lean_runtime: list[str]
@@ -1558,7 +1633,9 @@ class TestPortableEngines:
         TensorRTExporter(TensorRTConfig(fp16=False, version_compatible=True)).build_engine("model.onnx")
 
         expected = tensorrt_export._lean_library_name(10, sys.platform)
-        assert events == ["import tensorrt_lean_libs", f"load {expected}"]
+        # Other imports may pass through the patched ``import_module``, so only the two relevant events are compared.
+        relevant = [event for event in events if event in ("import tensorrt_lean_libs", f"load {expected}")]
+        assert relevant == ["import tensorrt_lean_libs", f"load {expected}"]
 
     def test_a_missing_lean_runtime_is_refused_with_the_install_hint_and_builds_nothing(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2622,7 +2699,9 @@ class TestTensorRTEndToEnd:
     ) -> None:
         """A hardware-compatible engine is tagged with the requested level and computes what the default one does.
 
-        ``AMPERE_PLUS`` needs compute capability 8.0 or newer, so it always skips on a T4 (7.5).
+        ``AMPERE_PLUS`` needs compute capability 8.0 or newer, so it always skips on a T4 (7.5). That skip is the only
+        one the TensorRT CI job whitelists. Loading an engine on a different GPU or TensorRT release than built it is
+        not CI-verified: this test builds and loads on one device with one release.
         """
         import numpy as np
         import tensorrt as trt

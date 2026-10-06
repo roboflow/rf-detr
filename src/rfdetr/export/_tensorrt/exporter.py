@@ -31,11 +31,14 @@ import importlib
 import os
 import sys
 import tempfile
+import warnings
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Final, Literal, get_args
+
+import torch
 
 from rfdetr.export._naming import resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
@@ -50,6 +53,8 @@ logger = get_logger()
 HardwareCompatibility = Literal["ampere_plus", "same_compute_capability"]
 #: The same spellings as a tuple, so validation reads the annotation instead of keeping a second list.
 _HARDWARE_COMPATIBILITY_LEVELS: Final[tuple[str, ...]] = get_args(HardwareCompatibility)
+#: Lowest compute capability ``"ampere_plus"`` can be built on: NVIDIA Ampere is 8.x.
+_AMPERE_COMPUTE_CAPABILITY: Final[tuple[int, int]] = (8, 0)
 
 
 #: Whether ``tensorrt`` itself is installed, probed without loading its CUDA libraries (see
@@ -924,15 +929,21 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         """Refuse a portability request that the installed TensorRT cannot build, before the forward pass.
 
         ``RFDETR.export`` and ``Exporter.__call__`` call it after :meth:`check_dependencies`; :meth:`build_engine`, a
-        public entry point that bypasses both, calls it too.
+        public entry point that bypasses both, calls it too. A request that passes on a TensorRT older than 11 also
+        gets its ``version_compatible`` warning here, before the forward pass rather than after it.
 
         Raises:
             ImportError: If ``version_compatible`` is set and TensorRT's lean runtime library cannot be loaded.
-            ValueError: If ``hardware_compatibility`` names a level this TensorRT does not have.
+            ValueError: If ``hardware_compatibility`` names a level this TensorRT does not have, or is
+                ``"ampere_plus"`` while the current CUDA device is older than Ampere (compute capability below 8.0).
         """
         self._require_lean_runtime()
         if self.config.hardware_compatibility is not None:
             self._hardware_compatibility_level(self.config.hardware_compatibility)
+        if self.config.hardware_compatibility == "ampere_plus":
+            self._require_ampere_or_newer_gpu()
+        if self.config.version_compatible:
+            self._warn_if_version_compatibility_is_unverified()
 
     def _convert(self, graph: ExportGraph) -> str:
         """Export to ONNX, build the engine from it, and return the engine's path.
@@ -1239,24 +1250,50 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             options["hardware_compatibility_level"] = self._hardware_compatibility_level(level)
         if self.config.version_compatible:
             options["version_compatible"] = True
-            self._warn_if_version_compatibility_is_unverified()
         return options
 
     @staticmethod
     def _warn_if_version_compatibility_is_unverified() -> None:
         """Warn when the installed TensorRT is one on which version compatibility was not seen to work.
 
-        It was checked between TensorRT 11 releases. On TensorRT 10 the engine had the size of a default one and did not
-        load on another 10.x release, so the request is honoured but its effect is not something to rely on.
+        NVIDIA documents the direction as forward only: an engine built by an older release of a major version loads on
+        the same or a newer release of it. That was seen between TensorRT 11 releases. On TensorRT 10.16 the engine had
+        the size of a default one and loaded neither on 10.13 (the older, unsupported direction) nor on 11.3, so the
+        request is honoured but its effect is not something to rely on. Attributed to the line that calls this helper,
+        so the warning shows once even though :meth:`check_environment` runs up to three times per export.
         """
         import tensorrt as trt
 
         major = _tensorrt_major(trt.__version__)
         if major is not None and major < 11:
-            logger.warning(
-                f"trt_version_compatible has only been verified between TensorRT 11 releases. An engine built by "
-                f"TensorRT {trt.__version__} may not load on another release; test your pair of releases before you "
-                "rely on it."
+            warnings.warn(
+                f"trt_version_compatible has only been verified between TensorRT 11 releases. NVIDIA supports loading "
+                f"a version-compatible engine on the same or a newer release of the major version that built it; an "
+                f"engine built by TensorRT {trt.__version__} may not load even there, so test your pair of releases "
+                "before you rely on it.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    @staticmethod
+    def _require_ampere_or_newer_gpu() -> None:
+        """Refuse ``"ampere_plus"`` on a GPU older than Ampere, which TensorRT cannot build that level on.
+
+        TensorRT builds on the current CUDA device, so that is the one checked. A host without a visible CUDA device is
+        let through: there is nothing to compare, and the build reports the missing device itself.
+
+        Raises:
+            ValueError: If the current CUDA device has a compute capability below 8.0.
+        """
+        if not torch.cuda.is_available():
+            return
+        capability = tuple(torch.cuda.get_device_capability(torch.cuda.current_device()))
+        if capability < _AMPERE_COMPUTE_CAPABILITY:
+            raise ValueError(
+                "trt_hardware_compatibility='ampere_plus' must be built on an NVIDIA Ampere or newer GPU (compute "
+                f"capability 8.0 or higher), but the current CUDA device has compute capability "
+                f"{capability[0]}.{capability[1]}. Build on an Ampere or newer GPU, or pick "
+                "'same_compute_capability'."
             )
 
     @staticmethod
