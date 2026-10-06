@@ -13,6 +13,7 @@ from typing import Any, Callable, cast
 import torch
 from torch import Tensor, nn
 
+from rfdetr.utilities.compiler import cuda_autocast_dtype
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import NestedTensor
 
@@ -30,20 +31,6 @@ _ExecutionKey = tuple[
     bool,
     torch.dtype | None,
 ]
-
-
-def _cuda_autocast_enabled() -> bool:
-    """Return CUDA autocast state across supported PyTorch versions."""
-    try:
-        return torch.is_autocast_enabled("cuda")
-    except TypeError:  # PyTorch 2.2 accepts no device argument.
-        return torch.is_autocast_enabled()
-
-
-def _cuda_autocast_dtype() -> torch.dtype:
-    """Return CUDA autocast dtype across supported PyTorch versions."""
-    get_dtype = getattr(torch, "get_autocast_dtype", None)
-    return get_dtype("cuda") if get_dtype is not None else torch.get_autocast_gpu_dtype()
 
 
 class _GraphableForward(nn.Module):
@@ -112,7 +99,7 @@ class CudaGraphTrainingRunner:
         if not self.inner.training or mask is None:
             return cast(dict[str, Any], self.inner(samples, targets))
 
-        autocast_enabled = _cuda_autocast_enabled()
+        autocast_dtype = cuda_autocast_dtype()
         key: _ExecutionKey = (
             tuple(tensors.shape),
             tuple(mask.shape),
@@ -121,8 +108,8 @@ class CudaGraphTrainingRunner:
             tensors.device,
             tensors.requires_grad,
             mask.requires_grad,
-            autocast_enabled,
-            _cuda_autocast_dtype() if autocast_enabled else None,
+            autocast_dtype is not None,
+            autocast_dtype,
         )
         graphed = self._graphed_cache.get(key)
         if graphed is None:
@@ -160,7 +147,7 @@ class CudaGraphTrainingRunner:
         """Capture one signature without modifying live accumulated gradients."""
         graphable = _GraphableForward(self.inner)
         autocast_cache_enabled = torch.is_autocast_cache_enabled()
-        disable_autocast_cache = _cuda_autocast_enabled() and autocast_cache_enabled
+        disable_autocast_cache = cuda_autocast_dtype() is not None and autocast_cache_enabled
         try:
             if disable_autocast_cache:
                 # make_graphed_callables rejects autocast's weight cache because its
