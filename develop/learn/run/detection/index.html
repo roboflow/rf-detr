@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-05T22:28:32">
+  <meta property="article:modified_time" content="2026-10-06T14:04:05">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-05T22:28:32",
+    "dateModified": "2026-10-06T14:04:05",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2878,9 +2878,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
 
 <h1 id="run-an-rf-detr-object-detection-model">Run an RF-DETR Object Detection Model<a class="headerlink" href="#run-an-rf-detr-object-detection-model" title="Permanent link">&para;</a></h1>
-<p>RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.</p>
+<p>RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone (a PE-Core-T backbone for Atto, Femto and Pico). The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.</p>
 <h2 id="pre-trained-checkpoints">Pre-trained Checkpoints<a class="headerlink" href="#pre-trained-checkpoints" title="Permanent link">&para;</a></h2>
-<p>RF-DETR offers model sizes from Nano to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0. XLarge and 2XLarge (marked with △) are provided by the <a href="https://github.com/roboflow/rf-detr-plus"><code>rfdetr_plus</code></a> extension (<code>pip install rfdetr[plus]</code>) under the Platform Model License 1.0 and require a Roboflow account.</p>
+<p>RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between accuracy, latency, and parameter count. All latency numbers were measured on an NVIDIA T4 using TensorRT, FP16, and batch size 1. Core models (Nano to Large) are licensed under Apache 2.0. Atto, Femto, Pico, XLarge and 2XLarge (marked with △) are provided by the <a href="https://github.com/roboflow/rf-detr-plus"><code>rfdetr_plus</code></a> extension (<code>pip install rfdetr[plus]</code>) under the Platform Model License 1.0 and require a Roboflow account.</p>
 <table>
 <thead>
 <tr>
@@ -2896,6 +2896,39 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </thead>
 <tbody>
+<tr>
+<td style="text-align: center;">A</td>
+<td style="text-align: center;"><code>RFDETRAtto</code> △</td>
+<td style="text-align: left;"><code>rfdetr-atto</code></td>
+<td style="text-align: center;">49.4</td>
+<td style="text-align: center;">30.5</td>
+<td style="text-align: center;">1.0</td>
+<td style="text-align: center;">7.4</td>
+<td style="text-align: center;">380x380</td>
+<td style="text-align: center;">PML 1.0</td>
+</tr>
+<tr>
+<td style="text-align: center;">F</td>
+<td style="text-align: center;"><code>RFDETRFemto</code> △</td>
+<td style="text-align: left;"><code>rfdetr-femto</code></td>
+<td style="text-align: center;">55.9</td>
+<td style="text-align: center;">37.8</td>
+<td style="text-align: center;">1.4</td>
+<td style="text-align: center;">7.9</td>
+<td style="text-align: center;">384x384</td>
+<td style="text-align: center;">PML 1.0</td>
+</tr>
+<tr>
+<td style="text-align: center;">P</td>
+<td style="text-align: center;"><code>RFDETRPico</code> △</td>
+<td style="text-align: left;"><code>rfdetr-pico</code></td>
+<td style="text-align: center;">60.2</td>
+<td style="text-align: center;">41.6</td>
+<td style="text-align: center;">1.7</td>
+<td style="text-align: center;">8.4</td>
+<td style="text-align: center;">560x560</td>
+<td style="text-align: center;">PML 1.0</td>
+</tr>
 <tr>
 <td style="text-align: center;">N</td>
 <td style="text-align: center;"><code>RFDETRNano</code></td>
@@ -3145,7 +3178,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 5, 2026 22:28:32 UTC">2026-10-05 22:28:32</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 14:04:05 UTC">2026-10-06 14:04:05</span>
   </span>
 
     

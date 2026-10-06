@@ -2773,10 +2773,27 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="breaking-changes">Breaking Changes<a class="headerlink" href="#breaking-changes" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Removed <code>rfdetr.datasets.yolo.REQUIRED_DATA_SUBDIRS</code>. <code>is_valid_yolo_dataset</code> resolves split directories through the YAML-aware resolver, which derives the labels directory from the resolved images path, so the constant no longer described how any code finds a split's subdirectories. Nothing inside the package read it; an external importer should inline <code>["images", "labels"]</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1570">#1570</a>)</li>
+<li>
+<p><code>format="coreml"</code> with <code>coreml_precision="float16"</code> now returns float32 output arrays; the <code>.mlpackage</code> returned float16 outputs before, because it was converted as an iOS 16 program and is now converted as iOS 15. A consumer that reads the outputs as float16 (a typed buffer, a <code>dtype</code> check) must read float32. <code>coreml_precision="float32"</code> bundles are unchanged. (<a href="https://github.com/roboflow/rf-detr/issues/1024">#1024</a>)</p>
+</li>
+<li>
+<p>Removed <code>rfdetr.datasets.yolo.REQUIRED_DATA_SUBDIRS</code>. <code>is_valid_yolo_dataset</code> resolves split directories through the YAML-aware resolver, which derives the labels directory from the resolved images path, so the constant no longer described how any code finds a split's subdirectories. Nothing inside the package read it; an external importer should inline <code>["images", "labels"]</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1570">#1570</a>)</p>
+</li>
 </ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><code>rfdetr.RFDETRAtto</code>, <code>rfdetr.RFDETRFemto</code> and <code>rfdetr.RFDETRPico</code>: real-time detection models with a PE-Core-T backbone, provided by <code>rfdetr_plus</code> like the XLarge models (<code>pip install "rfdetr[plus]"</code>, Platform Model License 1.0). <code>RFDETR.from_checkpoint()</code> resolves their checkpoints; an outdated <code>rfdetr_plus</code> raises an upgrade hint, and a broken <code>rfdetr_plus</code> install no longer blocks loading core checkpoints.</p>
+</li>
+<li>
+<p><code>rfdetr.models.backbone.register_backbone(encoder, backbone_cls)</code>: an extension package can provide a non-DINOv2 encoder for a <code>ModelConfig.encoder</code> name by subclassing <code>Backbone</code> and overriding <code>_build_encoder</code>. A registered encoder that defines <code>set_export_shape(shape)</code> gets its position embeddings frozen for export, like DINOv2.</p>
+</li>
+<li>
+<p><code>ModelConfig.dim_feedforward</code> (default <code>2048</code>) sets the decoder feed-forward width.</p>
+</li>
+<li>
+<p><code>RFDETRModelModule(..., load_encoder_weights=False)</code> skips fetching the encoder's upstream pretrained weights when every weight is replaced right after construction; the default <code>True</code> keeps the previous behaviour. <code>RFDETR.evaluate()</code> passes it.</p>
+</li>
 <li>
 <p>Public <code>rfdetr.export.inference</code> exposes <code>TRTInference</code>, <code>load_executorch_method</code>, <code>preprocess_to_nchw</code>, <code>decode_detections</code> and <code>DecodedDetections</code> next to <code>OpenVINOInference</code>; each resolves lazily, so importing the module does not require an optional runtime. (<a href="https://github.com/roboflow/rf-detr/pull/1585">#1585</a>)</p>
 </li>
@@ -2795,6 +2812,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p>The <code>rfdetr[plus]</code> extra now requires <code>rfdetr_plus&gt;=1.1.0</code> (was <code>&gt;=1.0.1</code>). An older <code>rfdetr_plus</code> that is already installed still works for the XLarge models, because the PE models are imported in their own block.</p>
+</li>
+<li>
+<p><code>build_backbone</code> now forwards <code>ModelDefaults.force_no_pretrain</code> to the encoder builder. A caller that already passed <code>defaults=ModelDefaults(force_no_pretrain=True)</code> used to get DINOv2's upstream encoder weights anyway and now gets randomly initialised encoder weights, with <code>pretrain_weights</code> handled separately as before. The default <code>False</code> leaves every other caller unchanged.</p>
+</li>
 <li>
 <p><code>quantization</code> for <code>format="onnx"</code> and <code>format="openvino"</code> is now checked: a value other than <code>None</code>, <code>"fp32"</code> or <code>"int8"</code> raises <code>ValueError</code> instead of being ignored, and <code>quantization="int8"</code> without <code>calibration_data</code> raises instead of silently exporting FP32. ONNX <code>quantization="int8"</code> returns <code>{stem}_int8.onnx</code>, written beside the FP32 <code>{stem}.onnx</code>, rather than the FP32 path. OpenVINO <code>quantization="int8"</code> writes <code>{stem}_int8.xml</code>/<code>.bin</code> so it no longer overwrites the FP32 IR; an explicit <code>output_name</code> is still used verbatim.</p>
 </li>
@@ -2846,6 +2869,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><code>format="coreml"</code> with <code>coreml_precision="float16"</code> no longer loses about 3 box AP on the Apple Neural Engine. The bundle was converted for iOS 16, whose program runs the deformable-attention <code>resample</code> on the Neural Engine in fp16; it is now converted for iOS 15, where that op stays on the CPU, which also matches what the ExecuTorch CoreML delegate lowers. Measured on an Apple M3 Pro (macOS 27.0.1, pretrained models, all 5000 COCO val2017 images) under <code>CPU_AND_NE</code>: <code>RFDETRNano</code> 45.06 → 48.04 AP (eager 48.03) and <code>RFDETRSmall</code> 50.70 → 52.76 AP (eager 52.80); <code>CPU_AND_GPU</code> was already unaffected, and fp32 scores 48.03 on <code>RFDETRNano</code> either way. The cost is single-image latency on the Neural Engine, <code>RFDETRNano</code> fp16 under <code>CPU_AND_NE</code> (p50, batch 1): 10.8 → 12.7 ms back to back and 18.3 → 24.9 ms with 200 ms between passes; <code>RFDETRSegNano</code> 18.1 → 20.3 ms and 30.4 → 38.8 ms (the pairs were measured in the same session). Bundles now declare iOS 15 / macOS 12 as the minimum OS, down from iOS 16 / macOS 13; the output dtype change this brings is listed under Breaking Changes. (<a href="https://github.com/roboflow/rf-detr/issues/1024">#1024</a>)</p>
+</li>
+<li>
+<p><code>RFDETR.evaluate()</code> no longer downloads DINOv2 pretrained weights when it rebuilds <code>RFDETRBase</code> or the deprecated <code>Large</code>, nor a registered encoder's upstream weights, so offline evaluation of those models works.</p>
+</li>
 <li>
 <p>Class names in the per-class metrics table printed after validation and test are no longer interpreted as Rich markup or emoji codes. Each name was passed to Rich as a plain string, which Rich parses as console markup and emoji codes, so <code>helmet[red]</code> printed as <code>helmet</code>, <code>car [parked]</code> as <code>car</code>, <code>price:dollar:</code> with an emoji in place of <code>:dollar:</code>, and a name containing a stray closing tag such as <code>sign[/]</code> raised <code>rich.errors.MarkupError</code> out of <code>COCOEvalCallback</code>, ending training at the first evaluated validation epoch. A non-string class name, such as <code>null</code> in an annotation file, is printed as text instead of raising. (<a href="https://github.com/roboflow/rf-detr/pull/1598">#1598</a>)</p>
 </li>

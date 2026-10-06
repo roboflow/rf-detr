@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-23T19:52:14">
+  <meta property="article:modified_time" content="2026-10-06T14:26:55">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-23T19:52:14",
+    "dateModified": "2026-10-06T14:26:55",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2928,7 +2928,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <div class="admonition note">
 <p class="admonition-title">Not the same as the ExecuTorch CoreML backend</p>
-<p><code>format="coreml"</code> exports directly via <code>torch.export</code> + <code>coremltools</code> to a native <code>.mlpackage</code> (mlprogram, iOS 16+) — no ONNX and no ExecuTorch runtime involved. This is distinct from <a href="../executorch/#coreml-backend-apple-neural-engine-fp16"><code>format="executorch", backend="coreml"</code></a>, which produces a <code>.pte</code> file for the ExecuTorch runtime. Passing both <code>format="coreml"</code> and <code>backend="coreml"</code> together does not fall through to the ExecuTorch delegate — <code>backend</code> is ignored (with a warning) and the native <code>.mlpackage</code> path always runs.</p>
+<p><code>format="coreml"</code> exports directly via <code>torch.export</code> + <code>coremltools</code> to a native <code>.mlpackage</code> (mlprogram, iOS 15 / macOS 12 or later; an fp16 bundle returns float32 outputs) — no ONNX and no ExecuTorch runtime involved. This is distinct from <a href="../executorch/#coreml-backend-apple-neural-engine-fp16"><code>format="executorch", backend="coreml"</code></a>, which produces a <code>.pte</code> file for the ExecuTorch runtime. Passing both <code>format="coreml"</code> and <code>backend="coreml"</code> together does not fall through to the ExecuTorch delegate — <code>backend</code> is ignored (with a warning) and the native <code>.mlpackage</code> path always runs.</p>
 </div>
 <p>RF-DETR's native CoreML export produces a <code>.mlpackage</code> you can drag directly into Xcode, with no ONNX intermediary and no ExecuTorch runtime dependency — the lowest-friction path for Apple-native (iOS / macOS) developers.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
@@ -3019,7 +3019,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 </div>
 <p><strong>Precision decides whether the ANE is reachable at all.</strong> The ANE has no fp32 path, so an fp32 bundle never touches it — <code>CPU_AND_NE</code> then measures the same as <code>CPU_ONLY</code>. Only <code>coreml_precision="float16"</code> puts the model on the ANE.</p>
-<p>Single-image latency, pretrained <code>RFDETRNano</code> at 384x384, Apple M3 Pro (macOS 27.0, coremltools 9.0), batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:</p>
+<p>Single-image latency, pretrained <code>RFDETRNano</code> at 384x384, Apple M3 Pro (macOS 27.0.1, coremltools 9.0), batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:</p>
 <table>
 <thead>
 <tr>
@@ -3033,23 +3033,23 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td>fp32</td>
-<td>73.6</td>
-<td>73.6</td>
-<td><strong>34.0</strong></td>
-<td>33.7</td>
+<td>75.1</td>
+<td>76.3</td>
+<td><strong>26.1</strong></td>
+<td>27.0</td>
 </tr>
 <tr>
 <td>fp16</td>
-<td>44.5</td>
-<td><strong>20.8</strong></td>
-<td>33.9</td>
-<td>21.2</td>
+<td>50.7</td>
+<td>24.9</td>
+<td>25.5</td>
+<td><strong>22.7</strong></td>
 </tr>
 </tbody>
 </table>
-<p>So: <strong>fp32 belongs on the GPU, fp16 on the ANE.</strong> Loading an fp16 bundle with <code>CPU_AND_NE</code> is about 2.1x faster than CPU and about 1.6x faster than the GPU on this machine.</p>
+<p>On this M3 Pro, with this one model: <strong>fp32 belongs on the GPU, fp16 on the ANE or <code>ALL</code>.</strong> The ranking depends on the chip and the model, so measure on your target device. Loading an fp16 bundle with <code>CPU_AND_NE</code> is about 2.0x faster than CPU and about as fast as the GPU here (back to back, with no sleep between passes: 12.7 ms on the ANE, 12.1 ms on the GPU). Single-image latency is therefore no longer a reason to prefer the ANE over the GPU.</p>
 <p>The ANE pays for that at load: compiling an fp16 RFDETRNano for it takes about 5 s on first load, against about 0.5 s for the GPU or CPU path (subsequent loads of the same bundle are cached by the system). For a process that runs a handful of images and exits, the GPU is the better trade.</p>
-<p><strong>fp16 costs accuracy.</strong> On COCO val2017 (all 5000 images, pretrained <code>RFDETRNano</code>, same decoding for both):</p>
+<p><strong>fp16 keeps the accuracy.</strong> On COCO val2017 (all 5000 images, pretrained <code>RFDETRNano</code>, same decoding for all rows, Apple M3 Pro):</p>
 <table>
 <thead>
 <tr>
@@ -3060,19 +3060,29 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </thead>
 <tbody>
 <tr>
-<td>fp32</td>
+<td>eager PyTorch fp32</td>
 <td>48.0</td>
 <td>67.1</td>
 </tr>
 <tr>
-<td>fp16</td>
-<td>45.1</td>
-<td>65.8</td>
+<td>Core ML fp32, <code>ALL</code></td>
+<td>48.0</td>
+<td>67.1</td>
+</tr>
+<tr>
+<td>Core ML fp16, <code>CPU_AND_NE</code></td>
+<td>48.0</td>
+<td>67.1</td>
+</tr>
+<tr>
+<td>Core ML fp16, <code>CPU_AND_GPU</code></td>
+<td>48.0</td>
+<td>67.1</td>
 </tr>
 </tbody>
 </table>
-<p>Confident detections survive fp16 — the same objects with the same classes — but the rest of the ranking shifts enough to move mAP by about 3 points. Validate an fp16 bundle on your own data before shipping it.</p>
-<p><strong>The fallback boundary, at fp16.</strong> An fp16 RF-DETR graph is almost entirely ANE-eligible. The exceptions are the two-stage query selection — <code>topk</code>, and the <code>expand_dims</code>/<code>tile</code>/<code>gather_along_axis</code> that consume its indices — which Core ML runs on the CPU. Measured with <code>MLComputePlan</code> under <code>CPU_AND_NE</code>:</p>
+<p>The fp16 bundle is an iOS 15 program on purpose. An iOS 16 program runs <code>resample</code> on the Neural Engine in fp16, and that moved mAP down by about 3 points (45.1) while the same bundle was fine on the GPU or CPU; as an iOS 15 program that op stays off the ANE. Validate an fp16 bundle on your own data before shipping it.</p>
+<p><strong>The fallback boundary, at fp16.</strong> An fp16 RF-DETR graph is almost entirely ANE-eligible. The exceptions are the two-stage query selection — <code>topk</code>, and the <code>expand_dims</code>/<code>tile</code>/<code>gather_along_axis</code> that consume its indices — plus the deformable-attention sampling (<code>resample</code>) with the <code>cast</code> ops beside it, which Core ML runs on the CPU. Measured with <code>MLComputePlan</code> under <code>CPU_AND_NE</code>:</p>
 <table>
 <thead>
 <tr>
@@ -3085,33 +3095,33 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tbody>
 <tr>
 <td><code>RFDETRNano</code></td>
-<td>592</td>
-<td>7</td>
-<td>99.9%</td>
+<td>591</td>
+<td>11</td>
+<td>99.7%</td>
 </tr>
 <tr>
 <td><code>RFDETRSmall</code></td>
-<td>650</td>
-<td>8</td>
-<td>99.9%</td>
+<td>648</td>
+<td>13</td>
+<td>99.7%</td>
 </tr>
 <tr>
 <td><code>RFDETRMedium</code></td>
-<td>708</td>
-<td>8</td>
-<td>99.9%</td>
+<td>705</td>
+<td>15</td>
+<td>99.7%</td>
 </tr>
 <tr>
 <td><code>RFDETRSegNano</code></td>
-<td>729</td>
-<td>8</td>
+<td>725</td>
+<td>15</td>
 <td>99.9%</td>
 </tr>
 </tbody>
 </table>
-<p>Those seven or eight ops are the whole boundary, and they cost about 0.1% of the model's estimated work.</p>
-<p>At fp32 there is no boundary to speak of, because there is no ANE: the plan reports <em>every</em> op as ANE-unsupported, and the same RFDETRNano bundle runs all 599 ops on the GPU under <code>ALL</code> and all 599 on the CPU under <code>CPU_AND_NE</code>.</p>
-<p><strong><code>ALL</code> is not always the fastest choice.</strong> With <code>ALL</code>, Core ML is free to put part of the graph on the GPU, and for <code>RFDETRSegNano</code> it does: the plan splits 79% ANE / 21% GPU, and the transfers between them cost real time — 34.5 ms under <code>ALL</code> against 23.5 ms under <code>CPU_AND_NE</code> (p50, same methodology as the table above). Detection models are unaffected; their plan is the same under both. Measure both on your target device rather than assuming the default is best.</p>
+<p>Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work.</p>
+<p>At fp32 there is no boundary to speak of, because there is no ANE: the plan reports <em>every</em> op as ANE-unsupported, and the same RFDETRNano bundle runs all 597 ops on the GPU under <code>ALL</code> and all 597 on the CPU under <code>CPU_AND_NE</code>.</p>
+<p><strong><code>ALL</code> is not always the fastest choice.</strong> With <code>ALL</code>, Core ML is free to put part of the graph on the GPU, and for <code>RFDETRSegNano</code> it does: the plan splits 79% ANE / 21% GPU (measured on the earlier iOS 16 bundle; not re-measured for the iOS 15 bundle), and the transfers between them cost real time — 44.2 ms under <code>ALL</code> against 38.8 ms under <code>CPU_AND_NE</code> (p50, same methodology as the table above). Whether detection models show the same gap was not measured here. Measure both on your target device rather than assuming the default is best.</p>
 <p>The <a href="../executorch/#coreml-backend-apple-neural-engine-fp16">ExecuTorch CoreML delegate</a> lowers RF-DETR to a single Core ML model inside the <code>.pte</code>, and that model does reach the Neural Engine. Its internal split is not measurable with <code>MLComputePlan</code>, which needs an <code>.mlpackage</code>, so the table above is not a statement about the <code>.pte</code>.</p>
 
 
@@ -3133,7 +3143,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 23, 2026 19:52:14 UTC">2026-09-23 19:52:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 14:26:55 UTC">2026-10-06 14:26:55</span>
   </span>
 
     

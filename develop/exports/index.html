@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T10:07:21">
+  <meta property="article:modified_time" content="2026-10-06T14:26:55">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T10:07:21",
+    "dateModified": "2026-10-06T14:26:55",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2987,7 +2987,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <ul>
 <li><strong>GPU — large win.</strong> On an L4, TensorRT's auto-selected precision is 1.94× faster than the same engine forced to fp32 (3.41 vs 6.62 ms end-to-end, batch 1), and PyTorch <code>inference(dtype=torch.float16)</code> cuts the eager fp32 baseline from 19.88 to 11.37 ms.</li>
 <li><strong>CPU — no measured win.</strong> A CPU without native fp16 kernels upconverts and computes in fp32, so fp16 storage (an fp16 OpenVINO IR or <code>.tflite</code>) saves disk and bandwidth, not arithmetic. The cookbooks' CPU fp16 and INT8 timings are pending a rerun: the OpenVINO rows ran at OpenVINO's own default execution precision, which is half precision on CPUs with native bf16 or f16 support (the Colab host's CPU flags were not recorded), and the TFLite rows ran through <code>tf.lite.Interpreter</code> at its default thread count (the same fp32 <code>.tflite</code> runs in 119 ms on one thread and 59 ms on eight through <code>ai_edge_litert</code> on the M4 Max, against 785 ms in the cookbook).</li>
-<li><strong>Apple — runtime-dependent.</strong> On the M4 Max, Core AI fp16 beat its fp32 default (13.53 vs 14.62 ms), while CoreML fp16 came out <em>slower</em> than its fp32 default (19.86 vs 11.57 ms). The direction of both results reproduced across runs. Measure per runtime, not per platform.</li>
+<li><strong>Apple — runtime-dependent.</strong> On the M4 Max, Core AI fp16 beat its fp32 default (13.53 vs 14.62 ms), while CoreML fp16 came out <em>slower</em> than its fp32 default (19.86 vs 11.57 ms). The direction of both results reproduced across runs. The CoreML fp16 figures were measured with iOS 16 bundles, before the fp16 export was switched to iOS 15 (see the changelog); they are not re-measured and the comparison may differ for current bundles. Measure per runtime, not per platform.</li>
 </ul>
 </div>
 <h2 id="per-format-guides">Per-Format Guides<a class="headerlink" href="#per-format-guides" title="Permanent link">&para;</a></h2>
@@ -3023,7 +3023,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 10:07:21 UTC">2026-10-06 10:07:21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 14:26:55 UTC">2026-10-06 14:26:55</span>
   </span>
 
     
