@@ -4,7 +4,7 @@ description: Run RF-DETR object detection on images, video, and streams. Nano to
 
 # Run an RF-DETR Object Detection Model
 
-RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone. The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.
+RF-DETR is a real-time transformer architecture for object detection, built on a DINOv2 vision transformer backbone (a PE-Core-T backbone for Atto, Femto and Pico). The base models are trained on the Microsoft COCO dataset and achieve state-of-the-art accuracy and latency trade-offs.
 
 ## Pre-trained Checkpoints
 
