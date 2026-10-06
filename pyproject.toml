@@ -159,12 +159,15 @@ tflite = [
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
 ]
 executorch = [
-    # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1.
-    # executorch publishes cp310-cp313 wheels only (1.3.1 is current) and has no sdist, so a
+    # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1. Capped below 1.4: 1.4.x needs
+    # torch>=2.13; 1.5.x dropped the torch requirement entirely but fails every `Method.execute` with
+    # "tensor does not have a device" (see the ci-executorch-pin group below, and
+    # https://rfdetr.roboflow.com/latest/cookbooks/export-mobile/ Section 9).
+    # executorch publishes cp310-cp313 wheels only and has no sdist, so a
     # 3.14 install fails on wheel availability rather than resolution. The marker keeps the
     # extra installable-but-empty on 3.14, matching how [tflite] is gated to 3.12. Drop the
     # `python_version < '3.14'` marker once executorch ships cp314 wheels.
-    "executorch>=1.3,<2.0; python_version < '3.14'",
+    "executorch>=1.3,<1.4; python_version < '3.14'",
 ]
 coreai = [
     # Apple Core AI (.aimodel) export. coreai-torch requires Python >= 3.11 and coreai-core ships cp311-cp314
@@ -206,10 +209,11 @@ loggers = [
 visual = [
     "matplotlib",
     "pandas",
+    "psutil",  # host-memory reader behind rfdetr.export.benchmark.measure_memory() on every non-CUDA device
     "seaborn",
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
-plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+plus = ["rfdetr_plus>=1.1.0, <2.0.0"]
 # XLA backend for TPU training AND hardware-free XLA validation on CPU/GPU PJRT.
 # torch_xla is built on top of torch (NOT mutually exclusive — it requires torch present) and its
 # _XLAC extension is ABI-locked to ONE torch minor (a mismatch surfaces as an `undefined symbol`
@@ -266,6 +270,10 @@ tests = [
   # instead of silently skipping.
   "onnx>=1.16.0,<2.0",
   "onnxconverter-common",
+  # tests/export/test_onnx_quantize.py runs quantize_int8 end to end on a synthetic graph, which needs the runtime
+  # that collects the activation ranges. Same 3.10 split as the [onnx] extra: 1.24+ ships no cp310 wheels.
+  "onnxruntime<1.24; python_version < '3.11'",
+  "onnxruntime; python_version >= '3.11'",
   "tomli>=2.0; python_version < '3.11'",
   # Generates the synthetic COCO fixtures in tests/conftest.py (replaced rfdetr.datasets.synthetic).
   # Pinned exactly: the project is pre-1.0 and only publishes dev releases, so a range would drift.
@@ -542,6 +550,7 @@ overrides = [
     "coreai", "coreai.*",
     "coreai_torch", "coreai_torch.*",
     "openvino", "openvino.*",
+    "nncf", "nncf.*",
     "litert_torch", "litert_torch.*",
     "ai_edge_litert", "ai_edge_litert.*",
     "roboflow", "roboflow.*",

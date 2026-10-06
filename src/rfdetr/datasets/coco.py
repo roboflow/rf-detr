@@ -836,6 +836,8 @@ class ConvertCoco:
                     keypoint_tensors.append(torch.zeros((num_keypoints, 3), dtype=torch.float32))
                     continue
 
+                # Taken as-is, with no +0.5 shift: keypoints are treated as continuous image coordinates, the same
+                # convention as boxes, and the horizontal flip mirrors them as ``width - x``.
                 keypoint_tensor = torch.as_tensor(raw_keypoints, dtype=torch.float32).reshape(-1, 3)
                 if keypoint_tensor.shape[0] < num_keypoints:
                     padded = torch.zeros((num_keypoints, 3), dtype=torch.float32)
