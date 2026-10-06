@@ -122,6 +122,8 @@ class _FakeRuntime:
 
     def __init__(self) -> None:
         self.engine: _FakeEngine | None = None
+        #: TensorRT's own default: an engine that carries host code is refused unless the caller opts in.
+        self.engine_host_code_allowed = False
         self.deserialize_cuda_engine = Mock(side_effect=lambda payload: self.engine)
 
     def __enter__(self) -> "_FakeRuntime":
@@ -129,6 +131,26 @@ class _FakeRuntime:
 
     def __exit__(self, *exc_info: object) -> bool:
         return False
+
+
+class _NoSwitchRuntime(_FakeRuntime):
+    """``tensorrt.Runtime`` from a release that predates ``engine_host_code_allowed``: setting it to ``True`` fails.
+
+    Real ``pybind11`` classes raise ``AttributeError`` for an attribute they do not define; the initial ``False`` is
+    what :class:`_FakeRuntime` assigns to model TensorRT's default, so only ``True`` raises.
+
+    Examples:
+        >>> runtime = _NoSwitchRuntime()
+        >>> runtime.engine_host_code_allowed = True
+        Traceback (most recent call last):
+        ...
+        AttributeError: 'Runtime' object has no attribute 'engine_host_code_allowed'
+    """
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "engine_host_code_allowed" and value is True:
+            raise AttributeError("'Runtime' object has no attribute 'engine_host_code_allowed'")
+        super().__setattr__(name, value)
 
 
 class _FakeTensorRTModule(ModuleType):
@@ -801,6 +823,110 @@ class TestTRTInferenceEngineLoading:
         with pytest.raises(RuntimeError, match=re.escape(str(engine_file)) + ".*Rebuild"):
             TRTInference(str(engine_file), device="cuda:0", sync_mode=True)
 
+    @pytest.mark.parametrize(
+        ("keywords", "allowed"),
+        [
+            pytest.param({}, False, id="not-given"),
+            pytest.param({"engine_host_code_allowed": False}, False, id="false"),
+            pytest.param({"engine_host_code_allowed": True}, True, id="true"),
+        ],
+    )
+    def test_host_code_is_allowed_only_when_asked_for(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, keywords: dict[str, bool], allowed: bool
+    ) -> None:
+        """An engine that carries host code (a version-compatible one) loads only on request, and the runtime is told
+        before it deserializes, not after.
+
+        TensorRT refuses such an engine by default because running host code from an engine file is only safe for a file
+        the caller trusts, so ``TRTInference`` never turns the switch on by itself.
+        """
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+        engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
+        fake_tensorrt.runtime.engine = engine
+        seen: dict[str, bool] = {}
+
+        def deserialize(payload: bytes) -> _FakeEngine:
+            seen["allowed_while_deserializing"] = fake_tensorrt.runtime.engine_host_code_allowed
+            return engine
+
+        fake_tensorrt.runtime.deserialize_cuda_engine.side_effect = deserialize
+
+        TRTInference(str(engine_file), device="cuda:0", sync_mode=True, **keywords)
+
+        assert seen == {"allowed_while_deserializing": allowed}
+
+    @pytest.mark.parametrize("value", ["false", 1, None])
+    def test_only_a_bool_can_allow_host_code(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, value: object
+    ) -> None:
+        """A truthy string such as ``"false"`` from a config file must not switch a security setting on."""
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+
+        with pytest.raises(ValueError, match="engine_host_code_allowed"):
+            TRTInference(str(engine_file), device="cuda:0", sync_mode=True, engine_host_code_allowed=value)
+
+    def test_a_failure_with_host_code_allowed_does_not_suggest_allowing_it(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """The caller already opted in, so the message points at the other reasons an engine does not load."""
+        engine_file = tmp_path / "foreign.trt"
+        engine_file.write_bytes(b"not an engine for this machine")
+        fake_tensorrt.runtime.engine = None
+
+        with pytest.raises(RuntimeError) as refusal:
+            TRTInference(str(engine_file), device="cuda:0", sync_mode=True, engine_host_code_allowed=True)
+
+        message = str(refusal.value)
+        assert "could not deserialize" in message
+        assert "engine_host_code_allowed" not in message
+
+    def test_a_tensorrt_without_the_host_code_switch_still_loads_the_engine(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """A release that predates the switch has no gate to open, so the opt-in must not become an AttributeError."""
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+        runtime = _NoSwitchRuntime()
+        runtime.engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
+        fake_tensorrt.Runtime.return_value = runtime
+
+        loaded = TRTInference(str(engine_file), device="cuda:0", sync_mode=True, engine_host_code_allowed=True)
+
+        assert loaded.engine is runtime.engine
+
+    def test_a_tensorrt_without_the_host_code_switch_says_the_opt_in_had_no_effect(
+        self, monkeypatch: pytest.MonkeyPatch, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
+    ) -> None:
+        """If the property is ever renamed, the caller who passed ``True`` must be told it did nothing."""
+        engine_file = tmp_path / "model.trt"
+        engine_file.write_bytes(b"engine")
+        runtime = _NoSwitchRuntime()
+        runtime.engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
+        fake_tensorrt.Runtime.return_value = runtime
+        logged: list[str] = []
+        monkeypatch.setattr(trt_inference.logger, "warning", lambda message, *args: logged.append(message % args))
+
+        TRTInference(str(engine_file), device="cuda:0", sync_mode=True, engine_host_code_allowed=True)
+
+        assert len(logged) == 1
+        assert "engine_host_code_allowed" in logged[0]
+
+    @pytest.mark.parametrize(
+        "phrase", ["trt_hardware_compatibility", "trt_version_compatible", "engine_host_code_allowed=True"]
+    )
+    def test_the_rebuild_hint_names_the_portable_builds(
+        self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path, phrase: str
+    ) -> None:
+        """An engine that will not load may be a portable one: the message names both keywords and the opt-in."""
+        engine_file = tmp_path / "foreign.trt"
+        engine_file.write_bytes(b"not an engine for this machine")
+        fake_tensorrt.runtime.engine = None
+
+        with pytest.raises(RuntimeError, match=re.escape(phrase)):
+            TRTInference(str(engine_file), device="cuda:0", sync_mode=True)
+
     def test_a_missing_execution_context_is_reported(self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path) -> None:
         """A context TensorRT could not create is reported at construction, not at the first call."""
         engine_file = tmp_path / "model.trt"
@@ -1015,9 +1141,28 @@ class TestBenchmarkMain:
 
         benchmark.main("model.trt", device=device, disable_eval=True)
 
-        runtime_class.assert_called_once_with("model.trt", sync_mode=True, device=f"cuda:{device}")
+        runtime_class.assert_called_once_with(
+            "model.trt", sync_mode=True, device=f"cuda:{device}", engine_host_code_allowed=False
+        )
         assert infer_engine.call_args.kwargs["device"] == f"cuda:{device}"
         assert infer_engine.call_args.args[2].device == torch.device(f"cuda:{device}")
+
+    @pytest.mark.parametrize("engine_path", ["model.trt", "model.engine"])
+    def test_trt_benchmark_forwards_the_host_code_opt_in(
+        self, monkeypatch: pytest.MonkeyPatch, engine_path: str
+    ) -> None:
+        """A version-compatible engine can be benchmarked once the caller opts in, as with ``TRTInference`` itself.
+
+        Both engine suffixes the benchmark routes to TensorRT carry the opt-in.
+        """
+        monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
+        runtime_class = Mock()
+        monkeypatch.setattr(benchmark, "TRTInference", runtime_class)
+        monkeypatch.setattr(benchmark, "infer_engine", Mock())
+
+        benchmark.main(engine_path, disable_eval=True, engine_host_code_allowed=True)
+
+        assert runtime_class.call_args.kwargs["engine_host_code_allowed"] is True
 
     def test_eval_enabled_passes_a_loaded_coco_object_to_the_evaluator(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
