@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `ModelConfig.dim_feedforward` (default `2048`) sets the decoder feed-forward width.
 
+- `RFDETRModelModule(..., load_encoder_weights=False)` skips fetching the encoder's upstream pretrained weights when every weight is replaced right after construction; the default `True` keeps the previous behaviour. `RFDETR.evaluate()` passes it.
+
 - Public `rfdetr.export.inference` exposes `TRTInference`, `load_executorch_method`, `preprocess_to_nchw`, `decode_detections` and `DecodedDetections` next to `OpenVINOInference`; each resolves lazily, so importing the module does not require an optional runtime. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
 - Public `rfdetr.export.benchmark` exposes `measure_latency`, `measure_memory`, `BenchmarkResult` and `MemoryResult`, the helpers the per-hardware export cookbooks use. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
