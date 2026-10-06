@@ -11,7 +11,7 @@ description: Overview of exporting RF-DETR models to ONNX, TensorRT, TFLite, Lit
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
     - Export to LiteRT (`.tflite`) straight from PyTorch with `litert-torch` — no ONNX or TensorFlow step
     - TensorRT conversion delivers the lowest latency on NVIDIA GPUs — 2.3 ms for Nano on a T4, TensorRT FP16, model only, batch 1 (the architecture headline on the [Benchmarks page](../learn/benchmarks.md); this page's own L4 end-to-end numbers below are a different measurement, see "Which latency number is this?")
-    - INT8 quantization is dynamic-range and needs no calibration data
+    - INT8 quantization: dynamic-range for TFLite (no calibration data), static for ONNX and OpenVINO (calibration data required)
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment
@@ -71,7 +71,7 @@ Each cookbook also scores every exported model and precision at batch 1 on the s
 
     - **GPU — large win.** On an L4, TensorRT's auto-selected precision is 1.94× faster than the same engine forced to fp32 (3.41 vs 6.62 ms end-to-end, batch 1), and PyTorch `inference(dtype=torch.float16)` cuts the eager fp32 baseline from 19.88 to 11.37 ms.
     - **CPU — no measured win.** A CPU without native fp16 kernels upconverts and computes in fp32, so fp16 storage (an fp16 OpenVINO IR or `.tflite`) saves disk and bandwidth, not arithmetic. The cookbooks' CPU fp16 and INT8 timings are pending a rerun: the OpenVINO rows ran at OpenVINO's own default execution precision, which is half precision on CPUs with native bf16 or f16 support (the Colab host's CPU flags were not recorded), and the TFLite rows ran through `tf.lite.Interpreter` at its default thread count (the same fp32 `.tflite` runs in 119 ms on one thread and 59 ms on eight through `ai_edge_litert` on the M4 Max, against 785 ms in the cookbook).
-    - **Apple — runtime-dependent.** On the M4 Max, Core AI fp16 beat its fp32 default (13.53 vs 14.62 ms), while CoreML fp16 came out *slower* than its fp32 default (19.86 vs 11.57 ms). The direction of both results reproduced across runs. Measure per runtime, not per platform.
+    - **Apple — runtime-dependent.** On the M4 Max, Core AI fp16 beat its fp32 default (13.53 vs 14.62 ms), while CoreML fp16 came out *slower* than its fp32 default (19.86 vs 11.57 ms). The direction of both results reproduced across runs. The CoreML fp16 figures were measured with iOS 16 bundles, before the fp16 export was switched to iOS 15 (see the changelog); they are not re-measured and the comparison may differ for current bundles. Measure per runtime, not per platform.
 
 ## Per-Format Guides
 

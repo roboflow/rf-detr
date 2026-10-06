@@ -212,6 +212,10 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     When ``draft_size`` is set, both decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to
     keep the image at least ``draft_size`` on both axes; it is a no-op for non-JPEG files.
 
+    ``RFDETR.predict()`` does not use this function for local files: ``rfdetr.detr._decode_local_image`` decodes them
+    with torchvision, a core dependency, straight into the CHW tensor inference consumes, because ``simplejpeg`` is
+    only installed with the ``[train]`` extra and this function returns HWC NumPy arrays.
+
     Args:
         path: Image file to decode.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
