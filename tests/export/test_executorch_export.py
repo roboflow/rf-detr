@@ -565,12 +565,16 @@ class TestBuildPartitioner:
         ],
     )
     def test_returns_partitioner(self, backend: str, leaf: str, cls: str) -> None:
+        """The partitioner is built without compile specs, so the delegate keeps its iOS15 / fp16 defaults."""
         from rfdetr.export._executorch.exporter import _build_partitioner
 
         sentinel = object()
-        mods = _fake_executorch_tree({leaf: {cls: mock.MagicMock(return_value=sentinel)}})
+        partitioner_cls = mock.MagicMock(return_value=sentinel)
+        mods = _fake_executorch_tree({leaf: {cls: partitioner_cls}})
         with mock.patch.dict(sys.modules, mods):
             assert _build_partitioner(backend) == [sentinel]
+
+        partitioner_cls.assert_called_once_with()
 
     @pytest.mark.parametrize(
         ("backend", "leaf"),
