@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-03T08:02:14">
+  <meta property="article:modified_time" content="2026-10-06T16:07:19">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-03T08:02:14",
+    "dateModified": "2026-10-06T16:07:19",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1533,6 +1533,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#reuse-the-timing-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reuse the Timing Cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#python-api-conversion" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2847,6 +2858,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#reuse-the-timing-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reuse the Timing Cache
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#python-api-conversion" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2910,22 +2932,31 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The <code>.trt</code> engine produced by <code>format="tensorrt"</code> is a standalone artifact for raw TensorRT deployment. It is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases.</p>
 <p>If you plan to run inference with <a href="../basics/#run-inference-with-inference-models"><code>inference-models</code></a> (the recommended path), do <strong>not</strong> pass <code>format="tensorrt"</code> — <code>inference-models</code> builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let <code>inference-models</code> handle the backend.</p>
 </div>
+<h2 id="reuse-the-timing-cache">Reuse the Timing Cache<a class="headerlink" href="#reuse-the-timing-cache" title="Permanent link">&para;</a></h2>
+<p>A large share of an engine build goes into timing candidate kernels for each layer. TensorRT can save those timings in a cache file, and a later build that uses the file skips the timing it already did. Pass <code>trt_timing_cache</code> to keep one across exports:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_timing_cache</span><span class="o">=</span><span class="s2">"output/rfdetr.cache"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The first export creates the file (and its folder). Later exports load it and write the merged timings back. It pays off when you rebuild the same model at the same precision and batch profile, on the same GPU and TensorRT version, for example after fine-tuning: the timings depend on the layers' shapes, not on the weights. In our tests, a cache from the pretrained model saved about as much time for a model fine-tuned to 3 classes, whose class head has a different shape. A different resolution changes every layer's shape, and we haven't measured it. A cache from a matching dynamic-batch build (batch 1-8) helps too: it cut the build time by 74-76% in fp16 and 42-43% in fp32. We did not measure reusing a cache between a static and a dynamic batch profile, or across precisions.</p>
+<p>A cache TensorRT can't use doesn't stop the export. For a file written by another TensorRT major version, or an empty or corrupt one, TensorRT logs a serialization error, builds as if there were no cache, and the file is replaced with the new timings. A timing cache is specific to the GPU, the CUDA version and the TensorRT version, so keep one cache file per GPU and per software stack. TensorRT's API reference says a cache whose recorded CUDA device properties differ from the current environment is reported as a failure; we had one GPU and could not test that. We tested TensorRT 10.16 and 11.3 with Polygraphy 0.53.4, while the supported range is <code>tensorrt&gt;=8.6.1</code> and the Polygraphy version is not pinned, so behavior on other versions is untested.</p>
+<p>A cache that can't be written does stop the export, though: Polygraphy writes the timing cache before it returns the engine, so if that write fails (a full disk, say) the export raises and the built engine is not saved. Fix the cause and export again; the engine can simply be rebuilt.</p>
+<p>A bad path is refused before the engine is built: a directory, or a path ending in a separator, raises <code>ValueError</code>, and a location that can't be created or written raises <code>OSError</code>. <code>~</code> is expanded, and a relative path is relative to the working directory, not to <code>output_dir</code>.</p>
+<p>Polygraphy keeps an empty <code>&lt;file&gt;.lock</code> next to the cache and locks it while it reads or writes the cache, so the folder has to be writable. We did not test two exports sharing one cache file at the same time. Without <code>trt_timing_cache</code>, no file is read or written.</p>
 <h2 id="python-api-conversion">Python API Conversion<a class="headerlink" href="#python-api-conversion" title="Permanent link">&para;</a></h2>
 <p>Use this only to convert an <strong>already-exported</strong> <code>.onnx</code> file without re-running the model export. To go straight from a checkpoint to an engine, use <a href="#export-directly-to-tensorrt"><code>format="tensorrt"</code></a> above.</p>
 <div class="admonition warning">
 <p class="admonition-title">Internal API</p>
 <p><code>rfdetr.export._tensorrt.exporter</code> is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. <code>RFDETR.export(format="tensorrt")</code> is the supported entry point; use the class below only when you need to convert an already-exported <code>.onnx</code> file.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorRTConfig</span><span class="p">,</span> <span class="n">TensorRTExporter</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorRTConfig</span><span class="p">,</span> <span class="n">TensorRTExporter</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
 </span></code></pre></div>
-<p><code>TensorRTExporter.build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file. Precision and progress logging come from the <code>TensorRTConfig</code> the exporter is constructed with — pass <code>TensorRTConfig(output_name="my-engine")</code> to write <code>output/my-engine.trt</code> verbatim instead.</p>
+<p><code>TensorRTExporter.build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file. Precision and progress logging come from the <code>TensorRTConfig</code> the exporter is constructed with — pass <code>TensorRTConfig(output_name="my-engine")</code> to write <code>output/my-engine.trt</code> verbatim instead. <code>TensorRTConfig(timing_cache="output/rfdetr.cache")</code> reuses a timing cache here too; see <a href="#reuse-the-timing-cache">Reuse the Timing Cache</a>.</p>
 <p>An <code>.onnx</code> file exported with <code>dynamic_batch=True</code> needs <code>dynamic_batch=True</code> here as well, plus <code>max_batch_size</code>, the largest batch the engine accepts. <code>opt_batch_size</code> (default <code>1</code>) is the batch its kernels are tuned for. Without <code>dynamic_batch=True</code>, <code>build_engine</code> raises <code>ValueError</code> rather than building an engine that accepts batch 1 only.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_batch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">opt_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_batch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">opt_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
 </span></code></pre></div>
 
 
@@ -2947,7 +2978,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 16:07:19 UTC">2026-10-06 16:07:19</span>
   </span>
 
     

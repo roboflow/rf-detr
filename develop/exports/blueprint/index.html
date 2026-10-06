@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-03T08:02:14">
+  <meta property="article:modified_time" content="2026-10-06T16:07:19">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-03T08:02:14",
+    "dateModified": "2026-10-06T16:07:19",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3417,7 +3417,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>Four rules for <code>_convert</code>:</p>
 <ul>
 <li><strong>Import the heavy dependency inside a method, never at module scope of a file the registry might import early.</strong> Raise <code>ImportError</code> with the exact <code>pip install "rfdetr[myformat]"</code> command; the other formats route this through a small <code>_check_&lt;dep&gt;_available()</code> helper so tests can monkeypatch one choke point. Wrap that helper in a <code>@classmethod</code> override of <code>check_dependencies</code> (keep it cheap: a metadata probe such as <code>rfdetr.utilities.package.is_installed</code>, or an import the conversion performs anyway; run the probes first and import only once they pass, so a refused request loads nothing, as TensorRT does before importing <code>onnx</code>), and never call <code>check_dependencies</code> yourself: <code>RFDETR.export()</code> runs it before the forward pass, and <code>Exporter.__call__</code> again before <code>_convert</code>. Calling the helper itself inside the conversion is fine where a public entry point skips <code>__call__</code>, as TFLite's <code>convert_onnx()</code> does. Never check dependencies in <code>__init__</code> or <code>_check_capabilities</code> — a TensorRT <code>dry_run</code> and the stubbed-converter tests construct exporters without them.</li>
-<li><strong>Refuse what only the graph shows first.</strong> An output the converter cannot lower (LiteRT refuses the keypoint head this way) is refused at the top of <code>_convert</code>, before any conversion work. Anything the configuration or the installed packages already decide belongs in the two hooks above instead.</li>
+<li><strong>Refuse what only the graph shows first.</strong> An output the converter cannot lower (LiteRT refuses the keypoint head this way) is refused at the top of <code>_convert</code>, before any conversion work. Anything the configuration or the installed packages already decide belongs in the two hooks above instead. A refusal that needs the filesystem or has side effects (TensorRT's timing-cache preflight creates its directory and lock file) also goes at the top of <code>_convert</code>, before any conversion work, and again in any public entry point that bypasses <code>_convert</code>, as TensorRT's <code>build_engine</code> does.</li>
 <li><strong>Return the path, do not log the success line.</strong> The base class does that, and doing it twice is how log output drifted between formats before.</li>
 <li><strong>Do not switch the model into export mode.</strong> It already is — <code>__call__</code> did it.</li>
 </ul>
@@ -3518,7 +3518,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 16:07:19 UTC">2026-10-06 16:07:19</span>
   </span>
 
     
