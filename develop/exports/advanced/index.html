@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-03T08:02:14">
+  <meta property="article:modified_time" content="2026-10-06T10:07:21">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-03T08:02:14",
+    "dateModified": "2026-10-06T10:07:21",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3047,12 +3047,12 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>quantization</code></td>
 <td><code>None</code></td>
-<td>TFLite quantization mode: <code>None</code>/<code>"fp32"</code>, <code>"fp16"</code>, or <code>"int8"</code>. Only used when <code>format="tflite"</code>; <code>format="litert"</code> accepts only <code>None</code>/<code>"fp32"</code> and raises <code>NotImplementedError</code> otherwise.</td>
+<td>Quantization mode, per format. <code>format="tflite"</code>: <code>None</code>/<code>"fp32"</code>, <code>"fp16"</code>, or <code>"int8"</code> (dynamic-range). <code>format="onnx"</code> and <code>format="openvino"</code>: <code>None</code>/<code>"fp32"</code> or <code>"int8"</code> (static; requires <code>calibration_data</code>). <code>format="litert"</code> accepts only <code>None</code>/<code>"fp32"</code> and raises <code>NotImplementedError</code> otherwise.</td>
 </tr>
 <tr>
 <td><code>calibration_data</code></td>
 <td><code>None</code></td>
-<td>Optional image directory, <code>.npy</code> file path, NumPy array, or <code>None</code>. Ignored: passing it warns, since <code>.tflite</code> INT8 is dynamic-range.</td>
+<td>Image directory, <code>.npy</code> file path, NumPy array, or <code>None</code>. <strong>Required</strong> for static INT8 (<code>format="onnx"</code> / <code>format="openvino"</code>), where activation ranges are read from it. Ignored for <code>format="tflite"</code>: passing it warns, since <code>.tflite</code> INT8 is dynamic-range.</td>
 </tr>
 <tr>
 <td><code>max_images</code></td>
@@ -3235,6 +3235,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td><code>None</code>/<code>"fp32"</code>, <code>"fp16"</code>, <code>"int8"</code> (dynamic-range)</td>
 </tr>
 <tr>
+<td><code>onnx</code></td>
+<td><code>quantization</code></td>
+<td><code>None</code>/<code>"fp32"</code> or <code>"int8"</code> (static; needs <code>calibration_data</code>)</td>
+</tr>
+<tr>
+<td><code>openvino</code></td>
+<td><code>quantization</code></td>
+<td><code>None</code>/<code>"fp32"</code> or <code>"int8"</code> (static via NNCF; needs <code>calibration_data</code>)</td>
+</tr>
+<tr>
 <td><code>litert</code></td>
 <td><code>quantization</code></td>
 <td><code>None</code>/<code>"fp32"</code> only</td>
@@ -3327,7 +3337,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 3, 2026 08:02:14 UTC">2026-10-03 08:02:14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 10:07:21 UTC">2026-10-06 10:07:21</span>
   </span>
 
     
