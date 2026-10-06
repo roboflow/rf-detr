@@ -86,6 +86,10 @@ _TENSORRT_MAX_ABS_DIFF = 1e-2
 _TENSORRT_FP16_MAX_ABS_DIFF = 3e-1
 
 
+#: Stand-in for the engine polygraphy builds. The exporter only serializes it, once, and writes those bytes.
+_FAKE_ENGINE = types.SimpleNamespace(serialize=lambda: b"engine")
+
+
 def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
     """Stub the polygraphy build chain and return the dict that captures ``CreateConfig`` kwargs.
 
@@ -119,8 +123,8 @@ def _patch_polygraphy_chain(monkeypatch: pytest.MonkeyPatch) -> dict:
         tensorrt_export, "network_from_onnx_path", lambda path: ("builder", _FakeNetwork(_STATIC_INPUT), "parser")
     )
     monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
-    monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: "engine")
-    monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+    monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: _FAKE_ENGINE)
+    monkeypatch.setattr(tensorrt_export, "save_file", lambda contents, dest, description=None: None)
     return config_kwargs
 
 
@@ -153,14 +157,14 @@ def _patch_polygraphy_build_capture(monkeypatch: pytest.MonkeyPatch, network: _F
     def _engine_from_network(network, config):
         build_args["network"] = network
         build_args["config"] = config
-        return "engine"
+        return _FAKE_ENGINE
 
     monkeypatch.setattr(tensorrt_export, "_IS_TENSORRT_AVAILABLE", True)
     monkeypatch.setattr(tensorrt_export, "_IS_POLYGRAPHY_AVAILABLE", True)
     monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
     monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
     monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
-    monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+    monkeypatch.setattr(tensorrt_export, "save_file", lambda contents, dest, description=None: None)
     return build_args
 
 
@@ -199,7 +203,7 @@ def _fake_tensorrt(version: str, *, has_fp16_flag: bool) -> types.ModuleType:
 
 
 def _fake_polygraphy_trt() -> types.ModuleType:
-    """Build a stand-in ``polygraphy.backend.trt`` exposing the five names the exporter imports from it.
+    """Build a stand-in ``polygraphy.backend.trt`` exposing the four names the exporter imports from it.
 
     Polygraphy imports ``tensorrt`` only when one of these is called, so importing them succeeds on a host without
     TensorRT; this stand-in reproduces that on hosts where polygraphy is not installed at all.
@@ -209,10 +213,10 @@ def _fake_polygraphy_trt() -> types.ModuleType:
 
     Examples:
         >>> sorted(name for name in vars(_fake_polygraphy_trt()) if not name.startswith("__"))
-        ['CreateConfig', 'Profile', 'engine_from_network', 'network_from_onnx_path', 'save_engine']
+        ['CreateConfig', 'Profile', 'engine_from_network', 'network_from_onnx_path']
     """
     module = types.ModuleType("polygraphy.backend.trt")
-    for name in ("CreateConfig", "Profile", "engine_from_network", "network_from_onnx_path", "save_engine"):
+    for name in ("CreateConfig", "Profile", "engine_from_network", "network_from_onnx_path"):
         setattr(module, name, object())
     return module
 
@@ -617,6 +621,10 @@ class TestTensorRTAvailability:
         monkeypatch.setitem(
             sys.modules, "polygraphy.backend.trt", _fake_polygraphy_trt() if polygraphy_installed else None
         )
+        # The engine is written with polygraphy's own file writer, the one other name the exporter imports.
+        polygraphy_util = types.ModuleType("polygraphy.util")
+        polygraphy_util.save_file = object()
+        monkeypatch.setitem(sys.modules, "polygraphy.util", polygraphy_util if polygraphy_installed else None)
         monkeypatch.delitem(sys.modules, "tensorrt", raising=False)
         monkeypatch.setattr(sys, "path", [str(tmp_path)])
         spec = importlib.util.spec_from_file_location("_tensorrt_exporter_probe", tensorrt_export.__file__)
@@ -692,7 +700,7 @@ class TestConvertDependencyGuard:
     """`TensorRTExporter._convert()` (not just `build_engine()`) must fail actionably without TensorRT.
 
     Regression coverage for the gap the challenger flagged (L7): the existing `RFDETR.export()` E2E tests in
-    `test_export.py` monkeypatch `OnnxExporter._convert` and `build_engine` together, so a missing-TensorRT failure they
+    `test_export.py` monkeypatch `OnnxExporter._convert` and `_build` together, so a missing-TensorRT failure they
     exercise is coupled to `RFDETR.export()`'s device-move/deepcopy plumbing. Calling `_convert()` directly here
     decouples the two.
     """
@@ -745,15 +753,15 @@ class TestBuildEngineWiring:
         def _engine_from_network(network, config):
             build_args["network"] = network
             build_args["config"] = config
-            return "engine-sentinel"
+            return types.SimpleNamespace(serialize=lambda: b"engine-sentinel")
 
-        def _save_engine(engine, path):
-            saved["engine"] = engine
-            saved["path"] = path
+        def _save_file(contents, dest, description=None):
+            saved["contents"] = contents
+            saved["dest"] = dest
 
         monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
         monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
-        monkeypatch.setattr(tensorrt_export, "save_engine", _save_engine)
+        monkeypatch.setattr(tensorrt_export, "save_file", _save_file)
 
         result = TensorRTExporter(TensorRTConfig(fp16=fp16)).build_engine("model.onnx")
         expected_path = f"model_{'fp16' if fp16 else 'fp32'}.trt"
@@ -765,7 +773,7 @@ class TestBuildEngineWiring:
             "network": ("builder", network, "parser"),
             "config": "config-sentinel",
         }
-        assert saved == {"engine": "engine-sentinel", "path": expected_path}
+        assert saved == {"contents": b"engine-sentinel", "dest": expected_path}
 
 
 @dataclass(frozen=True)
@@ -831,7 +839,7 @@ def _patch_dynamic_polygraphy_chain(monkeypatch: pytest.MonkeyPatch, network: _F
 
     def _engine_from_network(parsed, config):
         captured["network"] = parsed
-        return "engine"
+        return _FAKE_ENGINE
 
     def _create_config(*, fp16: bool, profiles: list) -> str:
         # Signature-bound (not **kwargs) so a real ``CreateConfig`` keyword rename in ``_compile`` fails
@@ -846,7 +854,7 @@ def _patch_dynamic_polygraphy_chain(monkeypatch: pytest.MonkeyPatch, network: _F
     monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
     monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
     monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
-    monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+    monkeypatch.setattr(tensorrt_export, "save_file", lambda contents, dest, description=None: None)
     return captured
 
 
@@ -1084,9 +1092,9 @@ class TestBuildEngineDynamicBatch:
         monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
         # The refusal comes before these are reached; they are stubbed so that a build which wrongly goes ahead fails
         # on the missing ValueError rather than inside the real (or absent) polygraphy.
-        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda *args, **kwargs: "engine")
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda *args, **kwargs: _FAKE_ENGINE)
         monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
-        monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+        monkeypatch.setattr(tensorrt_export, "save_file", lambda contents, dest, description=None: None)
         exporter = TensorRTExporter(TensorRTConfig(fp16=False, dynamic_batch=dynamic_batch, max_batch_size=8))
 
         # Bound so the traceback, and with it every frame of the failed build, is still alive at the assertion, as it
@@ -1135,8 +1143,8 @@ class TestBuildEngineDynamicBatch:
         monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", _network_from_onnx_path)
         monkeypatch.setattr(tensorrt_export, "Profile", _FakeProfile)
         monkeypatch.setattr(tensorrt_export, "CreateConfig", _create_config)
-        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda parsed, config: "engine")
-        monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda parsed, config: _FAKE_ENGINE)
+        monkeypatch.setattr(tensorrt_export, "save_file", lambda contents, dest, description=None: None)
         exporter = TensorRTExporter(TensorRTConfig(fp16=True, dynamic_batch=True, opt_batch_size=2, max_batch_size=8))
 
         exporter.build_engine(str(tmp_path / "model.onnx"))
@@ -1375,7 +1383,7 @@ class TestBuildEngineCastArtifactCleanup:
         Args:
             monkeypatch: Fixture used to stub the polygraphy chain and the fake ``tensorrt``.
             tmp_path: Directory the stand-in cast graph is written to.
-            save_fails: Whether ``save_engine`` should raise, simulating a failed build.
+            save_fails: Whether ``save_file`` should raise, simulating a failed build.
 
         Returns:
             Path the stand-in cast graph was written to, for an existence assertion.
@@ -1395,13 +1403,13 @@ class TestBuildEngineCastArtifactCleanup:
             tensorrt_export, "network_from_onnx_path", lambda path: ("builder", _FakeNetwork(_STATIC_INPUT), "parser")
         )
         monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: "config")
-        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: "engine")
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda network, config: _FAKE_ENGINE)
 
-        def _save_engine(engine, path):
+        def _save_file(contents, dest, description=None):
             if save_fails:
                 raise RuntimeError("builder ran out of workspace")
 
-        monkeypatch.setattr(tensorrt_export, "save_engine", _save_engine)
+        monkeypatch.setattr(tensorrt_export, "save_file", _save_file)
         monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("11.2.1.2", has_fp16_flag=False))
         monkeypatch.setattr(tensorrt_export, "_cast_onnx_to_fp16", lambda path, **_: str(cast_path))
         return cast_path

@@ -13,6 +13,7 @@ polygraphy chain the same way ``test_tensorrt_export.py`` does. The end-to-end c
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import itertools
 import json
@@ -22,6 +23,7 @@ import sys
 import types
 import warnings
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -32,7 +34,7 @@ from rfdetr.detr import RFDETR
 from rfdetr.export._runtime.preprocess import IMAGENET_MEAN, IMAGENET_STD, preprocess_to_nchw
 from rfdetr.export._tensorrt import exporter as tensorrt_export
 from rfdetr.export._tensorrt import metadata as tensorrt_metadata
-from rfdetr.export._tensorrt.exporter import TensorRTConfig, TensorRTExporter
+from rfdetr.export._tensorrt.exporter import TensorRTConfig, TensorRTExporter, _BuiltEngine
 from rfdetr.export._tensorrt.metadata import (
     METADATA_SCHEMA_VERSION,
     build_engine_metadata,
@@ -747,7 +749,7 @@ def _patch_build(
     """Stub the ONNX stage and the polygraphy chain so ``_convert`` runs without TensorRT, and record the engines.
 
     Each build yields a stand-in engine whose ``serialize()`` returns the next of *builds* (the last one repeats), and
-    ``save_engine`` really writes those bytes, so the sidecar has an engine to sit next to. The stand-in ``tensorrt``
+    ``save_file`` really writes those bytes, so the sidecar has an engine to sit next to. The stand-in ``tensorrt``
     module reports a weakly typed version, with or without the FP16 builder flag (a lean wheel lacks it).
 
     Args:
@@ -782,9 +784,9 @@ def _patch_build(
 
     serialized = itertools.chain(builds, itertools.repeat(builds[-1]))
 
-    def _save_engine(engine: types.SimpleNamespace, path: str) -> None:
-        Path(path).write_bytes(engine.serialize())
-        engines.append(path)
+    def _save_file(contents: bytes, dest: str, description: str | None = None) -> None:
+        Path(dest).write_bytes(contents)
+        engines.append(dest)
 
     onnx_path = str(tmp_path / "m.onnx")
     monkeypatch.setitem(sys.modules, "tensorrt", fake)
@@ -798,7 +800,7 @@ def _patch_build(
         "engine_from_network",
         lambda parsed, config: types.SimpleNamespace(serialize=lambda content=next(serialized): content),
     )
-    monkeypatch.setattr(tensorrt_export, "save_engine", _save_engine)
+    monkeypatch.setattr(tensorrt_export, "save_file", _save_file)
     return engines
 
 
@@ -843,8 +845,8 @@ class TestExporterWritesMetadata:
     @pytest.mark.parametrize(
         ("owner", "name"),
         [
-            pytest.param(tensorrt_export, "save_engine", id="after the first engine is saved"),
-            pytest.param(TensorRTExporter, "build_engine", id="after the first build returns"),
+            pytest.param(tensorrt_export, "save_file", id="after the first engine is saved"),
+            pytest.param(TensorRTExporter, "_build", id="after the first build returns"),
         ],
     )
     def test_a_description_written_after_another_export_replaced_the_engine_keeps_its_own_digest(
@@ -882,7 +884,7 @@ class TestExporterWritesMetadata:
         assert recorded == hashlib.sha256(b"first engine").hexdigest()
 
     def test_the_default_export_does_not_hash_the_engine(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Hashing serializes the whole engine again; an export that writes no description does not pay for it."""
+        """Hashing reads every engine byte again; an export that writes no description does not pay for it."""
         _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
         reads: list[object] = []
         monkeypatch.setattr(tensorrt_export, "serialized_engine_facts", reads.append)
@@ -1015,6 +1017,66 @@ class TestExporterWritesMetadata:
 
         assert "earlier" not in str(refusal.value)
 
+    @pytest.mark.parametrize(
+        ("code", "kind"),
+        [
+            pytest.param(errno.EACCES, PermissionError, id="permission denied"),
+            pytest.param(errno.ENOSPC, OSError, id="disk full"),
+        ],
+    )
+    def test_a_failed_write_keeps_the_kind_and_code_of_the_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, code: int, kind: type[OSError]
+    ) -> None:
+        """A caller that handles ``PermissionError`` or reads ``errno`` still recognizes why the write failed.
+
+        The error is re-raised with a message saying the engine exists; that must not turn a refused permission into a
+        bare ``OSError``. ENOSPC has no subclass of its own, so it stays an ``OSError`` that carries the code.
+        """
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        failure = OSError(code, os.strerror(code), str(tmp_path / "m_fp32.json"))
+        monkeypatch.setattr(os, "replace", MagicMock(side_effect=failure))
+
+        with pytest.raises(OSError) as refusal:
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph())
+
+        assert (type(refusal.value), refusal.value.errno) == (kind, code)
+
+    def test_a_failed_write_names_the_file_once(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The re-raised error prints the file name itself, so the message around it must not repeat it."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        failure = PermissionError(errno.EACCES, "Permission denied", str(tmp_path / "m_fp32.json"))
+        monkeypatch.setattr(os, "replace", MagicMock(side_effect=failure))
+
+        with pytest.raises(PermissionError) as refusal:
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph())
+
+        assert str(refusal.value).count("m_fp32.json") == 1
+
+    def test_a_failed_write_is_chained_to_the_error_it_reports(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The filesystem's own error stays reachable as the cause, for a traceback or a caller that inspects it."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        failure = PermissionError(errno.EACCES, "Permission denied", str(tmp_path / "m_fp32.json"))
+        monkeypatch.setattr(os, "replace", MagicMock(side_effect=failure))
+
+        with pytest.raises(PermissionError) as refusal:
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph())
+
+        assert refusal.value.__cause__ is failure
+
+    def test_a_failed_write_without_an_error_code_is_a_plain_os_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An ``OSError`` raised with a message alone has no errno to keep, so the re-raised one has none either."""
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        monkeypatch.setattr(os, "replace", _raise_os_error)
+
+        with pytest.raises(OSError) as refusal:
+            TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph())
+
+        assert (type(refusal.value), refusal.value.errno) == (OSError, None)
+
     def test_a_description_left_by_an_earlier_export_is_reported_when_metadata_is_off(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -1065,38 +1127,23 @@ class TestExporterWritesMetadata:
 
         assert warnings == []
 
-    def test_a_description_without_a_recorded_build_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The precision comes from the build; asking before any build is refused whether or not TensorRT imports."""
-        monkeypatch.setitem(sys.modules, "tensorrt", None)
-        exporter = TensorRTExporter(TensorRTConfig(metadata=True))
-
-        with pytest.raises(RuntimeError, match="build_engine"):
-            exporter._write_metadata(_graph(), "model.trt")
-
-    def test_a_failed_build_leaves_nothing_to_describe(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """The precision and digest of an earlier build of this exporter must not describe a build that failed."""
-        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
-        exporter = TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))
-        engine = exporter._convert(_graph())
-        monkeypatch.setattr(tensorrt_export, "engine_from_network", _fail_the_build)
-        with pytest.raises(RuntimeError, match="build failed"):
-            exporter._convert(_graph())
-
-        with pytest.raises(RuntimeError, match="build_engine"):
-            exporter._write_metadata(_graph(), engine)
-
-    def test_a_description_after_build_engine_alone_is_refused(
+    def test_a_build_asked_for_its_digest_reports_what_it_built(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """``build_engine`` alone does not read the engine back, so a description of it is refused rather than written
-        without the engine's digest, or with the digest of an engine an earlier export of this exporter wrote."""
-        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
-        exporter = TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))
-        exporter._convert(_graph())
-        engine = exporter.build_engine(str(tmp_path / "m.onnx"))
+        """The build hands back the engine's path, the precision it ended up with and the digest of its bytes.
 
-        with pytest.raises(RuntimeError, match="build_engine"):
-            exporter._write_metadata(_graph(), engine)
+        These are the facts the description records. They come back from the build itself rather than being left on the
+        exporter, so neither a failed build nor a later one can pass off an earlier build's facts as its own. An FP16
+        request on a wheel without the FP16 flag shows that the precision is the one built, not the one asked for.
+        """
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=False)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=True, metadata=True))
+
+        built = exporter._build(str(tmp_path / "m.onnx"), output_name=None, digest=True)
+
+        assert built == _BuiltEngine(
+            path=str(tmp_path / "m_fp32.trt"), fp16=False, engine_facts=serialized_engine_facts(b"engine")
+        )
 
     @pytest.mark.parametrize(
         "place",

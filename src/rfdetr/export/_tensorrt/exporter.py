@@ -66,8 +66,8 @@ try:
         Profile,
         engine_from_network,
         network_from_onnx_path,
-        save_engine,
     )
+    from polygraphy.util import save_file
 
     #: Whether polygraphy, which drives the build, imported. Tracked apart from ``_IS_TENSORRT_AVAILABLE`` so a
     #: refusal can name whichever of the two packages is actually missing.
@@ -77,7 +77,7 @@ except ImportError:  # pragma: no cover - exercised by TestTensorRTAvailability 
     Profile = None
     engine_from_network = None
     network_from_onnx_path = None
-    save_engine = None
+    save_file = None
 
     _IS_POLYGRAPHY_AVAILABLE = False
 
@@ -782,6 +782,27 @@ class TensorRTConfig(ExportConfig):
         return OnnxConfig.derive(self, opset_version=self.opset_version)
 
 
+@dataclass(frozen=True, slots=True)
+class _BuiltEngine:
+    """What one engine build produced: the facts :meth:`TensorRTExporter._convert` describes the engine with.
+
+    Attributes:
+        path: Path the engine was written to.
+        fp16: Whether the engine was built at FP16, after the lean-wheel fallback, so not always what was requested.
+            The engine's file name does not carry it when ``output_name`` is set.
+        engine_facts: The size and SHA-256 of the engine the build serialized, from :func:`serialized_engine_facts`,
+            when the build was asked for them; ``None`` otherwise.
+
+    Examples:
+        >>> _BuiltEngine(path="model_fp32.trt", fp16=False, engine_facts=None).path
+        'model_fp32.trt'
+    """
+
+    path: str
+    fp16: bool
+    engine_facts: dict[str, Any] | None
+
+
 class TensorRTExporter(Exporter[TensorRTConfig]):
     """Export to TensorRT by running an ONNX export first and compiling its output into an engine.
 
@@ -815,14 +836,6 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
     supports_dynamic_batch = True
     supports_notes = True
     pip_extra = "tensorrt"
-
-    #: The precision the last :meth:`build_engine` call actually built with, after the lean-wheel fallback; ``None``
-    #: until a build has succeeded, and again once a later build starts. The engine's file name does not carry it when
-    #: ``output_name`` is set.
-    _built_fp16: bool | None = None
-    #: The size and SHA-256 of the engine the last :meth:`build_engine` call serialized, when :meth:`_convert` is
-    #: about to describe it; ``None`` otherwise.
-    _built_engine: dict[str, Any] | None = None
 
     def _check_capabilities(self) -> None:
         """Reject settings that cannot work, before any work on the model.
@@ -888,7 +901,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         from rfdetr.export._onnx.exporter import OnnxExporter
 
         # Exporter.__call__ has already run check_dependencies; this repeats its TensorRT half for a caller of _convert
-        # itself, which would otherwise learn of a missing TensorRT only from build_engine, after the ONNX export.
+        # itself, which would otherwise learn of a missing TensorRT only from _build, after the ONNX export.
         self._require_tensorrt()
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         # A backbone-only export already carries the "-backbone" marker in the ONNX stem; reuse that stem so a
@@ -897,10 +910,11 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         if self.config.metadata:
             self._refuse_to_replace_a_foreign_file(str(onnx_path), output_name)
         logger.info("Converting ONNX model to TensorRT engine")
-        engine_path = self.build_engine(str(onnx_path), output_name=output_name, _describe=self.config.metadata)
-        if self.config.metadata:
-            self._write_metadata(graph, engine_path)
-        return engine_path
+        built = self._build(str(onnx_path), output_name=output_name, digest=self.config.metadata)
+        # The build records the engine's size and digest exactly when metadata asks for a description.
+        if built.engine_facts is not None:
+            self._write_metadata(graph, built.path, fp16=built.fp16, engine_facts=built.engine_facts)
+        return built.path
 
     def _refuse_to_replace_a_foreign_file(self, onnx_path: str, output_name: str | None) -> None:
         """Refuse a description that would replace a file this exporter did not write, before the engine is built.
@@ -913,7 +927,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
 
         Args:
             onnx_path: The ONNX file the engine is built from.
-            output_name: The engine's file name without extension, as :meth:`build_engine` receives it.
+            output_name: The engine's file name without extension, as :meth:`_build` receives it.
 
         Raises:
             FileExistsError: If anything other than a description an RF-DETR export wrote is at the description's
@@ -927,42 +941,46 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 "the TensorRT engine was not built."
             )
 
-    def _write_metadata(self, graph: ExportGraph, engine_path: str) -> None:
-        """Write the ``<engine>.json`` sidecar for the engine :meth:`build_engine` just wrote.
+    def _write_metadata(
+        self, graph: ExportGraph, engine_path: str, *, fp16: bool, engine_facts: dict[str, Any]
+    ) -> None:
+        """Write the ``<engine>.json`` sidecar for the engine :meth:`_build` just wrote.
 
         Args:
             graph: The prepared graph the engine was built from.
             engine_path: Path of the engine.
+            fp16: Whether the engine was built at FP16, after the lean-wheel fallback.
+            engine_facts: The size and SHA-256 of the engine the build serialized.
 
         Raises:
-            RuntimeError: If :meth:`build_engine` has not built an engine for a description with this exporter, so the
-                precision it ended up with and the engine's digest are not known.
             OSError: If the file cannot be written. The message says the engine itself was built, because this runs
-                after a build that can take minutes.
+                after a build that can take minutes. The failed write's errno and file names are kept, and with them
+                its subclass (a refused permission is still a ``PermissionError``); the failure is chained as the cause.
         """
-        if self._built_fp16 is None or self._built_engine is None:
-            raise RuntimeError(
-                "The engine description records the precision and the digest of an engine built to be described; "
-                "build_engine records them only when _convert asks it to."
-            )
         import tensorrt
 
         document = build_engine_metadata(
             self.config,
             graph,
-            engine=self._built_engine,
-            precision="fp16" if self._built_fp16 else "fp32",
+            engine=engine_facts,
+            precision="fp16" if fp16 else "fp32",
             tensorrt_version=tensorrt.__version__,
             gpu=gpu_facts(),
         )
         try:
             sidecar = write_engine_metadata(engine_path, document)
         except OSError as error:
-            message = f"The engine was written to {engine_path}, but its description could not be: {error}."
+            # strerror rather than str(error): the error raised below prints its own errno and file names around this.
+            reason = error.strerror or str(error)
+            message = f"The engine was written to {engine_path}, but its description could not be: {reason}."
             earlier = sidecar_path(engine_path)
             if is_engine_description(earlier):
                 message += f" The earlier {earlier} was written for a previous engine and may not describe this one."
-            raise OSError(message) from error
+            if error.errno is None:
+                raise OSError(message) from error
+            # OSError picks its subclass from the errno (EACCES gives PermissionError), so a caller handling the
+            # filesystem's reason still recognizes it. add_note would keep the original object, but needs Python 3.11.
+            raise OSError(error.errno, message, error.filename, None, error.filename2) from error
         logger.info(f"Wrote the engine description: {sidecar}")
 
     @staticmethod
@@ -983,9 +1001,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 "built. Export with trt_metadata=True to write a new one, or delete it."
             )
 
-    def build_engine(
-        self, onnx_path: str, *, dry_run: bool = False, output_name: str | None = None, _describe: bool = False
-    ) -> str:
+    def build_engine(self, onnx_path: str, *, dry_run: bool = False, output_name: str | None = None) -> str:
         """Build a serialized TensorRT engine from an already-exported ONNX model, in-process.
 
         Uses the TensorRT Python API through ``polygraphy`` — no ``trtexec`` subprocess. Workspace size is left to
@@ -1008,10 +1024,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             output_name: Full filename override (without extension), or ``None`` to fall back to the
                 configuration's ``output_name``. Takes precedence over the ONNX stem and suppresses the
                 ``_fp16``/``_fp32`` suffix — the engine is named ``{output_name}.trt`` verbatim, written alongside
-                *onnx_path*. :meth:`_convert` passes the backbone-marked ONNX stem through here.
-            _describe: Set only by :meth:`_convert` when it writes the engine's description next. The size and
-                SHA-256 of the serialized engine are then recorded for it, and neither ``metadata`` nor the description
-                about to be replaced is reported.
+                *onnx_path*.
 
         Returns:
             Path to the generated ``.trt`` engine file.
@@ -1034,9 +1047,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ```
         """
         name = output_name if output_name is not None else self.config.output_name
-        fp16 = self.config.fp16
-        engine_path = self._engine_path(onnx_path, fp16_used=fp16, output_name=name)
-        if self.config.metadata and not _describe:
+        if self.config.metadata:
             # A documented fallback, so a warning rather than a refusal: only _convert has the graph to describe.
             warnings.warn(
                 "build_engine writes no engine description: it builds from an .onnx file and has no graph to describe, "
@@ -1046,10 +1057,43 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             )
 
         if dry_run:
+            fp16 = self.config.fp16
+            engine_path = self._engine_path(onnx_path, fp16_used=fp16, output_name=name)
             logger.info(f"[dry-run] Would build TensorRT engine (fp16={fp16}): {onnx_path} -> {engine_path}")
             return engine_path
 
+        return self._build(onnx_path, output_name=name, digest=False).path
+
+    def _build(self, onnx_path: str, *, output_name: str | None, digest: bool) -> _BuiltEngine:
+        """Build the engine and report what was built: where it went, its precision and, if asked, its digest.
+
+        Args:
+            onnx_path: Path to the source ``.onnx`` file.
+            output_name: The engine's file name without extension, or ``None`` to derive it from the ONNX stem and the
+                precision (see :meth:`_engine_path`).
+            digest: Whether the size and SHA-256 of the serialized engine are wanted, which :meth:`_convert` asks for
+                when it writes the description next. Without them, a description an earlier export left beside an
+                engine of this name is reported with a warning instead, because this build replaced that engine.
+
+        Returns:
+            The engine's path, the precision it was actually built with, and its size and digest when asked for.
+
+        Raises:
+            ImportError: If ``polygraphy``/``tensorrt`` are not installed; and as :meth:`build_engine` documents.
+            Fp16CastUnsupportedError: As :meth:`build_engine` documents.
+            ValueError: As :meth:`build_engine` documents.
+
+        Examples:
+            Needs TensorRT and a GPU, so this is documentation rather than a doctest:
+
+            ```python
+            TensorRTExporter(TensorRTConfig(fp16=False))._build("output/m.onnx", output_name=None, digest=True)
+            # -> _BuiltEngine(path='output/m_fp32.trt', fp16=False, engine_facts={'size': ..., 'sha256': ...})
+            ```
+        """
         self._require_tensorrt()
+
+        fp16 = self.config.fp16
 
         strategy, trt_version = self._fp16_strategy() if fp16 else (Fp16Strategy.BUILDER_FLAG, "unknown")
         if strategy is Fp16Strategy.UNAVAILABLE:
@@ -1061,20 +1105,16 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 trt_version,
             )
             fp16 = False
-            engine_path = self._engine_path(onnx_path, fp16_used=fp16, output_name=name)
 
-        # A failed build must not leave the previous build's facts behind for a description of this one.
-        self._built_fp16 = self._built_engine = None
-        engine = self._compile(onnx_path, engine_path, fp16=fp16, strategy=strategy, trt_version=trt_version)
-        self._built_fp16 = fp16
-        if _describe:
-            # The bytes this build serialized, not the file: another export of the same name writes that file in place
-            # and may already have, so a digest read from disk could vouch for the other export's engine.
-            self._built_engine = serialized_engine_facts(engine.serialize())
-        else:
+        engine_path = self._engine_path(onnx_path, fp16_used=fp16, output_name=output_name)
+        serialized = self._compile(onnx_path, engine_path, fp16=fp16, strategy=strategy, trt_version=trt_version)
+        if not digest:
             # The build just replaced any engine of this name; a description written for that one no longer fits.
             self._warn_about_stale_description(engine_path)
-        return engine_path
+            return _BuiltEngine(path=engine_path, fp16=fp16, engine_facts=None)
+        # The bytes this build serialized, not the file: another export of the same name writes that file in place
+        # and may already have, so a digest read from disk could vouch for the other export's engine.
+        return _BuiltEngine(path=engine_path, fp16=fp16, engine_facts=serialized_engine_facts(serialized))
 
     def _engine_path(self, onnx_path: str, *, fp16_used: bool, output_name: str | None) -> str:
         """Derive the ``.trt`` path the engine is written to, beside *onnx_path*.
@@ -1157,7 +1197,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             trt_version: The version TensorRT reports, for logging.
 
         Returns:
-            The built engine, which :meth:`build_engine` serializes again to record its digest.
+            The serialized engine: the bytes written to *engine_path*, which :meth:`_build` hashes when asked for a
+            digest.
         """
         # The precision the engine ends up with and the flag handed to the builder are not the same thing
         # under strong typing: TensorRT >= 11 has no FP16 flag, and reads precision off the graph instead.
@@ -1198,10 +1239,13 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 del parsed
                 raise
             engine = engine_from_network(parsed, config=build_config)
-            save_engine(engine, path=engine_path)
+            # Serialized once: the same bytes are written here and hashed for a description. save_file opens the path
+            # for writing in place, as polygraphy's save_engine does, so an existing engine keeps its owner and mode.
+            serialized = engine.serialize()
+            save_file(contents=serialized, dest=engine_path, description="engine")
 
         logger.info(f"Successfully built TensorRT engine: {engine_path}")
-        return engine
+        return serialized
 
     def _build_config(self, network: Any, onnx_path: str, *, fp16: bool) -> Any:
         """Create the builder configuration, with a batch profile when ``dynamic_batch`` is set and none otherwise.
