@@ -30,7 +30,7 @@ if _IS_RFDETR_PLUS_AVAILABLE:
         "RFDETRXLarge",
     ]
 
-    # A separate block, not part of the import above: the `rfdetr[plus]` floor (`rfdetr_plus>=1.0.1` in
+    # A separate block, not part of the import above: the `rfdetr[plus]` floor (`rfdetr_plus>=1.1.0` in
     # pyproject.toml) admits rfdetr_plus releases that ship the XLarge models but predate the PE models, so this
     # import can fail even though rfdetr_plus is installed, and that must not hide the XLarge models.
     try:

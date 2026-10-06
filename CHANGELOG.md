@@ -32,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- The `rfdetr[plus]` extra now requires `rfdetr_plus>=1.1.0` (was `>=1.0.1`). An older `rfdetr_plus` that is already installed still works for the XLarge models, because the PE models are imported in their own block.
+
 - `build_backbone` now forwards `ModelDefaults.force_no_pretrain` to the encoder builder. A caller that already passed `defaults=ModelDefaults(force_no_pretrain=True)` used to get DINOv2's upstream encoder weights anyway and now gets randomly initialised encoder weights, with `pretrain_weights` handled separately as before. The default `False` leaves every other caller unchanged.
 
 - `quantization` for `format="onnx"` and `format="openvino"` is now checked: a value other than `None`, `"fp32"` or `"int8"` raises `ValueError` instead of being ignored, and `quantization="int8"` without `calibration_data` raises instead of silently exporting FP32. ONNX `quantization="int8"` returns `{stem}_int8.onnx`, written beside the FP32 `{stem}.onnx`, rather than the FP32 path. OpenVINO `quantization="int8"` writes `{stem}_int8.xml`/`.bin` so it no longer overwrites the FP32 IR; an explicit `output_name` is still used verbatim.
