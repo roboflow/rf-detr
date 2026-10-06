@@ -878,7 +878,9 @@ class TestTRTInferenceEngineLoading:
         with pytest.raises(RuntimeError) as refusal:
             TRTInference(str(engine_file), device="cuda:0", sync_mode=True, engine_host_code_allowed=True)
 
-        assert "load it with engine_host_code_allowed=True" not in str(refusal.value)
+        message = str(refusal.value)
+        assert "could not deserialize" in message
+        assert "engine_host_code_allowed" not in message
 
     def test_a_tensorrt_without_the_host_code_switch_still_loads_the_engine(
         self, fake_tensorrt: _FakeTensorRTModule, tmp_path: Path
@@ -903,13 +905,13 @@ class TestTRTInferenceEngineLoading:
         runtime = _NoSwitchRuntime()
         runtime.engine = _FakeEngine({"input": ("input", (1, 3, 8, 8))})
         fake_tensorrt.Runtime.return_value = runtime
-        warnings: list[str] = []
-        monkeypatch.setattr(trt_inference.logger, "warning", lambda message, *args: warnings.append(message % args))
+        logged: list[str] = []
+        monkeypatch.setattr(trt_inference.logger, "warning", lambda message, *args: logged.append(message % args))
 
         TRTInference(str(engine_file), device="cuda:0", sync_mode=True, engine_host_code_allowed=True)
 
-        assert len(warnings) == 1
-        assert "engine_host_code_allowed" in warnings[0]
+        assert len(logged) == 1
+        assert "engine_host_code_allowed" in logged[0]
 
     @pytest.mark.parametrize(
         "phrase", ["trt_hardware_compatibility", "trt_version_compatible", "engine_host_code_allowed=True"]
@@ -1145,14 +1147,20 @@ class TestBenchmarkMain:
         assert infer_engine.call_args.kwargs["device"] == f"cuda:{device}"
         assert infer_engine.call_args.args[2].device == torch.device(f"cuda:{device}")
 
-    def test_trt_benchmark_forwards_the_host_code_opt_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A version-compatible engine can be benchmarked once the caller opts in, as with ``TRTInference`` itself."""
+    @pytest.mark.parametrize("engine_path", ["model.trt", "model.engine"])
+    def test_trt_benchmark_forwards_the_host_code_opt_in(
+        self, monkeypatch: pytest.MonkeyPatch, engine_path: str
+    ) -> None:
+        """A version-compatible engine can be benchmarked once the caller opts in, as with ``TRTInference`` itself.
+
+        Both engine suffixes the benchmark routes to TensorRT carry the opt-in.
+        """
         monkeypatch.setattr(benchmark, "get_image_list", Mock(return_value=[]))
         runtime_class = Mock()
         monkeypatch.setattr(benchmark, "TRTInference", runtime_class)
         monkeypatch.setattr(benchmark, "infer_engine", Mock())
 
-        benchmark.main("model.trt", disable_eval=True, engine_host_code_allowed=True)
+        benchmark.main(engine_path, disable_eval=True, engine_host_code_allowed=True)
 
         assert runtime_class.call_args.kwargs["engine_host_code_allowed"] is True
 

@@ -607,7 +607,11 @@ def test_exporter_check_environment_defaults_to_a_no_op(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("keyword", "value"),
-    [("trt_hardware_compatibility", "ampere_plus"), ("trt_version_compatible", True)],
+    [
+        ("trt_hardware_compatibility", "ampere_plus"),
+        ("trt_version_compatible", True),
+        ("trt_version_compatible", "yes"),
+    ],
 )
 def test_rfdetr_export_warns_when_a_tensorrt_portability_option_is_used_without_tensorrt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, keyword: str, value: object
@@ -1603,6 +1607,27 @@ class TestExportRejectsBeforeForwardPass:
             pytest.param("tflite", {"notes": float("nan")}, ValueError, "notes", id="tflite-notes-nan"),
             pytest.param("tensorrt", {"notes": float("nan")}, ValueError, "notes", id="tensorrt-notes-nan"),
             pytest.param("coreai", {"notes": float("nan")}, ValueError, "notes", id="coreai-notes-nan"),
+            pytest.param(
+                "tensorrt",
+                {"trt_hardware_compatibility": "AMPERE_PLUS"},
+                ValueError,
+                "trt_hardware_compatibility must be",
+                id="tensorrt-hardware-compatibility-uppercase",
+            ),
+            pytest.param(
+                "tensorrt",
+                {"trt_hardware_compatibility": "ampere"},
+                ValueError,
+                "trt_hardware_compatibility must be",
+                id="tensorrt-hardware-compatibility-unknown",
+            ),
+            pytest.param(
+                "tensorrt",
+                {"trt_version_compatible": "yes"},
+                ValueError,
+                "trt_version_compatible must be a bool",
+                id="tensorrt-version-compatible-not-bool",
+            ),
             pytest.param("onnx", {"notes": object()}, TypeError, "notes", id="notes-not-json"),
             pytest.param(
                 "litert",
