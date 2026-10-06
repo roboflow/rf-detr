@@ -294,6 +294,7 @@ def _ufcoco_evaluator_type() -> type:
     """
     evaluator_type = cast(type, _ufcoco().COCOeval)
 
+    # Keep `_collect` inherited: ufcoco's columnar route requires `type(self)._collect is COCOeval._collect`.
     class _UfcocoCocoEval(evaluator_type):  # type: ignore[misc,valid-type]
         def summarize(self) -> None:
             """Summarize results and report aggregate AP at the configured detection limit."""
@@ -334,8 +335,11 @@ class _UfcocoBackend(_PackageCocoBackend):
 
     Unlike hotcoco, ufcoco keeps pycocotools' Python-side ``COCO`` object -- ``dataset`` assignment followed by
     ``createIndex()``, annotations read back as the same dictionaries -- so the adapter routes it through the paths it
-    takes for faster-coco-eval; the only adaptations are the two places where ufcoco follows pycocotools more literally
-    than the other backends do, :func:`_ufcoco_evaluator_type` and :class:`_UfcocoMaskTools`.
+    takes for faster-coco-eval, with one exception shared with hotcoco: box-only evaluation loads detections through
+    ``loadRes`` from one array (see ``OnePassCocoMeanAveragePrecision._loads_detections_from_array``) instead of
+    building the prediction dataset. Beyond that, the only adaptations are the two places where ufcoco follows
+    pycocotools more literally than the other backends do, :func:`_ufcoco_evaluator_type` and
+    :class:`_UfcocoMaskTools`.
     """
 
     def _package(self) -> Any:
@@ -720,7 +724,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             single-IoU-type evaluation, where no area switching happens.
 
         Raises:
-            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors, or, on the
+                detection-array path, if a non-empty image's detection labels are not an integer tensor.
             RuntimeError: If upstream stops emitting one annotation for each stored detection score.
         """
         backend = self._coco_backend
@@ -747,6 +752,9 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             )
             return coco_preds, coco_target, cast(dict[str, Any], coco_preds.dataset)
 
+        # Built before the target: a float detection label is also a category ID there, which hotcoco's `COCO`
+        # constructor rejects with a `TypeError` before the array's own label check would have run.
+        detections = self._detection_results_array() if self._loads_detections_from_array(detection_boxes) else None
         # `_get_coco_datasets` passes this same list of Python ints (helpers.py:216) even though the parameter is
         # annotated `list[Tensor]`; the values only ever become COCO category IDs.
         all_labels = cast(list[Tensor], classes)
@@ -761,10 +769,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             average=self.average,
         )
         coco_target = self._build_coco(target_dataset)
-        if self._loads_detections_from_array(detection_boxes):
-            # ufcoco's `loadRes` prints pycocotools' progress lines.
+        if detections is not None:
+            # ufcoco's `loadRes` prints pycocotools' progress lines; hotcoco's is silent, so the redirect is harmless
+            # there.
             with contextlib.redirect_stdout(io.StringIO()):
-                coco_preds = coco_target.loadRes(self._detection_results_array())
+                coco_preds = coco_target.loadRes(detections)
             return coco_preds, coco_target, None
 
         prediction_dataset = backend._get_coco_format(
@@ -823,9 +832,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             One row for each stored detection.
 
         Raises:
-            ValueError: If stored detection scores are not one-dimensional floating-point tensors.
+            ValueError: If stored detection scores are not one-dimensional floating-point tensors, or if a non-empty
+                image's detection labels are not an integer tensor.
         """
         self._validate_detection_scores()
+        self._validate_detection_labels()
         # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
         # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
         # another image, and whose `len()` would otherwise miscount that image as holding one detection instead
@@ -862,6 +873,24 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             if not torch.is_floating_point(image_scores):
                 raise ValueError(
                     f"Invalid input score of sample {image_id} (expected floating point, got {image_scores.dtype})"
+                )
+
+    def _validate_detection_labels(self) -> None:
+        """Restate the per-annotation label check TorchMetrics performs during conversion, for the array path.
+
+        Upstream rejects any detection label that is not a Python ``int`` once converted, one annotation at a time --
+        a whole-valued ``3.0`` included. The detection array never makes that conversion: its category column is
+        float64 whatever the stored dtype was, so the check is restated here on the stored tensor's dtype, which
+        every element shares. Integer and boolean tensors pass, as their elements do upstream; an empty tensor
+        passes whatever its dtype, because upstream has no element to check.
+
+        Raises:
+            ValueError: If a non-empty image's detection labels are a floating-point or complex tensor.
+        """
+        for image_id, image_labels in enumerate(self.detection_labels):
+            if image_labels.numel() > 0 and (torch.is_floating_point(image_labels) or torch.is_complex(image_labels)):
+                raise ValueError(
+                    f"Invalid input class of sample {image_id} (expected integer labels, got {image_labels.dtype})"
                 )
 
     def _build_coco(self, dataset: dict[str, Any]) -> Any:
