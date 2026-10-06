@@ -357,7 +357,10 @@ jobs:
           import os
           import xml.etree.ElementTree as ET
 
-          allowed_prefixes = ("AMPERE_PLUS engines need compute capability 8.0 or newer",)
+          allowed_prefixes = (
+              "AMPERE_PLUS engines need compute capability 8.0 or newer",
+              "needs two CUDA devices",  # the second-device inference test; one-GPU runners cannot run it
+          )
           tree = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "tensorrt-e2e.xml"))
           unexpected = []
           for case in tree.iter("testcase"):

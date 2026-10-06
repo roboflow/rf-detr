@@ -2351,7 +2351,9 @@ class RFDETR:
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
                 detail suffix that would otherwise be appended to encode the resolved precision/backend/SoC
-                (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above). Sanitized against path
+                (see *format* / *coreml_precision* / *backend* / *soc* / *fp16* above), and the TensorRT
+                portability suffixes (``_ampere_plus``, ``_same_compute_capability``, ``_version_compatible``).
+                Sanitized against path
                 traversal (only the basename, extension stripped, is used). Exception: ``format="tflite"``
                 always writes multiple files (one per precision/quantization mode), so the ``_fp32``/``_fp16``/
                 ``_dynamic_range_quant`` suffix is unavoidable even with
