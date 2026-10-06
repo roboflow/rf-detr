@@ -115,12 +115,17 @@ class TRTInference:
     ``chw32`` are not supported.
 
     Args:
-        engine_path: Path to a ``.trt`` engine built on this machine's GPU and TensorRT version.
+        engine_path: Path to a ``.trt`` engine. By default it must have been built on this machine's GPU and TensorRT
+            version; an engine exported with ``trt_hardware_compatibility`` or ``trt_version_compatible`` also loads
+            on the GPUs and TensorRT versions that option covers.
         device: CUDA device to load and run the engine on. A bare ``"cuda"`` is pinned to the current device at
             construction.
         sync_mode: Run with ``execute_v2`` instead of launching on a CUDA stream; the stream needs the
             ``tensorrt-bench`` extra (pycuda).
         verbose: Log TensorRT at VERBOSE rather than INFO.
+        engine_host_code_allowed: Let TensorRT deserialize an engine that carries host code, which an engine built by
+            TensorRT 11 with ``trt_version_compatible=True`` does. Off by default: loading such an engine runs code it
+            contains, so turn it on only for a file you built yourself or otherwise trust.
 
     Raises:
         ImportError: If TensorRT, or pycuda for ``sync_mode=False``, is not installed.
@@ -140,11 +145,17 @@ class TRTInference:
         device: str | torch.device = "cuda:0",
         sync_mode: bool = False,
         verbose: bool = False,
+        *,
+        engine_host_code_allowed: bool = False,
     ) -> None:
         if not trt:
             raise ImportError("TensorRT is not installed. Please install TensorRT to use TRTInference.")
+        # A truthy string such as "false" from a config file must not switch a security setting on.
+        if not isinstance(engine_host_code_allowed, bool):
+            raise ValueError(f"engine_host_code_allowed must be a bool, got {engine_host_code_allowed!r}.")
 
         self.engine_path = engine_path
+        self._engine_host_code_allowed = engine_host_code_allowed
         self.device = device
         self._engine_device = _resolve_engine_device(device)
         self.sync_mode = sync_mode
@@ -235,17 +246,36 @@ class TRTInference:
         Raises:
             RuntimeError: If TensorRT cannot deserialize the file. It reports that by returning ``None`` (with the
                 reason in its log), for an engine built by another TensorRT version or GPU architecture as well as
-                for a truncated or corrupt file.
+                for a truncated or corrupt file, and for an engine that carries host code when
+                ``engine_host_code_allowed`` was not set.
         """
         trt.init_libnvinfer_plugins(self.logger, "")
         with open(path, "rb") as f, trt.Runtime(self.logger) as runtime:
+            # Set only on request, and before deserializing: TensorRT refuses an engine that carries host code
+            # otherwise, and it has to know that before it reads the file, not after.
+            if self._engine_host_code_allowed:
+                try:
+                    runtime.engine_host_code_allowed = True
+                except AttributeError:
+                    logger.warning(
+                        f"engine_host_code_allowed=True had no effect: TensorRT {trt.__version__} has no such "
+                        "switch on its runtime, so an engine that carries host code loads only if that release "
+                        "needs none."
+                    )
             engine = runtime.deserialize_cuda_engine(f.read())
         if engine is None:
+            host_code_hint = (
+                ""
+                if self._engine_host_code_allowed
+                else "If it was exported with trt_version_compatible=True by TensorRT 11, load it with "
+                "engine_host_code_allowed=True (only for a file you trust). Otherwise: "
+            )
             raise RuntimeError(
                 f"TensorRT {trt.__version__} could not deserialize the engine at '{path}'; the reason is in the "
-                "TensorRT log above. By default an engine only loads on the TensorRT version and GPU architecture "
-                "that built it, and a truncated or corrupt file fails the same way. Rebuild it on this machine with "
-                'RFDETR.export(format="tensorrt").'
+                f"TensorRT log above. {host_code_hint}By default an engine only loads on the kind of GPU and the "
+                "TensorRT version that built it, and a truncated or corrupt file fails the same way. Rebuild it on "
+                'this machine with RFDETR.export(format="tensorrt"), or export it once for other machines with '
+                "trt_hardware_compatibility (other GPUs) or trt_version_compatible (other TensorRT 11 releases)."
             )
         return engine
 
