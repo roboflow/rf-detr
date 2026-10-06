@@ -2214,10 +2214,11 @@ class RFDETR:
         fp16: bool = True,
         max_batch_size: int | None = None,
         notes: object = None,
+        output_name: str | None = None,
+        trt_timing_cache: str | os.PathLike[str] | None = None,
         coreml_precision: str | None = None,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
-        output_name: str | None = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
@@ -2364,6 +2365,19 @@ class RFDETR:
                 one optimization profile spanning batch ``1 .. max_batch_size`` and tuned for *batch_size*
                 (``batch_size <= max_batch_size``).  Ignored for every other format or combination; passing a
                 non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
+            trt_timing_cache: File in which TensorRT keeps the kernel timings it measures while building an engine, for
+                ``format="tensorrt"``.  A build loads the file when it exists and writes the merged timings back, so a
+                later build with the same layer shapes at the same precision and batch profile, on the same GPU and
+                TensorRT version, skips the search it already did.  The timings depend on the layers' shapes, not the
+                weights, so a re-export with new weights reuses them for every layer whose shape did not change.  A
+                cache from a matching dynamic-batch build helps too; reuse between a static and a dynamic profile, or
+                across precisions, was not measured.  A relative path is relative to the working directory, not to
+                *output_dir*.  A cache written by another TensorRT major version, or an empty or damaged file, does
+                not stop the build: TensorRT logs an error, builds as if there were no cache, and the file gets this
+                build's timings.  A failed cache write does fail the export, and the built engine is not saved
+                (Polygraphy writes the cache before the engine is returned); the engine can simply be rebuilt.
+                ``None`` (default) reads and writes no file.  Ignored for every other format; passing a non-``None``
+                value there emits a ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -2428,8 +2442,11 @@ class RFDETR:
                 ``format="onnx"`` or ``format="openvino"`` and no ``calibration_data``; or, for those two INT8
                 requests, if ``calibration_data`` points to a missing path, a file that is not ``.npy``, an
                 image-less directory, or an array that is not ``(N, C, H, W)`` or does not match the graph's
-                input size.
+                input size. Also raised for ``format="tensorrt"`` when ``trt_timing_cache`` is not a non-empty file
+                path, ends in a path separator, or is a directory.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
+            OSError: If ``format="tensorrt"`` and the directory or files of ``trt_timing_cache`` cannot be created or
+                written, or it is a symbolic link to a missing file.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
                 paths require a fixed batch size; if ``format="litert"`` is combined with a ``quantization``
@@ -2471,6 +2488,13 @@ class RFDETR:
             warnings.warn(
                 f"`max_batch_size` is only used for format='tensorrt' with dynamic_batch=True "
                 f"(got format={format!r}, dynamic_batch={dynamic_batch!r}). This argument is ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if trt_timing_cache is not None and format != "tensorrt":
+            warnings.warn(
+                f"`trt_timing_cache` is only used for format='tensorrt' (got format={format!r}). "
+                "This argument is ignored.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -2517,6 +2541,7 @@ class RFDETR:
             max_images=max_images,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
+            trt_timing_cache=trt_timing_cache,
         )
         # Constructing the exporter validates the format's own settings (precision, quantization, notes, ...), then
         # warns about the ones it ignores.
