@@ -703,6 +703,35 @@ class TestWriteEngineMetadata:
         precisions = [json.loads((tmp_path / name).read_text())["build"]["precision"] for name in ("a.json", "b.json")]
         assert precisions == ["fp16", "fp32"]
 
+    @pytest.mark.skipif(os.name == "nt", reason="the permission change this hooks is skipped on Windows")
+    def test_two_writers_of_the_same_sidecar_leave_one_complete_document_and_no_temporary_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A second export of the same engine finishing in the middle of the first one's write must not corrupt it.
+
+        The permission change runs after the first writer created its temporary file and before it writes or swaps
+        anything, so hooking it runs the second writer to completion in that window. The first writer swaps last, so its
+        document is what stays, whole, and neither writer leaves a temporary file behind.
+        """
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+        real_fchmod = os.fchmod
+        interleaved: list[bool] = []
+
+        def fchmod_after_the_other_writer(descriptor: int, mode: int) -> None:
+            """Run the second writer to completion, the first time only, then make the real permission change."""
+            if not interleaved:
+                interleaved.append(True)
+                write_engine_metadata(engine, _metadata(precision="fp32"))
+            real_fchmod(descriptor, mode)
+
+        monkeypatch.setattr(os, "fchmod", fchmod_after_the_other_writer)
+
+        write_engine_metadata(engine, _metadata(precision="fp16"))
+
+        assert json.loads((tmp_path / "model.json").read_text())["build"]["precision"] == "fp16"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["model.json", "model.trt"]
+
     def test_the_file_has_the_same_line_endings_on_every_platform(self, tmp_path: Path) -> None:
         """Unix line endings on every platform, so a consumer that compares or hashes the file sees the same bytes."""
         engine = tmp_path / "model.trt"
@@ -740,6 +769,98 @@ class TestWriteEngineMetadata:
             write_engine_metadata(engine, {"schema_version": 1, "value": float("nan")})
 
         assert previous.read_text() == '{"previous": true}'
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["model.json", "model.trt"]
+
+    @pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+    def test_a_sidecar_that_is_a_symlink_to_a_file_is_replaced_not_followed(self, tmp_path: Path) -> None:
+        """``os.replace`` swaps the link itself, so the file the link pointed at keeps its content.
+
+        A user who links ``<engine>.json`` to a shared description must not find that description overwritten by an
+        export: the sidecar becomes a regular file and the link's old target is left alone.
+        """
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+        linked_to = tmp_path / "linked-to.json"
+        linked_to.write_text('{"shared": true}')
+        sidecar = tmp_path / "model.json"
+        sidecar.symlink_to(linked_to)
+
+        write_engine_metadata(engine, _metadata())
+
+        assert not sidecar.is_symlink()
+        assert json.loads(sidecar.read_text())["schema_version"] == 1
+        assert linked_to.read_text() == '{"shared": true}'
+
+    @pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+    def test_a_sidecar_that_is_a_dangling_symlink_is_replaced_and_its_target_is_not_created(
+        self, tmp_path: Path
+    ) -> None:
+        """A link to nothing is swapped for the regular file; the write does not create what the link named."""
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+        missing = tmp_path / "missing.json"
+        sidecar = tmp_path / "model.json"
+        sidecar.symlink_to(missing)
+
+        write_engine_metadata(engine, _metadata())
+
+        assert not sidecar.is_symlink()
+        assert json.loads(sidecar.read_text())["schema_version"] == 1
+        assert not missing.exists()
+
+    def test_a_failed_cleanup_does_not_mask_the_error_that_made_it_necessary(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When removing the temporary file fails too, the caller still learns why the swap failed.
+
+        The swap fails with ``disk full``; the cleanup that follows fails with ``busy``. The first error is the one the
+        caller can act on, so it, not the cleanup's, is what propagates.
+        """
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+        monkeypatch.setattr(os, "replace", _raise_os_error)
+        unlink = MagicMock(side_effect=OSError("busy"))
+        monkeypatch.setattr(Path, "unlink", unlink)
+
+        with pytest.raises(OSError, match="disk full"):
+            write_engine_metadata(engine, _metadata())
+
+        unlink.assert_called_once()
+
+    @pytest.mark.skipif(os.name == "nt", reason="permissions are copied from the engine on POSIX only")
+    def test_a_missing_engine_still_gets_its_description_and_a_warning(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """With no engine file to copy permissions from, the description is written anyway and the warning names it.
+
+        This is the degrade path for a filesystem or a race that hides the engine: the description is worth more than
+        its permissions.
+        """
+        engine = tmp_path / "model.trt"
+        warnings: list[str] = []
+        monkeypatch.setattr(tensorrt_metadata.logger, "warning", lambda message, *args: warnings.append(message % args))
+
+        path = write_engine_metadata(engine, _metadata())
+
+        assert is_rfdetr_description(path) is True
+        assert len(warnings) == 1
+        assert str(path) in warnings[0]
+
+    def test_a_directory_at_the_sidecar_path_is_refused_and_leaves_no_stray_file(self, tmp_path: Path) -> None:
+        """A folder with the sidecar's name cannot be replaced by a file, so the write fails with an ``OSError``.
+
+        The error type is ``IsADirectoryError`` on POSIX and ``PermissionError`` on Windows, so only ``OSError`` is
+        asserted. The temporary file written before the failed swap must be removed.
+        """
+        engine = tmp_path / "model.trt"
+        engine.write_bytes(b"engine")
+        sidecar = tmp_path / "model.json"
+        sidecar.mkdir()
+
+        with pytest.raises(OSError):
+            write_engine_metadata(engine, _metadata())
+
+        assert sidecar.is_dir()
         assert sorted(p.name for p in tmp_path.iterdir()) == ["model.json", "model.trt"]
 
 
@@ -971,6 +1092,24 @@ class TestExporterWritesMetadata:
 
         assert engine.name == "mine.trt"
         assert json.loads(engine.with_suffix(".json").read_text())["build"]["precision"] == "fp16"
+
+    def test_a_backbone_only_export_names_engine_and_description_after_the_onnx_stem(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A custom ``output_name`` does not rename a backbone-only engine: both files follow the ONNX stem.
+
+        The backbone ONNX stem carries the ``-backbone`` marker, so keeping it stops the engine from being
+        indistinguishable from a full-detector one. Here the stubbed ONNX file is ``m.onnx``, so the engine is ``m.trt``
+        (not ``custom.trt``) and its description ``m.json``, which says ``backbone_only`` is true.
+        """
+        _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
+        config = TensorRTConfig(fp16=False, metadata=True, output_name="custom")
+
+        engine = Path(TensorRTExporter(config)._convert(_graph(output_names=("features",), backbone_only=True)))
+
+        assert engine == tmp_path / "m.trt"
+        assert sorted(p.name for p in tmp_path.glob("*.json")) == ["m.json"]
+        assert json.loads((tmp_path / "m.json").read_text())["backbone_only"] is True
 
     def test_a_failed_build_leaves_no_sidecar(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """No engine, no description of one."""

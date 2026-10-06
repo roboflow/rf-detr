@@ -725,6 +725,50 @@ def test_rfdetr_export_warns_when_trt_metadata_used_without_tensorrt(
         _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="onnx", trt_metadata=True, shape=(14, 14))
 
 
+def test_rfdetr_export_does_not_warn_when_trt_metadata_is_false_without_tensorrt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`trt_metadata=False` is the default, so passing it explicitly for another format must stay silent.
+
+    Only a request that would have had an effect (`True`) is worth a warning; the explicit default is not ignored in any
+    way the caller needs to hear about.
+    """
+    model = _make_tensorrt_export_model()
+    onnx_output = str(tmp_path / "inference_model.onnx")
+
+    monkeypatch.setattr("rfdetr.export.prepare.make_infer_image", lambda *_a, **_kw: _make_mock_infer_tensor())
+    monkeypatch.setattr("rfdetr.export._onnx.exporter.OnnxExporter._convert", lambda *_a, **_kw: onnx_output)
+    monkeypatch.setattr("rfdetr.detr.deepcopy", lambda x: x)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _detr_module.RFDETR.export(model, output_dir=str(tmp_path), format="onnx", trt_metadata=False, shape=(14, 14))
+
+    assert [str(w.message) for w in caught if "trt_metadata" in str(w.message)] == []
+
+
+@pytest.mark.parametrize("value", ["yes", 1, None])
+def test_rfdetr_export_tensorrt_rejects_a_non_bool_trt_metadata_before_any_model_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: object
+) -> None:
+    """`RFDETR.export(format="tensorrt", trt_metadata=<not a bool>)` must raise instead of writing a file by accident.
+
+    A truthy non-`bool` such as `"yes"` or `1` would switch the description on silently. The exporter is constructed and
+    validated before the model is moved, copied or traced, so none of that work may have happened when it raises.
+    """
+    model = _make_tensorrt_export_model()
+    prepare = MagicMock()
+    monkeypatch.setattr("rfdetr.export.prepare.prepare_export_graph", prepare)
+
+    with pytest.raises(ValueError, match="trt_metadata"):
+        _detr_module.RFDETR.export(
+            model, output_dir=str(tmp_path), format="tensorrt", trt_metadata=value, shape=(14, 14)
+        )
+
+    prepare.assert_not_called()
+    assert model.model.model.to_calls == []
+
+
 def test_rfdetr_export_tensorrt_forwards_trt_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """`RFDETR.export(format="tensorrt", trt_metadata=True)` sets it on the exporter's configuration, unwarned."""
     model = _make_tensorrt_export_model()
