@@ -636,16 +636,16 @@ class TestWriteEngineMetadata:
         engine = tmp_path / "model.trt"
         engine.write_bytes(b"engine")
         engine.chmod(0o640)
-        warnings: list[str] = []
-        monkeypatch.setattr(tensorrt_metadata.logger, "warning", lambda message, *args: warnings.append(message % args))
+        logged: list[str] = []
+        monkeypatch.setattr(tensorrt_metadata.logger, "warning", lambda message, *args: logged.append(message % args))
         monkeypatch.setattr(os, "fchmod", _raise_os_error)
 
         path = write_engine_metadata(engine, _metadata())
 
         mode = 0o666 & ~_umask()
         assert stat.S_IMODE(path.stat().st_mode) == mode
-        assert len(warnings) == 1
-        assert f"{mode:#o}" in warnings[0]
+        assert len(logged) == 1
+        assert f"{mode:#o}" in logged[0]
 
     def test_the_temporary_file_is_written_in_the_sidecars_directory(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -837,14 +837,14 @@ class TestWriteEngineMetadata:
         its permissions.
         """
         engine = tmp_path / "model.trt"
-        warnings: list[str] = []
-        monkeypatch.setattr(tensorrt_metadata.logger, "warning", lambda message, *args: warnings.append(message % args))
+        logged: list[str] = []
+        monkeypatch.setattr(tensorrt_metadata.logger, "warning", lambda message, *args: logged.append(message % args))
 
         path = write_engine_metadata(engine, _metadata())
 
         assert is_rfdetr_description(path) is True
-        assert len(warnings) == 1
-        assert str(path) in warnings[0]
+        assert len(logged) == 1
+        assert str(path) in logged[0]
 
     def test_a_directory_at_the_sidecar_path_is_refused_and_leaves_no_stray_file(self, tmp_path: Path) -> None:
         """A folder with the sidecar's name cannot be replaced by a file, so the write fails with an ``OSError``.
@@ -1065,12 +1065,12 @@ class TestExporterWritesMetadata:
         """The new description replaces the old one, so there is nothing stale to warn about."""
         _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
         (tmp_path / "m_fp32.json").write_text(_EARLIER_DESCRIPTION)
-        warnings: list[str] = []
-        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: warnings.append(message % args))
+        logged: list[str] = []
+        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: logged.append(message % args))
 
         engine = Path(TensorRTExporter(TensorRTConfig(fp16=False, metadata=True))._convert(_graph()))
 
-        assert warnings == []
+        assert logged == []
         assert json.loads(engine.with_suffix(".json").read_text())["schema_version"] == 1
 
     def test_the_precision_is_the_one_actually_built_after_the_lean_wheel_fallback(
@@ -1223,13 +1223,13 @@ class TestExporterWritesMetadata:
         _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
         stale = tmp_path / "m_fp32.json"
         stale.write_text(_EARLIER_DESCRIPTION)
-        warnings: list[str] = []
-        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: warnings.append(message % args))
+        logged: list[str] = []
+        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: logged.append(message % args))
 
         TensorRTExporter(TensorRTConfig(fp16=False))._convert(_graph())
 
-        assert len(warnings) == 1
-        assert "m_fp32.json" in warnings[0]
+        assert len(logged) == 1
+        assert "m_fp32.json" in logged[0]
         assert stale.read_text() == _EARLIER_DESCRIPTION, "a file the export did not write is left alone"
 
     @pytest.mark.parametrize("metadata", [False, True])
@@ -1242,12 +1242,12 @@ class TestExporterWritesMetadata:
         """
         _patch_build(monkeypatch, tmp_path, has_fp16_flag=True)
         (tmp_path / "m_fp32.json").write_text(_EARLIER_DESCRIPTION)
-        warnings: list[str] = []
-        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: warnings.append(message % args))
+        logged: list[str] = []
+        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: logged.append(message % args))
 
         TensorRTExporter(TensorRTConfig(fp16=False, metadata=metadata)).build_engine(str(tmp_path / "m.onnx"))
 
-        assert sum("m_fp32.json" in warning for warning in warnings) == 1
+        assert sum("m_fp32.json" in warning for warning in logged) == 1
 
     @pytest.mark.parametrize("beside", [None, "unrelated json", "directory"])
     def test_only_a_description_is_reported(
@@ -1259,12 +1259,12 @@ class TestExporterWritesMetadata:
             (tmp_path / "m_fp32.json").write_text('{"name": "a file of the user\'s own"}')
         elif beside == "directory":
             (tmp_path / "m_fp32.json").mkdir()
-        warnings: list[str] = []
-        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: warnings.append(message % args))
+        logged: list[str] = []
+        monkeypatch.setattr(tensorrt_export.logger, "warning", lambda message, *args: logged.append(message % args))
 
         TensorRTExporter(TensorRTConfig(fp16=False))._convert(_graph())
 
-        assert warnings == []
+        assert logged == []
 
     def test_a_build_asked_for_its_digest_reports_what_it_built(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
