@@ -25,7 +25,9 @@ import torch
 
 from rfdetr.export._backend import check_onnx_available as _check_onnx_available
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._onnx.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
+from rfdetr.export._runtime.calibration_checks import check_calibration_data
 from rfdetr.export.base import ExportConfig, Exporter, serialize_notes, shared_settings
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -928,9 +930,16 @@ class OnnxConfig(ExportConfig):
 
     Attributes:
         opset_version: ONNX opset the graph targets.
+        quantization: ``None`` / ``"fp32"`` write the traced graph; ``"int8"`` additionally writes a static QDQ model.
+        calibration_data: Representative images the INT8 activation ranges are collected from. Required for
+            ``"int8"``, unused otherwise.
+        max_images: Maximum images read from a *calibration_data* directory.
     """
 
     opset_version: int = 17
+    quantization: str | None = None
+    calibration_data: Any = None
+    max_images: int = 100
 
     @classmethod
     def derive(cls, config: ExportConfig, *, opset_version: int) -> OnnxConfig:
@@ -973,12 +982,46 @@ class OnnxExporter(Exporter[OnnxConfig]):
     """
 
     config_class = OnnxConfig
-    setting_names = {"opset_version": "opset_version"}
+    setting_names = {
+        "opset_version": "opset_version",
+        "quantization": "quantization",
+        "calibration_data": "calibration_data",
+        "max_images": "max_images",
+    }
     format = "onnx"
     display_name = "ONNX"
     supports_dynamic_batch = True
     supports_notes = True
     pip_extra = "onnx"
+
+    def _check_capabilities(self) -> None:
+        """Reject a quantization mode this format does not write, or an INT8 request that cannot calibrate.
+
+        Static INT8 derives its activation ranges from the data it is shown, so missing calibration data is a
+        refusal rather than a default: random or absent data produces a model that loads, runs, and is quietly
+        wrong. This is the opposite of TFLite's dynamic-range ``"int8"``, where calibration data is genuinely
+        unused. What can be judged from the configuration alone -- a path that does not exist, a directory without
+        images, a file that is not ``.npy``, an array that is not rank 4 -- is judged here too, so it fails before the
+        forward pass instead of after the trace.
+
+        Raises:
+            ValueError: If *quantization* is not a recognized mode, or is ``"int8"`` without usable
+                *calibration_data*.
+        """
+        super()._check_capabilities()
+        if self.config.quantization not in VALID_QUANTIZATIONS:
+            raise ValueError(
+                f"Unsupported quantization mode {self.config.quantization!r} for format='onnx'. "
+                f"Choose from: {sorted(q for q in VALID_QUANTIZATIONS if q is not None)}."
+            )
+        if self.config.quantization == "int8" and self.config.calibration_data is None:
+            raise ValueError(
+                "quantization='int8' requires calibration_data: a directory of representative images, a .npy path, "
+                "or a preprocessed array. Static quantization reads activation ranges from this data, so there is "
+                "no meaningful default."
+            )
+        if self.config.quantization == "int8":
+            check_calibration_data(self.config.calibration_data)
 
     @classmethod
     def check_dependencies(cls) -> None:
@@ -1072,4 +1115,14 @@ class OnnxExporter(Exporter[OnnxConfig]):
         os.makedirs(str(self.config.output_dir), exist_ok=True)
         self._trace(graph, output_file)
         self._embed_notes(output_file)
+        if self.config.quantization == "int8":
+            # The FP32 graph stays on disk: it is the source the quantized copy was derived from, and the only
+            # baseline an accuracy check has to compare against.
+            return str(
+                quantize_int8(
+                    output_file,
+                    self.config.calibration_data,
+                    max_images=self.config.max_images,
+                )
+            )
         return output_file

@@ -375,6 +375,31 @@ class TestInt8Host:
         with pytest.raises(ImportError, match="host refused"):
             exporter.build_engine(str(tmp_path / "model.onnx"))
 
+    def test_check_environment_refuses_the_host_before_the_forward_pass(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(_refuse_host))
+        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path)))
+        with pytest.raises(ImportError, match="host refused"):
+            exporter.check_environment()
+
+    def test_check_environment_leaves_the_host_alone_without_int8(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(_refuse_host))
+        TensorRTExporter(TensorRTConfig()).check_environment()
+
+    def test_description_records_the_int8_precision(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        written: dict[str, Any] = {}
+        monkeypatch.setitem(sys.modules, "tensorrt", types.SimpleNamespace(__version__="11.3.0.99"))
+        monkeypatch.setattr(tensorrt_export, "gpu_facts", lambda: None)
+        monkeypatch.setattr(
+            tensorrt_export, "write_engine_metadata", lambda engine_path, document: written.update(document) or tmp_path
+        )
+        exporter = TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), metadata=True))
+        exporter._write_metadata(
+            _export_graph(), str(tmp_path / "m_int8.trt"), fp16=True, engine_facts={"size": 1, "sha256": "0" * 64}
+        )
+        assert written["build"]["precision"] == "int8"
+
     @pytest.mark.parametrize("extra", ["masks", "keypoints"])
     def test_non_detection_model_is_refused_before_the_onnx_export(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, extra: str
@@ -408,9 +433,15 @@ class TestInt8BuildWiring:
         monkeypatch.setattr(tensorrt_export, "network_from_onnx_path", fake_parse)
         monkeypatch.setattr(tensorrt_export, "_dynamic_batch_inputs", lambda network: {})
         monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: ("config", kwargs))
-        monkeypatch.setattr(tensorrt_export, "engine_from_network", lambda parsed, config: ("engine", config))
         monkeypatch.setattr(
-            tensorrt_export, "save_engine", lambda engine, path: calls.setdefault("saved", (engine, path))
+            tensorrt_export,
+            "engine_from_network",
+            lambda parsed, config: types.SimpleNamespace(serialize=lambda: ("engine", config)),
+        )
+        monkeypatch.setattr(
+            tensorrt_export,
+            "save_file",
+            lambda contents, dest, description=None: calls.setdefault("saved", (contents, dest)),
         )
 
         config = TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), max_images=3, verbose=False)

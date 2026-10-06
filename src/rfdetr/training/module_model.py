@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import inspect
 import math
@@ -36,6 +37,7 @@ from rfdetr.config import (
     _resolve_native_optimizer,
 )
 from rfdetr.datasets.coco import compute_multi_scale_scales
+from rfdetr.models._defaults import MODEL_DEFAULTS
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model_from_config
 from rfdetr.models.matcher import HungarianMatcher
 from rfdetr.models.weights import apply_lora, interpolate_position_embeddings, load_pretrain_weights
@@ -386,9 +388,13 @@ class RFDETRModelModule(LightningModule):
     Args:
         model_config: Architecture configuration.
         train_config: Training hyperparameter configuration.
+        load_encoder_weights: Fetch the encoder's upstream pretrained weights when ``model_config`` has no
+            ``pretrain_weights``. Pass ``False`` when every weight is replaced right after construction.
     """
 
-    def __init__(self, model_config: ModelConfig, train_config: TrainConfig) -> None:
+    def __init__(
+        self, model_config: ModelConfig, train_config: TrainConfig, *, load_encoder_weights: bool = True
+    ) -> None:
         super().__init__()
         self.model_config = model_config
         self.train_config = train_config
@@ -434,7 +440,12 @@ class RFDETRModelModule(LightningModule):
         self.strict_loading = False
 
         # Model, criterion, and postprocessor.
-        self.model = build_model_from_config(model_config, train_config)
+        # load_encoder_weights=False skips fetching upstream encoder weights (DINOv2, or a registered encoder's) for a
+        # model whose weights are about to be replaced anyway, e.g. RFDETR.evaluate()'s transplant.
+        defaults = (
+            MODEL_DEFAULTS if load_encoder_weights else dataclasses.replace(MODEL_DEFAULTS, force_no_pretrain=True)
+        )
+        self.model = build_model_from_config(model_config, train_config, defaults=defaults)
         if model_config.pretrain_weights is not None:
             # Canonical loader handles PE interpolation, PTL .ckpt normalisation,
             # per-group query slicing, class-name extraction, partial-load warnings,

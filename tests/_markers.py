@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 
 import pytest
+import torch
 
 #: Skip a test node that invokes CPU-backend `torch.compile` (Inductor codegen). Windows CI runners
 #: have no MSVC (``cl.exe``) on ``PATH``, so Inductor's CPU C++ codegen fails with
@@ -21,3 +22,8 @@ requires_cpu_inductor = pytest.mark.skipif(
     sys.platform == "win32",
     reason="CPU Inductor needs a C++ compiler; Windows CI runners have no MSVC on PATH",
 )
+
+#: Skip a test node when no CUDA device is present. Pair it with ``@pytest.mark.gpu`` so GPU CI selects it and CPU CI
+#: deselects it; ``cuda_marks`` is that pair for ``pytest.param(..., marks=cuda_marks)``.
+requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+cuda_marks = [pytest.mark.gpu, requires_cuda]

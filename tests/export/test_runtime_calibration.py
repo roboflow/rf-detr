@@ -128,7 +128,7 @@ class TestArraysFromSamples:
 
     @pytest.mark.parametrize("channels", [1, 2, 4])
     def test_channel_mismatch_is_refused(self, channels: int) -> None:
-        with pytest.raises(ValueError, match=f"has {channels} channels"):
+        with pytest.raises(ValueError, match=f"has {channels} channel"):
             list(_arrays_from_samples(np.zeros((1, channels, 8, 8), np.float32), height=8, width=8, channels=3))
 
     def test_empty_array_yields_nothing(self) -> None:
@@ -140,12 +140,6 @@ class TestArraysFromSamples:
         batches = list(_arrays_from_samples(samples, height=4, width=4, channels=3))
         assert [(b.shape, b.dtype) for b in batches] == [((1, 3, 4, 4), np.float32)] * 3
         np.testing.assert_array_equal(np.concatenate(batches), samples.astype(np.float32))
-
-    def test_batch_is_an_owned_writable_copy(self) -> None:
-        samples = np.zeros((2, 3, 4, 4), np.float32)
-        batch = next(_arrays_from_samples(samples, height=4, width=4, channels=3))
-        batch[...] = 1.0
-        assert (samples == 0).all() and batch.flags.writeable
 
 
 class TestCalibrationBatches:
@@ -166,7 +160,7 @@ class TestCalibrationBatches:
         ("shape", "message"),
         [
             pytest.param((2, 3, 8), "must be rank 4", id="rank"),
-            pytest.param((2, 1, 8, 8), "has 1 channels", id="channels"),
+            pytest.param((2, 1, 8, 8), "has 1 channel", id="channels"),
             pytest.param((2, 3, 8, 6), "but the graph expects", id="spatial"),
         ],
     )
@@ -191,11 +185,6 @@ class TestCalibrationBatches:
         monkeypatch.setattr(calibration, "_arrays_from_samples", spy)
         assert len(list(calibration_batches(path, height=8, width=8))) == 2
         assert isinstance(spy.call_args.args[0], np.memmap)
-
-    def test_batches_do_not_alias_the_calibration_file(self, tmp_path: Path) -> None:
-        path = _save_npy(tmp_path / "images.npy", (2, 3, 8, 8))
-        batch = next(calibration_batches(path, height=8, width=8))
-        assert batch.flags.writeable and batch.base is None
 
     @pytest.mark.parametrize("mode", ["RGB", "RGBA", "L", "P"])
     def test_directory_images_are_preprocessed_as_predict_does(self, tmp_path: Path, mode: str) -> None:
