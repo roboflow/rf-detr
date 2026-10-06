@@ -329,6 +329,38 @@ class TestExportOpenvinoNaming:
         assert output_xml == tmp_path / f"{expected}.xml"
         assert ".." not in str(output_xml).removeprefix(str(tmp_path))
 
+    @pytest.mark.parametrize(
+        ("variant_name", "output_name", "backbone_only", "expected"),
+        [
+            pytest.param("rfdetr-nano", None, False, "rfdetr-nano_int8", id="variant"),
+            pytest.param(None, None, False, "inference_model_int8", id="bare-default"),
+            pytest.param("rfdetr-nano", None, True, "rfdetr-nano_int8-backbone", id="backbone-marker-after-token"),
+            pytest.param("rfdetr-nano", "my-model", False, "my-model", id="custom-name-verbatim"),
+        ],
+    )
+    def test_int8_appends_suffix_unless_name_is_custom(
+        self, tmp_path: Path, variant_name: str | None, output_name: str | None, backbone_only: bool, expected: str
+    ) -> None:
+        """INT8 must not overwrite the FP32 IR written under the same name, except for a verbatim ``output_name``."""
+        exporter = OpenVINOExporter(
+            OpenVINOConfig(
+                output_dir=tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                quantization="int8",
+                calibration_data=np.zeros((1, 3, 8, 8), dtype=np.float32),
+                verbose=False,
+            )
+        )
+        assert exporter._resolve_export_name(backbone_only=backbone_only) == expected
+
+    def test_fp32_quantization_keeps_plain_stem(self, tmp_path: Path) -> None:
+        """Only ``"int8"`` changes the artifact name; ``"fp32"`` is the unquantized export."""
+        exporter = OpenVINOExporter(
+            OpenVINOConfig(output_dir=tmp_path, variant_name="rfdetr-nano", quantization="fp32")
+        )
+        assert exporter._resolve_export_name(backbone_only=False) == "rfdetr-nano"
+
 
 class TestExportOpenvinoPrecision:
     """``precision``'s ``compress_to_fp16`` forwarding, exercised with a stubbed ``openvino`` module.
