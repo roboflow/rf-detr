@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Hardening tests for static INT8 ONNX quantization (:mod:`rfdetr.export._onnx.quantize`)."""
 
+import importlib.util
 import shutil
 import sys
 import types
@@ -14,12 +15,15 @@ from typing import Any
 import numpy as np
 import pytest
 
-onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX quantization tests")
+from rfdetr.export._onnx.quantize import nodes_to_exclude, quantize_int8
+from rfdetr.export._runtime import calibration
 
-from onnx import TensorProto, helper, numpy_helper  # noqa: E402
+_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
 
-from rfdetr.export._onnx.quantize import nodes_to_exclude, quantize_int8  # noqa: E402
-from rfdetr.export._runtime import calibration  # noqa: E402
+onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX quantization tests")
+
+# The helper doctests build real ONNX graphs, so they need the package a class-level skipif cannot gate.
+__doctest_requires__ = {("_identity_model", "_score_graph", "_head_graph"): ["onnx"]}
 
 
 def _fail_after_partial_write(*args: Any, **kwargs: Any) -> None:
@@ -80,6 +84,9 @@ def source_model(tmp_path: Path) -> Path:
         >>> source_model(tmp_path).name  # doctest: +SKIP
         'model.onnx'
     """
+    import onnx
+    from onnx import TensorProto, helper
+
     graph = helper.make_graph(
         [helper.make_node("Identity", ["images"], ["out"], name="identity")],
         "model",
@@ -94,6 +101,7 @@ def source_model(tmp_path: Path) -> Path:
 _CALIBRATION = np.zeros((2, 3, 8, 8), dtype=np.float32)
 
 
+@onnx_only
 @pytest.mark.usefixtures("fake_ort")
 class TestCalibrationSettings:
     """How :func:`quantize_int8` configures ONNX Runtime's calibration."""
@@ -148,6 +156,8 @@ def _identity_model(dims: list[int | str]) -> object:
         >>> model.graph.input[0].type.tensor_type.shape.dim[0].dim_param
         'batch'
     """
+    from onnx import TensorProto, helper
+
     graph = helper.make_graph(
         [helper.make_node("Identity", ["images"], ["out"], name="identity")],
         "model",
@@ -157,6 +167,7 @@ def _identity_model(dims: list[int | str]) -> object:
     return helper.make_model(graph)
 
 
+@onnx_only
 @pytest.mark.usefixtures("fake_ort")
 class TestStaticBatch:
     """How calibration samples are fed to a graph traced at a fixed batch size."""
@@ -177,6 +188,8 @@ class TestStaticBatch:
         ORT rejects a ``(1, C, H, W)`` feed for a graph whose batch dimension is fixed at 2, so single-sample batches
         made static quantization impossible for any export traced with ``batch_size > 1``.
         """
+        import onnx
+
         source = tmp_path / "model.onnx"
         onnx.save(_identity_model(dims), str(source))
         shapes: list[tuple[int, ...]] = []
@@ -195,12 +208,15 @@ class TestStaticBatch:
 
         The dimensions are read as integers; a symbolic one reads as 0 and would otherwise flow into preprocessing.
         """
+        import onnx
+
         source = tmp_path / "model.onnx"
         onnx.save(_identity_model([1, 3, "height", "width"]), str(source))
         with pytest.raises(ValueError, match="static"):
             quantize_int8(source, np.zeros((2, 3, 8, 8), dtype=np.float32))
 
 
+@onnx_only
 @pytest.mark.usefixtures("fake_ort")
 class TestScratchFiles:
     """What :func:`quantize_int8` leaves on disk, on success and on failure."""
@@ -264,6 +280,8 @@ def _score_graph(key: str = "k", scaling: tuple[str, str] | None = None) -> obje
         >>> [node.op_type for node in graph.node][:4]
         ['Constant', 'MatMul', 'Div', 'Softmax']
     """
+    from onnx import TensorProto, helper, numpy_helper
+
     scalar = numpy_helper.from_array(np.array(2.0, dtype=np.float32))
     nodes = [
         helper.make_node("Constant", [], ["const"], name="const_node", value=scalar),
@@ -306,6 +324,8 @@ def _head_graph() -> object:
         >>> [output.name for output in graph.output]
         ['boxes', 'features', 'far']
     """
+    from onnx import TensorProto, helper
+
     nodes = [
         helper.make_node("Gemm", ["x", "w0"], ["h0"], name="layers.0"),
         helper.make_node("Relu", ["h0"], ["a0"], name="relu0"),
@@ -328,6 +348,7 @@ def _head_graph() -> object:
     return helper.make_graph(nodes, "heads", inputs, outputs)
 
 
+@onnx_only
 class TestHeadWalk:
     """Which head multiplies the walk back from the graph outputs holds in float."""
 
@@ -352,6 +373,7 @@ class TestHeadWalk:
         assert (name in nodes_to_exclude(_head_graph())) is excluded
 
 
+@onnx_only
 class TestAttentionScoreWalk:
     """Which multiplies the walk back from a ``Softmax`` holds in float."""
 

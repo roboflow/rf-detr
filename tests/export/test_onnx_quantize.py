@@ -5,20 +5,39 @@
 # ------------------------------------------------------------------------
 """Tests for static INT8 quantization of ONNX exports (:mod:`rfdetr.export._onnx.quantize`)."""
 
+import importlib.util
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-onnx = pytest.importorskip("onnx", reason="onnx not installed; skip ONNX quantization tests")
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
+from rfdetr.export._onnx.quantize import VALID_QUANTIZATIONS, nodes_to_exclude, quantize_int8
+from rfdetr.export._runtime.calibration import calibration_batches
+from rfdetr.export._tensorrt.exporter import TensorRTConfig
+from rfdetr.export._tflite.exporter import TFLiteConfig
 
-from onnx import TensorProto, helper, numpy_helper  # noqa: E402
+_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
+_IS_ONNXRUNTIME_INSTALLED = importlib.util.find_spec("onnxruntime") is not None
 
-from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter  # noqa: E402
-from rfdetr.export._onnx.quantize import VALID_QUANTIZATIONS, nodes_to_exclude, quantize_int8  # noqa: E402
-from rfdetr.export._runtime.calibration import calibration_batches  # noqa: E402
-from rfdetr.export._tensorrt.exporter import TensorRTConfig  # noqa: E402
-from rfdetr.export._tflite.exporter import TFLiteConfig  # noqa: E402
+onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX quantization tests")
+onnx_runtime_only = pytest.mark.skipif(
+    not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
+    reason="onnx/onnxruntime not installed; skip end-to-end quantization",
+)
+
+# The helper doctests build real ONNX graphs, so they need the package a class-level skipif cannot gate.
+__doctest_requires__ = {
+    (
+        "_weights",
+        "_deep_attention_model",
+        "_dequantized_inputs",
+        "_graph",
+        "_matmul_chain",
+        "_relu_tail",
+        "_attention_graph",
+    ): ["onnx"],
+}
 
 
 def _weights(name: str, shape: tuple[int, ...]) -> object:
@@ -35,6 +54,8 @@ def _weights(name: str, shape: tuple[int, ...]) -> object:
         >>> _weights("w", (2, 2)).name
         'w'
     """
+    from onnx import numpy_helper
+
     values = (np.cos(np.arange(int(np.prod(shape)))) * 0.5).reshape(shape).astype(np.float32)
     return numpy_helper.from_array(values, name)
 
@@ -55,6 +76,8 @@ def _deep_attention_model() -> object:
         >>> len(model.graph.node) >= 6
         True
     """
+    from onnx import TensorProto, helper
+
     nodes = [
         helper.make_node("MatMul", ["x", "w_proj"], ["q"], name="projection"),
         helper.make_node("Transpose", ["q"], ["k"], perm=[0, 1, 3, 2], name="transpose"),
@@ -104,6 +127,7 @@ def _dequantized_inputs(model: object, node_name: str) -> list[bool]:
         One flag per input, in input order.
 
     Examples:
+        >>> from onnx import helper
         >>> node = helper.make_node("Add", ["a", "b"], ["c"], name="add")
         >>> dq = helper.make_node("DequantizeLinear", ["qa", "s"], ["a"], name="dq")
         >>> graph = helper.make_graph([dq, node], "g", [], [])
@@ -127,10 +151,13 @@ def _graph(node_groups: list[list[object]], inputs: list[str], outputs: list[str
         An ``onnx.GraphProto``.
 
     Examples:
+        >>> from onnx import helper
         >>> node = helper.make_node("Relu", ["x"], ["y"], name="r")
         >>> [n.name for n in _graph([[node]], ["x"], ["y"]).node]
         ['r']
     """
+    from onnx import TensorProto, helper
+
     return helper.make_graph(
         [node for group in node_groups for node in group],
         "g",
@@ -154,6 +181,8 @@ def _matmul_chain(prefix: str, length: int) -> list[object]:
             >>> [n.name for n in _matmul_chain("m", 3)]
             ['m0', 'm1', 'm2']
     """
+    from onnx import helper
+
     return [
         helper.make_node(
             "MatMul",
@@ -181,6 +210,8 @@ def _relu_tail(source: str, length: int, prefix: str) -> tuple[list[object], str
         >>> [n.name for n in nodes], end
         (['t0', 't1'], 't1_out')
     """
+    from onnx import helper
+
     nodes = [
         helper.make_node(
             "Relu",
@@ -208,6 +239,8 @@ def _attention_graph() -> object:
         >>> sorted(node.name for node in graph.node)
         ['head', 'projection', 'scores', 'softmax', 'values']
     """
+    from onnx import TensorProto, helper
+
     nodes = [
         helper.make_node("MatMul", ["x", "w_in"], ["query"], name="projection"),
         helper.make_node("MatMul", ["query", "key"], ["score"], name="scores"),
@@ -220,6 +253,7 @@ def _attention_graph() -> object:
     return helper.make_graph(nodes, "attention", inputs, outputs)
 
 
+@onnx_only
 class TestNodeSelection:
     """Which nodes are held back from quantization."""
 
@@ -253,6 +287,8 @@ class TestNodeSelection:
 
     def test_excludes_both_branches_of_a_diamond_and_lists_the_shared_trunk_once(self) -> None:
         """A multiply reachable from the output along two paths is listed once; both branch multiplies are held back."""
+        from onnx import helper
+
         nodes = [
             helper.make_node("MatMul", ["x", "w"], ["trunk_out"], name="trunk"),
             helper.make_node("MatMul", ["trunk_out", "w"], ["left_out"], name="left"),
@@ -267,6 +303,8 @@ class TestNodeSelection:
 
         The nodes are declared ``z_head`` first, so a result in discovery order would not equal the sorted list.
         """
+        from onnx import helper
+
         nodes = [
             helper.make_node("MatMul", ["x", "w"], ["logits"], name="z_head"),
             helper.make_node("MatMul", ["x", "w"], ["boxes"], name="a_head"),
@@ -275,6 +313,8 @@ class TestNodeSelection:
 
     def test_softmax_without_a_producer_is_tolerated_and_excludes_nothing_far_away(self) -> None:
         """A Softmax reading a graph input has no producer to exclude; a distant multiply is still quantizable."""
+        from onnx import helper
+
         far = [helper.make_node("MatMul", ["x", "w"], ["far_out"], name="far")]
         far_tail, far_end = _relu_tail("far_out", 11, "far_tail")  # beyond the bounded head walk
         attention = [helper.make_node("Softmax", ["external_scores"], ["probs"], name="attention")]
@@ -283,6 +323,8 @@ class TestNodeSelection:
 
     def test_softmax_fed_by_a_non_matmul_does_not_exclude_that_producer(self) -> None:
         """Only multiplies feeding a Softmax are attention scores; an elementwise producer is left alone."""
+        from onnx import helper
+
         nodes = [helper.make_node("Relu", ["x"], ["pre"], name="pre_softmax")]
         nodes.append(helper.make_node("Softmax", ["pre"], ["probs"], name="softmax"))
         tail, tail_end = _relu_tail("probs", 8, "tail")
@@ -333,16 +375,18 @@ class TestCalibrationBatches:
         assert len(list(calibration_batches(array_path, height=8, width=8))) == 2
 
     def test_preprocesses_images_from_a_directory(self, tmp_path: Path) -> None:
-        pil = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+        from PIL import Image
+
         for name in ("a.jpg", "b.jpg"):
-            pil.new("RGB", (32, 24)).save(tmp_path / name)
+            Image.new("RGB", (32, 24)).save(tmp_path / name)
         batches = list(calibration_batches(tmp_path, height=8, width=8))
         assert [batch.shape for batch in batches] == [(1, 3, 8, 8), (1, 3, 8, 8)]
 
     def test_directory_reading_honours_max_images(self, tmp_path: Path) -> None:
-        pil = pytest.importorskip("PIL.Image", reason="Pillow not installed")
+        from PIL import Image
+
         for index in range(4):
-            pil.new("RGB", (32, 24)).save(tmp_path / f"{index}.jpg")
+            Image.new("RGB", (32, 24)).save(tmp_path / f"{index}.jpg")
         assert len(list(calibration_batches(tmp_path, height=8, width=8, max_images=2))) == 2
 
 
@@ -413,6 +457,7 @@ class TestSettingPlumbing:
         assert exporter.config.quantization is None
 
 
+@onnx_runtime_only
 class TestQuantizeInt8EndToEnd:
     """``quantize_int8`` run against a real ONNX Runtime on a small synthetic graph.
 
@@ -422,12 +467,16 @@ class TestQuantizeInt8EndToEnd:
 
     @pytest.fixture
     def onnxruntime(self) -> object:
-        """The ``onnxruntime`` module, or a skip on a host without it."""
-        return pytest.importorskip("onnxruntime", reason="onnxruntime not installed; skip end-to-end quantization")
+        """The ``onnxruntime`` module."""
+        import onnxruntime
+
+        return onnxruntime
 
     @pytest.fixture
     def run(self, onnxruntime: object, tmp_path: Path) -> tuple[Path, Path, np.ndarray, object]:
         """Quantize the synthetic model; return source path, INT8 path, calibration data and the loaded INT8 model."""
+        import onnx
+
         source = tmp_path / "model.onnx"
         onnx.save(_deep_attention_model(), str(source))
         data = np.stack([np.sin(np.arange(48).reshape(3, 4, 4) * (index + 1)) for index in range(4)]).astype(np.float32)
@@ -446,6 +495,8 @@ class TestQuantizeInt8EndToEnd:
 
     def test_leaves_source_graph_unquantized(self, run: tuple[Path, Path, np.ndarray, object]) -> None:
         """The FP32 source stays a float graph: it is the accuracy baseline."""
+        import onnx
+
         source, _, _, _ = run
         op_types = {node.op_type for node in onnx.load(str(source)).graph.node}
         assert "QuantizeLinear" not in op_types and "DequantizeLinear" not in op_types

@@ -5,10 +5,10 @@
 # ------------------------------------------------------------------------
 """Tests for static INT8 quantization of OpenVINO exports (:mod:`rfdetr.export._openvino.quantize`)."""
 
+import importlib.util
 import sys
 import types
 from pathlib import Path
-from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -18,6 +18,11 @@ import torch
 from rfdetr.export._openvino.exporter import OpenVINOConfig, OpenVINOExporter
 from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export.prepare import ExportGraph
+
+openvino_nncf_only = pytest.mark.skipif(
+    not (importlib.util.find_spec("openvino") and importlib.util.find_spec("nncf")),
+    reason="openvino/nncf not installed; `pip install nncf` to run the INT8 export",
+)
 
 
 class _TinyAttention(torch.nn.Module):
@@ -245,13 +250,14 @@ class TestExportOpenvinoInt8:
 
 @pytest.mark.integration
 @pytest.mark.e2e_openvino
+@openvino_nncf_only
 class TestOpenvinoInt8EndToEnd:
     """Real NNCF quantization of a tiny model (``-m e2e_openvino``; needs ``openvino`` and ``nncf`` installed)."""
 
     def test_exports_runnable_quantized_ir(self, tmp_path: Path) -> None:
         """INT8 export of a tiny attention model writes an IR that compiles and runs on CPU."""
-        openvino: Any = pytest.importorskip("openvino", reason="openvino not installed")
-        pytest.importorskip("nncf", reason="nncf not installed; `pip install nncf` to run the INT8 export")
+        import openvino
+
         data = np.stack([np.sin(np.arange(192).reshape(3, 8, 8) * (index + 1)) for index in range(3)]).astype(
             np.float32
         )
