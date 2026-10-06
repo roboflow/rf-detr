@@ -1016,6 +1016,8 @@ class RFDETR:
         # Raised only if the checkpoint needs a plus class: a broken rfdetr_plus must not block core checkpoints.
         _plus_import_error: ImportError | None = None
         _plus_symbols: dict[str, type[RFDETR]] = {}
+        # Why each plus symbol is missing; chained onto the upgrade hint below so the cause stays visible.
+        _plus_symbol_errors: dict[str, ImportError] = {}
         _plus_entries: list[tuple[str, type[RFDETR]]] = []
         _plus_stem_entries: list[tuple[str, type[RFDETR]]] = []
         from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
@@ -1027,8 +1029,9 @@ class RFDETR:
                 for class_symbol in sorted(_PLUS_EXPORTS):
                     try:
                         plus_obj = getattr(platform_models, class_symbol)
-                    except ImportError:
+                    except ImportError as ex:
                         # The installed rfdetr_plus predates this model; a checkpoint naming it is rejected below.
+                        _plus_symbol_errors[class_symbol] = ex
                         continue
                     _plus_symbols[class_symbol] = plus_obj
                 _plus_entries = [
@@ -1183,7 +1186,7 @@ class RFDETR:
                 raise ImportError(
                     f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r}: "
                     + _UPGRADE_MSG.format(name=missing_symbol)
-                )
+                ) from _plus_symbol_errors.get(missing_symbol)
 
             model_cls = next((klass for name, klass in _plus_stem_entries if name in weights_file), None)
             if model_cls is None:

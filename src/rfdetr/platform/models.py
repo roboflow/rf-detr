@@ -15,6 +15,10 @@ _UPGRADE_MSG = (
     " Upgrade it with `pip install -U rfdetr_plus`."
 )
 
+# Why the PE-model import below failed; chained onto the upgrade hint so a broken dependency isn't mistaken for an
+# outdated rfdetr_plus. A name bound by `except ... as` is deleted when its block ends, hence the module attribute.
+_PLUS_PE_IMPORT_ERROR: ImportError | None = None
+
 if _IS_RFDETR_PLUS_AVAILABLE:
     from rfdetr_plus.models import (
         RFDETR2XLarge,
@@ -35,9 +39,9 @@ if _IS_RFDETR_PLUS_AVAILABLE:
             RFDETRFemto,
             RFDETRPico,
         )
-    except ImportError:
+    except ImportError as ex:
         # rfdetr_plus releases before the PE-Core-T models; __getattr__ raises an upgrade hint on access.
-        pass
+        _PLUS_PE_IMPORT_ERROR = ex
     else:
         __all__ += [
             "RFDETRAtto",
@@ -56,7 +60,7 @@ def __getattr__(name: str) -> Any:
             # Surface a clear install hint when someone explicitly requests a plus symbol.
             raise ImportError(_INSTALL_MSG.format(name="platform model downloads"))
         # The installed rfdetr_plus is older than this symbol.
-        raise ImportError(_UPGRADE_MSG.format(name=name))
+        raise ImportError(_UPGRADE_MSG.format(name=name)) from _PLUS_PE_IMPORT_ERROR
 
     # Fall back to the normal attribute lookup error for everything else.
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
