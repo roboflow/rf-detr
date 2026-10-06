@@ -270,14 +270,14 @@ jobs:
           print(f"TensorRT {tensorrt.__version__} OK")
         shell: python
 
-      - name: 📦 Install the TensorRT lean runtime
-        timeout-minutes: 5
+      - name: 🔎 Resolve the TensorRT lean runtime spec
         # trt_version_compatible=True builds against TensorRT's lean runtime, a separate wheel the [tensorrt] extra does
         # not install. Match the installed TensorRT's CUDA suffix and release; the lean wheel may add a .post suffix.
+        # The spec goes to the job env, so the install step is a plain shell command.
         run: |
           import importlib.metadata
+          import os
           import re
-          import subprocess
 
           names = {dist.metadata["Name"] or "" for dist in importlib.metadata.distributions()}
           libs = sorted(name for name in names if re.fullmatch(r"tensorrt[-_]cu\d+[-_]libs", name))
@@ -285,9 +285,15 @@ jobs:
           suffix = re.fullmatch(r"tensorrt[-_](cu\d+)[-_]libs", libs[0]).group(1)
           release = re.match(r"\d+(\.\d+)*", importlib.metadata.version(libs[0])).group()
           spec = f"tensorrt-lean-{suffix}-libs=={release}.*"
-          print(f"installing {spec}")
-          subprocess.run(["uv", "pip", "install", spec], check=True)
+          print(f"lean runtime spec: {spec}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"TENSORRT_LEAN_SPEC={spec}\n")
         shell: python
+
+      - name: 📦 Install the TensorRT lean runtime
+        timeout-minutes: 5
+        run: uv pip install "${TENSORRT_LEAN_SPEC}"
+        shell: bash
 
       - name: 🔎 Verify the lean runtime loads
         # Same guard as the tensorrt import above: without the lean runtime the version-compatible parity tests skip
