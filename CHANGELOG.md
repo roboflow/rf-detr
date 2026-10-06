@@ -59,7 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- `RFDETR.evaluate()` no longer downloads the encoder's upstream pretrained weights for the model it rebuilds, so offline evaluation works.
+- `RFDETR.evaluate()` no longer downloads DINOv2 pretrained weights when it rebuilds `RFDETRBase` or the deprecated `Large`, nor a registered encoder's upstream weights, so offline evaluation of those models works.
 
 - Class names in the per-class metrics table printed after validation and test are no longer interpreted as Rich markup or emoji codes. Each name was passed to Rich as a plain string, which Rich parses as console markup and emoji codes, so `helmet[red]` printed as `helmet`, `car [parked]` as `car`, `price:dollar:` with an emoji in place of `:dollar:`, and a name containing a stray closing tag such as `sign[/]` raised `rich.errors.MarkupError` out of `COCOEvalCallback`, ending training at the first evaluated validation epoch. A non-string class name, such as `null` in an annotation file, is printed as text instead of raising. ([#1598](https://github.com/roboflow/rf-detr/pull/1598))
 
