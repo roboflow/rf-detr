@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T18:49:53">
+  <meta property="article:modified_time" content="2026-10-06T19:23:17">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T18:49:53",
+    "dateModified": "2026-10-06T19:23:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1533,6 +1533,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#engine-description-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engine Description File
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#portable-engines" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2869,6 +2880,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#engine-description-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engine Description File
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#portable-engines" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2954,27 +2976,101 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The <code>.trt</code> engine produced by <code>format="tensorrt"</code> is a standalone artifact for raw TensorRT deployment. By default it is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases; see <a href="#portable-engines">Portable Engines</a> for the options that widen that.</p>
 <p>If you plan to run inference with <a href="../basics/#run-inference-with-inference-models"><code>inference-models</code></a> (the recommended path), do <strong>not</strong> pass <code>format="tensorrt"</code> — <code>inference-models</code> builds and manages its own TensorRT engine internally and does not consume this file. Export a plain ONNX model instead and let <code>inference-models</code> handle the backend.</p>
 </div>
+<h2 id="engine-description-file">Engine Description File<a class="headerlink" href="#engine-description-file" title="Permanent link">&para;</a></h2>
+<p>A <code>.trt</code> file has no slot for user metadata, so a consumer that does not import the model, such as a C++ service, <a href="https://developer.nvidia.com/triton-inference-server">Triton</a> or <a href="https://developer.nvidia.com/deepstream-sdk">DeepStream</a>, cannot learn what the engine expects from the file itself. Pass <code>trt_metadata=True</code> to write <code>&lt;engine&gt;.json</code> next to it, with the same name and a <code>.json</code> suffix:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># engine -&gt; output/rfdetr-medium_fp16.trt, described by output/rfdetr-medium_fp16.json</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">engine</span><span class="p">)</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">".json"</span><span class="p">))</span> <span class="k">as</span> <span class="n">description_file</span><span class="p">:</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">description</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">description_file</span><span class="p">)</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">engine_bytes</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">engine</span><span class="p">)</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span>  <span class="c1"># deserialize these bytes, not a second read of the file</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="k">if</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">engine_bytes</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span> <span class="o">!=</span> <span class="n">description</span><span class="p">[</span><span class="s2">"engine"</span><span class="p">][</span><span class="s2">"sha256"</span><span class="p">]:</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">engine</span><span class="si">}</span><span class="s2"> is not the engine this description was written for"</span><span class="p">)</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">description</span><span class="p">[</span><span class="s2">"input"</span><span class="p">][</span><span class="s2">"height"</span><span class="p">],</span> <span class="n">description</span><span class="p">[</span><span class="s2">"input"</span><span class="p">][</span><span class="s2">"width"</span><span class="p">]</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>schema_version</code></td>
+<td>Version of this layout, <code>1</code>. It changes when a key is removed, renamed or changes meaning. Adding a key does not change it, so a reader ignores the keys it does not know.</td>
+</tr>
+<tr>
+<td><code>rfdetr_version</code></td>
+<td>The <code>rfdetr</code> version that exported the engine, or <code>null</code> when run from a source tree that is not installed.</td>
+</tr>
+<tr>
+<td><code>variant</code></td>
+<td>The model variant name, such as <code>rfdetr-nano</code>, or <code>null</code> when there is none.</td>
+</tr>
+<tr>
+<td><code>backbone_only</code></td>
+<td>Whether the engine is a backbone-only export, whose outputs are feature maps.</td>
+</tr>
+<tr>
+<td><code>engine</code></td>
+<td>The engine file this description file was written for: its <code>size</code> in bytes and <code>sha256</code>, the SHA-256 hex digest of its bytes. Compare them with the <code>.trt</code> you load, as in the example above.</td>
+</tr>
+<tr>
+<td><code>input</code></td>
+<td>The input tensor: <code>name</code>, <code>layout</code> (<code>NCHW</code>), <code>dtype</code>, <code>height</code>, <code>width</code>, <code>channels</code>, <code>channel_order</code> (<code>"RGB"</code> for three channels, otherwise <code>null</code>), <code>normalization</code> and <code>resize</code>. Pixel values are divided by <code>normalization.scale</code>, then <code>(x - mean) / std</code> is applied per channel; <code>resize</code> is bilinear with half-pixel centers and no antialiasing, and its <code>aspect_ratio</code> is <code>"stretch"</code>: the whole image is resized to <code>height</code> x <code>width</code>, with no letterbox and no padding, so the boxes are normalized to the image and scale by its original width and height.</td>
+</tr>
+<tr>
+<td><code>outputs</code></td>
+<td>The output tensors in the order the engine returns them, each with <code>name</code> and <code>dtype</code>.</td>
+</tr>
+<tr>
+<td><code>batch</code></td>
+<td><code>{"dynamic": false, "size": N}</code> for a static engine, or <code>{"dynamic": true, "min": 1, "opt": N, "max": M}</code> for one built with <code>dynamic_batch=True</code>.</td>
+</tr>
+<tr>
+<td><code>build</code></td>
+<td>How the engine was built: <code>precision</code> (the one actually built, which can differ from <code>fp16</code> on a lean TensorRT wheel; on TensorRT before 11 it records that the FP16 builder flag was set, so FP16 is allowed but not forced, while on TensorRT 11 and later it records an fp16 cast graph, so read <code>tensorrt_version</code> to tell which applies), <code>opset</code>, <code>tensorrt_version</code> and <code>gpu</code> (<code>name</code> and <code>compute_capability</code>, or <code>null</code> when PyTorch has no CUDA).</td>
+</tr>
+<tr>
+<td><code>notes</code></td>
+<td>The <code>notes</code> passed to <code>export()</code>: a string as it is, any other value JSON-encoded into a string (decode it once more), or <code>null</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>All inputs and outputs are <code>float32</code>, also for an <code>fp16</code> engine. The normalization values are the ones <code>RFDETR.predict()</code> applies. The <code>resize</code> block records the convention of the export runtime and of <code>RFDETR.predict()</code> by default; a checkpoint trained with an antialiased resize may expect <code>antialias=True</code>, which is the <code>antialias</code> argument of <code>RFDETR.predict()</code>, and the file does not record that.</p>
+<div class="admonition note">
+<p class="admonition-title">What the file does not say</p>
+<p>It does not record class names or which logit slot is the background class. How a slot maps to a class depends on the checkpoint (official COCO weights use sparse COCO category ids, fine-tuned models use contiguous ids), and <code>RFDETR.predict()</code> decides it internally. For <code>dets</code> and <code>labels</code> outputs, <code>dets</code> holds normalized <code>cx, cy, w, h</code> boxes and <code>labels</code> holds raw class logits, which <code>RFDETR.predict()</code> turns into scores with a per-class sigmoid (not a softmax) before it keeps the highest-scoring (query, class) pairs above the confidence threshold; see <a href="https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_runtime/decode.py"><code>decode_detections</code></a> for how the repository turns them into detections.</p>
+</div>
+<p>The file is written after the engine and replaces an older description of the same name in one step, so a reader never sees half a file; if a <code>.json</code> of that name that an RF-DETR export did not write is already there, <code>export()</code> raises <code>FileExistsError</code> before building the engine, and you rename or remove that file or pick another <code>output_name</code>. On Linux and macOS it gets the engine's permission bits and, where you are allowed to set it, the engine's group, so a service that can read the engine can read the description too. Only <code>RFDETR.export</code> (or calling the exporter on a prepared graph) writes it; <code>TensorRTExporter.build_engine</code> on an <code>.onnx</code> file has no graph to describe and does not, and with <code>TensorRTConfig(metadata=True)</code> it warns that the setting has no effect there. If the file can't be written, <code>export()</code> raises <code>OSError</code> after the engine is built, and the message says so.</p>
+<p>The engine and its description file are still two files, replaced one after the other. A program that reads them while an export is running, or after two exports of the same name ran at the same time, can find an engine next to the description file of another build. That is what <code>engine</code> is for: compare its <code>sha256</code> with the bytes you load, as the example above does, before you trust the rest.</p>
+<p>The engine's file name doesn't include its batch profile or input size, so a later export of the same model overwrites the engine and can leave an old <code>.json</code> next to it. When a build doesn't write a description file (<code>export()</code> without <code>trt_metadata=True</code>, or <code>build_engine</code>) and one with the engine's name is already there, you get a warning that it may no longer match. The warning repeats on every rebuild of that engine name for as long as the old description file stays in place. The file is never deleted, because this build didn't write it; a program that checks its <code>engine.sha256</code> finds out whether it still matches.</p>
 <h2 id="portable-engines">Portable Engines<a class="headerlink" href="#portable-engines" title="Permanent link">&para;</a></h2>
 <p>By default an engine only runs on the kind of GPU and the TensorRT version that built it. Two options ask TensorRT for more portable engines. Both are off by default, and the default build doesn't change. An engine built with either option gets its own file name, like <code>&lt;variant&gt;_fp16_ampere_plus.trt</code>, so it doesn't overwrite a default engine in the same folder (unless you set <code>output_name</code>, which is used as is).</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Ask for an engine that NVIDIA Ampere GPUs (compute capability 8.x) and newer can run.</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_hardware_compatibility</span><span class="o">=</span><span class="s2">"ampere_plus"</span><span class="p">)</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Ask for an engine that other releases of the same TensorRT major version may load.</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Ask for an engine that NVIDIA Ampere GPUs (compute capability 8.x) and newer can run.</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_hardware_compatibility</span><span class="o">=</span><span class="s2">"ampere_plus"</span><span class="p">)</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Ask for an engine that other releases of the same TensorRT major version may load.</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>trt_hardware_compatibility</code> is <code>"ampere_plus"</code> or <code>"same_compute_capability"</code>. The first targets Ampere and every newer GPU, and has to be built on one of them; the second targets GPUs with the same compute capability as the one you build on. TensorRT records the level in the engine. We only had one GPU, so we haven't tested running such an engine on a second one. NVIDIA doesn't support hardware compatibility on Jetson (JetPack) or DriveOS (<a href="https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/engine-compatibility.html">engine compatibility</a>). If your TensorRT doesn't have the level, you get a <code>ValueError</code> before the export runs the model.</p>
 <p><code>trt_version_compatible=True</code> asks for an engine that other releases of the same TensorRT major version may load. It worked between TensorRT 11.2 and 11.3, in both directions. It didn't work across major versions (10 and 11), or between TensorRT 10.13 and 10.16, so test your pair of releases before you rely on it. The build needs TensorRT's lean runtime, which is a separate package: install the lean wheel that matches your <code>tensorrt</code> wheel, for example <a href="https://pypi.org/project/tensorrt-lean-cu13-libs/"><code>tensorrt-lean-cu13-libs</code></a> next to <a href="https://pypi.org/project/tensorrt-cu13-libs/"><code>tensorrt-cu13-libs</code></a> (the version may differ by a <code>.post</code> suffix), or use the library from the TensorRT archive or system package. Without it the export raises <code>ImportError</code> naming the library, before it runs the model.</p>
 <p>The options have a cost, so measure on your own model. In our FP16 tests, <code>ampere_plus</code> made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. <code>same_compute_capability</code> cost nothing we could measure. <code>trt_version_compatible</code> added about 105 MB to an <code>RFDETRNano</code> engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The <a href="https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md">changelog</a> has the numbers.</p>
 <p>An engine built by TensorRT 11 with <code>trt_version_compatible=True</code> contains host code, and TensorRT only loads it if you say you trust the file. <code>TRTInference</code> and <code>rfdetr.export.benchmark</code> take <code>engine_host_code_allowed</code> for that; it's off by default:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">TRTInference</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">runtime</span> <span class="o">=</span> <span class="n">TRTInference</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">engine</span><span class="p">),</span> <span class="n">sync_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">engine_host_code_allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">TRTInference</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">runtime</span> <span class="o">=</span> <span class="n">TRTInference</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">engine</span><span class="p">),</span> <span class="n">sync_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">engine_host_code_allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Only turn it on for a file you built yourself or otherwise trust. <code>TRTInference</code> lives in a private module, so like the classes under <a href="#python-api-conversion">Python API Conversion</a> it can change without notice; <code>sync_mode=True</code> avoids the <a href="https://pypi.org/project/pycuda/"><code>pycuda</code></a> dependency of its default mode.</p>
 <h2 id="reuse-the-timing-cache">Reuse the Timing Cache<a class="headerlink" href="#reuse-the-timing-cache" title="Permanent link">&para;</a></h2>
 <p>A large share of an engine build goes into timing candidate kernels for each layer. TensorRT can save those timings in a cache file, and a later build that uses the file skips the timing it already did. Pass <code>trt_timing_cache</code> to keep one across exports:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_timing_cache</span><span class="o">=</span><span class="s2">"output/rfdetr.cache"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_timing_cache</span><span class="o">=</span><span class="s2">"output/rfdetr.cache"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The first export creates the file (and its folder). Later exports load it and write the merged timings back. It pays off when you rebuild the same model at the same precision and batch profile, on the same GPU and TensorRT version, for example after fine-tuning: the timings depend on the layers' shapes, not on the weights. In our tests, a cache from the pretrained model saved about as much time for a model fine-tuned to 3 classes, whose class head has a different shape. A different resolution changes every layer's shape, and we haven't measured it. A cache from a matching dynamic-batch build (batch 1-8) helps too: it cut the build time by 74-76% in fp16 and 42-43% in fp32. We did not measure reusing a cache between a static and a dynamic batch profile, or across precisions.</p>
 <p>A cache TensorRT can't use doesn't stop the export. For a file written by another TensorRT major version, or an empty or corrupt one, TensorRT logs a serialization error, builds as if there were no cache, and the file is replaced with the new timings. A timing cache is specific to the GPU, the CUDA version and the TensorRT version, so keep one cache file per GPU and per software stack. TensorRT's API reference says a cache whose recorded CUDA device properties differ from the current environment is reported as a failure; we had one GPU and could not test that. We tested TensorRT 10.16 and 11.3 with Polygraphy 0.53.4, while the supported range is <code>tensorrt&gt;=8.6.1</code> and the Polygraphy version is not pinned, so behavior on other versions is untested.</p>
@@ -2987,16 +3083,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Internal API</p>
 <p><code>rfdetr.export._tensorrt.exporter</code> is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. <code>RFDETR.export(format="tensorrt")</code> is the supported entry point; use the class below only when you need to convert an already-exported <code>.onnx</code> file.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorRTConfig</span><span class="p">,</span> <span class="n">TensorRTExporter</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorRTConfig</span><span class="p">,</span> <span class="n">TensorRTExporter</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
 </span></code></pre></div>
 <p><code>TensorRTExporter.build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file. Precision and progress logging come from the <code>TensorRTConfig</code> the exporter is constructed with — pass <code>TensorRTConfig(output_name="my-engine")</code> to write <code>output/my-engine.trt</code> verbatim instead. <code>TensorRTConfig(timing_cache="output/rfdetr.cache")</code> reuses a timing cache here too; see <a href="#reuse-the-timing-cache">Reuse the Timing Cache</a>.</p>
 <p>An <code>.onnx</code> file exported with <code>dynamic_batch=True</code> needs <code>dynamic_batch=True</code> here as well, plus <code>max_batch_size</code>, the largest batch the engine accepts. <code>opt_batch_size</code> (default <code>1</code>) is the batch its kernels are tuned for. Without <code>dynamic_batch=True</code>, <code>build_engine</code> raises <code>ValueError</code> rather than building an engine that accepts batch 1 only.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_batch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">opt_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_batch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">opt_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The portability options work here too, as <code>TensorRTConfig(hardware_compatibility="ampere_plus")</code> and <code>TensorRTConfig(version_compatible=True)</code>; see <a href="#portable-engines">Portable Engines</a>.</p>
 
@@ -3019,7 +3115,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 18:49:53 UTC">2026-10-06 18:49:53</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 19:23:17 UTC">2026-10-06 19:23:17</span>
   </span>
 
     

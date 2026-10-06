@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T18:49:53">
+  <meta property="article:modified_time" content="2026-10-06T19:23:17">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T18:49:53",
+    "dateModified": "2026-10-06T19:23:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3225,6 +3225,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </table>
 <p>Pass <code>output_name="my-model"</code> to override the variant name and write <code>{output_name}.{ext}</code> verbatim — this suppresses the detail suffix for every format <strong>except</strong> <code>tflite</code> and <code>onnx</code> with <code>quantization="int8"</code>. Both write several files from one call: <code>tflite</code> keeps its <code>_fp32</code>/<code>_fp16</code>/<code>_dynamic_range_quant</code> suffix even with a custom name (<code>{output_name}_fp32.tflite</code>, etc.), and ONNX int8 writes the FP32 <code>{output_name}.onnx</code> beside the quantized <code>{output_name}_int8.onnx</code>, so dropping the suffix would make the two collide. OpenVINO int8 writes a single IR, so a custom <code>output_name</code> is taken verbatim and the <code>_int8</code> suffix is dropped.</p>
 <p>With <code>backbone_only=True</code>, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a <code>-backbone</code> marker before the extension even when <code>output_name</code> is set, for example <code>my-model-backbone.onnx</code>. This distinguishes the backbone artifact from the full detector exported with the same name.</p>
+<p>With <code>trt_metadata=True</code>, <code>format="tensorrt"</code> also writes a JSON description next to the engine, named after it: <code>{variant}_fp16.trt</code> gets <code>{variant}_fp16.json</code>. See <a href="../tensorrt/#engine-description-file">Engine Description File</a>.</p>
 <h2 id="run-inference-with-inference-models">Run Inference with <code>inference-models</code><a class="headerlink" href="#run-inference-with-inference-models" title="Permanent link">&para;</a></h2>
 <p><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.</p>
 <h3 id="installation_1">Installation<a class="headerlink" href="#installation_1" title="Permanent link">&para;</a></h3>
@@ -3295,7 +3296,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 18:49:53 UTC">2026-10-06 18:49:53</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 19:23:17 UTC">2026-10-06 19:23:17</span>
   </span>
 
     
