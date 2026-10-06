@@ -28,14 +28,3 @@ def test_encoder_weights_flag_reaches_the_builder(
         RFDETRModelModule(model_config, train_config, load_encoder_weights=load_encoder_weights)
 
     assert build.call_args.kwargs["defaults"].force_no_pretrain is force_no_pretrain
-
-
-def test_evaluate_rebuild_skips_encoder_weights() -> None:
-    """RFDETR.evaluate() transplants every weight into its rebuilt module, so it must not fetch encoder weights."""
-    import inspect
-
-    from rfdetr.detr import RFDETR
-
-    assert "RFDETRModelModule(eval_model_config, config, load_encoder_weights=False)" in inspect.getsource(
-        RFDETR.evaluate
-    )

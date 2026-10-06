@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Regression tests for _namespace_from_configs() config forwarding."""
 
+import dataclasses
 import sys
 from typing import Any
 
@@ -12,6 +13,7 @@ import pytest
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import RFDETRNanoConfig, RFDETRSegNanoConfig, RFDETRSmallConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.models._defaults import MODEL_DEFAULTS
 from rfdetr.models._types import BuilderArgs
 
 
@@ -144,6 +146,16 @@ class TestDimFeedforward:
 
     def test_override_is_forwarded(self) -> None:
         ns = _namespace_from_configs(RFDETRNanoConfig(dim_feedforward=1024), TrainConfig(dataset_dir="/tmp"))
+
+        assert ns.dim_feedforward == 1024
+
+    def test_model_config_wins_over_defaults(self) -> None:
+        """A ``ModelConfig`` width overrides ``ModelDefaults.dim_feedforward``, which is only a fallback shadow."""
+        defaults = dataclasses.replace(MODEL_DEFAULTS, dim_feedforward=512)
+
+        ns = _namespace_from_configs(
+            RFDETRNanoConfig(dim_feedforward=1024), TrainConfig(dataset_dir="/tmp"), defaults=defaults
+        )
 
         assert ns.dim_feedforward == 1024
 
