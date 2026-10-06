@@ -120,10 +120,10 @@ Core ML decides at **load time** which of the CPU, GPU and Apple Neural Engine (
 
 Single-image latency, pretrained `RFDETRNano` at 384x384, Apple M3 Pro (macOS 27.0.1, coremltools 9.0), batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:
 
-| Precision | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL` |
+| Precision | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL`    |
 | --------- | ---------- | ------------ | ------------- | -------- |
-| fp32 | 75.1 | 76.3 | **26.1** | 27.0 |
-| fp16 | 50.7 | 24.9 | 25.5 | **22.7** |
+| fp32      | 75.1       | 76.3         | **26.1**      | 27.0     |
+| fp16      | 50.7       | 24.9         | 25.5          | **22.7** |
 
 On this M3 Pro, with this one model: **fp32 belongs on the GPU, fp16 on the ANE or `ALL`.** The ranking depends on the chip and the model, so measure on your target device. Loading an fp16 bundle with `CPU_AND_NE` is about 2.0x faster than CPU and about as fast as the GPU here (back to back, with no sleep between passes: 12.7 ms on the ANE, 12.1 ms on the GPU). Single-image latency is therefore no longer a reason to prefer the ANE over the GPU.
 
@@ -131,23 +131,23 @@ The ANE pays for that at load: compiling an fp16 RFDETRNano for it takes about 5
 
 **fp16 keeps the accuracy.** On COCO val2017 (all 5000 images, pretrained `RFDETRNano`, same decoding for all rows, Apple M3 Pro):
 
-| Precision | mAP@[.5:.95] | mAP@.5 |
+| Precision                   | mAP@[.5:.95] | mAP@.5 |
 | --------------------------- | ------------ | ------ |
-| eager PyTorch fp32 | 48.0 | 67.1 |
-| Core ML fp32, `ALL` | 48.0 | 67.1 |
-| Core ML fp16, `CPU_AND_NE` | 48.0 | 67.1 |
-| Core ML fp16, `CPU_AND_GPU` | 48.0 | 67.1 |
+| eager PyTorch fp32          | 48.0         | 67.1   |
+| Core ML fp32, `ALL`         | 48.0         | 67.1   |
+| Core ML fp16, `CPU_AND_NE`  | 48.0         | 67.1   |
+| Core ML fp16, `CPU_AND_GPU` | 48.0         | 67.1   |
 
 The fp16 bundle is an iOS 15 program on purpose. An iOS 16 program runs `resample` on the Neural Engine in fp16, and that moved mAP down by about 3 points (45.1) while the same bundle was fine on the GPU or CPU; as an iOS 15 program that op stays off the ANE. Validate an fp16 bundle on your own data before shipping it.
 
 **The fallback boundary, at fp16.** An fp16 RF-DETR graph is almost entirely ANE-eligible. The exceptions are the two-stage query selection — `topk`, and the `expand_dims`/`tile`/`gather_along_axis` that consume its indices — plus the deformable-attention sampling (`resample`) with the `cast` ops beside it, which Core ML runs on the CPU. Measured with `MLComputePlan` under `CPU_AND_NE`:
 
-| Model | Ops on ANE | Ops on CPU | Share of estimated work on the ANE |
+| Model           | Ops on ANE | Ops on CPU | Share of estimated work on the ANE |
 | --------------- | ---------- | ---------- | ---------------------------------- |
-| `RFDETRNano` | 591 | 11 | 99.7% |
-| `RFDETRSmall` | 648 | 13 | 99.7% |
-| `RFDETRMedium` | 705 | 15 | 99.7% |
-| `RFDETRSegNano` | 725 | 15 | 99.9% |
+| `RFDETRNano`    | 591        | 11         | 99.7%                              |
+| `RFDETRSmall`   | 648        | 13         | 99.7%                              |
+| `RFDETRMedium`  | 705        | 15         | 99.7%                              |
+| `RFDETRSegNano` | 725        | 15         | 99.9%                              |
 
 Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work.
 
