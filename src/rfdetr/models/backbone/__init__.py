@@ -68,7 +68,18 @@ def register_backbone(encoder: str, backbone_cls: type[Backbone]) -> None:
     Extension packages (for example ``rfdetr_plus``) call this at import time to plug in an encoder that ``rfdetr``
     does not ship. *backbone_cls* subclasses :class:`Backbone` and overrides ``_build_encoder`` (and, when its
     parameters follow other naming rules, ``get_named_param_lr_pairs``); the projector, padding masks and export path
-    stay those of :class:`Backbone`.
+    stay those of :class:`Backbone`. An override of ``_build_encoder`` must accept ``**kwargs`` and use only the
+    arguments it needs, because the hook signature may grow.
+
+    Registry keys are ``ModelConfig.encoder`` values, which ``ModelConfig`` restricts to the three built-in DINOv2
+    names (``EncoderName``). To select a registered encoder through a config, subclass ``ModelConfig`` (or one of its
+    subclasses) and redeclare ``encoder`` with the registered name. A ``Literal`` redeclaration that is not a subtype of
+    the base ``Literal`` needs ``# type: ignore[assignment]``.
+
+    The stochastic-depth (drop-path) schedule finds the transformer layers of the module that ``_build_encoder``
+    returns at its ``blocks``, ``trunk.blocks`` or ``encoder.encoder.layer`` attribute (the HuggingFace DINOv2 layout),
+    and sets ``drop_path.drop_prob`` on each layer that has it. An encoder with another layout is trained without the
+    schedule, and a warning is logged when a positive ``drop_path`` is configured.
 
     Args:
         encoder: The ``ModelConfig.encoder`` value that selects *backbone_cls*.

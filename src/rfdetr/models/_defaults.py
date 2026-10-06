@@ -39,7 +39,8 @@ class ModelDefaults:
         window_block_indexes: Indices of encoder layers using window attention.
         position_embedding: Type of positional embedding (``'sine'``).
         rms_norm: Whether to use RMSNorm instead of LayerNorm.
-        force_no_pretrain: Force-disable pretrain weight loading.
+        force_no_pretrain: Skip the upstream encoder-weight download (``load_encoder_weights`` is forced off). Does not
+            affect ``pretrain_weights``, which is handled separately.
         dim_feedforward: FFN hidden dimension in decoder layers. Superseded by ``ModelConfig.dim_feedforward``, which
             takes precedence in ``_namespace_from_configs``; kept for callers that build a namespace without a config.
         decoder_norm: Normalization type in decoder (``'LN'``).

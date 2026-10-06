@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import torch
@@ -216,8 +216,15 @@ class TestUnregisteredEncoders:
         ):
             _build("not_a_registered_encoder")
 
-    def test_dinov2_encoder_receives_the_backbone_arguments(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Pins Backbone -> DinoV2 argument forwarding, which moved into Backbone._build_encoder."""
+    @pytest.mark.parametrize("force_no_pretrain", [False, True])
+    def test_dinov2_encoder_receives_the_backbone_arguments(
+        self, monkeypatch: pytest.MonkeyPatch, force_no_pretrain: bool
+    ) -> None:
+        """Pins Backbone -> DinoV2 argument forwarding, which moved into Backbone._build_encoder.
+
+        ``force_no_pretrain=True`` must reach DinoV2 as ``load_dinov2_weights=False`` even when the caller asked for
+        upstream weights; otherwise every shipping DINOv2 model would fetch them again.
+        """
         from unittest.mock import MagicMock
 
         import rfdetr.models.backbone.backbone as backbone_module
@@ -233,6 +240,7 @@ class TestUnregisteredEncoders:
             drop_path=0.2,
             gradient_checkpointing=True,
             load_dinov2_weights=True,
+            force_no_pretrain=force_no_pretrain,
             patch_size=14,
             num_windows=4,
             positional_encoding_size=37,
@@ -246,7 +254,7 @@ class TestUnregisteredEncoders:
             use_registers=True,
             use_windowed_attn=True,
             gradient_checkpointing=True,
-            load_dinov2_weights=True,
+            load_dinov2_weights=not force_no_pretrain,
             patch_size=14,
             num_windows=4,
             positional_encoding_size=37,
@@ -277,8 +285,15 @@ class TestChannelAdaptation:
         from rfdetr.inference import _build_model_context
 
         register_backbone("toy_encoder", _ToyBackbone)
-        config = RFDETRNanoConfig(num_channels=4, pretrain_weights=None, device="cpu")
-        config = config.model_copy(update={"encoder": "toy_encoder"})  # past the DINOv2-only EncoderName literal
 
-        with pytest.raises(ValueError, match="num_channels=4 is supported for DINOv2 encoders only, not _ToyEncoder"):
+        class _ToyConfig(RFDETRNanoConfig):
+            """Extension config: redeclares ``encoder`` so validation accepts the registered name."""
+
+            encoder: Literal["toy_encoder"] = "toy_encoder"  # type: ignore[assignment]
+
+        config = _ToyConfig(num_channels=4, pretrain_weights=None, device="cpu")
+
+        with pytest.raises(
+            ValueError, match="num_channels=4 is supported for DINOv2 encoders only, not encoder='toy_encoder'"
+        ):
             _build_model_context(config)

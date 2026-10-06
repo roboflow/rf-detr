@@ -129,7 +129,12 @@ class Backbone(BackboneBase):
         ``(B, C, H / patch_size, W / patch_size)`` feature maps, one per entry of ``out_feature_indexes``, and expose
         their channel counts as ``_out_feature_channels``. An encoder whose forward resamples position embeddings for
         inputs other than ``target_shape`` should define ``set_export_shape(shape)``, which export preparation calls
-        before tracing so the resampling happens once, outside the traced graph.
+        before tracing so the resampling happens once, outside the traced graph. Export preparation may call
+        ``set_export_shape`` more than once, possibly with different shapes, so it must re-bake for the given shape
+        each time.
+
+        The set of keyword arguments passed to this hook may grow in future releases, so an override must declare
+        ``**kwargs`` and read only the arguments it needs.
 
         Args:
             name: Encoder identifier (``ModelConfig.encoder``).
