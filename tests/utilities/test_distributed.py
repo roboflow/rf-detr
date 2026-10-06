@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for distributed utility helpers."""
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -15,6 +16,9 @@ import torch
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 from rfdetr.utilities.distributed import _is_launcher_main_process, all_gather
+
+_IS_TORCH_XLA_INSTALLED = importlib.util.find_spec("torch_xla") is not None
+xla_only = pytest.mark.skipif(not _IS_TORCH_XLA_INSTALLED, reason="torch_xla not installed; skip real-XLA tests")
 
 _RANK_ENV_VARS = (
     "RANK",
@@ -147,7 +151,6 @@ class TestIsLauncherMainProcessEnvPrecedence:
         requiring ``LOCAL_RANK`` in ``{unset, "0"}`` and rejecting a nonzero ``OMPI_COMM_WORLD_RANK``/``PMI_RANK`` --
         and fail until that guard change lands in ``_is_launcher_main_process``.
         """
-        pytest.importorskip("pytorch_lightning")
         env = _minimal_subprocess_env()
         env.update(env_vars)
         code = "import rfdetr.utilities.distributed as d; print(d._is_launcher_main_process())"
@@ -235,6 +238,7 @@ def _xla_all_gather_worker(_local_index: int) -> None:
     assert {item["rank"] for item in result} == set(range(world_size))
 
 
+@xla_only
 @pytest.mark.xla
 def test_all_gather_multiprocess_xla_collective_routing() -> None:
     """all_gather(device=<xla device>) round-trips per-rank data through ProcessGroupXla under real multiprocess XLA.
@@ -249,8 +253,6 @@ def test_all_gather_multiprocess_xla_collective_routing() -> None:
     so this skips off real TPU/NEURON hardware; real multi-replica proof is Phase 2b's Kaggle TPU smoke test
     (``notebooks/tpu_phase2b_kaggle_smoke.py``).
     """
-    pytest.importorskip("torch_xla")
-
     from torch_xla import runtime as xr
 
     if xr.device_type() not in ("TPU", "NEURON"):

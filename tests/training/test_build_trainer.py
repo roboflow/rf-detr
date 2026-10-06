@@ -33,6 +33,14 @@ from rfdetr.training.trainer import (
     _requests_multiple_devices,
     _xla_resolves_to_single_device,
 )
+from rfdetr.utilities.imports import _IS_TORCH_XLA_INSTALLED, _IS_TRANSFORMER_ENGINE_INSTALLED
+
+torch_xla_only = pytest.mark.skipif(not _IS_TORCH_XLA_INSTALLED, reason="torch_xla not installed")
+
+
+transformer_engine_only = pytest.mark.skipif(
+    not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires the 'cuda' extra (transformer-engine)"
+)
 
 
 def _mc(**kwargs):
@@ -743,6 +751,7 @@ class TestBuildTrainerPrecision:
         assert captured_trainer_kwargs["precision"] == "32-true"
 
     @pytest.mark.xla
+    @torch_xla_only
     def test_tpu_accelerator_refuses_to_launch_off_real_tpu(self, tmp_path) -> None:
         """Resolves plan Sec 1.3 caveat #1: PTL's 'tpu' accelerator needs real TPU chips, not just torch_xla+PJRT.
 
@@ -753,7 +762,6 @@ class TestBuildTrainerPrecision:
         not launchable under the T1 (CPU-PJRT) CI lane -- only the device-gated unit tests (Tasks 1.1/1.3/1.6/1.7/1.8,
         which move tensors to ``xm.xla_device()`` directly) validate Phase 1 correctness there.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.accelerators import XLAAccelerator
 
         if XLAAccelerator.is_available():
@@ -1195,6 +1203,7 @@ class TestBuildTrainerFP8Smoke:
     """
 
     @pytest.mark.gpu
+    @transformer_engine_only
     @pytest.mark.skipif(
         not _cuda_supports_fp8(),
         reason="FP8 requires a Transformer Engine-supported GPU (Ada, Hopper, or newer; compute capability >= 8.9)",
@@ -1206,8 +1215,6 @@ class TestBuildTrainerFP8Smoke:
         ``transformer_engine.pytorch`` extension being unimportable, unbuilt, or incompatible with the installed
         CUDA/PyTorch stack only fails here, on real hardware, never in the CPU-only unit tests above.
         """
-        pytest.importorskip("transformer_engine.pytorch", reason="requires the 'cuda' extra (transformer-engine)")
-
         from rfdetr.training.module_data import RFDETRDataModule
         from rfdetr.training.module_model import RFDETRModelModule
 
@@ -2431,11 +2438,11 @@ class TestAcceleratorResolvesToXLA:
 class TestMultiDeviceXLAStrategy:
     """`XLAAccelerator` pairs only with `SingleDeviceXLAStrategy` or `XLAStrategy`.
 
-    The first four tests are marked ``xla`` and guarded with ``importorskip`` because they exercise ``build_trainer``'s
-    real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is touched, so the CPU-
-    PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the ``accelerator="auto"`` case,
-    ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so they run on every lane without
-    needing real ``torch_xla``.
+    The first four tests are marked ``xla`` and guarded with ``torch_xla_only`` because they exercise
+    ``build_trainer``'s real, unpatched ``XLAPrecision`` construction, which needs ``torch_xla`` present -- no chip is
+    touched, so the CPU-PJRT lane runs them. The later tests instead patch ``XLAPrecision`` (and, for the
+    ``accelerator="auto"`` case, ``XLAAccelerator.is_available``) the same way ``TestBuildTrainerPrecision`` does, so
+    they run on every lane without needing real ``torch_xla``.
 
     RF-DETR's generic ``strategy="auto"`` distributed branch creates ``DDPStrategy`` before Lightning can resolve an XLA
     accelerator. The guard therefore selects ``"xla"`` only when multiple local XLA devices are requested; one-device-
@@ -2446,26 +2453,25 @@ class TestMultiDeviceXLAStrategy:
     """
 
     @pytest.mark.xla
+    @torch_xla_only
     def test_multiple_xla_devices_select_the_xla_strategy(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
         """Without this, asking for more than one chip fails with `found DDPStrategy`."""
-        pytest.importorskip("torch_xla")
-
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4)
 
         assert captured_trainer_kwargs["strategy"] == "xla"
 
     @pytest.mark.xla
+    @torch_xla_only
     def test_single_xla_device_keeps_auto(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """One chip already resolves to SingleDeviceXLAStrategy, so nothing should be overridden."""
-        pytest.importorskip("torch_xla")
-
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=1)
 
         assert captured_trainer_kwargs["strategy"] == "auto"
 
     @pytest.mark.xla
+    @torch_xla_only
     def test_an_explicit_strategy_is_never_overridden(self, captured_trainer_kwargs: dict[str, Any], tmp_path) -> None:
         """A caller who names a strategy owns that choice, even on multi-device XLA.
 
@@ -2474,7 +2480,6 @@ class TestMultiDeviceXLAStrategy:
         above), which always turns it into a ``DDPStrategy`` object -- on XLA and off it alike. Asserting the literal
         string ``"ddp"`` here would be wrong regardless of this PR.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
         build_trainer(_tc(tmp_path, use_ema=False), _mc(amp=False), accelerator="tpu", devices=4, strategy="ddp")
@@ -2484,6 +2489,7 @@ class TestMultiDeviceXLAStrategy:
         assert strategy_obj._ddp_kwargs.get("find_unused_parameters") is True
 
     @pytest.mark.xla
+    @torch_xla_only
     def test_multi_device_xla_strategy_is_not_selected_for_keypoint_models(
         self, captured_trainer_kwargs: dict[str, Any], tmp_path
     ) -> None:
@@ -2494,7 +2500,6 @@ class TestMultiDeviceXLAStrategy:
         deliberately excluded from the fix and keeps hitting the pre-existing `DDPStrategy`/`XLAAccelerator` mismatch
         rather than running unverified.
         """
-        pytest.importorskip("torch_xla")
         from pytorch_lightning.strategies import DDPStrategy
 
         build_trainer(_kp_tc(tmp_path, use_ema=False), _mc(use_grouppose_keypoints=True), accelerator="tpu", devices=4)
@@ -2507,7 +2512,7 @@ class TestMultiDeviceXLAStrategy:
         A caller who leaves ``accelerator`` unset passes literal ``"auto"`` here. Without
         ``_accelerator_resolves_to_xla``, RF-DETR's generic distributed branch would create ``DDPStrategy`` before
         Lightning resolves that value to XLA, causing the `XLAAccelerator`/`DDPStrategy` mismatch. Not marked
-        ``xla``/``importorskip``:
+        ``xla``/``torch_xla_only``:
         follows ``TestBuildTrainerPrecision.test_xla_accelerator_uses_xla_precision_plugin_not_precision_string``'s
         pattern of patching ``XLAPrecision`` and (here) ``XLAAccelerator.is_available`` directly, so this runs on
         every CI lane rather than only the CPU-PJRT one.

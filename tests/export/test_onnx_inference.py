@@ -21,6 +21,13 @@ import pytest
 from PIL import Image as PILImage
 
 from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
+from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
+
+# ``tiny_onnx_model`` builds the graph with ``onnx`` and the session tests run it with ``onnxruntime``; a fixture cannot
+# carry a skipif, so the consuming class is decorated instead.
+onnx_runtime_only = pytest.mark.skipif(
+    not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED), reason="onnx/onnxruntime not installed"
+)
 
 _INPUT_SHAPE = [1, 3, 224, 224]
 
@@ -179,7 +186,8 @@ def tiny_onnx_model(tmp_path: Path) -> Path:
         Pytest fixture functions cannot be called directly outside fixture injection.
         >>> tiny_onnx_model(Path("."))  # doctest: +SKIP
     """
-    onnx = pytest.importorskip("onnx", reason="onnx not installed")
+    import onnx
+
     tensor_proto, helper = onnx.TensorProto, onnx.helper
 
     inp = helper.make_tensor_value_info("input", tensor_proto.FLOAT, [1, 3, 8, 8])
@@ -197,6 +205,7 @@ def tiny_onnx_model(tmp_path: Path) -> Path:
     return onnx_path
 
 
+@onnx_runtime_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestCreateOnnxSession:
@@ -211,8 +220,6 @@ class TestCreateOnnxSession:
 
     def test_disables_intra_op_spinning_on_cpu(self, tiny_onnx_model: Path) -> None:
         """The constructed session must not let its CPU threads busy-spin between calls."""
-        pytest.importorskip("onnxruntime", reason="onnxruntime not installed")
-
         session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])
 
         options = session.get_session_options()
@@ -221,8 +228,6 @@ class TestCreateOnnxSession:
 
     def test_still_produces_correct_output(self, tiny_onnx_model: Path) -> None:
         """Disabling spinning must not change what the session computes."""
-        pytest.importorskip("onnxruntime", reason="onnxruntime not installed")
-
         session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])
 
         feed = np.arange(3 * 8 * 8, dtype=np.float32).reshape(1, 3, 8, 8)
@@ -236,8 +241,6 @@ class TestCreateOnnxSession:
 
         ONNX Runtime falls back to an available provider with a warning rather than raising in that case.
         """
-        pytest.importorskip("onnxruntime", reason="onnxruntime not installed")
-
         session = _create_onnx_session(tiny_onnx_model, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
 
         options = session.get_session_options()

@@ -242,6 +242,26 @@ def test_model_loading(model_variant):
     pass
 ```
 
+**Skip tests that need an optional dependency with a decorator, never `pytest.importorskip`:**
+
+Do not call `pytest.importorskip(...)` (or `pytest.skip()`) at module level or inside a test or fixture body. Import the package's `_IS_<PACKAGE>_INSTALLED` flag from `rfdetr.export.imports` (export formats) or `rfdetr.utilities.imports` (everything else; add a new flag there rather than probing in the test file), build a named `skipif` decorator from it, and apply that decorator to the test or class (use `pytest.param(..., marks=...)` for parametrized cases; fixtures cannot carry `skipif`, so decorate their consumers). Import the optional package locally inside the test or helper that uses it. Helper doctests that need the package use `__doctest_requires__`.
+
+```python
+import pytest
+
+from rfdetr.export.imports import _IS_ONNX_INSTALLED
+
+onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed")
+
+
+@onnx_only
+class TestOnnxGraph:
+    def test_saves_model(self, tmp_path):
+        import onnx  # local: the package is optional
+
+        ...
+```
+
 **Avoid multiple validation cases in a single test:**
 
 Do not write tests that loop through multiple cases internally. Instead, use `@pytest.mark.parametrize` so each case runs as a separate test:

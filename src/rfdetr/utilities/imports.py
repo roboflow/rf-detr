@@ -1,0 +1,35 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+"""Install probes for the optional training, dataset, evaluation and plotting packages.
+
+Each flag answers "is this package installed" without importing it, so a caller can gate on it at collection time (for
+example ``pytest.mark.skipif``) and import the package locally where it is used. Export-format packages live in
+:mod:`rfdetr.export.imports`.
+"""
+
+from __future__ import annotations
+
+from rfdetr.utilities.package import is_installed
+
+_IS_TORCH_XLA_INSTALLED = is_installed("torch_xla")
+_IS_TRANSFORMER_ENGINE_INSTALLED = is_installed("transformer_engine") and is_installed("transformer_engine.pytorch")
+_IS_PYTORCH_LIGHTNING_INSTALLED = is_installed("pytorch_lightning")
+_IS_PYTORCH_OPTIMIZER_INSTALLED = is_installed("pytorch_optimizer")
+_IS_PEFT_INSTALLED = is_installed("peft")
+
+_IS_KORNIA_INSTALLED = is_installed("kornia")
+_IS_ALBUMENTATIONS_INSTALLED = is_installed("albumentations")
+_IS_WEBDATASET_INSTALLED = is_installed("webdataset")
+
+_IS_PYCOCOTOOLS_INSTALLED = is_installed("pycocotools")
+_IS_HOTCOCO_INSTALLED = is_installed("hotcoco")
+_IS_FASTER_COCO_EVAL_INSTALLED = is_installed("faster_coco_eval")
+_IS_UFCOCO_INSTALLED = is_installed("ultrafast_pycocotools")
+_IS_VERNIER_INSTALLED = is_installed("vernier")
+
+_IS_MATPLOTLIB_INSTALLED = is_installed("matplotlib")
+_IS_PANDAS_INSTALLED = is_installed("pandas")
+_IS_SEABORN_INSTALLED = is_installed("seaborn")

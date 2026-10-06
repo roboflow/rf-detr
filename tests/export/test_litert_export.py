@@ -15,7 +15,7 @@ Covers:
 * The single-level deformable-attention core emitting no one-output ``split`` under ``torch.export`` — the only op
   litert-torch 0.9.4 could not lower on RF-DETR's export graph.
 * A real end-to-end export + numerical parity check, gated behind the ``e2e_litert`` marker and
-  ``pytest.importorskip("litert_torch")`` so it only runs where the ``[litert]`` extra is installed.
+  the ``litert_only`` skip so it only runs where the ``[litert]`` extra is installed.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from numpy.typing import NDArray
 
 from rfdetr.export._backend import _switch_to_export_mode
 from rfdetr.export._litert.exporter import LiteRTConfig, LiteRTExporter, ModelWrapper
+from rfdetr.export.imports import _IS_LITERT_TORCH_INSTALLED
 from rfdetr.export.prepare import ExportGraph, prepare_export_graph
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
 from tests.export.conftest import (
@@ -42,6 +43,10 @@ from tests.export.conftest import (
     _structured_parity_input,
     eager_reference_tensors,
     max_abs_output_diffs,
+)
+
+litert_only = pytest.mark.skipif(
+    not _IS_LITERT_TORCH_INSTALLED, reason="litert_torch not installed; skip LiteRT e2e tests"
 )
 
 
@@ -617,7 +622,6 @@ def litert_detection_export(
     tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
 ) -> tuple[Any, torch.Tensor, Path]:
     """Export RFDETRNano to LiteRT once, shared across the gated detection e2e tests."""
-    pytest.importorskip("litert_torch")
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("litert_nano")
@@ -636,7 +640,6 @@ def litert_segmentation_export(
     tmp_path_factory: pytest.TempPathFactory, people_walking_image_path: Path
 ) -> tuple[Any, torch.Tensor, Path]:
     """Export RFDETRSegNano to LiteRT once, shared across the gated segmentation e2e test."""
-    pytest.importorskip("litert_torch")
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("litert_seg_nano")
@@ -653,7 +656,6 @@ def litert_segmentation_export(
 @pytest.fixture(scope="module")
 def litert_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
     """Export RFDETRNano's backbone-only LiteRT graph once, shared across the gated backbone e2e test."""
-    pytest.importorskip("litert_torch")
     import rfdetr
     from rfdetr.export._backend import _BackboneExport
 
@@ -667,6 +669,7 @@ def litert_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[to
     return reference_model, example, Path(tflite_path)
 
 
+@litert_only
 @pytest.mark.integration
 @pytest.mark.e2e_litert
 class TestLiteRTEndToEnd:
@@ -741,7 +744,8 @@ class TestLiteRTEndToEnd:
         fails. That is the cue to lift the refusal, drop the keypoint caveat from the ``format="litert"`` docs, and add
         a keypoint parity test next to the detection one.
         """
-        litert_torch = pytest.importorskip("litert_torch")
+        import litert_torch
+
         import rfdetr
 
         detector = rfdetr.RFDETRKeypointPreview(pretrain_weights=None)

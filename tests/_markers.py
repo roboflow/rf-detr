@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 
 import pytest
@@ -27,3 +28,10 @@ requires_cpu_inductor = pytest.mark.skipif(
 #: deselects it; ``cuda_marks`` is that pair for ``pytest.param(..., marks=cuda_marks)``.
 requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 cuda_marks = [pytest.mark.gpu, requires_cuda]
+
+#: Skip a test node that drives a real XLA device when ``torch_xla`` is not installed (the ``xla`` extra). Pair it with
+#: ``@pytest.mark.xla`` so the XLA CI job selects it.
+requires_torch_xla = pytest.mark.skipif(
+    importlib.util.find_spec("torch_xla") is None,
+    reason="torch_xla not installed; skip XLA device tests",
+)

@@ -32,26 +32,32 @@ from rfdetr.training.coco_map import (
     _vernier_thread_budget,
     _VernierBackend,
 )
+from rfdetr.utilities.imports import (
+    _IS_FASTER_COCO_EVAL_INSTALLED,
+    _IS_HOTCOCO_INSTALLED,
+    _IS_PYCOCOTOOLS_INSTALLED,
+    _IS_UFCOCO_INSTALLED,
+    _IS_VERNIER_INSTALLED,
+)
 
-# Every backend the adapter accepts, with the package `pytest.importorskip` has to find for each.
-_BACKEND_PACKAGES = {
-    "faster_coco_eval": "faster_coco_eval",
-    "hotcoco": "hotcoco",
-    "ufcoco": "ultrafast_pycocotools",
-    "vernier": "vernier",
+faster_coco_eval_only = pytest.mark.skipif(not _IS_FASTER_COCO_EVAL_INSTALLED, reason="faster_coco_eval not installed")
+hotcoco_only = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed")
+pycocotools_only = pytest.mark.skipif(not _IS_PYCOCOTOOLS_INSTALLED, reason="pycocotools not installed")
+ufcoco_only = pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed")
+vernier_only = pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed")
+
+# Every backend the adapter accepts, each carrying the skip mark for the package it needs.
+_BACKEND_ONLY = {
+    "faster_coco_eval": faster_coco_eval_only,
+    "hotcoco": hotcoco_only,
+    "ufcoco": ufcoco_only,
+    "vernier": vernier_only,
 }
-_ALL_BACKENDS = list(_BACKEND_PACKAGES)
+_ALL_BACKENDS = [pytest.param(backend, marks=mark) for backend, mark in _BACKEND_ONLY.items()]
 # The backends that replace the evaluation of a `faster_coco_eval`-named TorchMetrics backend.
-_ALTERNATIVE_BACKENDS = ["hotcoco", "ufcoco", "vernier"]
-
-
-def _require_backend(backend: str) -> None:
-    """Skip the calling test when the package behind *backend* is not installed.
-
-    Examples:
-        >>> _require_backend("faster_coco_eval")
-    """
-    pytest.importorskip(_BACKEND_PACKAGES[backend])
+_ALTERNATIVE_BACKENDS = [
+    pytest.param(backend, marks=_BACKEND_ONLY[backend]) for backend in ("hotcoco", "ufcoco", "vernier")
+]
 
 
 def test_one_pass_metric_matches_noncontiguous_per_class_results() -> None:
@@ -471,7 +477,6 @@ def test_empty_predictions_and_targets_return_compact_empty_class_result(backend
     Every backend is covered because this is the one path that hands the COCO constructor a dataset with no annotations
     at all, and hotcoco builds its index there rather than in a later ``createIndex()`` call.
     """
-    _require_backend(backend)
     metric = OnePassCocoMeanAveragePrecision(backend=backend, class_metrics=True)
     metric.update(
         [{"boxes": torch.empty((0, 4)), "scores": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)}],
@@ -777,7 +782,6 @@ def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path, back
     Every backend is spawned because the merge hands each rank's list states through the repo's object gather and the
     empty rank then evaluates a dataset with no annotations on whichever evaluator was selected.
     """
-    _require_backend(backend)
     init_file = tmp_path / "coco-map-gloo-init"
 
     mp.spawn(_distributed_empty_rank_worker, args=(2, str(init_file), backend), nprocs=2, join=True)
@@ -834,7 +838,6 @@ def test_alternative_backend_matches_faster_coco_eval(backend: str) -> None:
     from faster-coco-eval's in the last float64 digit on some entries (pycocotools adds ``np.spacing(1)`` to the
     precision denominator); the float32 tensors TorchMetrics reports absorb that here, so the same assertion holds.
     """
-    _require_backend(backend)
     predictions, targets = multiclass_detection_state()
     kwargs: dict[str, Any] = {"class_metrics": True, "sync_on_compute": False}
     expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
@@ -866,7 +869,6 @@ def test_alternative_backend_matches_faster_coco_eval_for_segmentation(backend: 
     the boolean masks TorchMetrics hands over, so the adapter converts them; a mask AP that silently collapses to 0.0 is
     what either mistake would look like.
     """
-    _require_backend(backend)
     mask = torch.zeros(2, 16, 16, dtype=torch.bool)
     mask[0, 2:10, 2:10] = True
     mask[1, 11:15, 11:15] = True
@@ -916,7 +918,6 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
     adapter could keep evaluating at COCO's default 100 detections while RF-DETR asked for ``eval_max_dets``, and every
     metric would still look plausible.
     """
-    _require_backend(backend)
     boxes = torch.tensor([[float(index), 0.0, float(index) + 8.0, 8.0] for index in range(0, 60, 6)])
     predictions = [
         {
@@ -937,6 +938,7 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
     assert recall_at(2) < recall_at(500)
 
 
+@hotcoco_only
 def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
     """Selecting hotcoco must not add backend chatter to a training run's console output.
 
@@ -945,7 +947,6 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) ->
     land on the console on every validation epoch of every run. ``test_hotcoco_evaluation_raises_no_warnings`` covers
     the warning channel.
     """
-    pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
     metric = OnePassCocoMeanAveragePrecision(
         backend="hotcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
@@ -960,6 +961,7 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) ->
     assert captured.err == ""
 
 
+@hotcoco_only
 def test_hotcoco_evaluation_raises_no_warnings() -> None:
     """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
 
@@ -969,7 +971,6 @@ def test_hotcoco_evaluation_raises_no_warnings() -> None:
     on a real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
     channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run.
     """
-    pytest.importorskip("hotcoco")
     predictions, targets = multiclass_detection_state()
     metric = OnePassCocoMeanAveragePrecision(
         backend="hotcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
@@ -983,6 +984,7 @@ def test_hotcoco_evaluation_raises_no_warnings() -> None:
     assert [str(warning.message) for warning in raised] == []
 
 
+@ufcoco_only
 def test_ufcoco_reports_aggregate_ap_at_the_configured_detection_limit() -> None:
     """``map`` must be a real number, equal to faster-coco-eval's, when ``eval_max_dets`` is not 100.
 
@@ -991,7 +993,6 @@ def test_ufcoco_reports_aggregate_ap_at_the_configured_detection_limit() -> None
     threshold instead. RF-DETR evaluates at 500 by default, so without the adapter's evaluator override every
     ``val/mAP`` on this backend would read ``-1`` while the rest of the metrics looked plausible.
     """
-    _require_backend("ufcoco")
     predictions, targets = multiclass_detection_state()
 
     def aggregate_ap(backend: str) -> float:
@@ -1006,13 +1007,13 @@ def test_ufcoco_reports_aggregate_ap_at_the_configured_detection_limit() -> None
     assert aggregate_ap("ufcoco") == expected
 
 
+@ufcoco_only
 def test_ufcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str]) -> None:
     """Selecting ufcoco must not add backend chatter to a training run's console output.
 
     ufcoco prints pycocotools' evaluation progress lines and twelve-row summary table on ``sys.stdout``, once per IoU
     type per ``compute()``; the adapter's evaluation window has to swallow them the way it does for the other backends.
     """
-    _require_backend("ufcoco")
     predictions, targets = multiclass_detection_state()
     metric = OnePassCocoMeanAveragePrecision(
         backend="ufcoco", max_detection_thresholds=[1, 10, 500], sync_on_compute=False
@@ -1077,13 +1078,13 @@ def test_ufcoco_propagates_nested_import_error() -> None:
     assert raised.value is nested_error
 
 
+@ufcoco_only
 def test_ufcoco_backend_picks_up_the_optional_package_and_survives_pickling() -> None:
     """The ufcoco backend must resolve its surfaces from ``ultrafast_pycocotools`` and pickle with the metric.
 
     Lightning's DDP spawn and the callback's checkpoint plumbing pickle metric objects; a backend that stored the
     imported module on itself would break there, which is why the surfaces are resolved on every access.
     """
-    _require_backend("ufcoco")
     metric = OnePassCocoMeanAveragePrecision(backend="ufcoco", sync_on_compute=False)
     backend = metric._coco_backend
 
@@ -1099,9 +1100,9 @@ def test_ufcoco_backend_picks_up_the_optional_package_and_survives_pickling() ->
     assert restored._coco_backend.cocoeval is backend.cocoeval
 
 
+@vernier_only
 def test_vernier_backend_survives_pickling() -> None:
     """The vernier backend must pickle with the metric, which Lightning's DDP spawn and checkpoint plumbing require."""
-    _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
 
     restored = pickle.loads(pickle.dumps(metric))
@@ -1135,21 +1136,21 @@ def test_vernier_thread_budget_divides_by_local_world_size(
     assert _vernier_thread_budget() == expected
 
 
+@vernier_only
 def test_vernier_rejects_mask_only_evaluation() -> None:
     """Mask-only evaluation must fail at construction, before an epoch of state is accumulated and discarded."""
-    _require_backend("vernier")
 
     with pytest.raises(ValueError, match="requires 'bbox'"):
         OnePassCocoMeanAveragePrecision(backend="vernier", iou_type="segm", sync_on_compute=False)
 
 
+@vernier_only
 def test_vernier_rejects_fractional_ground_truth_labels() -> None:
     """A fractional ground-truth class label must be rejected instead of silently truncated by ``.long()``.
 
     ``coco_inputs`` owns the check now, but a fractional value must still fail loudly rather than become a wrong class
     through an ``int64`` cast. Driven through ``compute()`` so it pins the behaviour wherever the check lives.
     """
-    _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
     metric.update(
         [{"boxes": torch.tensor([[0.0, 0.0, 10.0, 10.0]]), "scores": torch.tensor([0.9]), "labels": torch.tensor([3])}],
@@ -1160,13 +1161,13 @@ def test_vernier_rejects_fractional_ground_truth_labels() -> None:
         metric.compute()
 
 
+@vernier_only
 def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> None:
     """A fractional detection class label under ``segm`` must be rejected instead of truncated by ``.long()``.
 
     ``coco_inputs`` validates both sides and both routes, so this no longer depends on which route an IoU type takes.
     ``segm`` runs first so the failure is attributed to the detection labels.
     """
-    _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", iou_type=("segm", "bbox"), sync_on_compute=False)
     mask = torch.zeros((1, 4, 4), dtype=torch.bool)
     mask[0, :2, :2] = True
@@ -1186,13 +1187,13 @@ def test_vernier_rejects_fractional_detection_labels_under_segmentation() -> Non
         metric.compute()
 
 
+@vernier_only
 def test_vernier_accepts_whole_valued_float_labels() -> None:
     """A whole-valued floating-point label must be accepted, matching the equivalent integer label.
 
     Only a fractional value is a truncation risk; rejecting every floating-point label outright would also reject an
     empty ``float32`` label tensor, which carries no values to truncate.
     """
-    _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
     metric.update(
         [
@@ -1210,6 +1211,7 @@ def test_vernier_accepts_whole_valued_float_labels() -> None:
     assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
 
 
+@vernier_only
 def test_vernier_handles_one_dimensional_empty_boxes() -> None:
     """A 1-D empty box tensor on one image must not crash concatenation against another image's real boxes.
 
@@ -1218,7 +1220,6 @@ def test_vernier_handles_one_dimensional_empty_boxes() -> None:
     tensor from another image in the same batch fails on the mismatched second dimension unless each per-image tensor is
     reshaped to ``(-1, 4)`` first, for both the ground truth and the ``(N, 7)`` detection matrix ``bbox`` uses.
     """
-    _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
     metric.update(
         [
@@ -1240,13 +1241,13 @@ def test_vernier_handles_one_dimensional_empty_boxes() -> None:
     assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
 
 
+@vernier_only
 def test_vernier_handles_one_dimensional_empty_boxes_under_segmentation() -> None:
     """A 1-D empty box tensor on one image must not crash the columnar detection route ``segm`` uses.
 
     ``_vernier_detections`` takes the columnar route under ``segm`` instead of the ``(N, 7)`` matrix ``bbox`` uses, with
     its own ``torch.cat`` over ``detection_box`` that needs the same ``(-1, 4)`` reshape guard.
     """
-    _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", iou_type=("bbox", "segm"), sync_on_compute=False)
     mask = torch.zeros((1, 4, 4), dtype=torch.bool)
     mask[0, :2, :2] = True
@@ -1277,6 +1278,7 @@ def test_vernier_handles_one_dimensional_empty_boxes_under_segmentation() -> Non
     assert torch.equal(result["classes"].reshape(-1), torch.tensor([3], dtype=torch.int32))
 
 
+@vernier_only
 def test_vernier_ground_truth_handles_one_dimensional_empty_boxes() -> None:
     """A one-dimensional empty ground-truth box tensor must not crash concatenation against another image's boxes.
 
@@ -1285,7 +1287,6 @@ def test_vernier_ground_truth_handles_one_dimensional_empty_boxes() -> None:
     every image's ground-truth boxes into one tensor, so a ``(1, 0)`` entry next to a real image's ``(N, 4)`` entry
     fails on the mismatched second dimension unless each per-image tensor is reshaped to ``(-1, 4)`` first.
     """
-    _require_backend("vernier")
     metric = OnePassCocoMeanAveragePrecision(backend="vernier", sync_on_compute=False)
     metric.update(
         [
@@ -1309,13 +1310,13 @@ def test_vernier_ground_truth_handles_one_dimensional_empty_boxes() -> None:
 
 @pytest.mark.parametrize("iou_type", ["bbox", pytest.param(("bbox", "segm"), id="both")])
 @pytest.mark.parametrize("max_dets", [100, 500])
+@vernier_only
 def test_vernier_matches_faster_coco_eval_across_updates_and_reuse(iou_type: Any, max_dets: int) -> None:
     """Vernier's native path must match faster-coco-eval exactly on ties, crowds and images missing either side.
 
     It builds its own arrays instead of the COCO datasets every other backend shares, so it is held to exact equality on
     a fixture carrying everything those datasets encode, at ``eval_max_dets`` both at and above pycocotools' 100.
     """
-    _require_backend("vernier")
     predictions, targets = _metric_inputs()
     kwargs: dict[str, Any] = {
         "iou_type": iou_type,
@@ -1435,6 +1436,7 @@ def _rasterize(boxes: torch.Tensor) -> torch.Tensor:
         pytest.param(True, True, True, True, id="masks"),
     ],
 )
+@vernier_only
 def test_vernier_columnar_ground_truth_is_the_same_document(
     with_area: bool, with_crowd: bool, empty_images: bool, with_masks: bool
 ) -> None:
@@ -1450,7 +1452,6 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
     wrong -- the per-element ``area`` fallback, ``iscrowd``, an image with no ground truth, and under ``segm`` the
     size each image takes from its own first mask.
     """
-    _require_backend("vernier")
     predictions, targets = _vernier_gt_state(
         1, with_area=with_area, with_crowd=with_crowd, empty_images=empty_images, with_masks=with_masks
     )
@@ -1496,6 +1497,7 @@ def test_vernier_columnar_ground_truth_is_the_same_document(
     )
 
 
+@vernier_only
 def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> None:
     """The ground-truth builder must keep ``iscrowd`` at its stored width, not through a column that wraps it.
 
@@ -1505,7 +1507,6 @@ def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> No
     the built dataset's ``dataset_hash`` against one built with no crowd annotation at all catches the same defect
     without JSON in the loop -- a ``uint8`` column would wrap 256 back to 0 and make the two datasets identical.
     """
-    _require_backend("vernier")
 
     def ground_truth(crowd_value: int) -> Any:
         predictions, targets = _vernier_gt_state(1, crowd_value=crowd_value)
@@ -1525,13 +1526,13 @@ def test_vernier_ground_truth_builder_keeps_crowd_flags_wider_than_uint8() -> No
     assert wide_crowd.num_annotations == no_crowd.num_annotations
 
 
+@vernier_only
 def test_vernier_columnar_route_keeps_crowd_flags_wider_than_uint8() -> None:
     """A crowd flag must reach vernier at its stored width, not through a column that wraps it.
 
     ``iscrowd`` is 0/1 in COCO practice, so a ``uint8`` column looks harmless until 256 wraps to 0 and the annotation is
     matched as a normal one instead of ignored -- silently, and only on that value, since 255 and 257 both survive.
     """
-    _require_backend("vernier")
     predictions, targets = _vernier_gt_state(1, crowd_value=256)
     kwargs: dict[str, Any] = {"box_format": "xyxy", "iou_type": "bbox", "class_metrics": True}
     reference = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
@@ -1546,6 +1547,7 @@ def test_vernier_columnar_route_keeps_crowd_flags_wider_than_uint8() -> None:
 
 @pytest.mark.parametrize("iou_type", ["bbox", pytest.param(("bbox", "segm"), id="both")])
 @pytest.mark.parametrize("max_dets", [100, 500])
+@vernier_only
 def test_vernier_parity_modes_differ_only_on_the_aggregate_at_a_non_default_max_dets(
     iou_type: Any, max_dets: int
 ) -> None:
@@ -1558,7 +1560,6 @@ def test_vernier_parity_modes_differ_only_on_the_aggregate_at_a_non_default_max_
     A failure is therefore a signal about vernier, not a bug in RF-DETR: the numbers RF-DETR publishes would move on
     the version bump. Widen the allowed-to-differ set deliberately -- never by loosening the comparison.
     """
-    _require_backend("vernier")
     predictions, targets = _metric_inputs()
     kwargs: dict[str, Any] = {
         "backend": "vernier",
@@ -1653,14 +1654,16 @@ class TestUfcocoArraysMatchPycocotools:
     computed from. pycocotools is the reference ufcoco reproduces, and ``rfdetr[train]`` installs it.
     """
 
+    @pycocotools_only
+    @ufcoco_only
     @pytest.mark.parametrize("iou_type", ["bbox", "segm", pytest.param(("bbox", "segm"), id="both")])
     @pytest.mark.parametrize("max_dets", [100, 500])
     def test_evaluator_arrays_are_byte_identical(self, iou_type: Any, max_dets: int) -> None:
         """Precision, recall and score arrays must match pycocotools byte for byte across incremental updates and
         reuse."""
-        _require_backend("ufcoco")
-        pycocotools_coco = pytest.importorskip("pycocotools.coco").COCO
-        pycocotools_cocoeval = pytest.importorskip("pycocotools.cocoeval").COCOeval
+        from pycocotools.coco import COCO
+        from pycocotools.cocoeval import COCOeval
+
         predictions, targets = _metric_inputs()
         thresholds = [1, 10, max_dets]
         reference = OnePassCocoMeanAveragePrecision(
@@ -1683,7 +1686,7 @@ class TestUfcocoArraysMatchPycocotools:
 
             coco_preds, coco_target, prediction_dataset = actual._coco_datasets(actual._observed_classes())
             assert prediction_dataset is not None
-            oracle_gt, oracle_dt = pycocotools_coco(), pycocotools_coco()
+            oracle_gt, oracle_dt = COCO(), COCO()
             oracle_gt.dataset = copy.deepcopy(coco_target.dataset)
             oracle_dt.dataset = copy.deepcopy(prediction_dataset)
             oracle_gt.createIndex()
@@ -1694,7 +1697,7 @@ class TestUfcocoArraysMatchPycocotools:
                         for annotation in dataset["annotations"]:
                             annotation["area"] = annotation[f"area_{kind}"]
                 evaluator = actual._coco_backend.cocoeval(coco_target, coco_preds, iouType=kind)
-                oracle = pycocotools_cocoeval(oracle_gt, oracle_dt, iouType=kind)
+                oracle = COCOeval(oracle_gt, oracle_dt, iouType=kind)
                 for instance in (evaluator, oracle):
                     instance.params.maxDets = thresholds
                     with warnings.catch_warnings():
@@ -1736,7 +1739,6 @@ def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
     moves a reported number. Without the switch the segmentation area leaks into the box pass and ``bbox_map_small``
     doubles.
     """
-    _require_backend(backend)
     masks = torch.zeros(2, 128, 128, dtype=torch.bool)
     masks[0, 0:20, 0:20] = True
     masks[1, 40:100, 40:100] = True
@@ -1814,6 +1816,8 @@ def _straddling_disc_records() -> tuple[list[dict[str, Any]], list[dict[str, Any
     return predictions, targets
 
 
+@vernier_only
+@hotcoco_only
 def test_two_iou_type_run_buckets_bbox_ap_by_mask_area() -> None:
     """A two-IoU-type run must bucket ``bbox`` AP by *mask* area, as upstream does.
 
@@ -1822,8 +1826,6 @@ def test_two_iou_type_run_buckets_bbox_ap_by_mask_area() -> None:
     mask areas straddle 32**2 or 96**2, and then it moves AP between the small and medium buckets with no
     error. A disc of radius 17 does exactly that: box 34x34 = 1156 (medium), mask ~901 (small).
     """
-    _require_backend("vernier")
-    _require_backend("hotcoco")
     predictions, targets = _straddling_disc_records()
 
     def compute(backend: str) -> dict[str, torch.Tensor]:
@@ -1841,6 +1843,8 @@ def test_two_iou_type_run_buckets_bbox_ap_by_mask_area() -> None:
         assert torch.equal(vernier_result[key], reference[key]), key
 
 
+@vernier_only
+@hotcoco_only
 def test_bbox_only_run_buckets_by_box_area_and_carries_no_masks() -> None:
     """The mirror of the two-IoU-type case, and the reason ``rles`` is gated on the run.
 
@@ -1849,8 +1853,6 @@ def test_bbox_only_run_buckets_by_box_area_and_carries_no_masks() -> None:
     bucket the AP. The last assertion is the load-bearing one: what keeps masks out is the gate, not whether the state
     happens to be empty.
     """
-    _require_backend("vernier")
-    _require_backend("hotcoco")
     predictions, targets = _straddling_disc_records()
 
     def build(backend: str) -> OnePassCocoMeanAveragePrecision:
@@ -1882,6 +1884,7 @@ def test_bbox_only_run_buckets_by_box_area_and_carries_no_masks() -> None:
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+@vernier_only
 def test_autocast_dtypes_survive_the_round_trip_to_vernier(dtype: torch.dtype) -> None:
     """State stored under autocast must evaluate, whatever dtype the autocast ran in.
 
@@ -1890,7 +1893,6 @@ def test_autocast_dtypes_survive_the_round_trip_to_vernier(dtype: torch.dtype) -
     purpose — a cast here would hide that. Every value below is exactly representable in both dtypes, so the float32 run
     is a bit-exact oracle.
     """
-    _require_backend("vernier")
     boxes = [[0.0, 0.0, 16.0, 16.0], [32.0, 32.0, 64.0, 64.0]]
     scores = [0.75, 0.5]
 

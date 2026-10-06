@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 
 import contextlib
+import importlib.util
 import json
 import re
 import sys
@@ -24,6 +25,11 @@ from rfdetr.export._tensorrt import inference as trt_inference
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
 from rfdetr.export.benchmark import infer_transforms
+
+_IS_FASTER_COCO_EVAL_INSTALLED = importlib.util.find_spec("faster_coco_eval") is not None
+faster_coco_eval_only = pytest.mark.skipif(
+    not _IS_FASTER_COCO_EVAL_INSTALLED, reason="faster_coco_eval not installed; skip evaluator test"
+)
 
 #: Minimal indexed COCO dataset used to verify evaluator construction.
 _MINIMAL_COCO = {
@@ -1019,11 +1025,11 @@ class TestBenchmarkMain:
         assert infer_engine.call_args.kwargs["device"] == f"cuda:{device}"
         assert infer_engine.call_args.args[2].device == torch.device(f"cuda:{device}")
 
+    @faster_coco_eval_only
     def test_eval_enabled_passes_a_loaded_coco_object_to_the_evaluator(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """``main`` loads the annotation file so ``CocoEvaluator`` receives a COCO object, not a path string."""
-        pytest.importorskip("faster_coco_eval")
         annotations = tmp_path / "annotations"
         annotations.mkdir()
         (annotations / "instances_val2017.json").write_text(json.dumps(_MINIMAL_COCO))

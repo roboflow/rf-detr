@@ -133,10 +133,8 @@ def _compute_plan(mlpackage_path: Path) -> Any:
         >>> plan.model_structure.program.functions["main"] is not None  # doctest: +SKIP
         True
     """
-    compute_plan = pytest.importorskip(
-        "coremltools.models.compute_plan", reason="MLComputePlan needs coremltools>=8 and macOS>=14.4"
-    )
     import coremltools as ct
+    from coremltools.models import compute_plan
 
     plan = compute_plan.MLComputePlan.load_from_path(
         path=ct.utils.compile_model(str(mlpackage_path)), compute_units=ct.ComputeUnit.CPU_AND_NE

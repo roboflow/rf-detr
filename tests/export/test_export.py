@@ -14,7 +14,6 @@ Use cases covered:
 - Every symbol these tests monkeypatch must stay on the real call path, not merely remain importable.
 """
 
-import importlib.util
 import inspect
 import os
 import re
@@ -39,6 +38,7 @@ from rfdetr.export._backend import _switch_to_export_mode
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export.base import Exporter
+from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.export.registry import REGISTRY, resolve_exporter
 from rfdetr.models.backbone.dinov2 import DinoV2
@@ -46,7 +46,9 @@ from rfdetr.models.backbone.dinov2 import DinoV2
 if TYPE_CHECKING:
     import onnx
 
-_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
+
+onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX export tests")
+onnx_runtime_only = pytest.mark.skipif(not _IS_ONNXRUNTIME_INSTALLED, reason="onnxruntime not installed")
 
 
 @contextmanager
@@ -233,6 +235,7 @@ def test_export_with_rectangular_shape_different_from_resolution_no_crash(tmp_pa
     assert len(onnx_files) > 0, "Export should produce ONNX file(s)"
 
 
+@onnx_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestExportedGraphAvoidsCoreMLRejectedOps:
@@ -268,7 +271,6 @@ class TestExportedGraphAvoidsCoreMLRejectedOps:
         return onnx.shape_inference.infer_shapes(onnx.load(str(onnx_path))).graph
 
     def test_detection_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
-        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
         from tests.models.test_transformer_onnx_two_stage import (
             find_single_input_concat_nodes,
             find_zero_dim_float_concat_nodes,
@@ -281,7 +283,6 @@ class TestExportedGraphAvoidsCoreMLRejectedOps:
         assert find_zero_dim_float_concat_nodes(graph) == []
 
     def test_segmentation_graph_has_no_rejected_ops(self, tmp_path: Path) -> None:
-        pytest.importorskip("onnx", reason="onnx not installed; skip ONNX export tests")
         from tests.models.test_transformer_onnx_two_stage import (
             find_single_input_concat_nodes,
             find_zero_dim_float_concat_nodes,
@@ -1088,6 +1089,7 @@ class TestExportOnnxVariantNaming:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
+@onnx_runtime_only
 @pytest.mark.parametrize("model_class", [RFDETRNano, RFDETRSegNano, RFDETRKeypointPreview])
 @pytest.mark.parametrize("projector_scale", [["P4"], ["P4", "P5"]])
 @pytest.mark.parametrize("dynamic_batch", [False, True])
@@ -1099,8 +1101,8 @@ def test_backbone_only_exports_features_without_detector(
 ) -> None:
     """The public backbone export runs independently of detector heads and preserves every feature level."""
     import numpy as np
+    import onnxruntime as ort
 
-    ort = pytest.importorskip("onnxruntime")
     model = model_class(
         pretrain_weights=None,
         device="cpu",

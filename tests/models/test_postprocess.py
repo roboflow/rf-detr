@@ -15,6 +15,9 @@ import torch.nn.functional as F  # noqa: N812
 from rfdetr.models import postprocess
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities import box_ops
+from rfdetr.utilities.imports import _IS_TORCH_XLA_INSTALLED
+
+torch_xla_only = pytest.mark.skipif(not _IS_TORCH_XLA_INSTALLED, reason="torch_xla not installed")
 
 
 class TestGatherAndScaleBoxes:
@@ -561,9 +564,9 @@ class TestPostProcessMasks:
         assert result.shape == (num_select, 1, 64, 64)
 
     @pytest.mark.xla
+    @torch_xla_only
     def test_upsample_on_xla_uses_supported_fallback(self):
         """XLA exercises mask postprocessing without dispatching the unverified ``out=`` overload."""
-        pytest.importorskip("torch_xla")
         import torch_xla
 
         device = torch_xla.device()
