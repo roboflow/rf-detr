@@ -12,9 +12,9 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 | Size | RF-DETR package class | Inference package alias | COCO AP<sub>50</sub> | COCO AP<sub>50:95</sub> | Latency (ms) | Params (M) | Resolution |  License   |
 | :--: | :-------------------: | :---------------------- | :------------------: | :---------------------: | :----------: | :--------: | :--------: | :--------: |
-|  A   |    `RFDETRAtto` △     | —                       |         49.4         |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
-|  F   |    `RFDETRFemto` △    | —                       |         55.9         |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
-|  P   |    `RFDETRPico` △     | —                       |         60.2         |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
+|  A   |    `RFDETRAtto` △     | `rfdetr-atto`           |         49.4         |          30.5           |     1.0      |    7.4     |  380x380   |  PML 1.0   |
+|  F   |    `RFDETRFemto` △    | `rfdetr-femto`          |         55.9         |          37.8           |     1.4      |    7.9     |  384x384   |  PML 1.0   |
+|  P   |    `RFDETRPico` △     | `rfdetr-pico`           |         60.2         |          41.6           |     1.7      |    8.4     |  560x560   |  PML 1.0   |
 |  N   |     `RFDETRNano`      | `rfdetr-nano`           |         67.6         |          48.4           |     2.3      |    30.5    |  384x384   | Apache 2.0 |
 |  S   |     `RFDETRSmall`     | `rfdetr-small`          |         72.1         |          53.0           |     3.5      |    32.1    |  512x512   | Apache 2.0 |
 |  M   |    `RFDETRMedium`     | `rfdetr-medium`         |         73.6         |          54.7           |     4.4      |    33.7    |  576x576   | Apache 2.0 |
