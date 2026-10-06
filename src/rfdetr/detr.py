@@ -9,6 +9,7 @@ import contextlib
 import importlib
 import io
 import json
+import ntpath
 import operator
 import os
 import re
@@ -52,6 +53,9 @@ from rfdetr.datasets.coco import annotated_category_ids, filter_parent_categorie
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError, index_name, read_shard_index
 from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file, is_valid_yolo_dataset
 from rfdetr.inference import ModelContext, _build_model_context
+
+# The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
+from rfdetr.platform import _PLUS_EXPORTS
 from rfdetr.utilities.distributed import _is_launcher_main_process, is_main_process
 from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
@@ -378,7 +382,6 @@ _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS = frozenset({"RFDETRLargeDeprecated", "R
 _CHECKPOINT_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = tuple(
     class_symbol for class_symbol in _VARIANT_EXPORTS if class_symbol not in _CHECKPOINT_MODEL_NAME_EXCLUDED_SYMBOLS
 )
-_CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS: tuple[str, ...] = ("RFDETRXLarge", "RFDETR2XLarge")
 _CHECKPOINT_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("keypoint-preview", "RFDETRKeypointPreview"),
     ("seg-2xlarge", "RFDETRSeg2XLarge"),
@@ -399,6 +402,15 @@ _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES: tuple[tuple[str, str], ...] = (
     ("2xlarge", "RFDETR2XLarge"),
     ("xxlarge", "RFDETR2XLarge"),
     ("xlarge", "RFDETRXLarge"),
+)
+# PE-Core-T release-file stems, matched in the file name only: bare "atto" or "pico" occur in other words.
+_CHECKPOINT_PLUS_STEM_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("rf-detr-atto", "RFDETRAtto"),
+    ("rfdetr-atto", "RFDETRAtto"),
+    ("rf-detr-femto", "RFDETRFemto"),
+    ("rfdetr-femto", "RFDETRFemto"),
+    ("rf-detr-pico", "RFDETRPico"),
+    ("rfdetr-pico", "RFDETRPico"),
 )
 
 
@@ -1001,24 +1013,49 @@ class RFDETR:
         import rfdetr.variants as rfdetr_variants
 
         _plus_available = False
+        # Raised only if the checkpoint needs a plus class: a broken rfdetr_plus must not block core checkpoints.
+        _plus_import_error: ImportError | None = None
         _plus_symbols: dict[str, type[RFDETR]] = {}
+        # Why each plus symbol is missing; chained onto the upgrade hint below so the cause stays visible.
+        _plus_symbol_errors: dict[str, ImportError] = {}
         _plus_entries: list[tuple[str, type[RFDETR]]] = []
+        _plus_stem_entries: list[tuple[str, type[RFDETR]]] = []
         from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 
         if _IS_RFDETR_PLUS_AVAILABLE:
             try:
                 import rfdetr.platform.models as platform_models
 
-                for class_symbol in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS:
-                    plus_obj = getattr(platform_models, class_symbol)
+                for class_symbol in sorted(_PLUS_EXPORTS):
+                    try:
+                        plus_obj = getattr(platform_models, class_symbol)
+                    except ImportError as ex:
+                        # The installed rfdetr_plus predates this model; a checkpoint naming it is rejected below.
+                        _plus_symbol_errors[class_symbol] = ex
+                        continue
                     _plus_symbols[class_symbol] = plus_obj
                 _plus_entries = [
-                    (name, _plus_symbols[class_symbol]) for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
+                    (name, _plus_symbols[class_symbol])
+                    for name, class_symbol in _CHECKPOINT_PLUS_MODEL_MAP_ENTRIES
+                    if class_symbol in _plus_symbols
+                ]
+                _plus_stem_entries = [
+                    (name, _plus_symbols[class_symbol])
+                    for name, class_symbol in _CHECKPOINT_PLUS_STEM_ENTRIES
+                    if class_symbol in _plus_symbols
                 ]
                 _plus_available = True
             except ModuleNotFoundError as ex:
                 if ex.name not in {"rfdetr_plus", "rfdetr_plus.models"}:
-                    raise
+                    _plus_import_error = ex
+            except ImportError as ex:
+                _plus_import_error = ex
+            if _plus_import_error is not None:
+                # Every from_checkpoint call retries the import; report the broken install once per process.
+                logger.warning_once(
+                    "rfdetr_plus is installed but failed to import (%s); plus model checkpoints cannot be loaded.",
+                    _plus_import_error,
+                )
 
         # Use the safe-load helper which tries weights_only=True first (with
         # legacy argparse.Namespace safe globals), falling back to full pickle
@@ -1113,27 +1150,50 @@ class RFDETR:
         if weights_name in {"", "none", "null"}:
             weights_name = os.path.basename(os.fspath(path)).lower()
             _filename_fallback = True
+        # A directory such as "rf-detr-pico/" names no model. ntpath splits on both "/" and "\", so a Windows-style
+        # path recorded in the checkpoint (e.g. "c:\models\rf-detr-pico\rf-detr-nano.pth") also drops its directories.
+        weights_file = ntpath.basename(weights_name)
 
         if model_cls is None:
             # Guard: plus-only checkpoints should raise an actionable install error
             # when rfdetr_plus is missing, regardless of whether class inference
             # relies on model_name (new format) or pretrain_weights (legacy format).
-            plus_by_model_name = normalized_name in _CHECKPOINT_PLUS_MODEL_NAME_CLASS_SYMBOLS
+            plus_by_model_name = normalized_name in _PLUS_EXPORTS
             plus_by_weights_name = (
                 "xlarge" in weights_name and "seg-" not in weights_name and "keypoint-preview" not in weights_name
-            )
+            ) or any(name in weights_file for name, _ in _CHECKPOINT_PLUS_STEM_ENTRIES)
             if not _plus_available and (plus_by_model_name or plus_by_weights_name):
                 from rfdetr.platform import _INSTALL_MSG
 
+                reason = (
+                    f", which is installed but failed to import: {_plus_import_error}"
+                    if _plus_import_error
+                    else ". " + _INSTALL_MSG.format(name="platform model downloads")
+                )
                 raise ImportError(
                     f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r} requires the "
-                    f"rfdetr_plus package. " + _INSTALL_MSG.format(name="platform model downloads")
-                )
+                    f"rfdetr_plus package{reason}"
+                ) from _plus_import_error
+            # An installed rfdetr_plus that predates the checkpoint's model (by name or release stem): never fall back
+            # to other names, which could resolve a core class (e.g. "small" in "rf-detr-pico-small-ft.pth").
+            missing_symbol = normalized_name if plus_by_model_name else None
+            for stem, symbol in _CHECKPOINT_PLUS_STEM_ENTRIES:
+                if missing_symbol is None and stem in weights_file and symbol not in _plus_symbols:
+                    missing_symbol = symbol
+            if missing_symbol is not None:
+                from rfdetr.platform.models import _UPGRADE_MSG
 
-            for name, klass in _model_map:
-                if name in weights_name:
-                    model_cls = klass
-                    break
+                raise ImportError(
+                    f"Checkpoint model_name={saved_model_name!r}, pretrain_weights={weights_name!r}: "
+                    + _UPGRADE_MSG.format(name=missing_symbol)
+                ) from _plus_symbol_errors.get(missing_symbol)
+
+            model_cls = next((klass for name, klass in _plus_stem_entries if name in weights_file), None)
+            if model_cls is None:
+                for name, klass in _model_map:
+                    if name in weights_name:
+                        model_cls = klass
+                        break
 
             if _filename_fallback and model_cls is not None:
                 logger.info(
@@ -1760,7 +1820,8 @@ class RFDETR:
                         _live_args.resolution = _orig_args_resolution
                     if hasattr(_live_args, "positional_encoding_size"):
                         _live_args.positional_encoding_size = _orig_args_pe
-        module = RFDETRModelModule(eval_model_config, config)
+        # Every weight is transplanted from the live model below, so skip fetching upstream encoder weights.
+        module = RFDETRModelModule(eval_model_config, config, load_encoder_weights=False)
 
         # Free the original model's accelerator memory for the transplant -- otherwise the resident
         # original and the freshly built (randomly initialized) eval module are both on the accelerator
@@ -2155,10 +2216,11 @@ class RFDETR:
         trt_hardware_compatibility: Literal["ampere_plus", "same_compute_capability"] | None = None,
         trt_version_compatible: bool = False,
         notes: object = None,
+        output_name: str | None = None,
+        trt_timing_cache: str | os.PathLike[str] | None = None,
         coreml_precision: str | None = None,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
-        output_name: str | None = None,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
@@ -2321,6 +2383,19 @@ class RFDETR:
                 ``TRTInference(..., engine_host_code_allowed=True)``, and only from a file you trust.  ``False``
                 (default) builds an engine that loads on the building TensorRT version only.  Ignored for every other
                 format; ``True`` there emits a ``UserWarning`` instead of silently doing nothing.
+            trt_timing_cache: File in which TensorRT keeps the kernel timings it measures while building an engine, for
+                ``format="tensorrt"``.  A build loads the file when it exists and writes the merged timings back, so a
+                later build with the same layer shapes at the same precision and batch profile, on the same GPU and
+                TensorRT version, skips the search it already did.  The timings depend on the layers' shapes, not the
+                weights, so a re-export with new weights reuses them for every layer whose shape did not change.  A
+                cache from a matching dynamic-batch build helps too; reuse between a static and a dynamic profile, or
+                across precisions, was not measured.  A relative path is relative to the working directory, not to
+                *output_dir*.  A cache written by another TensorRT major version, or an empty or damaged file, does
+                not stop the build: TensorRT logs an error, builds as if there were no cache, and the file gets this
+                build's timings.  A failed cache write does fail the export, and the built engine is not saved
+                (Polygraphy writes the cache before the engine is returned); the engine can simply be rebuilt.
+                ``None`` (default) reads and writes no file.  Ignored for every other format; passing a non-``None``
+                value there emits a ``UserWarning`` instead of silently doing nothing.
             notes: Optional user-defined metadata (string, dict, list,
                 or any JSON-serialisable value) to embed in the exported
                 ONNX model under the ``"rfdetr_notes"`` metadata property.
@@ -2337,7 +2412,8 @@ class RFDETR:
             coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
                 ``"float32"`` selects FP32 (tight CPU parity with eager
                 PyTorch); ``"float16"`` selects a smaller
-                ANE-oriented bundle (expect larger numeric drift). Ignored for every other format.
+                ANE-oriented bundle (expect larger numeric drift) whose outputs are still float32. Bundles
+                declare iOS 15 / macOS 12 as the minimum OS. Ignored for every other format.
             coreai_precision: Precision the graph is traced and stored in for ``format="coreai"`` — ``None``
                 (default) or ``"float32"``, or ``"float16"`` for a half-size asset whose input and outputs are
                 float16 too. A float16 keypoint model warns: the asset aborts the process on the Neural Engine.
@@ -2391,7 +2467,11 @@ class RFDETR:
                 ``"ampere_plus"`` nor ``"same_compute_capability"``, when ``trt_version_compatible`` is not a
                 ``bool``, when the installed TensorRT has no hardware compatibility level of the requested name, or
                 when ``trt_hardware_compatibility="ampere_plus"`` is asked of a CUDA device older than Ampere.
+                Also raised for ``format="tensorrt"`` when ``trt_timing_cache`` is not a non-empty file path, ends in
+                a path separator, or is a directory.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
+            OSError: If ``format="tensorrt"`` and the directory or files of ``trt_timing_cache`` cannot be created or
+                written, or it is a symbolic link to a missing file.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
                 paths require a fixed batch size; if ``format="litert"`` is combined with a ``quantization``
@@ -2440,6 +2520,7 @@ class RFDETR:
         for keyword, requested in (
             ("trt_hardware_compatibility", trt_hardware_compatibility is not None),
             ("trt_version_compatible", trt_version_compatible),
+            ("trt_timing_cache", trt_timing_cache is not None),
         ):
             if requested and format != "tensorrt":
                 warnings.warn(
@@ -2493,6 +2574,7 @@ class RFDETR:
             max_batch_size=export_max_batch_size,
             trt_hardware_compatibility=trt_hardware_compatibility,
             trt_version_compatible=trt_version_compatible,
+            trt_timing_cache=trt_timing_cache,
         )
         # Constructing the exporter validates the format's own settings (precision, quantization, notes, ...), then
         # warns about the ones it ignores.

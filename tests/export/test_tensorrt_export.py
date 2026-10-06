@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import os
 import re
 import sys
 import types
@@ -1192,6 +1193,270 @@ def _patch_polygraphy_chain_recording(monkeypatch: pytest.MonkeyPatch, network: 
     monkeypatch.setattr(tensorrt_export, "engine_from_network", _engine_from_network)
     monkeypatch.setattr(tensorrt_export, "save_engine", lambda engine, path: None)
     return captured
+
+
+class TestTimingCache:
+    """``timing_cache`` reaches Polygraphy's config and engine build, and nothing is passed unless it is set."""
+
+    def test_no_timing_cache_keyword_is_passed_by_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without ``timing_cache`` the build calls Polygraphy exactly as it always did."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+
+        TensorRTExporter(TensorRTConfig(fp16=False)).build_engine("model.onnx")
+
+        assert captured["config"] == {"fp16": False}
+        assert captured["build"] == {}
+
+    @pytest.mark.parametrize("dynamic_batch", [False, True])
+    def test_an_existing_cache_is_loaded_and_saved_back(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dynamic_batch: bool
+    ) -> None:
+        """A cache file that exists seeds the build, and the same file receives the merged result.
+
+        The exporter probes the file before the build to refuse an unwritable cache, and that probe must leave the
+        timings a user already collected untouched; emptying them would silently throw the warm cache away.
+        """
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384) if dynamic_batch else (1, 3, 384, 384)))
+        captured = _patch_polygraphy_chain_recording(monkeypatch, network)
+        cache = tmp_path / "engine.cache"
+        cache.write_bytes(b"previous timings")
+        config = TensorRTConfig(fp16=False, dynamic_batch=dynamic_batch, max_batch_size=4, timing_cache=cache)
+
+        TensorRTExporter(config).build_engine("model.onnx")
+
+        assert captured["config"]["load_timing_cache"] == str(cache)
+        assert captured["build"] == {"save_timing_cache": str(cache)}
+        assert cache.read_bytes() == b"previous timings"
+
+    def test_a_missing_cache_is_saved_but_not_loaded(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The first use has no file yet: loading it would only make Polygraphy warn about a missing cache."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        cache = tmp_path / "not-yet.cache"
+
+        TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=cache)).build_engine("model.onnx")
+
+        assert "load_timing_cache" not in captured["config"]
+        assert captured["build"] == {"save_timing_cache": str(cache)}
+
+    @pytest.mark.parametrize("dynamic_batch", [False, True])
+    def test_the_keywords_handed_to_polygraphy_exist_in_its_api(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, dynamic_batch: bool
+    ) -> None:
+        """Every keyword the exporter passes with a timing cache is one the installed Polygraphy accepts.
+
+        The recording stub takes any keyword, so a keyword Polygraphy renamed or removed would leave the CPU suite green
+        while only a GPU run broke. The keywords the exporter really passes are recorded for a fixed-batch and a
+        dynamic-batch build (the latter adds a profile next to the cache), then checked against the signatures of the
+        real ``CreateConfig`` and ``engine_from_network``. Skipped where Polygraphy does not import.
+        """
+        trt_backend = pytest.importorskip("polygraphy.backend.trt", exc_type=ImportError)
+        network = _FakeNetwork(_FakeNetworkInput("input", (-1, 3, 384, 384) if dynamic_batch else (1, 3, 384, 384)))
+        captured = _patch_polygraphy_chain_recording(monkeypatch, network)
+        cache = tmp_path / "engine.cache"
+        cache.write_bytes(b"previous timings")
+        config = TensorRTConfig(fp16=False, dynamic_batch=dynamic_batch, max_batch_size=4, timing_cache=cache)
+
+        TensorRTExporter(config).build_engine("model.onnx")
+
+        # ``CreateConfig`` forwards most of its options to a base class through ``**kwargs``, so collect them all.
+        create_config_keywords = {
+            name
+            for cls in trt_backend.CreateConfig.__mro__
+            if cls is not object and "__init__" in vars(cls)
+            for name in inspect.signature(vars(cls)["__init__"]).parameters
+        }
+        build_keywords = set(inspect.signature(trt_backend.engine_from_network).parameters)
+        assert "load_timing_cache" in captured["config"], "the exporter no longer loads the cache it was given"
+        assert set(captured["config"]) <= create_config_keywords, "CreateConfig does not accept every keyword passed"
+        assert set(captured["build"]) <= build_keywords, "engine_from_network does not accept every keyword passed"
+
+    @pytest.mark.parametrize(
+        "value", [pytest.param("", id="empty"), pytest.param(b"engine.cache", id="bytes"), 3, True]
+    )
+    def test_a_value_that_is_not_a_path_is_refused(self, value: object) -> None:
+        """A non-path value is refused when the exporter is built, before any work on the model, and says why."""
+        with pytest.raises(ValueError, match="trt_timing_cache must be a non-empty file path"):
+            TensorRTExporter(TensorRTConfig(timing_cache=value))
+
+    def test_a_missing_directory_is_created(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Polygraphy opens the lock file beside the cache before it creates the directory, so the export does it."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        cache = tmp_path / "not" / "yet" / "engine.cache"
+
+        TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=cache)).build_engine("model.onnx")
+
+        assert cache.parent.is_dir()
+        assert captured["build"] == {"save_timing_cache": str(cache)}
+
+    def test_a_directory_is_refused_before_anything_is_built(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A directory cannot hold the cache, and Polygraphy would only say so after the whole build."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=tmp_path))
+
+        with pytest.raises(ValueError, match=r"trt_timing_cache.*directory"):
+            exporter.build_engine("model.onnx")
+
+        assert captured == {"config": {}, "build": {}}
+
+    def test_a_location_that_cannot_be_created_is_refused_before_anything_is_built(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A file where a directory is needed cannot be worked around by any user, on any operating system."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        blocker = tmp_path / "blocker"
+        blocker.write_text("a file, not a directory")
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=blocker / "engine.cache"))
+
+        with pytest.raises(OSError, match="trt_timing_cache"):
+            exporter.build_engine("model.onnx")
+
+        assert captured == {"config": {}, "build": {}}
+
+    def test_a_path_ending_in_a_separator_is_refused_when_the_exporter_is_built(self, tmp_path: Path) -> None:
+        """A path ending in a separator is refused when the exporter is built, before any work on the model.
+
+        ``out/cache/`` names a directory, and that is plain from the value alone, so no filesystem access is needed.
+        """
+        with pytest.raises(ValueError, match=r"trt_timing_cache.*names a directory"):
+            TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=str(tmp_path / "cache") + os.sep))
+
+    @pytest.mark.skipif(os.name == "nt", reason="creating a symbolic link needs extra privileges on Windows")
+    def test_a_link_to_a_missing_file_is_refused_before_anything_is_built(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A symbolic link to a missing file is refused before the build, not after it.
+
+        Polygraphy would create the file at the link's target after the build, and a missing target folder would lose
+        the timings.
+        """
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        link = tmp_path / "engine.cache"
+        link.symlink_to(tmp_path / "unmounted" / "engine.cache")
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=link))
+
+        with pytest.raises(OSError, match=r"trt_timing_cache.*symbolic link"):
+            exporter.build_engine("model.onnx")
+
+        assert captured == {"config": {}, "build": {}}
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_a_read_only_cache_file_is_refused_before_anything_is_built(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The build would save into the file after the engine exists, so a file it cannot write is refused now."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        cache = tmp_path / "engine.cache"
+        cache.write_bytes(b"previous timings")
+        cache.chmod(0o444)
+        if os.access(cache, os.W_OK):
+            pytest.skip("this user can write a read-only file (root)")
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=cache))
+
+        with pytest.raises(OSError, match="trt_timing_cache"):
+            exporter.build_engine("model.onnx")
+
+        assert captured == {"config": {}, "build": {}}
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_refusing_a_read_only_cache_file_leaves_no_lock_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A refused request must not leave behind a lock file that would then belong to the user who was refused."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        cache = tmp_path / "engine.cache"
+        cache.write_bytes(b"previous timings")
+        cache.chmod(0o444)
+        if os.access(cache, os.W_OK):
+            pytest.skip("this user can write a read-only file (root)")
+
+        with pytest.raises(OSError, match="trt_timing_cache"):
+            TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=cache)).build_engine("model.onnx")
+
+        assert sorted(path.name for path in tmp_path.iterdir()) == ["engine.cache"]
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    def test_a_read_only_directory_is_refused_before_anything_is_built(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The most common bad location: a folder the user cannot write, with no cache in it yet."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        folder = tmp_path / "shared"
+        folder.mkdir()
+        folder.chmod(0o555)
+        if os.access(folder, os.W_OK):
+            pytest.skip("this user can write a read-only directory (root)")
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=folder / "engine.cache"))
+
+        try:
+            with pytest.raises(OSError, match="trt_timing_cache"):
+                exporter.build_engine("model.onnx")
+        finally:
+            folder.chmod(0o755)
+
+        assert captured == {"config": {}, "build": {}}
+
+    def test_the_lock_file_polygraphy_needs_is_created_beside_the_cache(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Polygraphy opens ``<file>.lock`` before it writes the cache, so the export opens it first."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        cache = tmp_path / "engine.cache"
+
+        TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=cache)).build_engine("model.onnx")
+
+        assert (tmp_path / "engine.cache.lock").is_file()
+
+    def test_a_dry_run_touches_nothing(self, tmp_path: Path) -> None:
+        """A dry run builds nothing, so it creates neither the cache directory nor a lock file."""
+        cache = tmp_path / "not" / "yet" / "engine.cache"
+
+        TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=cache)).build_engine("model.onnx", dry_run=True)
+
+        assert not (tmp_path / "not").exists()
+
+    def test_a_bad_location_is_refused_before_the_onnx_export(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``_convert`` checks the location first, so a doomed request does not wait for the ONNX stage."""
+        _patch_polygraphy_chain_recording(monkeypatch)
+        onnx_calls: list[str] = []
+        monkeypatch.setattr(
+            "rfdetr.export._onnx.exporter.OnnxExporter._convert",
+            lambda self, graph: onnx_calls.append("called") or str(tmp_path / "model.onnx"),
+        )
+
+        with pytest.raises(ValueError, match="directory"):
+            TensorRTExporter(TensorRTConfig(timing_cache=tmp_path))._convert(_minimal_export_graph())
+
+        assert onnx_calls == []
+
+    def test_the_home_directory_is_expanded(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A shell expands ``~`` but Python does not; left alone it would create a directory named ``~``."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        # Should the expansion break, the relative "~/..." must land in the test's folder, not the repository.
+        monkeypatch.chdir(tmp_path)
+
+        TensorRTExporter(TensorRTConfig(fp16=False, timing_cache="~/engine.cache")).build_engine("model.onnx")
+
+        assert Path(captured["build"]["save_timing_cache"]) == tmp_path / "engine.cache"
+
+    def test_a_relative_path_is_relative_to_the_working_directory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The most natural call, ``trt_timing_cache="rfdetr.cache"``, puts the cache where the command runs."""
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+
+        TensorRTExporter(TensorRTConfig(fp16=False, timing_cache="engine.cache")).build_engine("out/model.onnx")
+
+        assert (Path(captured["build"]["save_timing_cache"]), (tmp_path / "engine.cache.lock").is_file()) == (
+            tmp_path / "engine.cache",
+            True,
+        )
 
 
 @pytest.fixture
@@ -2891,3 +3156,187 @@ class TestTensorRTEndToEnd:
             tensorrt_inference.TRTInference.build_engine(runtime_stand_in, str(onnx_path), str(target))
 
         assert target.read_bytes() == b"engine from an earlier build"
+
+    def test_warm_timing_cache_builds_an_equivalent_engine(
+        self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The first build writes the timing cache, and a build that reuses it produces the cold build's outputs.
+
+        Reusing measured timings changes which kernels a build may skip timing, never what the network computes, so on
+        an FP32 engine the two engines must agree to numerical noise.
+        """
+        import numpy as np
+        from polygraphy.backend.common import BytesFromPath
+        from polygraphy.backend.trt import EngineFromBytes, TrtRunner
+
+        _, example, engine_path = trt_engine
+        onnx_path = engine_path.with_name(engine_path.stem.removesuffix("_fp32") + ".onnx")
+        cache = tmp_path / "engine.cache"
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, verbose=False, timing_cache=cache))
+        # The real ``CreateConfig`` receives the keywords, so Polygraphy itself vouches for their names.
+        real_create_config = tensorrt_export.CreateConfig
+        create_config_calls: list[dict[str, object]] = []
+
+        def recording_create_config(**kwargs: object) -> object:
+            """Record the keywords and build the real configuration."""
+            create_config_calls.append(kwargs)
+            return real_create_config(**kwargs)
+
+        monkeypatch.setattr(tensorrt_export, "CreateConfig", recording_create_config)
+
+        cold_path = exporter.build_engine(str(onnx_path), output_name="cold-with-cache")
+        assert cache.is_file() and cache.stat().st_size > 0, "the first build must write the timing cache"
+        warm_path = exporter.build_engine(str(onnx_path), output_name="warm-with-cache")
+        assert ["load_timing_cache" in call for call in create_config_calls] == [False, True]
+        assert create_config_calls[1]["load_timing_cache"] == str(cache)
+
+        feed = {"input": np.ascontiguousarray(example.detach().cpu().numpy())}
+        outputs = []
+        for path in (cold_path, warm_path):
+            with TrtRunner(EngineFromBytes(BytesFromPath(path))) as runner:
+                outputs.append({name: np.array(value) for name, value in runner.infer(feed_dict=feed).items()})
+        diffs = {name: float(np.abs(outputs[0][name] - outputs[1][name]).max()) for name in ("dets", "labels")}
+        assert max(diffs.values()) < 1e-4, f"the warm-cache engine differs from the cold build's: {diffs}"
+
+    @pytest.fixture(scope="class")
+    def populated_timing_cache(
+        self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path], tmp_path_factory: pytest.TempPathFactory
+    ) -> bytes:
+        """The timing cache a real build writes, built once for the tests that damage it."""
+        _, _, engine_path = trt_engine
+        onnx_path = engine_path.with_name(engine_path.stem.removesuffix("_fp32") + ".onnx")
+        cache = tmp_path_factory.mktemp("timing-cache") / "engine.cache"
+        config = TensorRTConfig(fp16=False, verbose=False, timing_cache=cache)
+
+        TensorRTExporter(config).build_engine(str(onnx_path), output_name="populate-timing-cache")
+
+        return cache.read_bytes()
+
+    @pytest.mark.parametrize("damage", ["empty", "garbage", "truncated"])
+    def test_a_damaged_timing_cache_is_replaced_and_does_not_fail_the_build(
+        self,
+        trt_engine: tuple[torch.nn.Module, torch.Tensor, Path],
+        populated_timing_cache: bytes,
+        tmp_path: Path,
+        damage: str,
+    ) -> None:
+        """A cache TensorRT cannot read does not stop the build, and the build writes its own timings over it.
+
+        The documented behaviour of ``trt_timing_cache`` for an empty, a garbage and a truncated file (a real cache cut
+        in half). TensorRT logs a serialization error for the last two; the export still succeeds.
+        """
+        _, _, engine_path = trt_engine
+        onnx_path = engine_path.with_name(engine_path.stem.removesuffix("_fp32") + ".onnx")
+        damaged = {
+            "empty": b"",
+            "garbage": b"this is not a timing cache" * 40,
+            "truncated": populated_timing_cache[: len(populated_timing_cache) // 2],
+        }[damage]
+        cache = tmp_path / "engine.cache"
+        cache.write_bytes(damaged)
+
+        built = TensorRTExporter(TensorRTConfig(fp16=False, verbose=False, timing_cache=cache)).build_engine(
+            str(onnx_path), output_name=f"after-a-{damage}-cache"
+        )
+
+        assert Path(built).stat().st_size > 0
+        assert len(cache.read_bytes()) > len(damaged), "the build must write a fuller timing cache over the damaged one"
+
+
+class TestTimingCacheSafety:
+    """The timing cache Polygraphy is handed is one well-defined regular file, and a bad one is refused up front."""
+
+    @pytest.mark.skipif(os.name == "nt", reason="creating a symbolic link needs extra privileges on Windows")
+    def test_a_link_to_an_existing_cache_hands_polygraphy_its_target(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A link and the file it points to load, save and lock the same cache file.
+
+        Polygraphy locks ``<path>.lock`` beside the path it is given. Handed the link itself, an export through the link
+        and another through the target would each lock their own file and race the same cache's read-merge-write.
+        """
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        cache = tmp_path / "engine.cache"
+        cache.write_bytes(b"previous timings")
+        link = tmp_path / "link.cache"
+        link.symlink_to(cache)
+
+        TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=link)).build_engine("model.onnx")
+
+        assert (captured["config"]["load_timing_cache"], captured["build"], sorted(os.listdir(tmp_path))) == (
+            str(cache),
+            {"save_timing_cache": str(cache)},
+            ["engine.cache", "engine.cache.lock", "link.cache"],
+        )
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes need os.mkfifo, which only POSIX has")
+    def test_a_named_pipe_is_refused_before_anything_is_built(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A FIFO cannot hold the cache, and it is refused before the build without ever being opened.
+
+        ``os.path.isfile`` is false for a FIFO, so it used to pass as a cache that does not exist yet; Polygraphy's save
+        into it would then block, with no reader, after the whole build.
+        """
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        fifo = tmp_path / "engine.cache"
+        os.mkfifo(fifo)
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=fifo))
+
+        with pytest.raises(ValueError, match="trt_timing_cache must name a regular file"):
+            exporter.build_engine("model.onnx")
+
+        assert (captured, sorted(os.listdir(tmp_path))) == ({"config": {}, "build": {}}, ["engine.cache"])
+
+    def test_a_refused_location_keeps_its_operating_system_error_type(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The refusal names the setting and still raises the errno's own ``OSError`` subclass.
+
+        A file stands where the cache's directory has to be created, which fails with ``FileExistsError`` on every
+        operating system; a caller catching that subclass must not lose it to a plain ``OSError`` re-wrap.
+        """
+        _patch_polygraphy_chain_recording(monkeypatch)
+        blocker = tmp_path / "blocker"
+        blocker.write_text("a file, not a directory")
+        exporter = TensorRTExporter(TensorRTConfig(fp16=False, timing_cache=blocker / "engine.cache"))
+
+        with pytest.raises(FileExistsError, match="trt_timing_cache"):
+            exporter.build_engine("model.onnx")
+
+    def test_a_path_with_a_nul_byte_is_refused_when_the_exporter_is_built(self) -> None:
+        """No file can carry a NUL byte in its name, so the value is refused before any work on the model.
+
+        Left to the filesystem, the NUL byte surfaced as a bare ``ValueError('embedded null byte')`` that named no
+        setting.
+        """
+        with pytest.raises(ValueError, match="trt_timing_cache must not contain a NUL byte"):
+            TensorRTExporter(TensorRTConfig(fp16=False, timing_cache="engine\x00.cache"))
+
+    @pytest.mark.parametrize(
+        ("cache_name", "has_fp16_flag"),
+        [
+            pytest.param("model.onnx", True, id="onnx-model"),
+            pytest.param("model_fp16.trt", True, id="fp16-engine"),
+            pytest.param("model_fp32.trt", False, id="fp32-fallback-engine"),
+        ],
+    )
+    def test_a_cache_that_is_the_model_or_the_engine_is_refused_before_anything_is_created(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cache_name: str, has_fp16_flag: bool
+    ) -> None:
+        """A cache aliasing the build's ONNX model or its engine is refused before the build, and before its lock.
+
+        Saved over the ONNX model, the cache would destroy the export's own input; saved where the engine goes, it would
+        be overwritten by the engine on every run. A TensorRT without the FP16 builder flag falls back to an FP32
+        engine, so the comparison has to use the engine's final name, not the requested one.
+        """
+        captured = _patch_polygraphy_chain_recording(monkeypatch)
+        monkeypatch.setitem(sys.modules, "tensorrt", _fake_tensorrt("10.16.1.11", has_fp16_flag=has_fp16_flag))
+        onnx_path = tmp_path / "model.onnx"
+        onnx_path.write_bytes(b"exported model")
+        exporter = TensorRTExporter(TensorRTConfig(fp16=True, timing_cache=tmp_path / cache_name))
+
+        with pytest.raises(ValueError, match="trt_timing_cache .* is the same file as"):
+            exporter.build_engine(str(onnx_path))
+
+        assert (captured, sorted(os.listdir(tmp_path))) == ({"config": {}, "build": {}}, ["model.onnx"])
