@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Breaking Changes
 
+- `format="coreml"` with `coreml_precision="float16"` now returns float32 output arrays; the `.mlpackage` returned float16 outputs before, because it was converted as an iOS 16 program and is now converted as iOS 15. A consumer that reads the outputs as float16 (a typed buffer, a `dtype` check) must read float32. `coreml_precision="float32"` bundles are unchanged. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
 - Removed `rfdetr.datasets.yolo.REQUIRED_DATA_SUBDIRS`. `is_valid_yolo_dataset` resolves split directories through the YAML-aware resolver, which derives the labels directory from the resolved images path, so the constant no longer described how any code finds a split's subdirectories. Nothing inside the package read it; an external importer should inline `["images", "labels"]`. ([#1570](https://github.com/roboflow/rf-detr/pull/1570))
 
 ### Added
@@ -70,6 +72,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `format="openvino", dynamic_batch=True` is still refused, but the message now explains that the converted IR already has a dynamic input shape, so one export runs at any batch size. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
 ### Fixed
+
+- `format="coreml"` with `coreml_precision="float16"` no longer loses about 3 box AP on the Apple Neural Engine. The bundle was converted for iOS 16, whose program runs the deformable-attention `resample` on the Neural Engine in fp16; it is now converted for iOS 15, where that op stays on the CPU, which also matches what the ExecuTorch CoreML delegate lowers. Measured on an Apple M3 Pro (macOS 27.0.1, pretrained models, all 5000 COCO val2017 images) under `CPU_AND_NE`: `RFDETRNano` 45.06 → 48.04 AP (eager 48.03) and `RFDETRSmall` 50.70 → 52.76 AP (eager 52.80); `CPU_AND_GPU` was already unaffected, and fp32 scores 48.03 on `RFDETRNano` either way. The cost is single-image latency on the Neural Engine, `RFDETRNano` fp16 under `CPU_AND_NE` (p50, batch 1): 10.8 → 12.7 ms back to back and 18.3 → 24.9 ms with 200 ms between passes; `RFDETRSegNano` 18.1 → 20.3 ms and 30.4 → 38.8 ms (the pairs were measured in the same session). Bundles now declare iOS 15 / macOS 12 as the minimum OS, down from iOS 16 / macOS 13; the output dtype change this brings is listed under Breaking Changes. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
 
 - `RFDETR.evaluate()` no longer downloads DINOv2 pretrained weights when it rebuilds `RFDETRBase` or the deprecated `Large`, nor a registered encoder's upstream weights, so offline evaluation of those models works.
 
