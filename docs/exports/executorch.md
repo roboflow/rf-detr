@@ -70,7 +70,7 @@ model.export(format="executorch", backend="coreml")
 
 RF-DETR's graph lowers to a **single** CoreML delegate — no operator is left behind on ExecuTorch's portable CPU kernels — so the `.pte` carries one Core ML model, and the Neural Engine is reachable through it. The compute units are not baked in; the app that loads the `.pte` chooses them, exactly as for a native `.mlpackage`.
 
-Measured on a pretrained `RFDETRNano` (Apple M3 Pro, macOS 27.0.1, COCO val2017, all 5000 images), this delegate scores 48.0 mAP, the same as eager PyTorch and as a native fp16 `.mlpackage`. Both are iOS 15 (specification 6) Core ML programs holding fp16 weights, and Core ML schedules the same share of their estimated work onto the Neural Engine.
+Measured on a pretrained `RFDETRNano` (Apple M3 Pro, macOS 27.0.1, COCO val2017, all 5000 images), this delegate scores 48.0 mAP, the same as eager PyTorch and as a native fp16 `.mlpackage`. Both are iOS 15 (specification 6) Core ML programs holding fp16 weights, so the resample ops stay off the Neural Engine in each. The delegate does reach the Neural Engine, but its op split cannot be measured, because `MLComputePlan` needs an `.mlpackage` (see [Native CoreML Export](coreml.md#neural-engine-compute-units-and-the-fallback-boundary)).
 
 !!! note
 
