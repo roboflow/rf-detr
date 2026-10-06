@@ -130,14 +130,34 @@ class TestCoreMLSpecificationVersion:
     def test_fp16_export_returns_float32_outputs(
         self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
     ) -> None:
-        """An iOS 15 program returns float32 arrays; an iOS 16 one returned float16, which consumers may read as
-        such."""
+        """An iOS 15 fp16 bundle returns float32 output arrays.
+
+        An iOS 16 program returned float16 arrays, which a consumer may have read as such; the changelog documents the
+        switch, and this pins the new dtype.
+        """
         import coremltools as ct
 
         mlpackage_path, _, _ = nano_fp16_export
         outputs = ct.utils.load_spec(str(mlpackage_path)).description.output
 
         assert {output.type.multiArrayType.dataType for output in outputs} == {
+            ct.proto.FeatureTypes_pb2.ArrayFeatureType.FLOAT32
+        }
+
+    def test_fp16_export_takes_float32_input(
+        self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
+    ) -> None:
+        """The image input stays float32, so callers keep feeding float32 arrays to an fp16 bundle.
+
+        Only the weights and arithmetic are fp16; a changed input dtype would break every existing caller that feeds
+        float32 images.
+        """
+        import coremltools as ct
+
+        mlpackage_path, _, _ = nano_fp16_export
+        inputs = ct.utils.load_spec(str(mlpackage_path)).description.input
+
+        assert {feature.type.multiArrayType.dataType for feature in inputs} == {
             ct.proto.FeatureTypes_pb2.ArrayFeatureType.FLOAT32
         }
 
@@ -150,7 +170,7 @@ _ANE_UNSUPPORTED_OPS = frozenset({"topk", "gather_along_axis", "tile", "expand_d
 
 #: Minimum share of estimated work Core ML must still schedule onto the ANE under ``CPU_AND_NE``. Measured at
 #: 0.997 to 0.999 for fp16 RFDETRNano, RFDETRSmall, RFDETRMedium and RFDETRSegNano (pretrained, iOS15) on an Apple M3
-#: Pro running macOS 27.0; the untrained RFDETRNano below clears the floor on the same machine.
+#: Pro running macOS 27.0.1; the untrained RFDETRNano below clears the floor on the same machine.
 _MIN_ANE_COST_SHARE = 0.99
 
 
@@ -203,7 +223,12 @@ class TestCoreMLNeuralEngineFallbackBoundary:
     def test_only_known_ops_leave_the_neural_engine(
         self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
     ) -> None:
-        """No op outside ``_ANE_UNSUPPORTED_OPS`` may lose Neural Engine support."""
+        """Only ``_ANE_UNSUPPORTED_OPS`` may leave the Neural Engine, and ``resample`` must be one of them.
+
+        The positive half pins the mechanism of the iOS 15 choice: the deformable-attention ``resample`` has to stay
+        off the Neural Engine, because at iOS 16 it runs there in fp16 and costs ~3 box AP. Like the whole class,
+        this runs only on hardware that exposes a Neural Engine; ``_compute_plan`` skips elsewhere.
+        """
         mlpackage_path, _, _ = nano_fp16_export
         plan = _compute_plan(mlpackage_path)
         operations = plan.model_structure.program.functions["main"].block.operations
@@ -218,6 +243,10 @@ class TestCoreMLNeuralEngineFallbackBoundary:
         assert unsupported <= _ANE_UNSUPPORTED_OPS, (
             f"ops newly unsupported on the Neural Engine: {sorted(unsupported - _ANE_UNSUPPORTED_OPS)}; "
             "update docs/exports/coreml.md's fallback boundary if this is intended"
+        )
+        assert "resample" in unsupported, (
+            "resample now runs on the Neural Engine, which is the iOS 16 behavior that loses ~3 box AP at fp16; "
+            f"ops off the Neural Engine: {sorted(unsupported)}"
         )
 
     def test_neural_engine_keeps_nearly_all_of_the_estimated_work(
