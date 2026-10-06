@@ -225,6 +225,115 @@ def _uint8_chw_to_float(chw: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     return widened.div_(scale)
 
 
+class _CUDAGraphInferenceModel:
+    """Replay a fixed-shape TorchScript module through one direct CUDA Graph.
+
+    The graph owns its input and output buffers. Each call copies the caller's tensor into the static input, replays the
+    captured kernels, then clones the outputs before returning them so a later replay cannot mutate a previous call's
+    result. A CUDA event serializes calls made from different streams without forcing the host to synchronize.
+    """
+
+    def __init__(self, model: Any, sample_input: torch.Tensor, device: torch.device) -> None:
+        """Warm up ``model``, capture one forward pass, and record the completion event.
+
+        Args:
+            model: TorchScript module to capture.
+            sample_input: Fixed-shape input on ``device``; it becomes the graph's static input buffer.
+            device: CUDA device the graph is captured on.
+
+        Raises:
+            torch.cuda.OutOfMemoryError: If CUDA Graph capture runs out of device memory. The message advises a smaller
+                ``batch_size`` and notes that a process restart may be required.
+            RuntimeError: If CUDA Graph capture fails for any other reason. A failed capture can leave CUDA
+                random-number state unusable for the rest of the process, so the message asks for a restart.
+        """
+        self._model = model
+        self._static_input = sample_input
+        self._lock = threading.Lock()
+
+        current_stream = torch.cuda.current_stream(device)
+        warmup_stream = torch.cuda.Stream(device=device)  # type: ignore[no-untyped-call]
+        warmup_stream.wait_stream(current_stream)
+        with torch.cuda.stream(warmup_stream), torch.inference_mode():
+            for _ in range(3):
+                model(self._static_input)
+        current_stream.wait_stream(warmup_stream)
+        torch.cuda.synchronize(device)
+
+        self._graph = torch.cuda.CUDAGraph()
+        try:
+            # Capture on the warm-up stream, which lives on ``device``. Without ``stream=``, torch reuses one
+            # process-wide capture stream created on whichever device was current at the first capture.
+            # "thread_local" checks only this thread's CUDA calls for capture safety; the default "global" mode also
+            # errors on unsafe calls from other threads, e.g. a cudaMalloc by another model's concurrent predict().
+            with (
+                torch.inference_mode(),
+                torch.cuda.graph(self._graph, stream=warmup_stream, capture_error_mode="thread_local"),
+            ):
+                self._static_output = model(self._static_input)
+            # An error that CUDA only reports at the completion fence gets the same restart instruction.
+            torch.cuda.synchronize(device)
+        except torch.cuda.OutOfMemoryError as exc:
+            # Keep the OOM type so callers' OOM handlers still match; the fix is less memory, not another backend.
+            raise torch.cuda.OutOfMemoryError(
+                "CUDA ran out of memory while capturing compile_backend='cudagraph'. Call inference() with a smaller "
+                "batch_size or free device memory first. A failed capture can leave CUDA random-number state "
+                "unusable, so a process restart may be required."
+            ) from exc
+        except Exception as exc:
+            # On torch 2.9.1 a rejected capture leaves CUDA random ops raising "Offset increment outside graph capture"
+            # for the rest of the process, so even the default backend cannot be set up again after it.
+            raise RuntimeError(
+                "CUDA Graph capture failed for compile_backend='cudagraph'. A failed capture can leave CUDA "
+                "random-number state unusable for the rest of the process. Restart the process and use another "
+                "compile_backend."
+            ) from exc
+
+        self._completed = torch.cuda.Event()  # type: ignore[no-untyped-call]
+        self._completed.record(torch.cuda.current_stream(device))
+
+    @staticmethod
+    def _clone_output(value: Any) -> Any:
+        """Clone tensors recursively so graph-owned storage never escapes the wrapper."""
+        if isinstance(value, torch.Tensor):
+            return value.clone(memory_format=torch.preserve_format)
+        if isinstance(value, tuple):
+            return tuple(_CUDAGraphInferenceModel._clone_output(item) for item in value)
+        if isinstance(value, list):
+            return [_CUDAGraphInferenceModel._clone_output(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _CUDAGraphInferenceModel._clone_output(item) for key, item in value.items()}
+        return value
+
+    def __call__(self, value: torch.Tensor) -> Any:
+        """Copy one fixed-shape batch into the graph, replay it, and return owned outputs.
+
+        Raises:
+            ValueError: If ``value``'s shape, dtype or device differs from the captured input, which ``copy_`` would
+                otherwise silently broadcast or cast.
+        """
+        static_input = self._static_input
+        if (value.shape, value.dtype, value.device) != (static_input.shape, static_input.dtype, static_input.device):
+            raise ValueError(
+                f"compile_backend='cudagraph' was captured for input shape {tuple(static_input.shape)}, dtype "
+                f"{static_input.dtype}, device {static_input.device}; got shape {tuple(value.shape)}, dtype "
+                f"{value.dtype}, device {value.device}. Pass a matching input or call inference() again with the "
+                "batch_size and dtype you need."
+            )
+        with self._lock, torch.inference_mode():
+            stream = torch.cuda.current_stream(value.device)
+            stream.wait_event(self._completed)
+            self._static_input.copy_(value)
+            try:
+                self._graph.replay()
+                output = self._clone_output(self._static_output)
+            finally:
+                # Record after the clone attempt, even a failed one, so the next caller waits for this replay.
+                # Recording before the clone would let another stream's replay overwrite outputs still being read.
+                self._completed.record(stream)
+        return output
+
+
 def _mps_lacks_antialiased_resize() -> bool:
     """Report whether the installed torch predates MPS support for antialiased bilinear resize.
 
@@ -1723,16 +1832,19 @@ class RFDETR:
         dtype: torch.dtype | str = torch.float32,
         *,
         inplace: bool = False,
-        compile_backend: Literal["torchscript", "inductor"] = "torchscript",
+        compile_backend: Literal["torchscript", "cudagraph", "inductor"] = "torchscript",
     ) -> None:
         """Optimize the model for inference with optional compilation and dtype casting.
 
         Operations are wrapped in the correct CUDA device context to prevent context leaks on multi-GPU setups. When
         ``compile=True`` the model is compiled using ``compile_backend`` and a dummy input of ``batch_size`` images at
         the model's current resolution. The default ``"torchscript"`` backend preserves the existing
-        ``torch.jit.trace`` path. ``"inductor"`` uses ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the
-        dummy input twice before synchronizing the selected device so setup is paid inside this method instead of the
-        first :meth:`predict` call. By default,
+        ``torch.jit.trace`` path. ``"cudagraph"`` freezes that trace and captures its fixed-shape CUDA work for direct
+        replay, cloning graph-owned outputs before returning them. It is therefore TorchScript trace plus
+        ``torch.jit.freeze`` plus one directly replayed CUDA graph, not a separate compiler; ``"inductor"`` in
+        reduce-overhead mode also replays CUDA graphs, but of an Inductor-compiled model. ``"inductor"`` uses
+        ``torch.compile(mode="reduce-overhead")`` and, on CUDA, runs the dummy input twice before synchronizing the
+        selected device so setup is paid inside this method instead of the first :meth:`predict` call. By default,
         optimization deep-copies the loaded model before exporting it so the original module remains available. Set
         ``inplace=True`` for memory-constrained inference-only deployments; this exports the loaded module itself, may
         cast it to ``dtype``, and clears ``model.model`` after optimization succeeds. In-place optimization is
@@ -1758,16 +1870,31 @@ class RFDETR:
                 Requires ``compile=False``. With the default ``dtype=torch.float32``, the dtype cast is a no-op, so
                 memory savings come only from clearing the base model reference rather than from dtype reduction.
             compile_backend: Compilation implementation used when ``compile=True``. ``"torchscript"`` (default)
-                preserves the existing trace path. ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode;
-                it can reduce steady-state latency but has a substantially higher one-time compilation cost and its
-                device/operator support depends on the installed PyTorch version.
+                preserves the existing trace path. ``"cudagraph"`` is CUDA-only and captures a frozen TorchScript
+                trace once during setup. It keeps a graph-private memory pool holding the captured forward's
+                intermediates, plus the static input/output buffers, for as long as the optimized model exists; that
+                device memory grows with batch size, resolution and model size.
+                Freezing uses ``torch.jit.freeze``, deprecated since torch 2.5 along with TorchScript; its default
+                ``optimize_numerics=True`` passes do not strictly preserve numerics, so outputs are not guaranteed to
+                match the ``"torchscript"`` backend bit for bit.
+                Capture checks only the calling thread's CUDA calls, but entering it still synchronizes the device
+                and empties the process's cached CUDA and pinned host memory, so call ``inference()`` before
+                serving threads start.
+                ``"inductor"`` uses :func:`torch.compile` in reduce-overhead mode; it can reduce steady-state latency
+                but has a substantially higher one-time compilation cost and its device/operator support depends on the
+                installed PyTorch version.
 
         Raises:
             TypeError: If ``dtype`` is not a ``torch.dtype``, or if ``dtype`` is a
                 string that does not correspond to a valid ``torch.dtype`` attribute.
-            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, or if
-                ``inplace=True`` is used with ``compile=True``.
-            RuntimeError: If the base model has already been cleared by a previous inplace optimization.
+            ValueError: If ``dtype`` is not a floating-point dtype, if ``compile_backend`` is unknown, if
+                ``inplace=True`` is used with ``compile=True``, or if ``compile=True`` with
+                ``compile_backend="cudagraph"`` targets a non-CUDA device.
+            RuntimeError: If the base model has already been cleared by a previous inplace optimization, or if
+                ``compile_backend="cudagraph"`` fails to capture the model. A failed capture can leave CUDA
+                random-number state unusable, so restart the process before trying another backend.
+            torch.cuda.OutOfMemoryError: If ``compile_backend="cudagraph"`` runs out of device memory during
+                capture. Retry with a smaller ``batch_size``; a process restart may be required first.
 
         Examples:
             >>> from types import SimpleNamespace
@@ -1823,8 +1950,10 @@ class RFDETR:
             raise TypeError(f"dtype must be a torch.dtype or a string name of a dtype, got {type(dtype)!r}")
         if not dtype.is_floating_point:
             raise ValueError(f"dtype must be a floating-point torch.dtype or string name of one, got {dtype}")
-        if compile_backend not in ("torchscript", "inductor"):
-            raise ValueError(f"compile_backend must be 'torchscript' or 'inductor', got {compile_backend!r}")
+        if compile_backend not in ("torchscript", "cudagraph", "inductor"):
+            raise ValueError(
+                f"compile_backend must be 'torchscript', 'cudagraph', or 'inductor', got {compile_backend!r}"
+            )
         if inplace and compile:
             raise ValueError(
                 "inference(inplace=True) requires compile=False. "
@@ -1832,6 +1961,8 @@ class RFDETR:
                 "model.model=None may not free the weight tensors and inplace=True would not reliably reduce "
                 "memory usage."
             )
+        if compile and compile_backend == "cudagraph" and self.model.device.type != "cuda":
+            raise ValueError("compile_backend='cudagraph' requires a CUDA device.")
 
         # Clear any previously optimized state before starting a new optimization run.
         self.remove_optimized_model()
@@ -1862,11 +1993,17 @@ class RFDETR:
                         device=self.model.device,
                         dtype=dtype,
                     )
-                    if compile_backend == "torchscript":
+                    if compile_backend in ("torchscript", "cudagraph"):
                         inference_model = torch.jit.trace(  # type: ignore[no-untyped-call]
                             inference_model,
                             dummy_input,
                         )
+                        if compile_backend == "cudagraph":
+                            # Retained from the benchmarked configuration: the latency and COCO val2017 parity results
+                            # recorded in CHANGELOG.md were measured on this frozen trace, and no other reason for
+                            # freezing is recorded. Dropping it requires re-running both measurements on a GPU.
+                            inference_model = torch.jit.freeze(inference_model)
+                            inference_model = _CUDAGraphInferenceModel(inference_model, dummy_input, device)
                     else:
                         inference_model = torch.compile(inference_model, mode="reduce-overhead")
                         with torch.inference_mode():
@@ -2008,7 +2145,7 @@ class RFDETR:
         patch_size: int | None = None,
         format: str = "onnx",
         quantization: str | None = None,
-        calibration_data: str | np.ndarray[Any, Any] | None = None,
+        calibration_data: str | Path | np.ndarray[Any, Any] | None = None,
         max_images: int = 100,
         *,
         backend: str | None = None,
@@ -2105,19 +2242,42 @@ class RFDETR:
                     and subject to change; upstream dependency instabilities
                     (``onnx2tf``, ``ai_edge_litert``, ``executorch``,
                     ``coremltools``, ``litert-torch``) may affect results.
-            quantization: TFLite quantization mode (ignored when
-                ``format="onnx"``, ``format="openvino"``, or ``format="executorch"``).  One of ``None``,
-                ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"`` / ``"fp16"`` produce FP32 + FP16
-                ``.tflite`` files; ``"int8"`` additionally produces a dynamic-range INT8 model (INT8 weights,
-                float activations; needs no calibration data). ``format="litert"`` accepts only ``None`` /
-                ``"fp32"`` (it writes one float32 ``.tflite``) and raises ``NotImplementedError`` for the other
-                modes rather than silently ignoring them.
-            calibration_data: Ignored. Any value other than ``None`` raises a ``UserWarning`` and is never read, so a
-                missing path or a malformed array does not fail the export. No data could change the exported
-                ``.tflite`` models: ``quantization="int8"`` produces a dynamic-range model whose weight scales come
-                from the weights themselves, and fp32/fp16 involve no calibration.
-            max_images: Ignored along with *calibration_data*, whose image directory it would have capped. Defaults to
-                ``100``.
+            quantization: Quantization mode.  Its meaning is per format, and formats not listed here ignore it
+                (``format="executorch"``, for example):
+
+                * ``format="tflite"`` — one of ``None``, ``"fp32"``, ``"fp16"``, ``"int8"``.  ``None`` / ``"fp32"``
+                  / ``"fp16"`` produce FP32 + FP16 ``.tflite`` files; ``"int8"`` additionally produces a
+                  **dynamic-range** INT8 model (INT8 weights, float activations; needs no calibration data).
+                * ``format="onnx"`` — one of ``None``, ``"fp32"``, ``"int8"``.  ``"int8"`` writes a **static** QDQ
+                  model alongside the FP32 graph, with 8-bit weights *and* activations on the matrix multiplies
+                  only, and **requires** *calibration_data*.  Attention scores, detection heads, normalization and
+                  the surrounding elementwise math stay in float; quantizing those costs accuracy and speed alike.
+                * ``format="openvino"`` — one of ``None``, ``"fp32"``, ``"int8"``.  ``"int8"`` compresses the
+                  converted IR with NNCF (``pip install nncf``, not part of the ``rfdetr[openvino]`` extra) before it
+                  is written, so the ``.xml`` / ``.bin`` pair is already 8-bit, and **requires** *calibration_data*.
+                * ``format="litert"`` — accepts only ``None`` / ``"fp32"`` (it writes one float32 ``.tflite``) and
+                  raises ``NotImplementedError`` for the other modes rather than silently ignoring them.
+            calibration_data: Representative data for static INT8.  **Required** for ``format="onnx"`` and
+                ``format="openvino"`` with ``quantization="int8"``, where activation ranges are collected from it,
+                and refused as missing there rather than defaulted.  Accepts:
+
+                * ``None`` — the default; no calibration data.
+                * A **directory path** (``str`` or :class:`~pathlib.Path`) containing images, preprocessed exactly as
+                  :meth:`predict` does.
+                * A path (``str`` or :class:`~pathlib.Path`) to a ``.npy`` file of shape ``(N, C, H, W)``, already
+                  normalized the way the model expects.
+                * A :class:`numpy.ndarray` with the same format.
+
+                The resulting activation ranges decide the INT8 model's accuracy, so the data must be representative of
+                the deployment domain — out-of-domain data yields a model that loads, runs, and is quietly wrong.
+
+                For ``format="tflite"`` it is ignored: any value other than ``None`` raises a ``UserWarning`` and is
+                never read, so a missing path or a malformed array does not fail the export. No data could change the
+                exported ``.tflite`` models: ``quantization="int8"`` produces a dynamic-range model whose weight
+                scales come from the weights themselves, and fp32/fp16 involve no calibration.
+            max_images: Maximum number of images to load from a *calibration_data* directory for ONNX / OpenVINO
+                static INT8.  Defaults to ``100``.  Only used when *calibration_data* is a directory path; ignored for
+                ``format="tflite"`` along with *calibration_data*.
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
@@ -2188,7 +2348,9 @@ class RFDETR:
 
         Returns:
             Path to the exported model file (``.onnx``, ``.tflite`` for both TFLite and LiteRT, ``.trt``,
-            ``.pte``, ``.mlpackage``, ``.aimodel`` or ``.xml`` for OpenVINO).
+            ``.pte``, ``.mlpackage``, ``.aimodel`` or ``.xml`` for OpenVINO).  With ``format="onnx"`` and
+            ``quantization="int8"`` it is the quantized ``{stem}_int8.onnx``; the FP32 ``{stem}.onnx`` it was derived
+            from is left beside it.
 
         Raises:
             ValueError: If ``format`` is unrecognized; if ``batch_size``, or ``max_batch_size`` when given, is not
@@ -2198,7 +2360,13 @@ class RFDETR:
                 if ``coreml_precision``/``coreai_precision``/``openvino_precision``, or ``quantization`` for
                 ``format="tflite"``, is not one of their accepted values; if ``notes`` holds a non-finite float or a
                 circular reference, for a format that embeds it; or if ``format="tensorrt"`` with
-                ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``.
+                ``dynamic_batch=True`` lacks ``max_batch_size`` or has ``batch_size > max_batch_size``; if
+                ``quantization`` is not a recognized mode for ``format="onnx"`` or ``format="openvino"`` (only
+                ``None``, ``"fp32"`` and ``"int8"`` are accepted there); if ``quantization="int8"`` is combined with
+                ``format="onnx"`` or ``format="openvino"`` and no ``calibration_data``; or, for those two INT8
+                requests, if ``calibration_data`` points to a missing path, a file that is not ``.npy``, an
+                image-less directory, or an array that is not ``(N, C, H, W)`` or does not match the graph's
+                input size.
             TypeError: If ``notes`` holds a value JSON cannot encode, for a format that embeds it.
             NotImplementedError: If ``dynamic_batch=True`` is combined with ``format="executorch"``,
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
@@ -2211,13 +2379,15 @@ class RFDETR:
                 ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
                 ``backend="coreml"``, ``openvino`` for OpenVINO export,
                 ``rfdetr[litert]`` for LiteRT export,
+                ``onnxruntime`` for ``format="onnx"`` with ``quantization="int8"``, ``nncf`` for
+                ``format="openvino"`` with ``quantization="int8"``,
                 or an ExecuTorch source build against the QAIRT SDK for
                 ``backend="qnn"``); also raised for ``format="tensorrt"`` with ``fp16=True`` on a
                 strongly typed TensorRT (11+) if ``onnx``/``onnxconverter-common`` are not installed
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
                 ``fp16=False``. Each format's availability check runs before the model does; what it does not
-                cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package) is found
-                missing only during the conversion.
+                cover (a backend's extension, the TensorRT cast's packages, the Core AI runtime package, ``onnxruntime``
+                or ``nncf`` for INT8) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
         """
