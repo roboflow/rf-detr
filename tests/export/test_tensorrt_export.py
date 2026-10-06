@@ -3290,6 +3290,79 @@ class TestTensorRTEndToEnd:
 
         assert target.read_bytes() == b"engine from an earlier build"
 
+    @pytest.mark.parametrize("engine_fixture", ["trt_engine", "trt_fp16_engine"])
+    def test_cuda_graph_matches_the_plain_call_on_new_inputs(
+        self, request: pytest.FixtureRequest, engine_fixture: str
+    ) -> None:
+        """A replayed graph returns what the plain call returns, on tensors it was not captured on, in FP32 and FP16.
+
+        The first call captures; the later ones replay on other pointers and values and end on the first input again, so
+        a graph that had baked in the captured tensor instead of copying each input would fail. The FP16 engine is
+        compared with its own ``sync_mode=True`` call, on inputs in the dtype that engine reads.
+        """
+        _, example, engine_path = request.getfixturevalue(engine_fixture)
+        plain = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        graphed = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", cuda_graph=True)
+        images = _distinct_batch(3, example.shape[-1]).to("cuda:0", plain._input_dtypes["input"])
+
+        matches = []
+        for index in (0, 1, 2, 0):
+            image = images[index : index + 1].contiguous()
+            expected = {name: tensor.clone() for name, tensor in plain({"input": image}).items()}
+            got = graphed({"input": image})
+            matches.append(
+                got.keys() == expected.keys()
+                and all(torch.allclose(got[name], expected[name], rtol=1e-3, atol=1e-3) for name in expected)
+            )
+
+        assert matches == [True, True, True, True]
+
+    def test_cuda_graph_waits_for_an_input_still_in_flight_on_the_callers_stream(
+        self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """An input a side stream is still producing reaches the graph complete, in each of 20 rounds.
+
+        The runtime is called inside ``torch.cuda.stream(side)`` right after a long sleep kernel and the copy that
+        produces the input were enqueued there, so the graph stream must wait on the caller's current stream, not the
+        default one: copying the input early would read rows left over from an earlier round. The capturing call, which
+        synchronizes the device, runs before the rounds so every round replays.
+        """
+        _, example, engine_path = trt_engine
+        images = _distinct_batch(3, example.shape[-1]).cuda()
+        plain = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", sync_mode=True)
+        graphed = tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", cuda_graph=True)
+        graphed({"input": images[:1].contiguous()})
+        side = torch.cuda.Stream(device="cuda:0")
+        in_flight_cycles = 50_000_000  # tens of milliseconds of GPU clock: far longer than the host takes to call
+
+        matches = []
+        for round_index in range(20):
+            source = images[round_index % 3 : round_index % 3 + 1]
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                produced = torch.empty_like(source)
+                torch.cuda._sleep(in_flight_cycles)
+                produced.copy_(source)
+                got = {name: tensor.clone() for name, tensor in graphed({"input": produced}).items()}
+            torch.cuda.synchronize()
+            expected = plain({"input": produced})
+            matches.append(all(torch.allclose(got[name], expected[name], rtol=1e-3, atol=1e-3) for name in expected))
+
+        assert matches == [True] * 20
+
+    def test_cuda_graph_is_refused_for_the_dynamic_batch_engine(
+        self, trt_dynamic_engine: tuple[torch.nn.Module, int, Path]
+    ) -> None:
+        """A real ``dynamic_batch=True`` engine is refused for graph replay at construction, with the sync-mode advice.
+
+        Graphs captured at different batches would share one execution context whose input shapes each call changes
+        between replays, which TensorRT leaves undefined, so the real engine's profile must be read as varying.
+        """
+        _, _, engine_path = trt_dynamic_engine
+
+        with pytest.raises(ValueError, match="sync_mode=True instead of cuda_graph=True"):
+            tensorrt_inference.TRTInference(str(engine_path), device="cuda:0", cuda_graph=True)
+
     def test_warm_timing_cache_builds_an_equivalent_engine(
         self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
