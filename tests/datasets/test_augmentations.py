@@ -2135,7 +2135,6 @@ class TestTrainingLoop:
     )
     def test_geometric_dataloader_compatibility(self, include_masks, transform_name, transform_kwargs):
         """Test geometric Albumentations transforms work in DataLoader for detection and segmentation."""
-
         import albumentations as alb
 
         class _TinyTrainDataset:

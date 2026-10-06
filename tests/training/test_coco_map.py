@@ -1139,7 +1139,6 @@ def test_vernier_thread_budget_divides_by_local_world_size(
 @vernier_only
 def test_vernier_rejects_mask_only_evaluation() -> None:
     """Mask-only evaluation must fail at construction, before an epoch of state is accumulated and discarded."""
-
     with pytest.raises(ValueError, match="requires 'bbox'"):
         OnePassCocoMeanAveragePrecision(backend="vernier", iou_type="segm", sync_on_compute=False)
 
