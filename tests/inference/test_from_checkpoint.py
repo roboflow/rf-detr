@@ -1507,21 +1507,23 @@ class TestFromCheckpointPEPlusModels:
         assert excinfo.value.__cause__.name == "timm"
 
     def test_broken_plus_import_warns_once(
-        self, broken_plus_import, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, tmp_path: Path
+        self, broken_plus_import, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """Loading core checkpoints repeatedly with a broken rfdetr_plus logs the import failure only once.
 
         Each ``from_checkpoint`` call retries the plus import, so a plain warning would repeat on every load of a loop.
         """
         ckpt = {"args": {"pretrain_weights": "", "num_classes": 80}, "model_name": "RFDETRNano"}
-        monkeypatch.setattr(detr_logger, "propagate", True)
         monkeypatch.setattr(detr_logger, "_warned_once", set())
+        # Spy on the logger itself rather than caplog: pytest >= 9.1 attaches its capture handler to non-propagating
+        # loggers, so forcing propagate on makes caplog record each emission twice.
+        warning = MagicMock()
+        monkeypatch.setattr(detr_logger, "warning", warning)
 
-        with caplog.at_level(logging.WARNING, logger="rf-detr"):
-            _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
-            _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+        _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
+        _call_from_checkpoint(ckpt, tmp_path / "ckpt.pth", "rfdetr.variants.RFDETRNano")
 
-        messages = [record.message for record in caplog.records if "failed to import" in record.message]
+        messages = [call.args[0] for call in warning.call_args_list if "failed to import" in call.args[0]]
         assert len(messages) == 1, messages
 
     @pytest.mark.parametrize("model_name", _PE_SYMBOLS)
