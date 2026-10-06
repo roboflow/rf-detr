@@ -116,6 +116,8 @@ Pass `output_name="my-model"` to override the variant name and write `{output_na
 
 With `backbone_only=True`, ONNX, CoreML, ExecuTorch, TensorRT, and OpenVINO retain a `-backbone` marker before the extension even when `output_name` is set, for example `my-model-backbone.onnx`. This distinguishes the backbone artifact from the full detector exported with the same name.
 
+With `trt_metadata=True`, `format="tensorrt"` also writes a JSON description next to the engine, named after it: `{variant}_fp16.trt` gets `{variant}_fp16.json`. See [Engine Description File](tensorrt.md#engine-description-file).
+
 ## Run Inference with `inference-models`
 
 [`inference-models`](https://github.com/roboflow/inference/tree/main/inference_models) is the recommended library for running RF-DETR inference. It supports multiple backends — PyTorch, ONNX, and TensorRT — with automatic backend selection and a unified API.

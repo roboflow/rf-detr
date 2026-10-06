@@ -2213,6 +2213,7 @@ class RFDETR:
         soc: str | None = None,
         fp16: bool = True,
         max_batch_size: int | None = None,
+        trt_metadata: bool = False,
         trt_hardware_compatibility: Literal["ampere_plus", "same_compute_capability"] | None = None,
         trt_version_compatible: bool = False,
         notes: object = None,
@@ -2369,6 +2370,13 @@ class RFDETR:
                 one optimization profile spanning batch ``1 .. max_batch_size`` and tuned for *batch_size*
                 (``batch_size <= max_batch_size``).  Ignored for every other format or combination; passing a
                 non-``None`` value there emits a ``UserWarning`` instead of silently doing nothing.
+            trt_metadata: Also write ``<engine>.json`` beside a ``format="tensorrt"`` engine, so a consumer that does
+                not import the model (a C++ service, Triton, DeepStream) can learn the engine's input size and
+                normalization, output names, batch profile, the precision actually built, the TensorRT version and GPU
+                it was built on, and the engine file's size and SHA-256.  A ``.trt`` file has no slot for this.  It does
+                not record class names.
+                ``False`` (default) writes no description.  Ignored for every other format; ``True`` there emits a
+                ``UserWarning`` instead of silently doing nothing.
             trt_hardware_compatibility: Ask TensorRT for a ``format="tensorrt"`` engine that other GPUs may run too.
                 ``"ampere_plus"`` targets NVIDIA Ampere GPUs (compute capability 8.x) and newer, and needs an Ampere or
                 newer GPU to build; ``"same_compute_capability"`` targets GPUs that share the building GPU's compute
@@ -2463,6 +2471,7 @@ class RFDETR:
                 requests, if ``calibration_data`` points to a missing path, a file that is not ``.npy``, an
                 image-less directory, or an array that is not ``(N, C, H, W)`` or does not match the graph's
                 input size.
+                Also raised for ``format="tensorrt"`` when ``trt_metadata`` is not a ``bool``.
                 Also raised for ``format="tensorrt"`` when ``trt_hardware_compatibility`` is neither ``None``,
                 ``"ampere_plus"`` nor ``"same_compute_capability"``, when ``trt_version_compatible`` is not a
                 ``bool``, when the installed TensorRT has no hardware compatibility level of the requested name, or
@@ -2495,6 +2504,7 @@ class RFDETR:
                 ``onnxruntime`` or ``nncf`` for INT8) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
+            OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.
         """
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
@@ -2518,6 +2528,7 @@ class RFDETR:
                 stacklevel=2,
             )
         for keyword, requested in (
+            ("trt_metadata", trt_metadata),
             ("trt_hardware_compatibility", trt_hardware_compatibility is not None),
             ("trt_version_compatible", trt_version_compatible),
             ("trt_timing_cache", trt_timing_cache is not None),
@@ -2572,6 +2583,7 @@ class RFDETR:
             max_images=max_images,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
+            trt_metadata=trt_metadata,
             trt_hardware_compatibility=trt_hardware_compatibility,
             trt_version_compatible=trt_version_compatible,
             trt_timing_cache=trt_timing_cache,
