@@ -44,6 +44,7 @@ from tests.export.conftest import (
     eager_reference_tensors,
     max_abs_output_diffs,
 )
+from tests.export.test_coreml_ane import _IOS15_SPEC_VERSION
 
 coreml_only = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
@@ -365,6 +366,39 @@ class TestResolveComputePrecision:
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=precision))
 
         assert exporter._resolve_compute_precision(api) is expected
+
+
+class TestConvertDeploymentTarget:
+    """``_build_mlmodel`` must hand ``coremltools.convert`` the iOS15 deployment target."""
+
+    @pytest.mark.parametrize("precision_member", ["fp32-member", "fp16-member"])
+    def test_converts_for_ios15_so_the_neural_engine_runs_a_spec_6_program(
+        self, tmp_path: Path, precision_member: str
+    ) -> None:
+        """The whole convert call is pinned: mlprogram, the iOS15 target, and the resolved precision member.
+
+        The target selects the program generation; spec 7 (iOS16) loses ~3 box AP on the Neural Engine. Measured on an
+        M3 Pro: pretrained RFDETRNano at fp16 under ``CPU_AND_NE`` scores 45.06 AP on all 5000 COCO val2017 images at
+        iOS16 and 48.04 at iOS15, against 48.03 for eager. ``tests/export/test_coreml_ane.py`` pins the resulting
+        spec version on a real bundle; this test needs no coremltools.
+        """
+        target = mock.Mock()
+        convert = mock.Mock(return_value="mlmodel")
+        api = _CoreMLApi(convert=convert, target=target, float32="fp32-member", float16="fp16-member")
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
+
+        with (
+            mock.patch.object(exporter, "_export_program") as export_program,
+            mock.patch.object(exporter, "_check_op_coverage"),
+        ):
+            exporter._build_mlmodel(mock.Mock(), precision_member, api)
+
+        convert.assert_called_once_with(
+            export_program.return_value,
+            convert_to="mlprogram",
+            minimum_deployment_target=target.iOS15,
+            compute_precision=precision_member,
+        )
 
 
 class TestExportCoremlBareDefaultNaming:
@@ -832,13 +866,20 @@ class TestCoreMLEndToEnd:
     """Real CoreML export + FLOAT32 CPU numerical parity (``-m e2e_coreml``)."""
 
     def test_mlpackage_written(self, coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]) -> None:
-        """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision."""
+        """Export must write a non-empty ``.mlpackage`` directory/bundle, named with the resolved precision.
+
+        The bundle of every variant (detection, segmentation, keypoints) must also be an iOS15 (spec 6) program, the
+        generation whose Neural Engine results match eager; see ``TestConvertDeploymentTarget``.
+        """
+        import coremltools as ct
+
         _, _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
         # Default compute_precision resolves to FLOAT32 (see the exporter module docstring); the filename must
         # always encode it, since precision materially changes the artifact.
         assert mlpackage_path.stem.endswith("_fp32")
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
+        assert ct.utils.load_spec(str(mlpackage_path)).specificationVersion == _IOS15_SPEC_VERSION
 
     def test_outputs_match_pytorch_structured(
         self, coreml_export: tuple[str, Any, torch.Tensor, Path, tuple[str, ...]]
@@ -878,6 +919,16 @@ class TestCoreMLEndToEnd:
         assert max(diffs) < _COREML_MAX_ABS_DIFF, (
             f"CoreML backbone outputs diverge from PyTorch: max abs diff {max(diffs)} (bound={_COREML_MAX_ABS_DIFF})"
         )
+
+    def test_backbone_mlpackage_is_an_ios15_program(
+        self, coreml_backbone_export: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """The backbone-only bundle is converted through the same iOS15 target as the full model (spec 6)."""
+        import coremltools as ct
+
+        _, _, mlpackage_path = coreml_backbone_export
+
+        assert ct.utils.load_spec(str(mlpackage_path)).specificationVersion == _IOS15_SPEC_VERSION
 
     def test_default_query_count_runs_with_eager_shapes(
         self, coreml_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path, Path, tuple[str, ...]]

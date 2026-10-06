@@ -338,7 +338,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                 return api.convert(
                     exported_program,
                     convert_to="mlprogram",
-                    minimum_deployment_target=api.target.iOS16,
+                    # iOS15 (spec 6), not iOS16 (spec 7): on the Neural Engine the iOS16 program of an fp16 export loses
+                    # ~3 box AP (pretrained RFDETRNano, COCO val2017, M3 Pro) and iOS15 matches eager. See #1024.
+                    # Cause: iOS15 `resample` takes no fp16 `coordinates` (added in iOS16), so the fp16 pass leaves
+                    # that input fp32 and Core ML runs the op on the CPU. If this target is ever raised, keep
+                    # `resample` fp32 via FP16ComputePrecision(op_selector=...) (measured 48.04 AP at iOS16, #1604).
+                    minimum_deployment_target=api.target.iOS15,
                     compute_precision=compute_precision,
                 )
         except (ImportError, NotImplementedError, ValueError):
