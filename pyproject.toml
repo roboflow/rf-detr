@@ -124,7 +124,6 @@ onnx = [
     # requires-python floor moves past 3.10.
     "onnxruntime<1.24; python_version < '3.11'",
     "onnxruntime; python_version >= '3.11'",
-    "onnxscript",
     "polygraphy",
 ]
 tensorrt = [

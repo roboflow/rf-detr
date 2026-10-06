@@ -45,10 +45,10 @@ def check_calibration_data(calibration_data: str | Path | NDArray[Any]) -> None:
         Traceback (most recent call last):
             ...
         ValueError: Calibration array must be rank 4 (N, C, H, W); got shape (3, 8, 8).
-        >>> check_calibration_data("/definitely/not/here")
+        >>> check_calibration_data("/definitely/not/here")  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
-        ValueError: Calibration data path does not exist: /definitely/not/here
+        ValueError: Calibration data path does not exist: ...here
     """
     if isinstance(calibration_data, np.ndarray):
         if calibration_data.ndim != 4:

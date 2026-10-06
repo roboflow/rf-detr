@@ -6,6 +6,7 @@
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
 import copy
+import inspect
 import io
 from collections.abc import Callable
 from unittest.mock import Mock
@@ -41,6 +42,9 @@ from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor, _bilinear_grid_sample
 from tests._markers import cuda_marks, requires_cuda
 from tests.models._transformer_support import decoder_layer, record_apply_calls
+
+# Mirrors the production exporter: the dynamo exporter needs onnxscript, so pin the legacy path when torch offers one.
+_DYNAMO_KWARG = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
 
 
 @pytest.fixture(autouse=True)
@@ -1135,6 +1139,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
             output_names=["output_memory", "output_proposals"],
             dynamic_axes={"memory": {0: "batch"}},
             opset_version=17,
+            **_DYNAMO_KWARG,
         )
         buf.seek(0)
         onnx_bytes = buf.read()
