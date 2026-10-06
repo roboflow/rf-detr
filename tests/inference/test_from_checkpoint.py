@@ -1312,9 +1312,9 @@ class TestFromCheckpointPEPlusModels:
     @pytest.mark.parametrize(
         "pretrain_weights, expected",
         [
-            pytest.param("rf-detr-atto.pth", "RFDETRAtto", id="atto"),
-            pytest.param("rf-detr-femto.pth", "RFDETRFemto", id="femto"),
-            pytest.param("/cache/rfdetr/rf-detr-pico.pth", "RFDETRPico", id="pico-full-path"),
+            ("rf-detr-atto.pth", "RFDETRAtto"),
+            ("rf-detr-femto.pth", "RFDETRFemto"),
+            ("/cache/rfdetr/rf-detr-pico.pth", "RFDETRPico"),
         ],
     )
     def test_pretrain_weights_name_resolves_the_plus_class(
@@ -1408,9 +1408,9 @@ class TestFromCheckpointPEPlusModels:
     @pytest.mark.parametrize(
         "pretrain_weights, expected",
         [
-            pytest.param("/data/xlarge_runs/rf-detr-pico.pth", "RFDETRPico", id="xlarge-directory"),
-            pytest.param("/runs/seg-large-sweep/rf-detr-atto.pth", "RFDETRAtto", id="seg-directory"),
-            pytest.param("rfdetr-femto.pth", "RFDETRFemto", id="size-spelling"),
+            ("/data/xlarge_runs/rf-detr-pico.pth", "RFDETRPico"),
+            ("/runs/seg-large-sweep/rf-detr-atto.pth", "RFDETRAtto"),
+            ("rfdetr-femto.pth", "RFDETRFemto"),
         ],
     )
     def test_release_stems_win_over_other_names_in_the_path(
