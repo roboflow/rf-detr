@@ -19,6 +19,7 @@ only appears on correlated image structure.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 from collections import Counter
 from pathlib import Path
@@ -341,6 +342,39 @@ class TestExportCoremlValidation:
         """A ``coremltools.precision`` value cannot be recognized without coremltools, so construction accepts it."""
         CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=object()))
 
+    @pytest.mark.parametrize(
+        ("neural_engine", "compute_precision", "expect_warning"),
+        [
+            (True, None, True),
+            (True, "float32", True),
+            (True, "float16", False),
+            (False, None, False),
+        ],
+    )
+    def test_neural_engine_at_float32_warns_at_construction(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        neural_engine: bool,
+        compute_precision: str | None,
+        expect_warning: bool,
+    ) -> None:
+        """The Neural Engine rewrite at float32 is legal but warns, since that artifact never reaches the ANE.
+
+        The end-to-end parity rows export the rewrite at the default float32 precision, so it must stay an export rather
+        than an error; the warning tells everyone else that they built the slower artifact.
+        """
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            CoreMLExporter(
+                CoreMLConfig(output_dir=tmp_path, compute_precision=compute_precision, neural_engine=neural_engine)
+            )
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("the Neural Engine runs float16 only" in message for message in messages) is expect_warning
+
 
 #: Stand-in for a ``coremltools.precision`` member a caller passes directly; the mapper must hand it on unchanged.
 _PRECISION_MEMBER = object()
@@ -437,11 +471,14 @@ class TestExportCoremlBareDefaultNaming:
         mock_mlmodel.save.assert_called_once_with(str(output_file))
 
     @pytest.mark.parametrize(
-        "variant_name, output_name, full_name, backbone_name",
+        "variant_name, output_name, neural_engine, full_name, backbone_name",
         [
-            ("rfdetr-nano", None, "rfdetr-nano_fp32.mlpackage", "rfdetr-nano_fp32-backbone.mlpackage"),
-            ("rfdetr-nano", "custom", "custom.mlpackage", "custom-backbone.mlpackage"),
-            (None, None, "inference_model_fp32.mlpackage", "backbone_model_fp32.mlpackage"),
+            ("rfdetr-nano", None, False, "rfdetr-nano_fp32.mlpackage", "rfdetr-nano_fp32-backbone.mlpackage"),
+            ("rfdetr-nano", "custom", False, "custom.mlpackage", "custom-backbone.mlpackage"),
+            (None, None, False, "inference_model_fp32.mlpackage", "backbone_model_fp32.mlpackage"),
+            ("rfdetr-nano", None, True, "rfdetr-nano_fp32-ane.mlpackage", "rfdetr-nano_fp32-ane-backbone.mlpackage"),
+            ("rfdetr-nano", "custom", True, "custom.mlpackage", "custom-backbone.mlpackage"),
+            (None, None, True, "inference_model_fp32-ane.mlpackage", "backbone_model_fp32-ane.mlpackage"),
         ],
     )
     def test_backbone_only_does_not_collide_with_full_detector_export(
@@ -449,10 +486,15 @@ class TestExportCoremlBareDefaultNaming:
         tmp_path: Path,
         variant_name: str | None,
         output_name: str | None,
+        neural_engine: bool,
         full_name: str,
         backbone_name: str,
     ) -> None:
-        """Backbone and detector paths stay distinct with variant, custom, and default names."""
+        """Backbone and detector paths stay distinct with variant, custom, and default names.
+
+        A derived name also carries ``-ane`` for the Neural Engine rewrite, between the precision and the backbone
+        marker, so it never overwrites the default export of the same model; an explicit ``output_name`` stays as given.
+        """
         coremltools = mock.MagicMock()
         full_model, backbone_model = mock.MagicMock(), mock.MagicMock()
         coremltools.convert.side_effect = [full_model, backbone_model]
@@ -465,7 +507,11 @@ class TestExportCoremlBareDefaultNaming:
             mock.patch("rfdetr.export._coreml.exporter.unsupported_coreml_ops", return_value={}),
         ):
             config = CoreMLConfig(
-                output_dir=tmp_path, variant_name=variant_name, output_name=output_name, verbose=False
+                output_dir=tmp_path,
+                variant_name=variant_name,
+                output_name=output_name,
+                neural_engine=neural_engine,
+                verbose=False,
             )
             full_out = CoreMLExporter(config)(_make_export_graph(torch.nn.Identity()))
             backbone_out = CoreMLExporter(config)(_make_export_graph(torch.nn.Identity(), backbone_only=True))
@@ -882,11 +928,11 @@ class TestCoreMLEndToEnd:
         """
         import coremltools as ct
 
-        _, _, _, mlpackage_path, _ = coreml_export
+        (_, _, neural_engine), _, _, mlpackage_path, _ = coreml_export
         assert mlpackage_path.exists()
         # Default compute_precision resolves to FLOAT32 (see the exporter module docstring); the filename must
-        # always encode it, since precision materially changes the artifact.
-        assert mlpackage_path.stem.endswith("_fp32")
+        # always encode it, since precision materially changes the artifact, followed by ``-ane`` for the rewrite.
+        assert mlpackage_path.stem.endswith("_fp32-ane" if neural_engine else "_fp32")
         assert mlpackage_path.suffix == ".mlpackage" or mlpackage_path.name.endswith(".mlpackage")
         assert ct.utils.load_spec(str(mlpackage_path)).specificationVersion == _IOS15_SPEC_VERSION
 

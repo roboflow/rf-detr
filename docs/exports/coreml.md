@@ -149,7 +149,7 @@ The fp16 bundle is an iOS 15 program on purpose. An iOS 16 program runs `resampl
 | `RFDETRMedium`  | 705        | 15         | 99.7%                              |
 | `RFDETRSegNano` | 725        | 15         | 99.9%                              |
 
-Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work. With `coreml_neural_engine=True`, the query-selection ops (`topk` and the ops that consume its indices) leave this boundary: see [Neural Engine Rewrites](#neural-engine-rewrites).
+Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work. With `coreml_neural_engine=True`, the query-selection ops (`topk` and the ops that consume its indices) leave this boundary in the compute plan of `RFDETRNano` at 384x384, the one model that plan was checked for: see [Neural Engine Rewrites](#neural-engine-rewrites).
 
 At fp32 there is no boundary to speak of, because there is no ANE: the plan reports *every* op as ANE-unsupported, and the same RFDETRNano bundle runs all 597 ops on the GPU under `ALL` and all 597 on the CPU under `CPU_AND_NE`.
 
@@ -159,7 +159,7 @@ The [ExecuTorch CoreML delegate](executorch.md#coreml-backend-apple-neural-engin
 
 ## Neural Engine Rewrites
 
-`coreml_neural_engine=True` rewrites two parts of the graph into ops that the Apple Neural Engine runs natively. The weights do not change.
+`coreml_neural_engine=True` rewrites two parts of the graph into ops that the Apple Neural Engine runs natively. It adds no parameters, but it folds the attention scale and the layer scales into the weights of the 1x1 convolutions that replace the backbone's linear layers, so an fp16 export rounds those weights differently.
 
 - The backbone attention runs as one einsum pair per head, on a channels-first layout, in query chunks of at most 256 tokens. This is Apple's `SPLIT_EINSUM_V2` pattern. The Neural Engine runs the fused attention op of the default graph about 10x slower per FLOP than its linear layers.
 - The two-stage query selection ranks the scores with comparisons and a sum, and selects the rows with a one-hot matmul. The Neural Engine has no `topk` and no `gather`, so the default graph runs them on the CPU, between two Neural Engine segments.
@@ -168,7 +168,9 @@ The [ExecuTorch CoreML delegate](executorch.md#coreml-backend-apple-neural-engin
 model.export(format="coreml", coreml_precision="float16", coreml_neural_engine=True)
 ```
 
-The flag changes only the speed on each compute unit. The parity tests hold the rewritten graph to the same 1e-4 fp32 bound against eager PyTorch as the default graph. Median latency in ms, flag off → on, with mAP@[.5:.95] on the first 100 COCO val2017 images (pretrained models, Apple M4 Max, macOS 27, coremltools 9.0):
+The bundle name carries `-ane` after the precision, for example `output/rfdetr-small_fp16-ane.mlpackage`, so it does not replace a default export of the same model in the same directory. An explicit `output_name` is used as given.
+
+The rewritten graph computes the same function, but not bit for bit. In fp32 the parity tests hold it to the same 1e-4 bound against eager PyTorch as the default graph, on inputs whose ranking scores are free of ties. In fp16 the outputs drift further: on the 100-image check below, mAP moved by up to about ±0.4 points against the default fp16 export, in both directions. Median latency in ms, flag off → on, with mAP@[.5:.95] on the first 100 COCO val2017 images (pretrained models, Apple M4 Max, macOS 27, coremltools 9.0):
 
 | Model          | fp16, `CPU_AND_NE`        | fp16, `CPU_AND_GPU`       | fp16, `CPU_ONLY`          |
 | -------------- | ------------------------- | ------------------------- | ------------------------- |
@@ -176,8 +178,10 @@ The flag changes only the speed on each compute unit. The parity tests hold the 
 | `RFDETRSmall`  | 17.8 → 11.2 (56.8 → 57.1) | 8.5 → 15.5 (59.6 → 59.5)  | 25.4 → 34.3 (59.7 → 59.4) |
 | `RFDETRMedium` | 25.8 → 16.2 (57.1 → 56.7) | 10.4 → 18.5 (59.1 → 59.1) | 32.5 → 42.4 (59.3 → 58.9) |
 
-The rewrites are 30-40% faster on the Neural Engine, and 25-80% slower on the GPU and the CPU. At fp32, mAP does not change. Use the flag only for an app that runs the model with `CPU_AND_NE` or `ALL` compute units. On a Mac with a large GPU, the default graph on the GPU can be faster than the rewritten graph on the Neural Engine, as for `RFDETRSmall` and `RFDETRMedium` above. Measure both on your target device.
+On the Neural Engine the rewrites cut the latency by 30-37%; on the GPU and the CPU they raise it by 23-82%. Use the flag only for an app that runs the model with `CPU_AND_NE` or `ALL` compute units. On a Mac with a large GPU, the default graph on the GPU can be faster than the rewritten graph on the Neural Engine, as for `RFDETRSmall` and `RFDETRMedium` above. Measure both on your target device.
+
+These figures cover `RFDETRNano`, `RFDETRSmall` and `RFDETRMedium` at their default resolutions only, where the query selection ranks 576, 1024 and 1296 encoder tokens. The one-hot ranking compares every token with every other token, so its compute and memory grow with the square of the token count. Other models and resolutions, and any graph that ranks more than 1296 tokens, have not been measured: neither the speed-up nor the memory cost is known there.
 
 !!! note
 
-    The one-hot selection puts equal scores in index order, lowest first. `torch.topk` does not specify an order for them. It needs the box reparameterization of the released models (`bbox_reparam=True`). For any other model, the export keeps `topk` and logs a warning.
+    The one-hot selection puts equal scores in index order, lowest first. `torch.topk` does not specify an order for them, so when equal scores straddle the k-th place the two can select different rows, not only order them differently, and fp16 rounding makes close scores equal more often. It needs the box reparameterization of the released models (`bbox_reparam=True`). For any other model, the export keeps `topk` and logs a warning.

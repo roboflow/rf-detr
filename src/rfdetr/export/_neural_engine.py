@@ -5,6 +5,9 @@
 # ------------------------------------------------------------------------
 """Graph rewrites that keep an exported RF-DETR on the Apple Neural Engine.
 
+These are format-neutral PyTorch rewrites, applied before tracing; today only the Core ML exporter uses them
+(``coreml_neural_engine=True``).
+
 - :func:`split_einsum_encoder` runs the windowed DINOv2 attention as one einsum pair per head, on a channels-first
   layout, in query chunks (Apple's ``SPLIT_EINSUM_V2``). The Neural Engine runs the fused attention op of the original
   graph about 10x slower per FLOP than its linear layers.
@@ -46,6 +49,10 @@ def one_hot_top_rows(scores: Tensor, k: int) -> Callable[[Tensor], Tensor]:
     token count. A row that is not selected multiplies by 0, so the selected rows are exact only when every row is
     finite: ``0 * inf`` is NaN.
 
+    Preconditions, which the graph does not check at run time: every score is finite and not NaN, and
+    ``k <= tokens``. A NaN score compares false with everything, so it takes rank 0 and its row is added to the best
+    row. ``k > tokens`` would select all-zero rows, so it is refused here, like ``torch.topk`` refuses it.
+
     Args:
         scores: One score per token.
         k: Number of rows to keep, best first.
@@ -53,12 +60,17 @@ def one_hot_top_rows(scores: Tensor, k: int) -> Callable[[Tensor], Tensor]:
     Returns:
         A function from a ``(batch, tokens, C)`` tensor to its ``(batch, k, C)`` selected rows.
 
+    Raises:
+        ValueError: If ``k`` is larger than the number of tokens.
+
     Examples:
         >>> rows = torch.arange(4.0).reshape(1, 4, 1)
         >>> one_hot_top_rows(torch.tensor([[0.1, 0.9, 0.5, 0.9]]), 3)(rows).flatten().tolist()
         [1.0, 3.0, 2.0]
     """
     num_tokens = scores.shape[-1]
+    if k > num_tokens:
+        raise ValueError(f"cannot select {k} rows from {num_tokens} tokens")
     score_i, score_j = scores[..., :, None], scores[..., None, :]
     lower_index = torch.ones(num_tokens, num_tokens, dtype=scores.dtype, device=scores.device).tril(-1)
     beats = (score_j > score_i).to(scores.dtype) + (score_j == score_i).to(scores.dtype) * lower_index
@@ -72,7 +84,7 @@ def _conv_from_linear(linear: nn.Linear, scale: Tensor | None = None) -> nn.Conv
     """Convert a linear layer to an equivalent 1x1 convolution.
 
     Args:
-        linear: Linear layer whose parameters are copied.
+        linear: Linear layer whose parameters are copied. It is not modified; a missing bias becomes zeros.
         scale: Optional per-output-channel scale applied to the copied weight and bias.
 
     Returns:
@@ -106,7 +118,11 @@ class _ChannelLayerNorm(nn.Module):
             The normalized activations, same shape.
         """
         centered = x - x.mean(dim=1, keepdim=True)
-        normalized: Tensor = centered * torch.rsqrt(centered.pow(2).mean(dim=1, keepdim=True) + self.eps)
+        # `centered * centered`, not `pow(2)`: the BC1S pattern of coremltools' fuse_layernorm_or_instancenorm pass
+        # matches this sub/mul/reduce_mean/rsqrt chain over axis 1 and fuses it into one layer_norm op. A `pow` does
+        # not match, and leaves an explicit fp16 square that overflows once a deviation exceeds ~256. The affine stays
+        # outside the chain, as that pattern expects.
+        normalized: Tensor = centered * torch.rsqrt((centered * centered).mean(dim=1, keepdim=True) + self.eps)
         return normalized * self.weight + self.bias
 
 
@@ -131,10 +147,19 @@ class _SplitEinsumLayer(nn.Module):
         self.activation = cast(Callable[[Tensor], Tensor], layer.mlp.activation)
 
     def _attention(self, x: Tensor) -> Tensor:
+        """Run multi-head self-attention within each row, one einsum pair per head and query chunk.
+
+        Args:
+            x: Normalized activations of shape ``(batch, C, rows, tokens)``. The tokens of a row attend to each other.
+
+        Returns:
+            The output projection of the attended values, with the first layer scale folded in, same shape.
+        """
         query, value = self.query(x), self.value(x)
         key = self.key(x).transpose(1, 3)  # (batch, tokens, rows, C)
         num_tokens = x.shape[3]
-        # Equal chunks: a short remainder chunk (for example 256 + 1 tokens) is slow on the Neural Engine.
+        # Near-equal chunks (580 tokens split as 194 + 194 + 192): a short remainder chunk (for example 256 + 1
+        # tokens) is slow on the Neural Engine.
         chunk = -(-num_tokens // -(-num_tokens // self.query_chunk))
         heads = []
         for head in range(self.num_heads):
@@ -219,15 +244,19 @@ class _SplitEinsumEncoder(nn.Module):
 def split_einsum_encoder(encoder: WindowedDinov2WithRegistersEncoder, query_chunk: int = 256) -> nn.Module:
     """Rebuild a windowed DINOv2 encoder for the Neural Engine, with the same weights, for inference.
 
+    Stochastic depth (``drop_path_rate > 0``) is left out: it is the identity in eval mode, the only mode the rebuild
+    runs in, so an encoder trained with it rebuilds to the same outputs.
+
     Args:
         encoder: The encoder to rebuild. It is not modified.
-        query_chunk: Largest number of query tokens in one attention chunk. Chunks are equal in size.
+        query_chunk: Largest number of query tokens in one attention chunk. Chunks are near-equal in size; only the
+            last one can be shorter, as in 194 + 194 + 192.
 
     Returns:
         An eval-mode module with the interface of *encoder*.
 
     Raises:
-        NotImplementedError: For an encoder with SwiGLU MLPs or stochastic depth, which the rebuild does not copy.
+        NotImplementedError: For an encoder with SwiGLU MLPs, which the rebuild does not copy.
 
     Examples:
         >>> from rfdetr.models.backbone.dinov2_with_windowed_attn import (
@@ -244,15 +273,19 @@ def split_einsum_encoder(encoder: WindowedDinov2WithRegistersEncoder, query_chun
         >>> torch.allclose(rebuilt, encoder(hidden_states).last_hidden_state, atol=1e-5)
         True
     """
-    if encoder.config.use_swiglu_ffn or encoder.config.drop_path_rate > 0:
-        raise NotImplementedError("the split-einsum encoder copies plain-MLP layers without stochastic depth only")
+    if encoder.config.use_swiglu_ffn:
+        raise NotImplementedError(
+            "coreml_neural_engine=True cannot rebuild a DINOv2 backbone with SwiGLU MLPs (use_swiglu_ffn=True): "
+            "export this model with coreml_neural_engine=False."
+        )
     return _SplitEinsumEncoder(encoder, query_chunk).eval()
 
 
 def neural_engine_model(model: nn.Module) -> nn.Module:
     """Return a copy of an export-ready RF-DETR with the Neural Engine rewrites, for tracing.
 
-    - Every windowed DINOv2 encoder becomes a :func:`split_einsum_encoder`.
+    - Every windowed DINOv2 encoder becomes a :func:`split_einsum_encoder`. A model with none keeps its attention and
+      logs a warning.
     - The two-stage query selection uses :func:`one_hot_top_rows`. A transformer keeps ``topk`` when its proposals
       can be infinite (``bbox_reparam=False``) or its query count is too large for exact float16 ranks.
 
@@ -274,10 +307,12 @@ def neural_engine_model(model: nn.Module) -> nn.Module:
         '_SplitEinsumEncoder'
     """
     model = copy.deepcopy(model)
+    rewritten_encoders = 0
     for module in list(model.modules()):
         encoder = getattr(module, "encoder", None)
         if isinstance(encoder, WindowedDinov2WithRegistersEncoder):
             module.encoder = split_einsum_encoder(encoder)
+            rewritten_encoders += 1
         if isinstance(module, Transformer) and module.two_stage:
             if module.bbox_reparam and module.num_queries <= _MAX_EXACT_FLOAT16_RANK:
                 module.select_top_rows = one_hot_top_rows
@@ -287,4 +322,9 @@ def neural_engine_model(model: nn.Module) -> nn.Module:
                     f"{_MAX_EXACT_FLOAT16_RANK} queries (got bbox_reparam={module.bbox_reparam}, "
                     f"num_queries={module.num_queries})."
                 )
+    if rewritten_encoders == 0:
+        logger.warning(
+            "Keeping the backbone attention unchanged: the split-einsum rewrite needs a windowed DINOv2 encoder, and "
+            "this model has none."
+        )
     return model
