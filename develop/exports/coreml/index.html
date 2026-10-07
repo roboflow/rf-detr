@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T14:26:55">
+  <meta property="article:modified_time" content="2026-10-07T21:29:44">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T14:26:55",
+    "dateModified": "2026-10-07T21:29:44",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1705,6 +1705,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#neural-engine-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Neural Engine Export
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2901,6 +2912,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#neural-engine-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Neural Engine Export
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3119,10 +3141,139 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-<p>Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work.</p>
+<p>Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work. A <a href="#neural-engine-export">Neural Engine export</a> runs the query selection on the ANE as well.</p>
 <p>At fp32 there is no boundary to speak of, because there is no ANE: the plan reports <em>every</em> op as ANE-unsupported, and the same RFDETRNano bundle runs all 597 ops on the GPU under <code>ALL</code> and all 597 on the CPU under <code>CPU_AND_NE</code>.</p>
 <p><strong><code>ALL</code> is not always the fastest choice.</strong> With <code>ALL</code>, Core ML is free to put part of the graph on the GPU, and for <code>RFDETRSegNano</code> it does: the plan splits 79% ANE / 21% GPU (measured on the earlier iOS 16 bundle; not re-measured for the iOS 15 bundle), and the transfers between them cost real time — 44.2 ms under <code>ALL</code> against 38.8 ms under <code>CPU_AND_NE</code> (p50, same methodology as the table above). Whether detection models show the same gap was not measured here. Measure both on your target device rather than assuming the default is best.</p>
 <p>The <a href="../executorch/#coreml-backend-apple-neural-engine-fp16">ExecuTorch CoreML delegate</a> lowers RF-DETR to a single Core ML model inside the <code>.pte</code>, and that model does reach the Neural Engine. Its internal split is not measurable with <code>MLComputePlan</code>, which needs an <code>.mlpackage</code>, so the table above is not a statement about the <code>.pte</code>.</p>
+<h2 id="neural-engine-export">Neural Engine Export<a class="headerlink" href="#neural-engine-export" title="Permanent link">&para;</a></h2>
+<p><code>coreml_neural_engine=True</code> exports a graph that runs almost in full on the ANE. Every recent A-series (iPhone, iPad) and M-series (Mac) chip has an ANE. The flag is off by default. It needs <code>coreml_precision="float16"</code>: the ANE runs fp16 only, so an fp32 export with the flag logs a warning.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"coreml"</span><span class="p">,</span> <span class="n">coreml_precision</span><span class="o">=</span><span class="s2">"float16"</span><span class="p">,</span> <span class="n">coreml_neural_engine</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The graph has the same weights, inputs, outputs and minimum OS as the default fp16 export. Two parts of it change:</p>
+<ul>
+<li>The backbone attention runs as one einsum pair per head, on a channels-first layout, in query chunks of at most 256 tokens. This is Apple's <a href="https://github.com/apple/ml-ane-transformers"><code>SPLIT_EINSUM_V2</code></a> pattern: the ANE runs matmul and convolution ops much faster than a fused attention op.</li>
+<li>The two-stage query selection ranks the scores with comparisons and a sum, and selects the rows with a one-hot matmul.</li>
+</ul>
+<p>Under <code>CPU_AND_NE</code>, only <code>resample</code> and its <code>cast</code> ops stay on the CPU: 4, 6 and 8 ops for <code>RFDETRNano</code>, <code>RFDETRSmall</code> and <code>RFDETRMedium</code>, with 99.8% of the estimated work on the ANE (<code>MLComputePlan</code>, Apple M4 Max).</p>
+<p>The bundle name has <code>-ane</code> after the precision, <code>{variant}_fp16-ane.mlpackage</code>, so it does not replace a default export in the same folder. An explicit <code>output_name</code> is used as given.</p>
+<p><strong>Use it only with <code>CPU_AND_NE</code> or <code>ALL</code> compute units.</strong> On the CPU and the GPU, this graph is slower than the default graph. Single-image latency, pretrained models at their default resolutions, Apple M4 Max (16-core CPU, 40-core GPU; macOS 27.0.1, coremltools 9.0), fp16, batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Export</th>
+<th><code>CPU_ONLY</code></th>
+<th><code>CPU_AND_NE</code></th>
+<th><code>CPU_AND_GPU</code></th>
+<th><code>ALL</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RFDETRNano</code></td>
+<td>default</td>
+<td>31.3</td>
+<td>22.4</td>
+<td><strong>20.1</strong></td>
+<td>22.9</td>
+</tr>
+<tr>
+<td><code>RFDETRNano</code></td>
+<td><code>coreml_neural_engine=True</code></td>
+<td>36.1</td>
+<td><strong>17.7</strong></td>
+<td>24.0</td>
+<td>18.7</td>
+</tr>
+<tr>
+<td><code>RFDETRSmall</code></td>
+<td>default</td>
+<td>45.6</td>
+<td>34.5</td>
+<td><strong>23.3</strong></td>
+<td>39.3</td>
+</tr>
+<tr>
+<td><code>RFDETRSmall</code></td>
+<td><code>coreml_neural_engine=True</code></td>
+<td>55.4</td>
+<td>30.4</td>
+<td>31.5</td>
+<td><strong>30.2</strong></td>
+</tr>
+<tr>
+<td><code>RFDETRMedium</code></td>
+<td>default</td>
+<td>47.2</td>
+<td>44.7</td>
+<td><strong>24.0</strong></td>
+<td>49.2</td>
+</tr>
+<tr>
+<td><code>RFDETRMedium</code></td>
+<td><code>coreml_neural_engine=True</code></td>
+<td>65.5</td>
+<td>36.6</td>
+<td><strong>33.0</strong></td>
+<td>44.2</td>
+</tr>
+</tbody>
+</table>
+<p>On this M4 Max, the Neural Engine graph on the ANE is the fastest choice for <code>RFDETRNano</code>, and the default graph on the GPU for <code>RFDETRSmall</code> and <code>RFDETRMedium</code>. Measure both exports on your target device.</p>
+<p>The ANE takes longer to compile this graph on first load: 6.4, 9.3 and 10.3 s for the three models, against 4.3, 4.5 and 5.2 s for the default graph. Later loads of the same bundle use the system cache and take less than 0.1 s.</p>
+<p>The two graphs give close but not identical outputs, and the same accuracy. On COCO val2017 (all 5000 images, <code>CPU_AND_NE</code>, same decoding for all rows, Apple M4 Max):</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Export</th>
+<th>mAP@[.5:.95]</th>
+<th>mAP@.5</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RFDETRNano</code></td>
+<td>default</td>
+<td>48.0</td>
+<td>67.1</td>
+</tr>
+<tr>
+<td><code>RFDETRNano</code></td>
+<td><code>coreml_neural_engine=True</code></td>
+<td>48.0</td>
+<td>67.1</td>
+</tr>
+<tr>
+<td><code>RFDETRSmall</code></td>
+<td>default</td>
+<td>52.8</td>
+<td>71.9</td>
+</tr>
+<tr>
+<td><code>RFDETRSmall</code></td>
+<td><code>coreml_neural_engine=True</code></td>
+<td>52.8</td>
+<td>71.9</td>
+</tr>
+<tr>
+<td><code>RFDETRMedium</code></td>
+<td>default</td>
+<td>54.6</td>
+<td>73.5</td>
+</tr>
+<tr>
+<td><code>RFDETRMedium</code></td>
+<td><code>coreml_neural_engine=True</code></td>
+<td>54.6</td>
+<td>73.5</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Equal scores and other models</p>
+<p>The one-hot selection puts equal scores in index order, lowest first. <code>torch.topk</code> does not specify an order for them, so equal scores at the k-th place can select different rows. A model without the box reparameterization of the released models (<code>bbox_reparam=True</code>) keeps <code>topk</code>, and the export logs a warning.</p>
+</div>
 
 
 
@@ -3143,7 +3294,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 14:26:55 UTC">2026-10-06 14:26:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 7, 2026 21:29:44 UTC">2026-10-07 21:29:44</span>
   </span>
 
     
