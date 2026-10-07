@@ -5,13 +5,20 @@
 # ------------------------------------------------------------------------
 """Tests for RFDETR.inference()."""
 
+import threading
+import weakref
+from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from typing import Any
+from unittest.mock import Mock, call, patch
 
 import pytest
 import torch
 
+from rfdetr import RFDETRNano, RFDETRSegNano
+from rfdetr import detr as detr_module
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 
@@ -28,6 +35,45 @@ class _FakeModel(torch.nn.Module):
 
     def export(self) -> None:
         pass
+
+
+class _TupleModule(torch.nn.Module):
+    """Parameter-free module whose forward returns two tensors, like the exported detector."""
+
+    def forward(self, value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return ``value + 1`` and ``value * 2``.
+
+        Examples:
+            >>> first, second = _TupleModule()(torch.tensor([2.0]))
+            >>> first.tolist(), second.tolist()
+            ([3.0], [4.0])
+        """
+        return value + 1, value * 2
+
+    def export(self) -> None:
+        """Do nothing; ``RFDETR.inference()`` calls ``export()`` on the module it optimizes.
+
+        Examples:
+            >>> _TupleModule().export() is None
+            True
+        """
+
+
+def _tensor_leaves(value: Any) -> list[torch.Tensor]:
+    """Collect the tensors nested in tuples, lists and dict values, in traversal order.
+
+    Examples:
+        >>> leaves = _tensor_leaves(({"a": torch.tensor([1.0])}, [torch.tensor([2.0]), None]))
+        >>> [leaf.tolist() for leaf in leaves]
+        [[1.0], [2.0]]
+    """
+    if isinstance(value, torch.Tensor):
+        return [value]
+    if isinstance(value, (tuple, list)):
+        return [leaf for item in value for leaf in _tensor_leaves(item)]
+    if isinstance(value, dict):
+        return [leaf for item in value.values() for leaf in _tensor_leaves(item)]
+    return []
 
 
 class _FakeModelContext:
@@ -208,6 +254,155 @@ class TestModelInferenceCudaDeviceContext:
 class TestModelInferenceCompile:
     """Tests for the compile=True paths."""
 
+    def test_cudagraph_backend_traces_freezes_and_captures(self) -> None:
+        """The CUDA Graph backend should capture a frozen TorchScript module and its fixed input."""
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = torch.device("cuda")
+        dummy_input = torch.randn(2, 3, 28, 28)
+        traced = Mock()
+        frozen = Mock()
+        captured = Mock()
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("rfdetr.detr.torch.jit.trace", return_value=traced) as mock_trace,
+            patch("rfdetr.detr.torch.jit.freeze", return_value=frozen) as mock_freeze,
+            patch("rfdetr.detr._CUDAGraphInferenceModel", return_value=captured) as mock_capture,
+            patch("rfdetr.detr.torch.randn", return_value=dummy_input),
+            patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
+            patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
+            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+        ):
+            rfdetr.inference(compile=True, batch_size=2, compile_backend="cudagraph")
+
+        mock_trace.assert_called_once_with(rfdetr.model.model, dummy_input)
+        mock_freeze.assert_called_once_with(traced)
+        mock_capture.assert_called_once_with(frozen, dummy_input, rfdetr.model.device)
+        assert rfdetr.model.inference_model is captured
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize(
+        "dtype",
+        [pytest.param(torch.float32, id="float32"), pytest.param(torch.float16, id="float16")],
+    )
+    def test_cudagraph_backend_replays_real_module_through_inference(self, dtype: torch.dtype) -> None:
+        """The public cudagraph route should capture a real CUDA module and return outputs that survive a replay."""
+        device = torch.device("cuda")
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = device
+        rfdetr.model.model = _TupleModule().to(device)
+
+        rfdetr.inference(compile=True, batch_size=2, dtype=dtype, compile_backend="cudagraph")
+
+        graph_model = rfdetr.model.inference_model
+        assert isinstance(graph_model, detr_module._CUDAGraphInferenceModel)
+        first_input = torch.randn(2, 3, 28, 28, device=device, dtype=dtype)
+        second_input = torch.randn(2, 3, 28, 28, device=device, dtype=dtype)
+        first = graph_model(first_input)
+        second = graph_model(second_input)
+
+        torch.cuda.synchronize(device)
+        assert first[0].dtype == dtype
+        assert torch.equal(first[0], first_input + 1)
+        assert torch.equal(first[1], first_input * 2)
+        assert torch.equal(second[0], second_input + 1)
+        assert torch.equal(second[1], second_input * 2)
+
+    @pytest.fixture
+    def nondeterministic_algorithms(self) -> Generator[None, None, None]:
+        """Turn deterministic algorithms off for one test, restoring the previous mode afterwards.
+
+        The autouse ``reset_random_seeds`` fixture enables them, which routes CUDA ``F.interpolate`` through a
+        decomposition that fails under ``torch.jit.trace`` (its sizes become CPU tensors).
+        """
+        enabled = torch.are_deterministic_algorithms_enabled()
+        warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+        torch.use_deterministic_algorithms(False)
+        try:
+            yield
+        finally:
+            torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+
+    @pytest.mark.gpu
+    @pytest.mark.usefixtures("nondeterministic_algorithms")
+    @pytest.mark.parametrize(
+        "model_class",
+        [pytest.param(RFDETRNano, id="detection"), pytest.param(RFDETRSegNano, id="segmentation")],
+    )
+    @pytest.mark.parametrize(
+        ("dtype", "tolerance"),
+        [pytest.param(torch.float32, 1e-3, id="float32"), pytest.param(torch.float16, 1e-2, id="float16")],
+    )
+    def test_cudagraph_predict_matches_torchscript_backend(
+        self, model_class: type[RFDETR], dtype: torch.dtype, tolerance: float
+    ) -> None:
+        """The cudagraph backend gives predict() the same raw predictions as the default TorchScript backend.
+
+        Elsewhere only the parameter-free ``_TupleModule`` is captured; this runs a real detector through ``predict()``,
+        including its tuple-to-dict mapping of the cloned graph outputs. Raw predictions are compared because a top-k
+        order flip between near-equal random-weight scores would make final detections unstable. The tolerance allows
+        for ``torch.jit.freeze``, whose default passes do not strictly preserve numerics; float32 matmuls run in TF32
+        because ``rfdetr.detr`` sets ``torch.set_float32_matmul_precision("high")`` on import.
+        """
+        model = model_class(pretrain_weights=None, device="cuda")
+        image = torch.rand(3, 480, 640)
+        model.inference(compile=True, batch_size=1, dtype=dtype)
+        with patch.object(model.model, "postprocess", wraps=model.model.postprocess) as torchscript_postprocess:
+            model.predict(image)
+        model.inference(compile=True, batch_size=1, dtype=dtype, compile_backend="cudagraph")
+
+        with patch.object(model.model, "postprocess", wraps=model.model.postprocess) as cudagraph_postprocess:
+            model.predict(image)
+
+        inference_model = model.model.inference_model
+        assert isinstance(inference_model, detr_module._CUDAGraphInferenceModel)
+        if dtype == torch.float16:
+            # Half precision on random weights flips near-tied top-k proposals between the two separate traces. Each
+            # decoder slot starts from its own learned query embedding, so a flip changes the logits themselves and
+            # not only their order; sorting cannot absorb it. Compare the graph with eager replay of the very module
+            # it captured, which is what the backend adds. The float32 case covers the predict() mapping.
+            static_input = inference_model._static_input.clone()
+            with torch.inference_mode():
+                expected = inference_model._model(static_input)
+                actual = inference_model(static_input)
+        else:
+            actual = cudagraph_postprocess.call_args.args[0]
+            expected = torchscript_postprocess.call_args.args[0]
+        torch.testing.assert_close(actual, expected, rtol=tolerance, atol=tolerance)
+
+    @pytest.mark.gpu
+    def test_cudagraph_reoptimize_replays_at_the_new_batch_size(self) -> None:
+        """Calling inference() again with another batch size recaptures, so the new batch size replays correctly.
+
+        Users are told to re-run ``inference()`` per batch size; the new graph must take the new static shape instead of
+        reusing the earlier capture.
+        """
+        device = torch.device("cuda")
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = device
+        rfdetr.model.model = _TupleModule().to(device)
+        rfdetr.inference(compile=True, batch_size=1, compile_backend="cudagraph")
+        value = torch.randn(2, 3, 28, 28, device=device)
+
+        rfdetr.inference(compile=True, batch_size=2, compile_backend="cudagraph")
+        first, second = rfdetr.model.inference_model(value)
+
+        torch.cuda.synchronize(device)
+        assert torch.equal(first, value + 1)
+        assert torch.equal(second, value * 2)
+
+    def test_cudagraph_backend_rejects_cpu_before_copying_model(self) -> None:
+        """CUDA Graph capture should fail clearly when the selected device is not CUDA."""
+        rfdetr = _FakeRFDETR()
+
+        with (
+            patch("rfdetr.detr.deepcopy") as mock_deepcopy,
+            pytest.raises(ValueError, match="cudagraph.*CUDA"),
+        ):
+            rfdetr.inference(compile=True, compile_backend="cudagraph")
+
+        mock_deepcopy.assert_not_called()
+
     def test_compile_true_calls_jit_trace(self) -> None:
         """torch.jit.trace should be called with the model and a correctly-shaped dummy input."""
         rfdetr = _FakeRFDETR()
@@ -216,10 +411,12 @@ class TestModelInferenceCompile:
         with (
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace", return_value=mock_traced) as mock_trace,
+            patch("torch.jit.freeze") as mock_freeze,
         ):
             rfdetr.inference(compile=True, batch_size=2)
 
         assert mock_trace.called
+        mock_freeze.assert_not_called()
         dummy_input: torch.Tensor = mock_trace.call_args.args[1]
         resolution = rfdetr.model.resolution
         assert dummy_input.shape == (2, 3, resolution, resolution)
@@ -268,6 +465,7 @@ class TestModelInferenceCompile:
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.compile", return_value=compiled_model) as mock_compile,
             patch("torch.jit.trace") as mock_trace,
+            patch("torch.jit.freeze") as mock_freeze,
             patch("rfdetr.detr.torch.randn", return_value=dummy_input),
             patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
             patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
@@ -277,6 +475,7 @@ class TestModelInferenceCompile:
             rfdetr.inference(compile=True, batch_size=2, compile_backend="inductor")
 
         mock_trace.assert_not_called()
+        mock_freeze.assert_not_called()
         mock_compile.assert_called_once_with(rfdetr.model.model, mode="reduce-overhead")
         assert compiled_model.call_count == 2
         mock_synchronize.assert_called_once_with(rfdetr.model.device)
@@ -290,7 +489,7 @@ class TestModelInferenceCompile:
 
         with (
             patch("rfdetr.detr.deepcopy") as mock_deepcopy,
-            pytest.raises(ValueError, match="compile_backend must be 'torchscript' or 'inductor'"),
+            pytest.raises(ValueError, match="compile_backend must be 'torchscript', 'cudagraph', or 'inductor'"),
         ):
             rfdetr.inference(compile=True, compile_backend="unknown")  # type: ignore[arg-type]
 
@@ -303,12 +502,28 @@ class TestModelInferenceCompile:
         with (
             patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
             patch("torch.jit.trace") as mock_trace,
+            patch("torch.jit.freeze") as mock_freeze,
         ):
             rfdetr.inference(compile=False)
 
         mock_trace.assert_not_called()
+        mock_freeze.assert_not_called()
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
+
+    @pytest.mark.parametrize("compile_backend", ["cudagraph", "inductor"])
+    def test_compile_false_ignores_compile_backend(self, compile_backend: str) -> None:
+        """With compile=False the backend is ignored: no CUDA check runs and the eager exported model is used.
+
+        ``compile_backend`` is documented as applying only when ``compile=True``. On a CPU model ``"cudagraph"`` with
+        ``compile=True`` raises, so this pins that ``compile=False`` neither checks the device nor wraps the model.
+        """
+        rfdetr = _FakeRFDETR()
+
+        rfdetr.inference(compile=False, compile_backend=compile_backend)
+
+        assert isinstance(rfdetr.model.inference_model, _FakeModel)
+        assert rfdetr._optimized_has_been_compiled is False
 
 
 class TestModelInferenceState:
@@ -353,6 +568,32 @@ class TestModelInferenceState:
         assert rfdetr._optimized_has_been_compiled is False
         assert rfdetr._optimized_batch_size is None
         assert rfdetr.is_optimized_inplace is False
+
+    def test_remove_optimized_model_releases_cudagraph_wrapper(self) -> None:
+        """remove_optimized_model() leaves no reference to the CUDA graph wrapper, so the graph can be freed.
+
+        The wrapper owns the captured graph and its memory; a reference kept after ``remove_optimized_model()`` would
+        hold that device memory for the rest of the process.
+        """
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = torch.device("cuda")
+        wrapper_class = detr_module._CUDAGraphInferenceModel
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", return_value=rfdetr.model.model),
+            patch("torch.jit.freeze", return_value=rfdetr.model.model),
+            patch("rfdetr.detr._CUDAGraphInferenceModel", side_effect=lambda *_: wrapper_class.__new__(wrapper_class)),
+            patch("rfdetr.detr.torch.randn", return_value=torch.randn(1, 3, 28, 28)),
+            patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
+            patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
+            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+        ):
+            rfdetr.inference(compile=True, compile_backend="cudagraph")
+        released = weakref.ref(rfdetr.model.inference_model)
+
+        rfdetr.remove_optimized_model()
+
+        assert released() is None
 
 
 class TestModelInferenceInplace:
@@ -597,6 +838,70 @@ class TestModelInferenceExceptionRecovery:
         assert rfdetr._is_optimized_for_inference is False
         assert rfdetr.model.inference_model is None
 
+    def test_jit_freeze_failure_leaves_model_fully_unoptimized(self) -> None:
+        """A freeze failure after tracing must not publish a partially optimized model."""
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = torch.device("cuda")
+        dummy_input = torch.randn(1, 3, 28, 28)
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", return_value=rfdetr.model.model),
+            patch("torch.jit.freeze", side_effect=RuntimeError("freeze failed")),
+            patch("rfdetr.detr.torch.randn", return_value=dummy_input),
+            patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
+            patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
+            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            pytest.raises(RuntimeError, match="freeze failed"),
+        ):
+            rfdetr.inference(compile=True, compile_backend="cudagraph")
+
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
+
+    def test_cudagraph_capture_failure_leaves_model_fully_unoptimized(self) -> None:
+        """A capture failure after tracing and freezing must not publish partial state."""
+        rfdetr = _FakeRFDETR()
+        rfdetr.model.device = torch.device("cuda")
+        dummy_input = torch.randn(1, 3, 28, 28)
+
+        with (
+            patch("rfdetr.detr.deepcopy", return_value=rfdetr.model.model),
+            patch("torch.jit.trace", return_value=rfdetr.model.model),
+            patch("torch.jit.freeze", return_value=rfdetr.model.model),
+            patch("rfdetr.detr._CUDAGraphInferenceModel", side_effect=RuntimeError("capture failed")),
+            patch("rfdetr.detr.torch.randn", return_value=dummy_input),
+            patch("rfdetr.detr.torch.cuda.current_device", return_value=0),
+            patch("rfdetr.detr.torch.cuda.device", return_value=nullcontext()),
+            patch.object(_FakeModel, "to", return_value=rfdetr.model.model),
+            pytest.raises(RuntimeError, match="capture failed"),
+        ):
+            rfdetr.inference(compile=True, compile_backend="cudagraph")
+
+        assert rfdetr._is_optimized_for_inference is False
+        assert rfdetr.model.inference_model is None
+        assert rfdetr._optimized_has_been_compiled is False
+        assert rfdetr._optimized_batch_size is None
+
+    def test_rejected_cudagraph_request_keeps_previous_optimization(self) -> None:
+        """A cudagraph request on a CPU model fails without discarding the model that is already optimized.
+
+        The non-CUDA check runs before ``remove_optimized_model()``, so a bad request must leave the optimized model
+        that ``predict()`` already uses in place instead of silently falling back to the eager path.
+        """
+        rfdetr = _FakeRFDETR()
+        rfdetr.inference(compile=False, dtype="float16")
+        optimized_model = rfdetr.model.inference_model
+
+        with pytest.raises(ValueError, match="cudagraph.*CUDA"):
+            rfdetr.inference(compile=True, compile_backend="cudagraph")
+
+        assert rfdetr.model.inference_model is optimized_model
+        assert rfdetr._is_optimized_for_inference is True
+        assert rfdetr._optimized_dtype == torch.float16
+
     def test_inplace_export_failure_module_mutations_are_not_undone(self) -> None:
         """RFDETR resets flags on export failure but cannot undo module-level mutations.
 
@@ -623,6 +928,274 @@ class TestModelInferenceExceptionRecovery:
         assert rfdetr.model.model is original_model
         # The mutation happened and cannot be undone by RFDETR's recovery path
         assert mutated["happened"] is True
+
+
+class TestCudaGraphInferenceModel:
+    """Coverage for the static buffers and stream ordering owned by the direct graph wrapper."""
+
+    def test_waits_for_previous_stream_before_replay(self) -> None:
+        """A call waits on the prior completion event, then replays, clones, and only then records its own stream."""
+        order = Mock()
+        order.clone.side_effect = detr_module._CUDAGraphInferenceModel._clone_output
+        wrapper = detr_module._CUDAGraphInferenceModel.__new__(detr_module._CUDAGraphInferenceModel)
+        wrapper._lock = nullcontext()
+        wrapper._static_input = order.static_input
+        wrapper._static_output = torch.tensor([3.0])
+        wrapper._graph = order.graph
+        wrapper._completed = order.completed
+        value = Mock(shape=order.static_input.shape, dtype=order.static_input.dtype, device=order.static_input.device)
+
+        with (
+            patch("rfdetr.detr.torch.cuda.current_stream", return_value=order.stream) as mock_current_stream,
+            patch.object(detr_module._CUDAGraphInferenceModel, "_clone_output", order.clone),
+        ):
+            result = wrapper(value)
+
+        mock_current_stream.assert_called_once_with(value.device)
+        assert order.mock_calls == [
+            call.stream.wait_event(order.completed),
+            call.static_input.copy_(value),
+            call.graph.replay(),
+            call.clone(wrapper._static_output),
+            call.completed.record(order.stream),
+        ]
+        assert torch.equal(result, wrapper._static_output)
+        assert result.data_ptr() != wrapper._static_output.data_ptr()
+
+    @pytest.mark.parametrize(
+        ("batch", "size", "dtype", "device"),
+        [
+            (1, 4, "float16", "cpu"),
+            (2, 8, "float16", "cpu"),
+            (2, 4, "float32", "cpu"),
+            (2, 4, "float16", "meta"),
+        ],
+    )
+    def test_rejects_input_unlike_the_captured_one(self, batch: int, size: int, dtype: str, device: str) -> None:
+        """An input differing from the captured batch, size, dtype or device fails instead of being broadcast or cast.
+
+        ``copy_`` into the static buffer would replicate a smaller batch or cast float32 into a float16 graph, so a
+        direct ``model.model.inference_model`` caller would get plausible but wrong results without this check.
+        """
+        wrapper = detr_module._CUDAGraphInferenceModel.__new__(detr_module._CUDAGraphInferenceModel)
+        wrapper._static_input = torch.zeros(2, 3, 4, 4, dtype=torch.float16)
+        value = torch.zeros(batch, 3, size, size, dtype=getattr(torch, dtype), device=device)
+
+        with pytest.raises(ValueError, match=r"captured for input shape \(2, 3, 4, 4\), dtype torch\.float16"):
+            wrapper(value)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param([torch.ones(2), torch.zeros(3)], id="list"),
+            pytest.param({"pred_logits": torch.ones(2, 3), "pred_boxes": torch.zeros(2, 4)}, id="dict"),
+            pytest.param(
+                ({"spatial_features": torch.ones(2, 2), "bias": torch.zeros(1)}, [torch.ones(1)]), id="nested"
+            ),
+            pytest.param((torch.ones(2), torch.zeros(2), torch.full((2,), 3.0)), id="three-tuple"),
+            pytest.param((torch.ones(2), None, 7), id="non-tensor-leaf"),
+            pytest.param((torch.arange(12.0).reshape(3, 4).t(),), id="non-contiguous"),
+        ],
+    )
+    def test_clone_output_copies_every_tensor_leaf(self, value: Any) -> None:
+        """Every tensor leaf is copied into new storage with its layout; containers and other leaves are kept.
+
+        Detection, segmentation and keypoint graphs return different tuple and dict shapes. A tensor that escaped
+        uncloned would be overwritten by the next replay, so every branch of ``_clone_output`` must copy its leaves.
+        """
+        result = detr_module._CUDAGraphInferenceModel._clone_output(value)
+
+        result_leaves = _tensor_leaves(result)
+        source_leaves = _tensor_leaves(value)
+        assert type(result) is type(value)
+        torch.testing.assert_close(result, value, rtol=0, atol=0)
+        assert set(map(torch.Tensor.data_ptr, result_leaves)).isdisjoint(map(torch.Tensor.data_ptr, source_leaves))
+        assert list(map(torch.Tensor.stride, result_leaves)) == list(map(torch.Tensor.stride, source_leaves))
+
+    @pytest.mark.gpu
+    def test_replays_from_two_streams_keep_inputs_and_returned_outputs_separate(self) -> None:
+        """A replay held back on the device sees its own input, and its returned outputs survive the next replay."""
+        device = torch.device("cuda")
+        module = torch.jit.trace(_TupleModule().eval().to(device), torch.zeros(1, device=device))
+        wrapper = detr_module._CUDAGraphInferenceModel(module, torch.zeros(1, device=device), device)
+        graph = wrapper._graph
+
+        def delayed_replay() -> None:
+            """Queue a device-side delay ahead of the replay so a call from another stream could overtake it.
+
+            Examples:
+                Requires the live CUDA graph captured by this test.
+                >>> delayed_replay()  # doctest: +SKIP
+            """
+            torch.cuda._sleep(20_000_000)
+            graph.replay()
+
+        wrapper._graph = Mock(replay=delayed_replay)
+        first_stream = torch.cuda.Stream(device=device)
+        second_stream = torch.cuda.Stream(device=device)
+        with torch.cuda.stream(first_stream):
+            first = wrapper(torch.tensor([2.0], device=device))
+        with torch.cuda.stream(second_stream):
+            second = wrapper(torch.tensor([5.0], device=device))
+
+        torch.cuda.synchronize(device)
+        assert torch.equal(first[0], torch.tensor([3.0], device=device))
+        assert torch.equal(first[1], torch.tensor([4.0], device=device))
+        assert torch.equal(second[0], torch.tensor([6.0], device=device))
+        assert torch.equal(second[1], torch.tensor([10.0], device=device))
+
+    @pytest.mark.gpu
+    def test_next_replay_waits_for_a_delayed_clone(self) -> None:
+        """A replay from another stream waits until the previous call's clone has read the graph outputs.
+
+        The clone is held back on the device. Had the completion event been recorded before the clone, the second
+        stream's replay could overwrite the static outputs first and the first caller would get the second's result.
+        """
+        device = torch.device("cuda")
+        module = torch.jit.trace(_TupleModule().eval().to(device), torch.zeros(1, device=device))
+        wrapper = detr_module._CUDAGraphInferenceModel(module, torch.zeros(1, device=device), device)
+
+        def delayed_clone(value: Any) -> Any:
+            """Queue a device-side delay ahead of the real clone so a replay from another stream could overtake it.
+
+            Examples:
+                Requires a live CUDA device.
+                >>> delayed_clone(torch.zeros(1, device="cuda"))  # doctest: +SKIP
+            """
+            torch.cuda._sleep(20_000_000)
+            return detr_module._CUDAGraphInferenceModel._clone_output(value)
+
+        first_stream = torch.cuda.Stream(device=device)
+        second_stream = torch.cuda.Stream(device=device)
+        with patch.object(wrapper, "_clone_output", delayed_clone):
+            with torch.cuda.stream(first_stream):
+                first = wrapper(torch.tensor([2.0], device=device))
+            with torch.cuda.stream(second_stream):
+                second = wrapper(torch.tensor([5.0], device=device))
+
+        torch.cuda.synchronize(device)
+        assert torch.equal(first[0], torch.tensor([3.0], device=device))
+        assert torch.equal(first[1], torch.tensor([4.0], device=device))
+        assert torch.equal(second[0], torch.tensor([6.0], device=device))
+        assert torch.equal(second[1], torch.tensor([10.0], device=device))
+
+    @pytest.mark.gpu
+    def test_concurrent_threads_each_get_their_own_result(self) -> None:
+        """Threads calling the wrapper at once, each from its own stream, each get the result for their own input.
+
+        A barrier releases every thread together and each replay is held back on the device, so without the host lock
+        and the completion event one thread's input copy could land before another thread's replay had read its input.
+        """
+        device = torch.device("cuda")
+        module = torch.jit.trace(_TupleModule().eval().to(device), torch.zeros(1, device=device))
+        wrapper = detr_module._CUDAGraphInferenceModel(module, torch.zeros(1, device=device), device)
+        graph = wrapper._graph
+        inputs = torch.tensor([2.0, 3.0, 5.0, 7.0])
+        barrier = threading.Barrier(len(inputs), timeout=30)
+
+        def delayed_replay() -> None:
+            """Queue a device-side delay ahead of the replay so another thread's input copy could overtake it.
+
+            Examples:
+                Requires the live CUDA graph captured by this test.
+                >>> delayed_replay()  # doctest: +SKIP
+            """
+            torch.cuda._sleep(20_000_000)
+            graph.replay()
+
+        def call_from_own_stream(value: torch.Tensor) -> torch.Tensor:
+            """Wait for every caller, then call the wrapper from a new stream and stack its two outputs.
+
+            Examples:
+                Requires the live CUDA graph and barrier created by this test.
+                >>> call_from_own_stream(torch.tensor(2.0))  # doctest: +SKIP
+            """
+            barrier.wait()
+            with torch.cuda.stream(torch.cuda.Stream(device=device)):
+                return torch.stack(wrapper(value.reshape(1).to(device)))
+
+        with (
+            patch.object(wrapper, "_graph", Mock(replay=delayed_replay)),
+            ThreadPoolExecutor(max_workers=len(inputs)) as executor,
+        ):
+            outputs = list(executor.map(call_from_own_stream, inputs))
+
+        torch.cuda.synchronize(device)
+        assert torch.equal(torch.cat(outputs, dim=1), torch.stack([inputs + 1, inputs * 2]).to(device))
+
+    @pytest.mark.gpu
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
+    def test_capture_on_second_device_replays_the_callers_input(self) -> None:
+        """A graph captured on cuda:1 after one on cuda:0 must compute on the caller's input, not the dummy.
+
+        The first capture on ``cuda:0`` is what would create torch's shared default capture stream on that device; the
+        later ``cuda:1`` capture must still record its own work and match eager outputs for a new input.
+        """
+        first_device = torch.device("cuda:0")
+        second_device = torch.device("cuda:1")
+        with torch.cuda.device(first_device):
+            first_module = torch.jit.trace(_TupleModule().eval().to(first_device), torch.zeros(1, device=first_device))
+            detr_module._CUDAGraphInferenceModel(first_module, torch.zeros(1, device=first_device), first_device)
+        with torch.cuda.device(second_device):
+            second_module = torch.jit.trace(
+                _TupleModule().eval().to(second_device), torch.zeros(1, device=second_device)
+            )
+            wrapper = detr_module._CUDAGraphInferenceModel(
+                second_module, torch.zeros(1, device=second_device), second_device
+            )
+        value = torch.tensor([5.0], device=second_device)
+        expected = _TupleModule()(value)
+
+        output = wrapper(value)
+
+        torch.cuda.synchronize(second_device)
+        assert torch.equal(output[0], expected[0])
+        assert torch.equal(output[1], expected[1])
+
+    @pytest.mark.gpu
+    def test_capture_failure_reports_restart_and_keeps_the_cause(self) -> None:
+        """A rejected capture should tell the caller to restart the process and chain the original error."""
+        device = torch.device("cuda")
+        module = torch.jit.trace(_TupleModule().eval().to(device), torch.zeros(1, device=device))
+
+        with (
+            patch("rfdetr.detr.torch.cuda.graph", side_effect=RuntimeError("unsupported operator")),
+            pytest.raises(RuntimeError, match="capture failed.*Restart the process") as exc_info,
+        ):
+            detr_module._CUDAGraphInferenceModel(module, torch.zeros(1, device=device), device)
+
+        assert str(exc_info.value.__cause__) == "unsupported operator"
+
+    @pytest.mark.gpu
+    def test_error_at_the_completion_fence_reports_restart_and_keeps_the_cause(self) -> None:
+        """An error CUDA reports only at the post-capture fence should get the same restart message and cause."""
+        device = torch.device("cuda")
+        module = torch.jit.trace(_TupleModule().eval().to(device), torch.zeros(1, device=device))
+        real_synchronize = torch.cuda.synchronize
+        fences = 0
+
+        def fail_completion_fence(target: torch.device | None = None) -> None:
+            """Fail the wrapper's second synchronize on the test device; any other synchronize call passes through.
+
+            Examples:
+                Requires the live CUDA device and closure created by this test.
+                >>> fail_completion_fence()  # doctest: +SKIP
+            """
+            nonlocal fences
+            if target == device:
+                fences += 1
+                if fences == 2:
+                    raise RuntimeError("deferred capture error")
+            real_synchronize(target)
+
+        with (
+            patch("rfdetr.detr.torch.cuda.synchronize", side_effect=fail_completion_fence),
+            pytest.raises(RuntimeError, match="capture failed.*Restart the process") as exc_info,
+        ):
+            detr_module._CUDAGraphInferenceModel(module, torch.zeros(1, device=device), device)
+
+        assert fences == 2
+        assert str(exc_info.value.__cause__) == "deferred capture error"
 
 
 class TestModelContextClearedWeights:
