@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -63,6 +64,29 @@ def _reference(value: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
     return F.grid_sample(value, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
 
 
+class _PixelRowSampler(torch.nn.Module):
+    """Run :func:`pixel_row_grid_sample` with its default settings, so ``torch.export`` can capture it."""
+
+    def forward(self, value: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
+        return pixel_row_grid_sample(value, grid)
+
+
+def _sampler_ops(value: torch.Tensor, grid: torch.Tensor) -> set[str]:
+    """Name the sampling op ``pixel_row_grid_sample`` captures into a ``torch.export`` graph.
+
+    Returns ``{"embedding"}`` on the pixel-row path and ``{"grid_sampler"}`` when it falls back to the default sampler.
+    Capturing only traces the graph, so it also works for dtype pairs the default sampler rejects when it runs.
+
+    Examples:
+        >>> value, grid = _value_and_grid(1, 2, 3, 3, 4, 1.0)
+        >>> sorted(_sampler_ops(value, grid)), sorted(_sampler_ops(value.double(), grid.double()))
+        (['embedding'], ['grid_sampler'])
+    """
+    program = torch.export.export(_PixelRowSampler(), (value, grid), strict=False)
+    targets = {str(node.target) for node in program.graph.nodes if node.op == "call_function"}
+    return {name for name in ("embedding", "grid_sampler") if any(name in target for target in targets)}
+
+
 class TestPixelRowGridSample:
     """The pixel-row sampler computes the same values as ``F.grid_sample`` (bilinear, zeros, align_corners=False).
 
@@ -99,41 +123,109 @@ class TestPixelRowGridSample:
         actual = pixel_row_grid_sample(value, grid, padding_mode=padding_mode, align_corners=align_corners)
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
-    def test_float64_uses_the_original_sampler(self) -> None:
+    def test_float32_uses_pixel_rows(self) -> None:
         value, grid = _value_and_grid(2, 3, 4, 5, points=10, spread=1.5)
-        value, grid = value.double(), grid.double()
-        torch.testing.assert_close(
-            pixel_row_grid_sample(value, grid), _bilinear_grid_sample(value, grid), rtol=0, atol=0
-        )
+        assert _sampler_ops(value, grid) == {"embedding"}
+
+    @pytest.mark.parametrize(
+        ("value_dtype", "grid_dtype"),
+        [
+            (torch.float64, torch.float64),
+            (torch.float16, torch.float16),
+            (torch.bfloat16, torch.bfloat16),
+            (torch.float64, torch.float32),
+            (torch.float32, torch.float64),
+        ],
+    )
+    def test_other_dtypes_use_the_original_sampler(self, value_dtype: torch.dtype, grid_dtype: torch.dtype) -> None:
+        value, grid = _value_and_grid(2, 3, 4, 5, points=10, spread=1.5)
+        assert _sampler_ops(value.to(value_dtype), grid.to(grid_dtype)) == {"grid_sampler"}
+
+    @pytest.mark.parametrize(
+        ("extra_headroom", "expected_op"),
+        [
+            (0, "grid_sampler"),
+            (1, "embedding"),
+        ],
+    )
+    def test_pixel_row_count_must_stay_below_the_exact_float32_limit(
+        self, monkeypatch: pytest.MonkeyPatch, extra_headroom: int, expected_op: str
+    ) -> None:
+        """A map with exactly ``limit`` padded pixels falls back; one pixel fewer takes the pixel-row path."""
+        batch, height, width = 2, 4, 5
+        padded_pixels = batch * (height + 2) * (width + 2)
+        monkeypatch.setattr("rfdetr.export._litert.sampling._EXACT_FLOAT32_INTEGERS", padded_pixels + extra_headroom)
+        value, grid = _value_and_grid(batch, 3, height, width, points=10, spread=1.5)
+        assert _sampler_ops(value, grid) == {expected_op}
+
+    def test_fallback_logs_the_inputs_at_debug(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        value, grid = _value_and_grid(2, 3, 4, 5, points=10, spread=1.5)
+        # The rf-detr logger does not propagate, so caplog's root handler would see nothing.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        with caplog.at_level(logging.DEBUG, logger="rf-detr"):
+            pixel_row_grid_sample(value, grid, align_corners=True)
+        assert "align_corners=True" in caplog.text
+
+    def test_batch_mismatch_raises(self) -> None:
+        value, _ = _value_and_grid(2, 3, 4, 5, points=10, spread=1.0)
+        _, grid = _value_and_grid(1, 3, 4, 5, points=10, spread=1.0)
+        with pytest.raises(RuntimeError):
+            pixel_row_grid_sample(value, grid)
 
 
 class _DeformableCore(torch.nn.Module):
-    """Call the single-level deformable-attention core the way the export path does, with the pixel-row sampler."""
+    """Call the deformable-attention core the way the export path does, with the pixel-row sampler.
+
+    Args:
+        shapes_hw: Per-level ``(height, width)`` of the flattened value map.
+
+    Examples:
+        >>> value, locations, weights = _core_inputs([(4, 4)])
+        >>> tuple(_DeformableCore([(4, 4)])(value, locations, weights).shape)
+        (1, 3, 16)
+    """
+
+    def __init__(self, shapes_hw: list[tuple[int, int]]) -> None:
+        super().__init__()
+        self.shapes_hw = shapes_hw
 
     def forward(self, value: torch.Tensor, locations: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-        shapes_hw = [(4, 4)]
         return ms_deform_attn_core_pytorch(
             value,
-            torch.tensor(shapes_hw),
+            torch.tensor(self.shapes_hw),
             locations,
             weights,
-            value_spatial_shapes_hw=shapes_hw,
+            value_spatial_shapes_hw=self.shapes_hw,
             grid_sample=pixel_row_grid_sample,
         )
 
 
-def _core_inputs() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Build ``(value, sampling_locations, attention_weights)`` in the rank-5 export layout.
+def _core_inputs(
+    shapes_hw: list[tuple[int, int]], batch: int = 1, heads: int = 2, rank6: bool = False
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build ``(value, sampling_locations, attention_weights)`` for the deformable-attention core.
+
+    The locations use the rank-5 export layout, or the rank-6 eager layout when *rank6* is set. Both carry the same
+    values.
 
     Examples:
-        >>> value, locations, weights = _core_inputs()
+        >>> value, locations, weights = _core_inputs([(4, 4)])
         >>> tuple(value.shape), tuple(locations.shape), tuple(weights.shape)
         ((1, 2, 8, 16), (1, 3, 2, 4, 2), (1, 3, 2, 4))
+        >>> value, locations, weights = _core_inputs([(4, 4), (2, 3)], batch=3, heads=4, rank6=True)
+        >>> tuple(value.shape), tuple(locations.shape), tuple(weights.shape)
+        ((3, 4, 8, 22), (3, 3, 4, 2, 4, 2), (3, 3, 4, 8))
     """
     generator = torch.Generator().manual_seed(0)
-    value = torch.randn(1, 2, 8, 16, generator=generator)
-    locations = torch.rand(1, 3, 2, 4, 2, generator=generator) * 1.4 - 0.2
-    weights = torch.softmax(torch.randn(1, 3, 2, 4, generator=generator), -1)
+    head_dim, len_query, points = 8, 3, 4
+    levels = len(shapes_hw)
+    value = torch.randn(batch, heads, head_dim, sum(height * width for height, width in shapes_hw), generator=generator)
+    locations = torch.rand(batch, len_query, heads, levels * points, 2, generator=generator) * 1.4 - 0.2
+    if rank6:
+        locations = locations.view(batch, len_query, heads, levels, points, 2)
+    weights = torch.softmax(torch.randn(batch, len_query, heads, levels * points, generator=generator), -1)
     return value, locations, weights
 
 
@@ -141,14 +233,29 @@ class TestDeformableCoreWithPixelRows:
     """The deformable-attention core samples with the ``grid_sample`` it is given."""
 
     def test_captured_core_has_no_grid_sampler(self) -> None:
-        program = torch.export.export(_DeformableCore(), _core_inputs(), strict=False)
+        program = torch.export.export(_DeformableCore([(4, 4)]), _core_inputs([(4, 4)]), strict=False)
         targets = {str(node.target) for node in program.graph.nodes if node.op == "call_function"}
         assert not any("grid_sampler" in target for target in targets), sorted(targets)
+        assert any("embedding" in target for target in targets), sorted(targets)
 
-    def test_core_output_is_unchanged(self) -> None:
-        value, locations, weights = _core_inputs()
-        expected = ms_deform_attn_core_pytorch(value, torch.tensor([(4, 4)]), locations, weights)
-        torch.testing.assert_close(_DeformableCore()(value, locations, weights), expected)
+    @pytest.mark.parametrize(
+        "shapes_hw",
+        [
+            [(4, 4)],
+            [(4, 4), (2, 3)],
+            [(4, 4), (2, 3), (3, 2)],
+        ],
+    )
+    def test_core_output_is_unchanged(self, shapes_hw: list[tuple[int, int]]) -> None:
+        value, locations, weights = _core_inputs(shapes_hw, batch=3, heads=4)
+        expected = ms_deform_attn_core_pytorch(value, torch.tensor(shapes_hw), locations, weights)
+        torch.testing.assert_close(_DeformableCore(shapes_hw)(value, locations, weights), expected)
+
+    def test_core_output_is_unchanged_for_rank6_locations(self) -> None:
+        shapes_hw = [(4, 4), (2, 3)]
+        value, locations, weights = _core_inputs(shapes_hw, batch=3, heads=4, rank6=True)
+        expected = ms_deform_attn_core_pytorch(value, torch.tensor(shapes_hw), locations, weights)
+        torch.testing.assert_close(_DeformableCore(shapes_hw)(value, locations, weights), expected)
 
 
 def _attention() -> MSDeformAttn:
@@ -193,6 +300,48 @@ class TestPixelRowSampling:
             pass
         assert attention.grid_sample is F.grid_sample
 
+    def test_explicit_none_sampler_is_restored_after_the_context(self) -> None:
+        attention = _attention()
+        attention.grid_sample = None  # type: ignore[assignment]
+        with pixel_row_sampling(attention):
+            pass
+        assert attention.grid_sample is None
+
+    def test_installed_samplers_are_restored_when_a_later_install_fails(self) -> None:
+        model = torch.nn.ModuleList([_attention(), _attention()])
+        # A registered submodule cannot be replaced by a function, so the second install raises TypeError.
+        model[1].grid_sample = torch.nn.Identity()
+        with pytest.raises(TypeError), pixel_row_sampling(model):
+            pass
+        assert model[0].grid_sample is _bilinear_grid_sample
+
+    def test_sampler_removed_inside_the_context_restores_the_default(self) -> None:
+        attention = _attention()
+        with pixel_row_sampling(attention):
+            del attention.grid_sample
+        assert attention.grid_sample is _bilinear_grid_sample
+
+    @pytest.mark.parametrize("export_mode", [False, True])
+    def test_attention_forward_matches_the_default_sampler(self, export_mode: bool) -> None:
+        """``MSDeformAttn.forward`` gives the same output inside and outside the context, in eager and export mode."""
+        shapes_hw = [(4, 4), (2, 3)]
+        batch, len_query, d_model = 3, 5, 16
+        attention = MSDeformAttn(d_model=d_model, n_levels=2, n_heads=4, n_points=2)
+        if export_mode:
+            attention.export()
+        generator = torch.Generator().manual_seed(0)
+        inputs = (
+            torch.randn(batch, len_query, d_model, generator=generator),
+            torch.rand(batch, len_query, 2, 2, generator=generator),
+            torch.randn(batch, sum(height * width for height, width in shapes_hw), d_model, generator=generator),
+            torch.tensor(shapes_hw),
+            torch.tensor([0, 16]),
+        )
+        expected = attention(*inputs, input_spatial_shapes_hw=shapes_hw)
+        with pixel_row_sampling(attention):
+            actual = attention(*inputs, input_spatial_shapes_hw=shapes_hw)
+        torch.testing.assert_close(actual, expected)
+
 
 class TestLiteRTExporterSampling:
     """The LiteRT exporter captures the model with the pixel-row sampler in place."""
@@ -210,3 +359,14 @@ class TestLiteRTExporterSampling:
         model = ModelWrapper(_attention())
         exporter._convert_and_save(litert_torch, model, torch.zeros(1, 3, 4, 4), tmp_path / "model.tflite")
         assert samplers_seen == [pixel_row_grid_sample]
+
+    def test_default_sampler_is_restored_when_conversion_fails(self, tmp_path: Path) -> None:
+        """A failing ``litert_torch.convert`` surfaces as the exporter's RuntimeError and leaves the sampler
+        restored."""
+        litert_torch = MagicMock()
+        litert_torch.convert.side_effect = ValueError("boom")
+        exporter = LiteRTExporter(LiteRTConfig(output_dir=tmp_path, verbose=False))
+        attention = _attention()
+        with pytest.raises(RuntimeError, match="Failed to export model to LiteRT"):
+            exporter._convert_and_save(litert_torch, ModelWrapper(attention), torch.zeros(1, 3, 4, 4), tmp_path / "m")
+        assert attention.grid_sample is _bilinear_grid_sample
