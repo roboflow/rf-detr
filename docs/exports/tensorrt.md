@@ -104,8 +104,8 @@ Requirements and limits:
 
 - Detection models only. Segmentation and keypoint models raise `NotImplementedError`; export them with `quantization=None`.
 - A static batch (`dynamic_batch=True` is refused), `fp16=True`, and TensorRT 10 or newer.
-- At batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay. Without one, INT8 gains only 1.05–1.11× (the plain-call column above).
-- Measured on one GPU. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.
+- On the RTX 5070, at batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column above). The T4 gains about as much without a graph (1.09–1.22×).
+- Measured on two GPUs (sm_120 and sm_75), without `trt_hardware_compatibility`, `trt_version_compatible` or a shared `trt_timing_cache`: those settings are accepted with `quantization="int8"`, but INT8 engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the gain relies on. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.
 
 !!! note "Who consumes the `.trt` engine?"
 

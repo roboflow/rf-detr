@@ -980,8 +980,9 @@ def int8_source_graph(
         ValueError: If the graph is already quantized, is not float32, has a dynamic batch axis, cannot be lifted to
             opset 19, is not a quantizable RF-DETR detector (its outputs must be exactly ``dets`` and ``labels``), or
             holds attention INT8 cannot be placed around; or if the calibration data is unusable, holds a NaN or
-            infinite value, or gives a range that is not finite or does not fit an FP16 scale. A calibration image the
-            reader cannot decode raises the image library's own error.
+            infinite value, or gives a range that is not finite or does not fit an FP16 scale; or if a calibration
+            image cannot be identified as an image (the message names the file). An image Pillow identifies but
+            cannot decode (a truncated file) raises Pillow's own ``OSError``, which does not name the file.
     """
     import onnx
 

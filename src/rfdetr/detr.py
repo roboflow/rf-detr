@@ -2512,10 +2512,10 @@ class RFDETR:
                 to cast the graph — install ``rfdetr[tensorrt]`` for the complete set, or pass
                 ``fp16=False``; and for ``format="tensorrt"`` with ``quantization="int8"`` without onnxruntime or
                 ``onnxconverter-common``, or on a TensorRT older than 10. Each format's availability check runs before
-                the model does, and so does the check for TensorRT's lean runtime library that
-                ``trt_version_compatible=True`` needs; what they do not cover (a backend's extension, the TensorRT
-                cast's packages, the Core AI runtime package, ``onnxruntime`` or ``nncf`` for INT8, the TensorRT INT8
-                host checks) is found missing only during the conversion.
+                the model does, and so do the check for TensorRT's lean runtime library that
+                ``trt_version_compatible=True`` needs and the TensorRT INT8 host checks; what they do not cover (a
+                backend's extension, the TensorRT cast's packages, the Core AI runtime package, ``onnxruntime`` or
+                ``nncf`` for INT8) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
                 model has been cleared; instantiate a new :class:`RFDETR` to export).
             OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.

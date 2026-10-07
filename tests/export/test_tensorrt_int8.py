@@ -413,7 +413,7 @@ class TestInt8Host:
 
 
 class TestInt8BuildWiring:
-    """An INT8 build parses the quantized graph as a strongly typed network, whatever the TensorRT major."""
+    """How an INT8 request reaches the build: strongly typed parse, builder options, engine and description names."""
 
     def test_builds_the_quantized_graph_strongly_typed(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         calls: dict[str, Any] = {}
@@ -454,6 +454,80 @@ class TestInt8BuildWiring:
         assert calls["parse"] == (str(tmp_path / "quantized.onnx"), {"strongly_typed": True})
         assert calls["saved"] == (("engine", ("config", {"fp16": False})), engine_path)
         assert engine_path == str(tmp_path / "model_int8.trt")
+
+    def test_portability_and_the_timing_cache_reach_the_int8_build(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        calls: dict[str, Any] = {}
+
+        @contextlib.contextmanager
+        def fake_source(onnx_path: str, **kwargs: Any) -> Iterator[str]:
+            yield str(tmp_path / "quantized.onnx")
+
+        def fake_engine_from_network(parsed: Any, config: Any, **kwargs: Any) -> types.SimpleNamespace:
+            calls["engine"] = (config, kwargs)
+            return types.SimpleNamespace(serialize=lambda: b"engine")
+
+        cache = tmp_path / "timings.cache"
+        cache.write_bytes(b"timings")
+        monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
+        monkeypatch.setattr(TensorRTExporter, "_require_lean_runtime", lambda self: None)
+        monkeypatch.setattr(
+            TensorRTExporter, "_warn_if_version_compatibility_is_unverified", staticmethod(lambda: None)
+        )
+        monkeypatch.setattr(
+            TensorRTExporter, "_hardware_compatibility_level", staticmethod(lambda level: f"level:{level}")
+        )
+        monkeypatch.setattr(tensorrt_export, "int8_source_graph", fake_source)
+        monkeypatch.setattr(
+            tensorrt_export,
+            "network_from_onnx_path",
+            lambda path, **kwargs: (None, types.SimpleNamespace(num_inputs=0), None),
+        )
+        monkeypatch.setattr(tensorrt_export, "_dynamic_batch_inputs", lambda network: {})
+        monkeypatch.setattr(tensorrt_export, "CreateConfig", lambda **kwargs: ("config", kwargs))
+        monkeypatch.setattr(tensorrt_export, "engine_from_network", fake_engine_from_network)
+        monkeypatch.setattr(tensorrt_export, "save_file", lambda contents, dest, description=None: None)
+
+        config = TensorRTConfig(
+            quantization="int8",
+            calibration_data=str(tmp_path),
+            verbose=False,
+            hardware_compatibility="same_compute_capability",
+            version_compatible=True,
+            timing_cache=cache,
+        )
+        engine_path = TensorRTExporter(config).build_engine(str(tmp_path / "model.onnx"))
+
+        (_, create_kwargs), engine_kwargs = calls["engine"][0], calls["engine"][1]
+        assert create_kwargs["hardware_compatibility_level"] == "level:same_compute_capability"
+        assert create_kwargs["version_compatible"] is True
+        assert Path(create_kwargs["load_timing_cache"]).samefile(cache)
+        assert Path(engine_kwargs["save_timing_cache"]).samefile(cache)
+        assert engine_path == str(tmp_path / "model_int8_same_compute_capability_version_compatible.trt")
+
+    def test_dry_run_names_an_int8_engine_with_its_portability_details(self, tmp_path: Path) -> None:
+        config = TensorRTConfig(
+            quantization="int8",
+            calibration_data=str(tmp_path),
+            hardware_compatibility="ampere_plus",
+            version_compatible=True,
+        )
+        engine_path = TensorRTExporter(config).build_engine(str(tmp_path / "model.onnx"), dry_run=True)
+        assert engine_path == str(tmp_path / "model_int8_ampere_plus_version_compatible.trt")
+
+    def test_description_does_not_replace_a_foreign_file_beside_an_int8_engine(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        (tmp_path / "model_int8.json").write_text("{}")  # a label map of the user's own, not an RF-DETR description
+        monkeypatch.setattr(TensorRTExporter, "_require_tensorrt", classmethod(lambda cls: None))
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
+        monkeypatch.setattr(onnx_export.OnnxExporter, "__call__", lambda *_: tmp_path / "model.onnx")
+        monkeypatch.setattr(TensorRTExporter, "_build", lambda *_, **__: pytest.fail("the engine was built"))
+        config = TensorRTConfig(quantization="int8", calibration_data=str(tmp_path), metadata=True)
+        with pytest.raises(FileExistsError, match="model_int8.json"):
+            TensorRTExporter(config)._convert(_export_graph())
 
 
 class TestPlanInt8:

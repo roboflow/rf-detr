@@ -5,10 +5,10 @@
 # ------------------------------------------------------------------------
 """Calibration data for the static-quantization export paths.
 
-Static post-training quantization derives activation ranges from data, so ONNX and OpenVINO both need the same thing:
-representative images, preprocessed exactly as inference preprocesses them. That is one job with one correct answer, so
-it lives here rather than once per format -- and it stays free of both formats' heavy optional dependencies, which is
-what lets each import it without dragging in the other's runtime.
+Static post-training quantization derives activation ranges from data, so ONNX, OpenVINO and TensorRT all need the same
+thing: representative images, preprocessed exactly as inference preprocesses them. That is one job with one correct
+answer, so it lives here rather than once per format -- and it stays free of every format's heavy optional dependencies,
+which is what lets each import it without dragging in another's runtime.
 
 The accepted forms mirror ``RFDETR.export``'s *calibration_data* keyword: a directory of images, a ``.npy`` file, or an
 array. A directory is the normal case and the only one where preprocessing happens here; arrays are taken as already
@@ -32,9 +32,9 @@ logger = get_logger()
 #: Image suffixes read from a *calibration_data* directory.
 IMAGE_SUFFIXES: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp"})
 
-#: Fewest calibration samples both INT8 paths accept without a warning. A conservative heuristic floor, not a measured
-#: threshold: min/max activation ranges taken from a handful of images rarely cover what the model sees in deployment,
-#: and the resulting model still loads and runs, so the accuracy loss is otherwise silent.
+#: Fewest calibration samples the ONNX and OpenVINO INT8 paths accept without a warning. A conservative heuristic
+#: floor, not a measured threshold: min/max activation ranges taken from a handful of images rarely cover what the
+#: model sees in deployment, and the resulting model still loads and runs, so the accuracy loss is otherwise silent.
 MIN_CALIBRATION_SAMPLES: int = 32
 
 
@@ -150,8 +150,10 @@ def calibration_batches(
     path or array is taken as already preprocessed and is passed through unchanged. A ``.npy`` file is memory-mapped
     rather than read up front, so only the samples being converted are paged in.
 
-    Both quantizers materialize the whole sequence before calibrating (ONNX Runtime rewinds its reader, NNCF takes a
-    sized dataset), so peak memory grows with the number of samples: roughly ``N * C * H * W * 4`` bytes.
+    The ONNX and OpenVINO quantizers materialize the whole sequence before calibrating (ONNX Runtime rewinds its
+    reader, NNCF takes a sized dataset), so their peak memory grows with the number of samples: roughly
+    ``N * C * H * W * 4`` bytes. The TensorRT quantizer consumes them lazily, one export batch at a time, so its memory
+    grows with ``batch_size`` rather than with the number of samples.
 
     Args:
         calibration_data: Directory of images, path to a ``.npy`` file, or a preprocessed array.
