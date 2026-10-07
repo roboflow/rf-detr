@@ -360,8 +360,10 @@ def gen_sineembed_for_position(pos_tensor: Tensor, dim: int = 128, out_dtype: to
 def select_top_rows(scores: Tensor, k: int) -> Callable[[Tensor], Tensor]:
     """Rank ``(batch, tokens)`` scores and return a function that picks the ``k`` best rows of a token tensor.
 
-    The eval/export two-stage query selection calls this through ``Transformer.select_top_rows``, so an exporter can
-    replace the ranking with one its target runs natively (see :mod:`rfdetr.export._neural_engine`).
+    The per-group two-stage query selection loop calls this through ``Transformer.select_top_rows``, so an exporter can
+    replace the ranking with one its target runs natively (see :mod:`rfdetr.export._neural_engine`). That loop runs in
+    eval and export, and in training whenever the batched ``Transformer._two_stage_group_selection`` path is not taken;
+    the batched path calls ``torch.topk`` itself and never reaches this hook.
 
     Args:
         scores: One score per token.
@@ -617,7 +619,9 @@ class Transformer(nn.Module):
         self.d_model = d_model
         self.dec_layers = num_decoder_layers
         self.group_detr = group_detr
-        # Eval/export two-stage query selection. An exporter can swap it on its copy of the model.
+        # Query selection of the per-group two-stage loop: eval, export, and training when the batched
+        # _two_stage_group_selection path (which calls torch.topk directly) is not taken. An exporter can swap it on
+        # its copy of the model.
         self.select_top_rows: Callable[[Tensor, int], Callable[[Tensor], Tensor]] = select_top_rows
         self.num_feature_levels = num_feature_levels
         self.bbox_reparam = bbox_reparam
