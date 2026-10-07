@@ -361,7 +361,7 @@ GitHub Actions workflows in `.github/workflows/`:
 
 **Concurrency:** PRs cancel in-progress runs on new pushes
 
-**Pretrained weights cache:** Jobs that build pretrained models set `RF_HOME` to `${{ github.workspace }}/.rfdetr-weights` and restore one cross-OS Actions cache entry keyed on the git blob hash of `src/rfdetr/assets/model_weights.py` plus the installed `rfdetr_plus` version. Only the ubuntu / Python 3.13 leg of `try-all-models` (`ci-integrations.yml`) writes it, on push to `develop`, and that leg skips the restore so the real download and MD5 check stay covered; every other job only restores. Keep the key format identical across `ci-integrations.yml`, `ci-tests-gpu.yml` and `ci-legacy-checkpoints.yml`, and never save it from a PR run.
+**Pretrained weights cache:** Jobs that build pretrained models set `RF_HOME` to `${{ github.workspace }}/.rfdetr-weights` and restore one cross-OS Actions cache entry. The full key is the git blob hash of `src/rfdetr/assets/model_weights.py` plus the installed `rfdetr_plus` version; keep that format identical between the `try-all-models` writer in `ci-integrations.yml` and the exact-key reader in `ci-tests-gpu.yml`. The OpenVINO/LiteRT rows and `ci-legacy-checkpoints.yml` deliberately restore by registry-hash prefix because they need only core weights. Only the ubuntu / Python 3.13 `try-all-models` leg writes the cache, on push to `develop`, and that leg skips restore so the real download and MD5 check stay covered; never save it from a PR run.
 
 ## Additional Resources
 
