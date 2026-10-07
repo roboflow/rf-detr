@@ -153,10 +153,57 @@ The fp16 bundle is an iOS 15 program on purpose. An iOS 16 program runs `resampl
 | `RFDETRMedium`  | 705        | 15         | 99.7%                              |
 | `RFDETRSegNano` | 725        | 15         | 99.9%                              |
 
-Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work.
+Those eleven to fifteen ops are the whole boundary, and they cost 0.1% to 0.3% of the model's estimated work. A [Neural Engine export](#neural-engine-export) runs the query selection on the ANE as well.
 
 At fp32 there is no boundary to speak of, because there is no ANE: the plan reports *every* op as ANE-unsupported, and the same RFDETRNano bundle runs all 597 ops on the GPU under `ALL` and all 597 on the CPU under `CPU_AND_NE`.
 
 **`ALL` is not always the fastest choice.** With `ALL`, Core ML is free to put part of the graph on the GPU, and for `RFDETRSegNano` it does: the plan splits 79% ANE / 21% GPU (measured on the earlier iOS 16 bundle; not re-measured for the iOS 15 bundle), and the transfers between them cost real time — 44.2 ms under `ALL` against 38.8 ms under `CPU_AND_NE` (p50, same methodology as the table above). Whether detection models show the same gap was not measured here. Measure both on your target device rather than assuming the default is best.
 
 The [ExecuTorch CoreML delegate](executorch.md#coreml-backend-apple-neural-engine-fp16) lowers RF-DETR to a single Core ML model inside the `.pte`, and that model does reach the Neural Engine. Its internal split is not measurable with `MLComputePlan`, which needs an `.mlpackage`, so the table above is not a statement about the `.pte`.
+
+## Neural Engine Export
+
+`coreml_neural_engine=True` exports a graph that runs almost in full on the ANE. Every recent A-series (iPhone, iPad) and M-series (Mac) chip has an ANE. The flag is off by default. It needs `coreml_precision="float16"`: the ANE runs fp16 only, so an fp32 export with the flag logs a warning.
+
+```python
+model.export(format="coreml", coreml_precision="float16", coreml_neural_engine=True)
+```
+
+The graph has the same weights, inputs, outputs and minimum OS as the default fp16 export. Two parts of it change:
+
+- The backbone attention runs as one einsum pair per head, on a channels-first layout, in query chunks of at most 256 tokens. This is Apple's [`SPLIT_EINSUM_V2`](https://github.com/apple/ml-ane-transformers) pattern: the ANE runs matmul and convolution ops much faster than a fused attention op.
+- The two-stage query selection ranks the scores with comparisons and a sum, and selects the rows with a one-hot matmul.
+
+Under `CPU_AND_NE`, only `resample` and its `cast` ops stay on the CPU: 4, 6 and 8 ops for `RFDETRNano`, `RFDETRSmall` and `RFDETRMedium`, with 99.8% of the estimated work on the ANE (`MLComputePlan`, Apple M4 Max).
+
+The bundle name has `-ane` after the precision, `{variant}_fp16-ane.mlpackage`, so it does not replace a default export in the same folder. An explicit `output_name` is used as given.
+
+**Use it only with `CPU_AND_NE` or `ALL` compute units.** On the CPU and the GPU, this graph is slower than the default graph. Single-image latency, pretrained models at their default resolutions, Apple M4 Max (16-core CPU, 40-core GPU; macOS 27.0.1, coremltools 9.0), fp16, batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:
+
+| Model          | Export                      | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL`    |
+| -------------- | --------------------------- | ---------- | ------------ | ------------- | -------- |
+| `RFDETRNano`   | default                     | 31.3       | 22.4         | **20.1**      | 22.9     |
+| `RFDETRNano`   | `coreml_neural_engine=True` | 36.1       | **17.7**     | 24.0          | 18.7     |
+| `RFDETRSmall`  | default                     | 45.6       | 34.5         | **23.3**      | 39.3     |
+| `RFDETRSmall`  | `coreml_neural_engine=True` | 55.4       | 30.4         | 31.5          | **30.2** |
+| `RFDETRMedium` | default                     | 47.2       | 44.7         | **24.0**      | 49.2     |
+| `RFDETRMedium` | `coreml_neural_engine=True` | 65.5       | 36.6         | **33.0**      | 44.2     |
+
+On this M4 Max, the Neural Engine graph on the ANE is the fastest choice for `RFDETRNano`, and the default graph on the GPU for `RFDETRSmall` and `RFDETRMedium`. Measure both exports on your target device.
+
+The ANE takes longer to compile this graph on first load: 6.4, 9.3 and 10.3 s for the three models, against 4.3, 4.5 and 5.2 s for the default graph. Later loads of the same bundle use the system cache and take less than 0.1 s.
+
+The two graphs give close but not identical outputs, and the same accuracy. On COCO val2017 (all 5000 images, `CPU_AND_NE`, same decoding for all rows, Apple M4 Max):
+
+| Model          | Export                      | mAP@[.5:.95] | mAP@.5 |
+| -------------- | --------------------------- | ------------ | ------ |
+| `RFDETRNano`   | default                     | 48.0         | 67.1   |
+| `RFDETRNano`   | `coreml_neural_engine=True` | 48.0         | 67.1   |
+| `RFDETRSmall`  | default                     | 52.8         | 71.9   |
+| `RFDETRSmall`  | `coreml_neural_engine=True` | 52.8         | 71.9   |
+| `RFDETRMedium` | default                     | 54.6         | 73.5   |
+| `RFDETRMedium` | `coreml_neural_engine=True` | 54.6         | 73.5   |
+
+!!! note "Equal scores and other models"
+
+    The one-hot selection puts equal scores in index order, lowest first. `torch.topk` does not specify an order for them, so equal scores at the k-th place can select different rows. A model without the box reparameterization of the released models (`bbox_reparam=True`) keeps `topk`, and the export logs a warning.
