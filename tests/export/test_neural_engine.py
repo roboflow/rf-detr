@@ -47,6 +47,7 @@ def _two_stage_transformer() -> Transformer:
 
 class TestOneHotQuerySelection:
     def test_transformer_outputs_match_top_k_gather(self) -> None:
+        """Verify that one-hot row selection matches the default top-k gather outputs."""
         torch.manual_seed(0)
         transformer = _two_stage_transformer()
         hidden_dim, feature_size = 16, 6
