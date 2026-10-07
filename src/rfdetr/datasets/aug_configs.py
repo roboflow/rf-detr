@@ -80,7 +80,7 @@ or torchvision defaults. Install it with ``pip install 'rfdetr[augment]'``.
 | ``HorizontalFlip`` | ``K.RandomHorizontalFlip`` | Direct |
 | ``VerticalFlip`` | ``K.RandomVerticalFlip`` | Direct |
 | ``Rotate`` | ``K.RandomRotation`` | ``limit`` may be scalar or tuple |
-| ``Affine`` | ``K.RandomAffine`` | ``translate_percent`` fraction; scalar -> signed; CPU warning; scale -> ``(v, v)`` |
+| ``Affine`` | ``K.RandomAffine`` / pixel translation | Pixel shifts or fractional translation; see below |
 | ``ColorJitter`` | ``K.ColorJiggle`` | Same multiplicative semantics |
 | ``ToGray`` | ``K.RandomGrayscale`` | Grayscale, 3 channels; only ``p`` honored, method/num_output_channels ignored |
 | ``RandomBrightnessContrast`` | ``K.ColorJiggle`` | ``brightness_limit`` / ``contrast_limit`` direct |
@@ -115,6 +115,13 @@ Use the Albumentations backend when that distribution must be preserved. ``inter
 Note that
 Albumentations itself deprecates ``ShiftScaleRotate`` in favour of ``Affine``, which this backend already
 supports; new configs should prefer ``Affine``.
+
+``Affine(translate_px=...)`` accepts fixed integers, inclusive integer pairs, and per-axis ``x``/``y``
+mappings on Kornia. It applies whole-pixel shifts to images, boxes, instance masks and padding masks together.
+Only pure translation is supported in this form: nonzero rotation/shear, nonunit scale, nonzero fill, reflected
+borders and shape-changing options raise at pipeline construction. Use Albumentations for those combinations.
+The existing ``translate_percent`` mapping uses a size fraction; a scalar becomes a signed Kornia range instead
+of Albumentations' fixed positive shift and emits a warning. A scalar ``scale`` becomes ``(v, v)``.
 
 Not yet supported on Kornia: ``HueSaturationValue`` (Albumentations shifts hue/saturation/value additively,
 Kornia's ``ColorJiggle`` scales them multiplicatively, so there is no faithful mapping), and the geometric

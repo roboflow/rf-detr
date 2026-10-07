@@ -394,6 +394,47 @@ def _make_rotate(params: dict[str, Any]) -> Any:
     return rotation
 
 
+def _pixel_translation_bounds(value: Any) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Normalize Albumentations pixel translation to inclusive x/y ranges.
+
+    Args:
+        value: Integer, pair, or mapping with ``x`` and/or ``y`` entries.
+
+    Returns:
+        Separate horizontal and vertical integer bounds.
+
+    Raises:
+        ValueError: If a range is malformed, non-integral, or reversed.
+
+    Examples:
+        >>> _pixel_translation_bounds({"x": (-2, 4), "y": 3})
+        ((-2, 4), (3, 3))
+    """
+    if isinstance(value, dict):
+        if not value.keys() & {"x", "y"} or value.keys() - {"x", "y"}:
+            raise ValueError("Affine translate_px must have only 'x' and/or 'y' keys.")
+        components = (value.get("x", 0), value.get("y", 0))
+    else:
+        components = (value, value)
+
+    bounds: list[tuple[int, int]] = []
+    for component in components:
+        if isinstance(component, int) and not isinstance(component, bool):
+            lower = upper = component
+        elif (
+            isinstance(component, (tuple, list))
+            and len(component) == 2
+            and all(isinstance(item, int) and not isinstance(item, bool) for item in component)
+        ):
+            lower, upper = component
+        else:
+            raise ValueError("Affine translate_px axes must be integers or two-integer (min, max) ranges.")
+        if lower > upper:
+            raise ValueError("Affine translate_px range minimum must not exceed maximum.")
+        bounds.append((lower, upper))
+    return bounds[0], bounds[1]
+
+
 def _make_affine(params: dict[str, Any]) -> Any:
     """Build a ``K.RandomAffine`` from aug_config params.
 
@@ -405,7 +446,54 @@ def _make_affine(params: dict[str, Any]) -> Any:
     """
     from kornia.augmentation import RandomAffine
 
+    translate_px = params.get("translate_px")
     translate_percent = params.get("translate_percent")
+    if translate_px is not None and translate_percent is not None:
+        raise ValueError("Affine accepts either translate_px or translate_percent, not both.")
+
+    scale = params.get("scale")
+    if isinstance(scale, (int, float)) and not isinstance(scale, bool):
+        scale = _as_range(scale)
+
+    if translate_px is not None:
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+        if isinstance(scale, dict) or isinstance(params.get("shear"), dict):
+            raise ValueError("Kornia Affine translate_px cannot express per-axis scale or shear; use albumentations.")
+        if params.get("rotate", 0.0) not in (0, 0.0, (0, 0), [0, 0]):
+            raise ValueError("Kornia Affine translate_px supports pure pixel translation only (rotate=0).")
+        scale_as_tuple = tuple(scale) if isinstance(scale, (list, tuple)) else scale
+        if scale_as_tuple is not None and scale_as_tuple != (1.0, 1.0):
+            raise ValueError("Kornia Affine translate_px supports pure pixel translation only (scale=1).")
+        if params.get("shear", 0.0) not in (0, 0.0, (0, 0), [0, 0]):
+            raise ValueError("Kornia Affine translate_px supports pure pixel translation only (shear=0).")
+        for name, default in (
+            ("fit_output", False),
+            ("keep_ratio", False),
+            ("balanced_scale", False),
+            ("rotate_method", "largest_box"),
+            ("mask_interpolation", 0),
+        ):
+            if params.get(name, default) != default:
+                raise ValueError(f"Kornia Affine translate_px does not support {name}={params[name]!r}.")
+        for name in ("fill", "fill_mask"):
+            fill = params.get(name, 0)
+            fill_values = fill if isinstance(fill, (tuple, list)) else (fill,)
+            if any(value != 0 for value in fill_values):
+                raise ValueError(f"Kornia Affine translate_px requires {name}=0; use albumentations otherwise.")
+        interpolation = params.get("interpolation", 1)
+        if interpolation not in (0, 1):
+            raise ValueError("Kornia Affine translate_px supports only nearest or linear image interpolation.")
+        border_mode = params.get("border_mode", 0)
+        padding_modes = {0: "zeros", 1: "border"}
+        if border_mode not in padding_modes:
+            raise ValueError("Kornia Affine translate_px supports only constant or replicate borders.")
+        return PixelTranslatedAffine(
+            _pixel_translation_bounds(translate_px),
+            p=params.get("p", 0.5),
+            padding_mode=padding_modes[border_mode],
+        )
+
     if isinstance(translate_percent, (int, float)) and not isinstance(translate_percent, bool):
         logger.warning(
             "GPU augmentation (Kornia) Affine scalar translate_percent=%s samples signed translations on both axes; "
@@ -419,10 +507,6 @@ def _make_affine(params: dict[str, Any]) -> Any:
         translate: float | tuple[float, float] | list[float] | None = (magnitude, magnitude)
     else:
         translate = translate_percent
-
-    scale = params.get("scale")
-    if isinstance(scale, (int, float)) and not isinstance(scale, bool):
-        scale = _as_range(scale)
 
     return RandomAffine(
         degrees=params.get("rotate", (-15, 15)),

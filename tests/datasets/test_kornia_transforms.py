@@ -11,6 +11,7 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 
@@ -1471,6 +1472,226 @@ def _affine_ranges(transform: Any) -> dict[str, tuple[float, float]]:
             )
         resolved[key] = tuple(float(v) for v in value)
     return resolved
+
+
+class TestAffinePixelTranslation(_RequiresKornia):
+    """Pixel translation must move image and training targets together."""
+
+    def test_fixed_translation_moves_image_boxes_and_masks(self) -> None:
+        """The GPU-backend config must not silently discard ``translate_px``."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        config = {"Affine": {"translate_px": {"x": (4, 4), "y": (0, 0)}, "rotate": 0.0, "scale": 1.0, "p": 1.0}}
+        pipeline = build_kornia_pipeline(config, resolution=64, with_masks=True)
+        image = torch.arange(64 * 80, dtype=torch.float32).reshape(1, 1, 64, 80) / (64 * 80)
+        boxes = torch.tensor([[[30.0, 30.0, 34.0, 34.0]]])
+        masks = torch.zeros(1, 2, 64, 80)
+        masks[0, 0, 30:34, 30:34] = 1.0
+        masks[0, 1, :, 70:] = 1.0
+
+        image_out, boxes_out, masks_out = pipeline(image, boxes, masks)
+
+        expected_image = torch.zeros_like(image)
+        expected_image[:, :, :, 4:] = image[:, :, :, :-4]
+        expected_masks = torch.zeros_like(masks)
+        expected_masks[:, :, :, 4:] = masks[:, :, :, :-4]
+        torch.testing.assert_close(image_out, expected_image, rtol=0, atol=1e-5)
+        torch.testing.assert_close(boxes_out, torch.tensor([[[34.0, 30.0, 38.0, 34.0]]]), rtol=0, atol=1e-5)
+        torch.testing.assert_close(masks_out, expected_masks, rtol=0, atol=0)
+
+    def test_fixed_vertical_translation_moves_image_boxes_and_masks(self) -> None:
+        """A pure y-axis shift must move pixels, boxes, and masks down together.
+
+        ``apply_transform`` indexes rows with ``offsets[:, 1:2]`` and columns with ``offsets[:, 0:1]``
+        (``_kornia_pixel_affine.py``), while boxes and masks are carried through Kornia's own matrix-based affine
+        transform built from the same ``translations`` parameter. A sign or axis mix-up confined to the y-component is
+        invisible when every other case in this module fixes ``y=0``, because ``-0`` and ``+0`` index identically;
+        isolate the vertical axis here with ``x=0`` so such a divergence cannot hide behind a nonzero horizontal offset.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        config = {"Affine": {"translate_px": {"x": (0, 0), "y": (3, 3)}, "rotate": 0.0, "scale": 1.0, "p": 1.0}}
+        pipeline = build_kornia_pipeline(config, resolution=64, with_masks=True)
+        image = torch.arange(80 * 64, dtype=torch.float32).reshape(1, 1, 80, 64) / (80 * 64)
+        boxes = torch.tensor([[[30.0, 30.0, 34.0, 34.0]]])
+        masks = torch.zeros(1, 2, 80, 64)
+        masks[0, 0, 30:34, 30:34] = 1.0
+        masks[0, 1, 70:, :] = 1.0
+
+        image_out, boxes_out, masks_out = pipeline(image, boxes, masks)
+
+        expected_image = torch.zeros_like(image)
+        expected_image[:, :, 3:, :] = image[:, :, :-3, :]
+        expected_masks = torch.zeros_like(masks)
+        expected_masks[:, :, 3:, :] = masks[:, :, :-3, :]
+        torch.testing.assert_close(image_out, expected_image, rtol=0, atol=1e-5)
+        torch.testing.assert_close(boxes_out, torch.tensor([[[30.0, 33.0, 34.0, 37.0]]]), rtol=0, atol=1e-5)
+        torch.testing.assert_close(masks_out, expected_masks, rtol=0, atol=0)
+
+    @pytest.mark.parametrize(
+        "configured,expected",
+        [
+            pytest.param(3, ((3, 3), (3, 3)), id="scalar-both-axes"),
+            pytest.param((-2, 4), ((-2, 4), (-2, 4)), id="range-both-axes"),
+            pytest.param({"x": (-2, 4)}, ((-2, 4), (0, 0)), id="x-only"),
+            pytest.param({"y": -3}, ((0, 0), (-3, -3)), id="y-only"),
+        ],
+    )
+    def test_integer_parameter_ranges(self, configured: Any, expected: tuple[tuple[int, int], tuple[int, int]]) -> None:
+        """The public builder preserves signed, inclusive per-axis pixel ranges."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Affine": {"translate_px": configured, "p": 1.0}}, resolution=32)
+        transform = next(iter(pipeline.children()))
+        torch.manual_seed(0)
+        sampled = transform.generate_parameters((512, 1, 16, 20))["translations"]
+        assert sampled.shape == (512, 2)
+        assert sampled[:, 0].min().item() == expected[0][0]
+        assert sampled[:, 0].max().item() == expected[0][1]
+        assert sampled[:, 1].min().item() == expected[1][0]
+        assert sampled[:, 1].max().item() == expected[1][1]
+        assert torch.equal(sampled, sampled.round())
+
+    def test_zero_probability_preserves_inputs(self) -> None:
+        """``p=0`` keeps the historical no-augmentation behavior."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Affine": {"translate_px": 4, "p": 0.0}}, resolution=32, with_masks=True)
+        image = torch.rand(2, 1, 24, 32)
+        boxes = torch.tensor([[[4.0, 5.0, 8.0, 9.0]], [[10.0, 8.0, 16.0, 15.0]]])
+        masks = torch.zeros(2, 1, 24, 32)
+        masks[:, :, 5:9, 4:8] = 1.0
+        image_out, boxes_out, masks_out = pipeline(image, boxes, masks)
+        torch.testing.assert_close(image_out, image, rtol=0, atol=0)
+        torch.testing.assert_close(boxes_out, boxes, rtol=0, atol=0)
+        torch.testing.assert_close(masks_out, masks, rtol=0, atol=0)
+
+    def test_partial_probability_keeps_each_image_and_target_aligned(self) -> None:
+        """Kornia's per-image selection must not mix selected and unselected targets."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Affine": {"translate_px": {"x": 2}, "p": 0.5}}, resolution=12)
+        image = torch.zeros(16, 1, 8, 12)
+        image[:, :, 3, 3] = 1.0
+        boxes = torch.tensor([[[3.0, 3.0, 4.0, 4.0]]]).expand(16, -1, -1).clone()
+        torch.manual_seed(3)
+
+        image_out, boxes_out = pipeline(image, boxes)
+
+        selected = boxes_out[:, 0, 0] > 3.5
+        assert selected.any() and (~selected).any()
+        expected_x = torch.where(selected, 5, 3)
+        for batch_index in range(16):
+            assert image_out[batch_index, 0, 3, expected_x[batch_index]] == 1
+        torch.testing.assert_close(boxes_out[:, 0, 0], expected_x.float(), rtol=0, atol=0)
+
+    def test_no_boxes_still_moves_image_and_padding_mask(self) -> None:
+        """A background-only batch does not depend on a populated box tensor."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline(
+            {"Affine": {"translate_px": {"x": -2}, "p": 1.0}}, resolution=8, with_masks=True
+        )
+        image = torch.arange(8, dtype=torch.float32).reshape(1, 1, 1, 8)
+        boxes = torch.empty(1, 0, 4)
+        padding = torch.zeros(1, 1, 1, 8)
+        padding[:, :, :, 6:] = 1.0
+
+        image_out, boxes_out, padding_out = pipeline(image, boxes, padding)
+
+        torch.testing.assert_close(image_out, torch.tensor([[[[2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 0.0, 0.0]]]]))
+        assert boxes_out.shape == (1, 0, 4)
+        expected_padding = torch.zeros_like(padding)
+        expected_padding[:, :, :, 4:6] = 1.0
+        torch.testing.assert_close(padding_out, expected_padding, rtol=0, atol=0)
+
+    @pytest.mark.parametrize(
+        "border_mode,interpolation",
+        [
+            pytest.param(0, 1, id="constant-linear"),
+            pytest.param(1, 1, id="replicate-linear"),
+            pytest.param(0, 0, id="constant-nearest"),
+        ],
+    )
+    def test_fixed_translation_matches_albumentations_geometry(self, border_mode: int, interpolation: int) -> None:
+        """Image, box, and mask geometry matches the CPU backend on a non-square input."""
+        albumentations = pytest.importorskip("albumentations")
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        config = {
+            "translate_px": {"x": (4, 4), "y": (0, 0)},
+            "rotate": 0.0,
+            "scale": 1.0,
+            "shear": 0.0,
+            "border_mode": border_mode,
+            "interpolation": interpolation,
+            "p": 1.0,
+        }
+        image = np.arange(7 * 9 * 3, dtype=np.uint8).reshape(7, 9, 3)
+        object_mask = np.zeros((7, 9), dtype=np.uint8)
+        object_mask[2:5, 1:4] = 1
+        padding_mask = np.zeros((7, 9), dtype=np.uint8)
+        padding_mask[:, 7:] = 1
+        cpu = albumentations.Compose(
+            [albumentations.Affine(**config)], bbox_params=albumentations.BboxParams(format="pascal_voc")
+        )(image=image, bboxes=[(1, 2, 4, 5)], masks=[object_mask, padding_mask])
+        pipeline = build_kornia_pipeline({"Affine": config}, resolution=7, with_masks=True)
+        image_tensor = torch.from_numpy(image.copy()).permute(2, 0, 1).float().unsqueeze(0) / 255
+        boxes = torch.tensor([[[1.0, 2.0, 4.0, 5.0]]])
+        masks = torch.from_numpy(np.stack((object_mask, padding_mask))).float().unsqueeze(0)
+
+        image_out, boxes_out, masks_out = pipeline(image_tensor, boxes, masks)
+
+        cpu_image = torch.from_numpy(cpu["image"].copy()).permute(2, 0, 1).float().unsqueeze(0) / 255
+        cpu_masks = torch.from_numpy(np.stack(cpu["masks"]).copy()).float().unsqueeze(0)
+        torch.testing.assert_close(image_out, cpu_image, rtol=0, atol=1e-5)
+        torch.testing.assert_close(boxes_out, torch.tensor([cpu["bboxes"]]), rtol=0, atol=1e-5)
+        torch.testing.assert_close(masks_out, cpu_masks, rtol=0, atol=0)
+
+    @pytest.mark.parametrize(
+        "translation,other,diagnostic",
+        [
+            pytest.param(True, {}, "integers", id="boolean"),
+            pytest.param(1.5, {}, "integers", id="fractional-pixel"),
+            pytest.param((3, -3), {}, "minimum", id="reversed-range"),
+            pytest.param((1, 2, 3), {}, "integers", id="three-element-range"),
+            pytest.param({"z": 4}, {}, "keys", id="wrong-axis"),
+            pytest.param(4, {"translate_percent": 0.1}, "either", id="two-translation-units"),
+            pytest.param(4, {"border_mode": 2}, "border", id="unsupported-reflect-mode"),
+            pytest.param(4, {"border_mode": 4}, "border", id="reflected-box-duplication"),
+            pytest.param(4, {"fill": 1}, "fill", id="unsupported-nonzero-fill"),
+            pytest.param(4, {"fit_output": True}, "fit_output", id="output-shape-change"),
+            pytest.param(4, {"scale": {"x": (0.8, 1.2)}}, "per-axis scale", id="unsupported-axis-scale"),
+            pytest.param(4, {"scale": [0.8, 1.2]}, "scale=1", id="nonunit-list-scale"),
+        ],
+    )
+    def test_unsupported_pixel_affine_config_fails_at_build(
+        self, translation: Any, other: dict[str, Any], diagnostic: str
+    ) -> None:
+        """Unsupported settings fail before training instead of changing silently."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match=diagnostic):
+            build_kornia_pipeline({"Affine": {"translate_px": translation, **other}}, resolution=32)
+
+    @pytest.mark.parametrize(
+        "scale",
+        [
+            pytest.param((1.0, 1.0), id="unit-tuple"),
+            pytest.param([1.0, 1.0], id="unit-list"),
+            pytest.param(1, id="unit-scalar-int"),
+        ],
+    )
+    def test_unit_scale_variants_build_for_translate_px(self, scale: Any) -> None:
+        """A semantically unit scale must build regardless of its container type.
+
+        ``scale != (1.0, 1.0)`` previously rejected a list such as ``[1.0, 1.0]`` because Python never treats a list as
+        equal to a tuple, even with identical elements, so only the tuple form built successfully. Each parametrized
+        value here represents the same no-op scale.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        build_kornia_pipeline({"Affine": {"translate_px": 4, "scale": scale, "p": 1.0}}, resolution=32)
 
 
 class TestAffineScalarParameters(_RequiresKornia):
