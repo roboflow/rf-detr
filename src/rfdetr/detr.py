@@ -2220,6 +2220,7 @@ class RFDETR:
         output_name: str | None = None,
         trt_timing_cache: str | os.PathLike[str] | None = None,
         coreml_precision: str | None = None,
+        coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
     ) -> Path:
@@ -2422,6 +2423,12 @@ class RFDETR:
                 PyTorch); ``"float16"`` selects a smaller
                 ANE-oriented bundle (expect larger numeric drift) whose outputs are still float32. Bundles
                 declare iOS 15 / macOS 12 as the minimum OS. Ignored for every other format.
+            coreml_neural_engine: For ``format="coreml"``, export a graph for the Apple Neural Engine, with the same
+                weights: the backbone attention runs as one einsum pair per head in query chunks, and the two-stage
+                query selection as a one-hot matmul. In an fp16 export, only the deformable-attention ``resample`` and
+                its ``cast`` ops run on the CPU. This graph is faster than the default graph on the Neural Engine and
+                slower on the CPU and the GPU, so use it only with ``CPU_AND_NE`` or ``ALL`` compute units. Ignored for
+                every other format.
             coreai_precision: Precision the graph is traced and stored in for ``format="coreai"`` — ``None``
                 (default) or ``"float32"``, or ``"float16"`` for a half-size asset whose input and outputs are
                 float16 too. A float16 keypoint model warns: the asset aborts the process on the Neural Engine.
@@ -2576,6 +2583,7 @@ class RFDETR:
             soc=soc,
             fp16=fp16,
             coreml_precision=coreml_precision,
+            coreml_neural_engine=coreml_neural_engine,
             coreai_precision=coreai_precision,
             openvino_precision=openvino_precision,
             quantization=quantization,
