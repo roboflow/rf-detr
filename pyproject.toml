@@ -451,6 +451,7 @@ addopts = [
 ]
 doctest_norecursedirs = [
     "*_fused_adamw_ema_triton.py",  # CUDA-only DSL module; imported lazily after the Triton gate
+    "_kornia_pixel_affine.py",  # Kornia is optional; this module is imported lazily after the backend gate
 ]
 # Doctest collection is intentionally enabled across tests/ (no doctest_norecursedirs exclusion) so
 # helper-function doctests in test modules run. This previously blanket-excluded tests/* because
