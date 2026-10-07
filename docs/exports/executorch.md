@@ -70,11 +70,11 @@ model.export(format="executorch", backend="coreml")
 
 RF-DETR's graph lowers to a **single** CoreML delegate — no operator is left behind on ExecuTorch's portable CPU kernels — so the `.pte` carries one Core ML model, and the Neural Engine is reachable through it. The compute units are not baked in; the app that loads the `.pte` chooses them, exactly as for a native `.mlpackage`.
 
-Measured on a pretrained `RFDETRNano` (Apple M3 Pro, macOS 27.0, COCO val2017, all 5000 images), this delegate keeps more accuracy than a native fp16 `.mlpackage`: 48.0 mAP against 45.1, at 14.0 ms against 20.8 ms. Both run their arithmetic in fp16, but the native export also stores the weights in fp16, and that is what costs the accuracy.
+Measured on a pretrained `RFDETRNano` (Apple M3 Pro, macOS 27.0.1, COCO val2017, all 5000 images), this delegate scores 48.0 mAP, the same as eager PyTorch and as a native fp16 `.mlpackage`. Both are iOS 15 (specification 6) Core ML programs holding fp16 weights, so the resample ops stay off the Neural Engine in each. The delegate does reach the Neural Engine, but its op split cannot be measured, because `MLComputePlan` needs an `.mlpackage` (see [Native CoreML Export](coreml.md#neural-engine-compute-units-and-the-fallback-boundary)).
 
 !!! note
 
-    CoreML export uses fp16 arithmetic. Top-level detections (bounding boxes and class labels) are correct, but raw tensor values will differ from the PyTorch fp32 baseline — at the fp16 precision level, and through the two-stage query ranking described under [Native CoreML Export](coreml.md#neural-engine-compute-units-and-the-fallback-boundary), which fp16 makes more likely to diverge rather than less. For what fp16 costs in mAP, and for how Core ML splits the model across the ANE, GPU and CPU, see [Neural Engine, compute units, and the fallback boundary](coreml.md#neural-engine-compute-units-and-the-fallback-boundary).
+    CoreML export uses fp16 arithmetic. Top-level detections (bounding boxes and class labels) are correct, but raw tensor values will differ from the PyTorch fp32 baseline — at the fp16 precision level, and through the two-stage query ranking described under [Native CoreML Export](coreml.md#neural-engine-compute-units-and-the-fallback-boundary), which fp16 makes more likely to diverge rather than less. For how Core ML splits the model across the ANE, GPU and CPU, see [Neural Engine, compute units, and the fallback boundary](coreml.md#neural-engine-compute-units-and-the-fallback-boundary).
 
 ## QNN Backend (Qualcomm Snapdragon HTP, fp16)
 

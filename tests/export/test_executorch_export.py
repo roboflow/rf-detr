@@ -565,12 +565,16 @@ class TestBuildPartitioner:
         ],
     )
     def test_returns_partitioner(self, backend: str, leaf: str, cls: str) -> None:
+        """The partitioner is built without compile specs, so the delegate keeps its iOS15 / fp16 defaults."""
         from rfdetr.export._executorch.exporter import _build_partitioner
 
         sentinel = object()
-        mods = _fake_executorch_tree({leaf: {cls: mock.MagicMock(return_value=sentinel)}})
+        partitioner_cls = mock.MagicMock(return_value=sentinel)
+        mods = _fake_executorch_tree({leaf: {cls: partitioner_cls}})
         with mock.patch.dict(sys.modules, mods):
             assert _build_partitioner(backend) == [sentinel]
+
+        partitioner_cls.assert_called_once_with()
 
     @pytest.mark.parametrize(
         ("backend", "leaf"),
@@ -1022,6 +1026,55 @@ def _portable_kernel_call_names(pte_path: Path) -> list[str]:
         for instruction in chain.instructions
         if type(instruction.instr_args).__name__ == "KernelCall"
     ]
+
+
+class _TinyConvNet(torch.nn.Module):
+    """Conv + linear network small enough to lower through XNNPACK and run in well under a second.
+
+    Examples:
+        >>> outputs = _TinyConvNet()(torch.zeros(1, 3, 8, 8))
+        >>> [tuple(t.shape) for t in outputs]
+        [(1, 2)]
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv = torch.nn.Conv2d(3, 4, kernel_size=3, padding=1)
+        self.head = torch.nn.Linear(4, 2)
+
+    def forward(self, pixel_values: torch.Tensor) -> tuple[torch.Tensor]:
+        """Pool the conv features and project them to two logits."""
+        return (self.head(self.conv(pixel_values).mean(dim=(2, 3))),)
+
+
+@executorch_only
+@pytest.mark.integration
+@pytest.mark.e2e_executorch
+class TestExecutorchXnnpackRuntimeSmoke:
+    """A tiny XNNPACK ``.pte`` must run through ``Method.execute`` on the installed executorch runtime.
+
+    Regression guard for executorch 1.5.x, whose runtime fails every ``Method.execute`` call with ``RuntimeError: tensor
+    does not have a device`` (mobile cookbook, Section 9). The real-model ``TestExecutorchEndToEnd`` covers the same
+    call, but is opt-in; this one runs wherever executorch is installed.
+    """
+
+    def test_execute_matches_eager(self, tmp_path: Path) -> None:
+        model = _TinyConvNet().eval()
+        example = torch.randn(1, 3, 8, 8)
+        graph = ExportGraph(
+            model=model,
+            input_tensors=example,
+            input_names=("input",),
+            output_names=("output",),
+            dynamic_axes=None,
+            shape=(8, 8),
+            backbone_only=False,
+        )
+        pte_path = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="xnnpack"))(graph)
+        with torch.no_grad():
+            (eager,) = model(example)
+        (runtime,) = _executorch_runtime_tensors(pte_path, example)
+        torch.testing.assert_close(runtime, eager, atol=1e-5, rtol=1e-5)
 
 
 @executorch_only

@@ -221,6 +221,16 @@ body:not(:has(#dropdown-products:checked)) .products-sublist {
 .md-sidebar--primary {
   flex: 0 20%;
 }
+/* Notebook pages (cookbooks) sit outside the nav tree, so the primary sidebar is empty:
+   drop it and let the notebook use the freed width. */
+@media screen and (min-width: 76.25em) {
+  .md-main__inner:has(.jp-Notebook) .md-sidebar--primary {
+    display: none;
+  }
+}
+.md-main__inner:has(.jp-Notebook) .md-content {
+  max-width: 100%;
+}
 .md-tabs {
   border-bottom: 1px solid rgb(229, 231, 235);
 }

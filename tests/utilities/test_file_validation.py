@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Iterable, Iterator, Literal, Optional
@@ -13,7 +14,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
-from rfdetr.utilities.files import _compute_file_md5, _download_file, _validate_file_md5
+from rfdetr.utilities.files import _compute_file_md5, _download_file, _mkstemp_default_mode, _validate_file_md5
 
 
 class _DummyTqdm:
@@ -298,3 +299,78 @@ class TestDownloadFile:
         assert target_path.read_bytes() == b"data"
         _assert_no_download_temp_files(tmp_path)
         mock_open.assert_not_called()
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
+    @patch("rfdetr.utilities.files.tqdm", _DummyTqdm)
+    @patch("rfdetr.utilities.files.requests.get")
+    def test_download_file_mode_follows_umask(self, mock_get: Mock, process_umask: int, tmp_path: Path) -> None:
+        """The downloaded file gets the mode ``open()`` would give it, not ``mkstemp``'s owner-only ``0o600``."""
+        target_path = tmp_path / "weights.bin"
+        mock_get.return_value = _FakeResponse([b"data"], headers={"content-length": "4"})
+
+        _download_file("https://example.com/file.bin", str(target_path))
+
+        assert stat.S_IMODE(target_path.stat().st_mode) == 0o666 & ~process_umask
+
+
+class TestMkstempDefaultMode:
+    """Tests for the temp-file helper behind the atomic writes, whose mode follows the umask."""
+
+    def test_retries_a_colliding_name(self, tmp_path: Path) -> None:
+        """A candidate name that is already taken is skipped in favour of the next one."""
+        (tmp_path / f"tmp{'a' * 16}").touch()
+        with patch("rfdetr.utilities.files.secrets.token_hex", side_effect=["a" * 16, "b" * 16]):
+            fd, path = _mkstemp_default_mode(tmp_path)
+        os.close(fd)
+        assert Path(path).name == f"tmp{'b' * 16}"
+
+    def test_raises_when_every_candidate_name_is_taken(self, tmp_path: Path) -> None:
+        """Running out of ``tempfile.TMP_MAX`` candidates raises instead of looping forever."""
+        (tmp_path / f"tmp{'a' * 16}").touch()
+        with (
+            patch("rfdetr.utilities.files.tempfile.TMP_MAX", 3),
+            patch("rfdetr.utilities.files.secrets.token_hex", return_value="a" * 16),
+            pytest.raises(FileExistsError, match="No usable temporary file name"),
+        ):
+            _mkstemp_default_mode(tmp_path)
+
+    @pytest.mark.skipif(os.name == "nt", reason="creating symlinks needs elevated privileges on Windows")
+    def test_never_follows_a_planted_symlink(self, tmp_path: Path) -> None:
+        """A symlink planted at a candidate name counts as taken, so the file it points to is never created."""
+        link_target = tmp_path / "link_target"
+        (tmp_path / f"tmp{'a' * 16}").symlink_to(link_target)
+        with patch("rfdetr.utilities.files.secrets.token_hex", side_effect=["a" * 16, "b" * 16]):
+            fd, _ = _mkstemp_default_mode(tmp_path)
+        os.close(fd)
+        assert not link_target.exists()
+
+    def test_creates_the_file_in_the_given_directory(self, tmp_path: Path) -> None:
+        """The temp file lands in the destination directory, so ``os.replace`` stays on one filesystem."""
+        fd, path = _mkstemp_default_mode(tmp_path)
+        os.close(fd)
+        assert Path(path).parent.resolve() == tmp_path.resolve()
+
+    def test_file_name_carries_prefix_and_suffix(self, tmp_path: Path) -> None:
+        """The random part of the name sits between the caller's prefix and suffix."""
+        fd, path = _mkstemp_default_mode(tmp_path, prefix="weights.pth.", suffix=".tmp")
+        os.close(fd)
+        name = Path(path).name
+        assert (name.startswith("weights.pth."), name.endswith(".tmp")) == (True, True)
+
+    def test_returns_an_absolute_path_for_a_relative_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative directory still yields an absolute path, as ``tempfile.mkstemp`` returns."""
+        monkeypatch.chdir(tmp_path)
+        fd, path = _mkstemp_default_mode(Path("."))
+        os.close(fd)
+        assert os.path.isabs(path)
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+    @pytest.mark.parametrize("process_umask", [0o022, 0o027], indirect=True, ids=oct)
+    def test_mode_follows_umask(self, tmp_path: Path, process_umask: int) -> None:
+        """The file is created ``0o666`` minus the umask, as ``open()`` creates one, not ``mkstemp``'s ``0o600``."""
+        fd, path = _mkstemp_default_mode(tmp_path)
+        os.close(fd)
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o666 & ~process_umask
