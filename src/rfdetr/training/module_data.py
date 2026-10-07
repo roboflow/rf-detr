@@ -388,19 +388,6 @@ class RFDETRDataModule(LightningDataModule):
         ns = _namespace_from_configs(self.model_config, self.train_config)
         if stage == "fit":
             requested_backend = self.train_config.augmentation_backend
-            # Keypoint transforms are incompatible with the Kornia GPU pipeline outright, so an
-            # explicit 'kornia'/'gpu' request is rejected here -- before the CUDA readiness check
-            # below -- so a keypoint model without CUDA still sees the keypoint error, not an
-            # unrelated "no CUDA" one.
-            if self.model_config.use_grouppose_keypoints and requested_backend in (
-                AugmentationBackend.KORNIA,
-                "kornia",
-                "gpu",
-            ):
-                raise ValueError(
-                    f"augmentation_backend={requested_backend!r} does not support keypoint transforms. "
-                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
-                )
             from rfdetr.datasets.kornia_transforms import (
                 is_gpu_postprocess,
                 require_gpu_backend_ready,
@@ -424,11 +411,6 @@ class RFDETRDataModule(LightningDataModule):
             # ALBU forces Albumentations even when aug_config is None
             if resolved == AugmentationBackend.ALBU and ns.aug_config is None:
                 ns.aug_config = AUG_CONFIG
-            if self.model_config.use_grouppose_keypoints and is_gpu_postprocess(resolved):
-                raise ValueError(
-                    f"augmentation_backend='{resolved}' does not support keypoint transforms. "
-                    "Set augmentation_backend='cpu' or 'albumentations' when use_grouppose_keypoints=True."
-                )
             if self.train_config.pad_targets_to is not None and is_gpu_postprocess(resolved):
                 # The Kornia GPU pipeline's own collate_boxes/unpack_boxes (kornia_transforms.py)
                 # rebuild their own real/filler mask from each image's box count -- they don't know
@@ -974,11 +956,15 @@ class RFDETRDataModule(LightningDataModule):
 
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, build_normalize
 
+        pipeline_kwargs: dict[str, Any] = {"with_masks": True}
+        if self.model_config.use_grouppose_keypoints:
+            pipeline_kwargs.update(
+                include_keypoints=True, with_keypoints=True, keypoint_flip_pairs=self.train_config.keypoint_flip_pairs
+            )
         self._kornia_pipeline = build_kornia_pipeline(
             self.train_config.aug_config if self.train_config.aug_config is not None else AUG_CONFIG,
             self.model_config.resolution,
-            # The padding mask must receive every geometric warp, even for detection-only batches.
-            with_masks=True,
+            **pipeline_kwargs,
         )
         self._kornia_normalize = build_normalize()
         logger.info("Kornia augmentation pipeline built (resolved=%s)", resolved)
@@ -1005,7 +991,13 @@ class RFDETRDataModule(LightningDataModule):
         if self.trainer is None or not self.trainer.training or kornia_pipeline is None or kornia_normalize is None:
             return batch
 
-        from rfdetr.datasets.kornia_transforms import collate_boxes, collate_masks, unpack_boxes
+        from rfdetr.datasets.kornia_transforms import (
+            collate_boxes,
+            collate_keypoints,
+            collate_masks,
+            keypoint_horizontal_flip_mask,
+            unpack_boxes,
+        )
         from rfdetr.utilities.tensors import NestedTensor
 
         samples, targets = batch
@@ -1015,6 +1007,18 @@ class RFDETRDataModule(LightningDataModule):
         kornia_pipeline.to(img.device)
         kornia_normalize.to(img.device)
         boxes_padded, valid = collate_boxes(targets, img.device)
+        points_padded = visibility = None
+        if self.model_config.use_grouppose_keypoints:
+            points_padded, visibility = collate_keypoints(targets, img.device, valid.shape[1])
+            # Match the continuous-coordinate frame used by keypoints and CPU
+            # box transforms. Kornia's geometric kernels use pixel indices.
+            boxes_padded = boxes_padded - 0.5
+        # Kornia's keypoint transformer cannot reshape a [B, 0, 2] input.
+        # Carry one disposable point through an all-empty batch; target unpacking
+        # below ignores it because every image has zero valid boxes.
+        empty_keypoint_batch = points_padded is not None and points_padded.shape[1] == 0
+        if empty_keypoint_batch:
+            points_padded = img.new_zeros(img.shape[0], 1, 2)
         padding_mask = samples.mask
         if padding_mask is None:
             padding_mask = torch.zeros(img.shape[0], *img.shape[-2:], dtype=torch.bool, device=img.device)
@@ -1026,18 +1030,63 @@ class RFDETRDataModule(LightningDataModule):
                 targets, img.device, n_max=valid.shape[1], image_height=image_height, image_width=image_width
             )
             auxiliary_masks = torch.cat((masks_padded, padding_masks), dim=1)
-            img_aug, boxes_aug, auxiliary_masks_aug = kornia_pipeline(img, boxes_padded, auxiliary_masks)
+            if points_padded is None:
+                img_aug, boxes_aug, auxiliary_masks_aug = kornia_pipeline(img, boxes_padded, auxiliary_masks)
+                points_aug = None
+            else:
+                img_aug, boxes_aug, auxiliary_masks_aug, points_aug = kornia_pipeline(
+                    img, boxes_padded, auxiliary_masks, points_padded
+                )
+                if empty_keypoint_batch:
+                    points_aug = None
             masks_aug = auxiliary_masks_aug[:, : valid.shape[1]]
             padding_mask_aug = auxiliary_masks_aug[:, valid.shape[1]] > 0.5
+            if points_padded is not None:
+                boxes_aug = boxes_aug + 0.5
             img_aug = kornia_normalize(img_aug)
             aug_height, aug_width = img_aug.shape[-2:]
-            targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width, masks_aug=masks_aug)
+            targets = unpack_boxes(
+                boxes_aug,
+                valid,
+                targets,
+                aug_height,
+                aug_width,
+                masks_aug=masks_aug,
+                keypoints_aug=points_aug,
+                keypoint_visibility=visibility,
+                keypoint_flip_pairs=self.train_config.keypoint_flip_pairs,
+                keypoint_flip_mask=keypoint_horizontal_flip_mask(kornia_pipeline, img.shape[0], img.device)
+                if points_aug is not None
+                else None,
+            )
         else:
-            img_aug, boxes_aug, padding_masks_aug = kornia_pipeline(img, boxes_padded, padding_masks)
+            if points_padded is None:
+                img_aug, boxes_aug, padding_masks_aug = kornia_pipeline(img, boxes_padded, padding_masks)
+                points_aug = None
+            else:
+                img_aug, boxes_aug, padding_masks_aug, points_aug = kornia_pipeline(
+                    img, boxes_padded, padding_masks, points_padded
+                )
+                if empty_keypoint_batch:
+                    points_aug = None
             padding_mask_aug = padding_masks_aug[:, 0] > 0.5
+            if points_padded is not None:
+                boxes_aug = boxes_aug + 0.5
             img_aug = kornia_normalize(img_aug)
             aug_height, aug_width = img_aug.shape[-2:]
-            targets = unpack_boxes(boxes_aug, valid, targets, aug_height, aug_width)
+            targets = unpack_boxes(
+                boxes_aug,
+                valid,
+                targets,
+                aug_height,
+                aug_width,
+                keypoints_aug=points_aug,
+                keypoint_visibility=visibility,
+                keypoint_flip_pairs=self.train_config.keypoint_flip_pairs,
+                keypoint_flip_mask=keypoint_horizontal_flip_mask(kornia_pipeline, img.shape[0], img.device)
+                if points_aug is not None
+                else None,
+            )
 
         height, width = img_aug.shape[-2:]
         for target in targets:
@@ -1046,6 +1095,12 @@ class RFDETRDataModule(LightningDataModule):
                 continue
             scale = boxes.new_tensor([width, height, width, height])
             target["boxes"] = box_xyxy_to_cxcywh(boxes) / scale
+        if self.model_config.use_grouppose_keypoints:
+            for target in targets:
+                keypoints = target["keypoints"].clone()
+                keypoints[..., 0] /= width
+                keypoints[..., 1] /= height
+                target["keypoints"] = keypoints
         batch = (NestedTensor(img_aug, padding_mask_aug), targets)
         return batch
 

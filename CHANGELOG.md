@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Keypoint training accepts Kornia augmentation on CUDA. The default backend remains `cpu`; users can select `kornia`/`gpu` explicitly, or select `auto` to use Kornia when available. Image geometry, boxes, padding masks and keypoints share each augmentation draw; keypoint visibility, dropped instances and paired-joint flips stay synchronized.
+
 - `rfdetr.RFDETRAtto`, `rfdetr.RFDETRFemto` and `rfdetr.RFDETRPico`: real-time detection models with a PE-Core-T backbone, provided by `rfdetr_plus` like the XLarge models (`pip install "rfdetr[plus]"`, Platform Model License 1.0). `RFDETR.from_checkpoint()` resolves their checkpoints; an outdated `rfdetr_plus` raises an upgrade hint, and a broken `rfdetr_plus` install no longer blocks loading core checkpoints.
 
 - `rfdetr.models.backbone.register_backbone(encoder, backbone_cls)`: an extension package can provide a non-DINOv2 encoder for a `ModelConfig.encoder` name by subclassing `Backbone` and overriding `_build_encoder`. A registered encoder that defines `set_export_shape(shape)` gets its position embeddings frozen for export, like DINOv2.

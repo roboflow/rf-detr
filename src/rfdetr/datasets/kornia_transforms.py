@@ -8,7 +8,8 @@
 This module provides GPU-side augmentation as an alternative to the CPU-based Albumentations pipeline.  All transforms
 run on the device where the batch already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
 
-Supports detection (boxes only) and segmentation (boxes + instance masks).
+Supports detection (boxes only), segmentation (boxes + instance masks), and
+keypoints (boxes + visible joint coordinates).
 
 Usage::
 
@@ -851,6 +852,8 @@ def build_kornia_pipeline(
     resolution: int,
     with_masks: bool = False,
     include_keypoints: bool = False,
+    with_keypoints: bool = False,
+    keypoint_flip_pairs: list[int] | None = None,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
 
@@ -867,8 +870,13 @@ def build_kornia_pipeline(
             to transport its padding mask; segmentation batches concatenate instance-mask channels before the final
             padding channel. The pipeline then expects three inputs ``(img, boxes, masks)`` and returns three outputs.
             Defaults to ``False`` for direct detection-only callers.
-        include_keypoints: When ``True``, keypoint-unsafe horizontal-flip
-            transforms are dropped with a warning before the Kornia pipeline is built.
+        include_keypoints: Preserve the existing flip-safety behavior: drop
+            horizontal flips when no flip pairs are provided.
+        with_keypoints: When ``True``, add ``"keypoints"`` to ``data_keys``.
+            This is separate from ``include_keypoints`` so existing direct
+            callers using that flag keep the same input arity.
+        keypoint_flip_pairs: Flat left/right joint pairs. A nonempty list keeps
+            horizontal flips; the caller swaps joint slots after each flip.
 
     Returns:
         A ``kornia.augmentation.AugmentationSequential`` instance.
@@ -884,9 +892,12 @@ def build_kornia_pipeline(
     _require_kornia()
     from kornia.augmentation import AugmentationSequential
 
+    if (include_keypoints or with_keypoints) and keypoint_flip_pairs and len(keypoint_flip_pairs) % 2:
+        raise ValueError("keypoint_flip_pairs must contain an even number of joint indices")
+
     filtered_aug_config = filter_keypoint_hflip_augmentations(
         aug_config,
-        include_keypoints=include_keypoints,
+        include_keypoints=(include_keypoints or with_keypoints) and not keypoint_flip_pairs,
         warn=logger.warning,
     )
     assert isinstance(filtered_aug_config, dict)
@@ -901,10 +912,14 @@ def build_kornia_pipeline(
         transforms.append(factory(params))
 
     data_keys = ["input", "bbox_xyxy", "mask"] if with_masks else ["input", "bbox_xyxy"]
-    return AugmentationSequential(
+    if with_keypoints:
+        data_keys.append("keypoints")
+    pipeline = AugmentationSequential(
         *transforms,
         data_keys=data_keys,
     )
+    pipeline._rfdetr_has_keypoint_hflip = with_keypoints and "HorizontalFlip" in filtered_aug_config
+    return pipeline
 
 
 def build_normalize(
@@ -1032,6 +1047,75 @@ def collate_masks(
     return masks_padded
 
 
+def collate_keypoints(targets: list[dict[str, Any]], device: torch.device, n_max: int) -> tuple[Tensor, Tensor]:
+    """Pad keypoints to the box count and retain visibility separately.
+
+    Kornia transforms only xy coordinates. Its pixel-index convention uses
+    ``width - 1 - x`` for a horizontal flip, while RF-DETR's continuous
+    coordinates use ``width - x``. Moving points to pixel-centre coordinates
+    here and back in :func:`unpack_boxes` keeps the latter convention.
+
+    Args:
+        targets: Per-image targets with ``[N, K, 3]`` keypoints.
+        device: Device holding the batch.
+        n_max: Padded box count from :func:`collate_boxes`.
+
+    Returns:
+        Kornia xy points ``[B, n_max * K, 2]`` and visibility
+        ``[B, n_max, K]``. Both are float32.
+
+    Examples:
+        >>> points, visibility = collate_keypoints(
+        ...     [{"keypoints": torch.tensor([[[3., 4., 2.]]])}], torch.device("cpu"), 1
+        ... )
+        >>> points.tolist(), visibility.tolist()
+        ([[[2.5, 3.5]]], [[[2.0]]])
+    """
+    if not targets:
+        return torch.zeros(0, 0, 2, device=device), torch.zeros(0, 0, 0, device=device)
+    k = targets[0]["keypoints"].shape[1]
+    points = torch.zeros(len(targets), n_max, k, 2, dtype=torch.float32, device=device)
+    visibility = torch.zeros(len(targets), n_max, k, dtype=torch.float32, device=device)
+    for i, target in enumerate(targets):
+        keypoints = target["keypoints"]
+        if keypoints.ndim != 3 or keypoints.shape[1:] != (k, 3) or keypoints.shape[0] > n_max:
+            raise ValueError(f"Expected keypoints with shape (N <= {n_max}, {k}, 3), got {tuple(keypoints.shape)}")
+        n = keypoints.shape[0]
+        points[i, :n] = keypoints[..., :2].to(device=device, dtype=torch.float32) - 0.5
+        visibility[i, :n] = keypoints[..., 2].to(device=device, dtype=torch.float32)
+    return points.reshape(len(targets), n_max * k, 2), visibility
+
+
+def keypoint_horizontal_flip_mask(pipeline: Any, batch_size: int, device: torch.device) -> Tensor:
+    """Read per-image horizontal-flip draws from the completed Kornia pipeline.
+
+    Kornia exposes sampled parameters through ``_params`` after a forward pass;
+    the transform matrix alone cannot distinguish horizontal from vertical
+    reflection. Only the horizontal-flip transform needs joint-slot relabeling.
+
+    Args:
+        pipeline: The just-executed AugmentationSequential.
+        batch_size: Number of images in the batch.
+        device: Device holding the batch.
+
+    Returns:
+        Boolean ``[B]`` tensor marking odd horizontal-flip parity.
+
+    Examples:
+        >>> keypoint_horizontal_flip_mask(None, 2, torch.device("cpu")).tolist()
+        [False, False]
+    """
+    flipped = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    found = False
+    for item in getattr(pipeline, "_params", []) or []:
+        if item.name.startswith("RandomHorizontalFlip_"):
+            found = True
+            flipped ^= item.data["batch_prob"].to(device=device, dtype=torch.bool)
+    if getattr(pipeline, "_rfdetr_has_keypoint_hflip", False) and not found:
+        raise RuntimeError("Kornia did not expose horizontal-flip draws; cannot safely relabel paired keypoints")
+    return flipped
+
+
 def unpack_boxes(
     boxes_aug: Tensor,
     valid: Tensor,
@@ -1039,8 +1123,12 @@ def unpack_boxes(
     image_height: int,
     image_width: int,
     masks_aug: Tensor | None = None,
+    keypoints_aug: Tensor | None = None,
+    keypoint_visibility: Tensor | None = None,
+    keypoint_flip_pairs: list[int] | None = None,
+    keypoint_flip_mask: Tensor | None = None,
 ) -> list[dict[str, Any]]:
-    """Unpack augmented boxes (and optionally masks), clamp to image bounds, remove zero-area boxes.
+    """Unpack augmented boxes, masks and keypoints, removing zero-area instances.
 
     After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked back into per-image target dicts.  Boxes
     are clamped to ``[0, W] x [0, H]`` and any that collapse to zero area are removed along with their corresponding
@@ -1057,10 +1145,13 @@ def unpack_boxes(
             (float32) from Kornia.  When provided, masks are filtered by the same ``keep`` mask as boxes, thresholded at
             ``> 0.5`` to bool, and stored under ``"masks"`` in each output target dict.  When ``None``, any existing
             ``"masks"`` entry in the target dict is preserved unchanged.
+        keypoints_aug: Optional Kornia xy points ``[B, N_max * K, 2]``.
+        keypoint_visibility: Original visibility values ``[B, N_max, K]``.
+        keypoint_flip_pairs: Flat left/right index pairs for slot relabeling.
+        keypoint_flip_mask: Per-image horizontal-flip draws ``[B]``.
 
     Returns:
-        A new list of target dicts with updated ``boxes``, ``labels``, ``area``, ``iscrowd``, and (when *masks_aug* is
-        given) ``masks`` entries.
+        A new list of target dicts with aligned boxes and per-instance fields.
     """
     if masks_aug is not None:
         assert masks_aug.shape[:2] == valid.shape, (
@@ -1068,6 +1159,12 @@ def unpack_boxes(
             f"valid shape {tuple(valid.shape)}; ensure collate_masks is called with "
             "n_max=valid.shape[1] from collate_boxes"
         )
+    if keypoints_aug is not None:
+        if keypoint_visibility is None or keypoints_aug.shape[:2] != (
+            valid.shape[0],
+            valid.shape[1] * keypoint_visibility.shape[2],
+        ):
+            raise ValueError("keypoints_aug and keypoint_visibility must match the padded box and joint counts")
     new_targets: list[dict[str, Any]] = []
     for i, t in enumerate(targets):
         t = t.copy()
@@ -1105,9 +1202,21 @@ def unpack_boxes(
         if masks_aug is not None:
             masks_i = masks_aug[i, :n_orig]  # [N_orig, H, W]
             t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD
-        # TODO(keypoints): First public keypoint preview keeps keypoint coordinates unchanged through GPU augmentation
-        # to preserve existing training paths without introducing partial geometry transforms. Add keypoint-aware
-        # Kornia unpack/keep logic once augmentation parity is implemented.
+        if keypoints_aug is not None and keypoint_visibility is not None:
+            k = keypoint_visibility.shape[2]
+            xy = keypoints_aug[i].reshape(valid.shape[1], k, 2)[:n_orig][keep] + 0.5
+            visibility = keypoint_visibility[i, :n_orig][keep]
+            keypoints = torch.cat((xy, visibility.unsqueeze(-1)), dim=-1)
+            inside = (xy[..., 0] >= 0) & (xy[..., 0] <= image_width) & (xy[..., 1] >= 0) & (xy[..., 1] <= image_height)
+            keypoints = keypoints.masked_fill((~inside | (visibility <= 0)).unsqueeze(-1), 0)
+            if keypoint_flip_mask is not None and bool(keypoint_flip_mask[i]) and keypoint_flip_pairs:
+                permutation = list(range(k))
+                for j in range(0, len(keypoint_flip_pairs), 2):
+                    left, right = keypoint_flip_pairs[j : j + 2]
+                    if left < k and right < k:
+                        permutation[left], permutation[right] = permutation[right], permutation[left]
+                keypoints = keypoints[:, permutation]
+            t["keypoints"] = keypoints
 
         new_targets.append(t)
 

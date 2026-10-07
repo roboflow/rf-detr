@@ -257,6 +257,16 @@ class TestBuildKorniaPipeline(_RequiresKornia):
         assert "RandomVerticalFlip" in transform_names
         assert warning.called
         assert "HorizontalFlip" in str(warning.call_args)
+        image = torch.zeros(1, 3, 16, 16)
+        boxes = torch.tensor([[[1.0, 1.0, 8.0, 8.0]]])
+        assert len(pipeline(image, boxes)) == 2
+
+    def test_keypoint_pipeline_rejects_unpaired_flip_index(self) -> None:
+        """A malformed joint-pair list fails before the first training batch."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        with pytest.raises(ValueError, match="even number"):
+            build_kornia_pipeline({"HorizontalFlip": {"p": 1.0}}, 16, include_keypoints=True, keypoint_flip_pairs=[0])
 
     # --- pixel-level transforms added for issue #1252 -------------------
 
@@ -1018,6 +1028,292 @@ class TestBuildKorniaPipelineWithMasks(_RequiresKornia):
         masks = torch.ones(2, 1, 32, 32, dtype=torch.float32)
         _, _, masks_aug = pipeline(img, boxes, masks)
         assert masks_aug.shape == (2, 1, 32, 32), f"Mask shape must be preserved: {masks_aug.shape}"
+
+    def test_keypoint_pipeline_flips_points_with_boxes_and_masks(self) -> None:
+        """A keypoint pipeline transports every geometric target in the same draw."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, collate_keypoints, unpack_boxes
+
+        pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}},
+            16,
+            with_masks=True,
+            include_keypoints=True,
+            with_keypoints=True,
+            keypoint_flip_pairs=[0, 1],
+        )
+        image = torch.zeros(1, 3, 16, 16)
+        boxes = torch.tensor([[[2.0, 2.0, 8.0, 8.0]]])
+        masks = torch.zeros(1, 1, 16, 16)
+        targets = [
+            {
+                "boxes": boxes[0],
+                "labels": torch.tensor([1]),
+                "keypoints": torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 1.0], [0.0, 0.0, 2.0]]]),
+            }
+        ]
+        points, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=1)
+
+        _, boxes_out, _, points_out = pipeline(image, boxes, masks, points)
+        result = unpack_boxes(
+            boxes_out,
+            torch.tensor([[True]]),
+            targets,
+            16,
+            16,
+            keypoints_aug=points_out,
+            keypoint_visibility=visibility,
+            keypoint_flip_pairs=[0, 1],
+            keypoint_flip_mask=torch.tensor([True]),
+        )
+
+        torch.testing.assert_close(
+            result[0]["keypoints"], torch.tensor([[[10.0, 7.0, 1.0], [13.0, 4.0, 2.0], [16.0, 0.0, 2.0]]])
+        )
+
+
+class TestKeypointTargetTransport(_RequiresKornia):
+    """Keypoints retain visibility and instance alignment through GPU augmentation."""
+
+    def test_horizontal_flip_matches_torchvision_continuous_coordinates_on_boundary(self) -> None:
+        """Kornia matches the default CPU backend's continuous keypoint convention."""
+        from rfdetr.datasets._torchvision import RandomHorizontalFlip
+        from rfdetr.datasets.kornia_transforms import (
+            build_kornia_pipeline,
+            collate_keypoints,
+            keypoint_horizontal_flip_mask,
+            unpack_boxes,
+        )
+
+        target = {
+            "boxes": torch.tensor([[0.0, 2.0, 8.0, 12.0]]),
+            "labels": torch.tensor([0]),
+            "keypoints": torch.tensor([[[0.0, 8.0, 2.0], [3.0, 8.0, 2.0]]]),
+        }
+        cpu_flip = RandomHorizontalFlip(p=1.0, keypoint_flip_pairs=[0, 1])
+        _, cpu_target = cpu_flip(torch.zeros(3, 16, 16), target)
+        pipeline = build_kornia_pipeline(
+            {"HorizontalFlip": {"p": 1.0}}, 16, with_masks=True, with_keypoints=True, keypoint_flip_pairs=[0, 1]
+        )
+        points, visibility = collate_keypoints([target], torch.device("cpu"), 1)
+        _, boxes, _, points = pipeline(
+            torch.zeros(1, 3, 16, 16), target["boxes"].unsqueeze(0) - 0.5, torch.zeros(1, 1, 16, 16), points
+        )
+        gpu_target = unpack_boxes(
+            boxes + 0.5,
+            torch.tensor([[True]]),
+            [target],
+            16,
+            16,
+            keypoints_aug=points,
+            keypoint_visibility=visibility,
+            keypoint_flip_pairs=[0, 1],
+            keypoint_flip_mask=keypoint_horizontal_flip_mask(pipeline, 1, torch.device("cpu")),
+        )[0]
+        torch.testing.assert_close(cpu_target["keypoints"], torch.tensor([[[13.0, 8.0, 2.0], [16.0, 8.0, 2.0]]]))
+        torch.testing.assert_close(gpu_target["keypoints"], cpu_target["keypoints"])
+
+    def test_flip_mask_tracks_each_image(self) -> None:
+        """A batch can flip one image without relabeling joints in another."""
+        from types import SimpleNamespace
+
+        from rfdetr.datasets.kornia_transforms import keypoint_horizontal_flip_mask
+
+        draw = SimpleNamespace(name="RandomHorizontalFlip_0", data={"batch_prob": torch.tensor([1.0, 0.0])})
+        pipeline = SimpleNamespace(_rfdetr_has_keypoint_hflip=True, _params=[draw])
+        assert keypoint_horizontal_flip_mask(pipeline, 2, torch.device("cpu")).tolist() == [True, False]
+
+    def test_flip_mask_tracks_each_image_on_a_real_two_image_kornia_batch(self) -> None:
+        """A real ``AugmentationSequential`` batch call swaps joints only for the image it actually flipped."""
+        from rfdetr.datasets.kornia_transforms import (
+            build_kornia_pipeline,
+            collate_keypoints,
+            keypoint_horizontal_flip_mask,
+            unpack_boxes,
+        )
+
+        target = {
+            "boxes": torch.tensor([[2.0, 2.0, 8.0, 8.0]]),
+            "labels": torch.tensor([1]),
+            "keypoints": torch.tensor([[[3.0, 4.0, 2.0], [6.0, 7.0, 1.0]]]),
+        }
+        targets = [target, target]
+        points, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=1)
+        boxes = torch.stack([target["boxes"], target["boxes"]])
+        image = torch.zeros(2, 3, 16, 16)
+        masks = torch.zeros(2, 1, 16, 16)
+
+        mask = None
+        for seed in range(10):
+            torch.manual_seed(seed)
+            pipeline = build_kornia_pipeline(
+                {"HorizontalFlip": {"p": 0.5}},
+                16,
+                with_masks=True,
+                include_keypoints=True,
+                with_keypoints=True,
+                keypoint_flip_pairs=[0, 1],
+            )
+            _, boxes_aug, _, points_aug = pipeline(image.clone(), boxes.clone(), masks.clone(), points.clone())
+            mask = keypoint_horizontal_flip_mask(pipeline, 2, torch.device("cpu"))
+            if bool(mask[0]) != bool(mask[1]):
+                break
+        else:
+            raise AssertionError("no seed in range(10) produced differing per-image Kornia flip draws")
+
+        flipped_idx, identity_idx = (0, 1) if mask[0] else (1, 0)
+        flipped_target = unpack_boxes(
+            boxes_aug[flipped_idx : flipped_idx + 1],
+            torch.tensor([[True]]),
+            [target],
+            16,
+            16,
+            keypoints_aug=points_aug[flipped_idx : flipped_idx + 1],
+            keypoint_visibility=visibility[flipped_idx : flipped_idx + 1],
+            keypoint_flip_pairs=[0, 1],
+            keypoint_flip_mask=mask[flipped_idx : flipped_idx + 1],
+        )[0]
+        identity_target = unpack_boxes(
+            boxes_aug[identity_idx : identity_idx + 1],
+            torch.tensor([[True]]),
+            [target],
+            16,
+            16,
+            keypoints_aug=points_aug[identity_idx : identity_idx + 1],
+            keypoint_visibility=visibility[identity_idx : identity_idx + 1],
+            keypoint_flip_pairs=[0, 1],
+            keypoint_flip_mask=mask[identity_idx : identity_idx + 1],
+        )[0]
+
+        torch.testing.assert_close(flipped_target["keypoints"], torch.tensor([[[10.0, 7.0, 1.0], [13.0, 4.0, 2.0]]]))
+        torch.testing.assert_close(identity_target["keypoints"], target["keypoints"])
+
+    def test_flip_draws_fail_closed_when_kornia_params_are_unavailable(self) -> None:
+        """A changed Kornia parameter API cannot silently leave paired joints unswapped."""
+        from types import SimpleNamespace
+
+        from rfdetr.datasets.kornia_transforms import keypoint_horizontal_flip_mask
+
+        pipeline = SimpleNamespace(_rfdetr_has_keypoint_hflip=True, _params=[])
+        with pytest.raises(RuntimeError, match="horizontal-flip draws"):
+            keypoint_horizontal_flip_mask(pipeline, 1, torch.device("cpu"))
+
+    @pytest.mark.parametrize(
+        ("config", "expected"),
+        [
+            ({"VerticalFlip": {"p": 1.0}}, (3.0, 12.0)),
+            ({"Rotate": {"limit": (90, 90), "p": 1.0}}, (4.0, 13.0)),
+        ],
+    )
+    def test_geometric_transforms_use_continuous_coordinates(
+        self, config: dict[str, dict[str, Any]], expected: tuple[float, float]
+    ) -> None:
+        """Flip and rotation agree with the default CPU path's continuous frame."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, collate_keypoints, unpack_boxes
+
+        targets = [
+            {
+                "boxes": torch.tensor([[2.0, 2.0, 8.0, 8.0]]),
+                "labels": torch.tensor([1]),
+                "keypoints": torch.tensor([[[3.0, 4.0, 2.0]]]),
+            }
+        ]
+        points, visibility = collate_keypoints(targets, torch.device("cpu"), 1)
+        pipeline = build_kornia_pipeline(config, 16, with_masks=True, include_keypoints=True, with_keypoints=True)
+        _, boxes_aug, _, points_aug = pipeline(
+            torch.zeros(1, 3, 16, 16), targets[0]["boxes"].unsqueeze(0) - 0.5, torch.zeros(1, 1, 16, 16), points
+        )
+
+        result = unpack_boxes(
+            boxes_aug + 0.5,
+            torch.tensor([[True]]),
+            targets,
+            16,
+            16,
+            keypoints_aug=points_aug,
+            keypoint_visibility=visibility,
+        )
+
+        torch.testing.assert_close(result[0]["keypoints"], torch.tensor([[[*expected, 2.0]]]))
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            {"Affine": {"rotate": (5, 5), "translate_percent": (0.05, 0.05), "scale": (1.0, 1.0), "p": 1.0}},
+            {"ShiftScaleRotate": {"shift_limit": 0.05, "scale_limit": 0.05, "rotate_limit": 5, "p": 1.0}},
+            {"Perspective": {"scale": (0.05, 0.05), "p": 1.0}},
+        ],
+    )
+    def test_other_geometric_transforms_keep_joint_inside_box(self, config: dict[str, dict[str, Any]]) -> None:
+        """Supported affine and perspective warps transport boxes and joints together."""
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline(config, 32, with_masks=True, with_keypoints=True)
+        boxes = torch.tensor([[[4.0, 4.0, 20.0, 20.0]]]) - 0.5
+        point = torch.tensor([[[10.0, 10.0]]]) - 0.5
+        _, boxes_out, _, point_out = pipeline(torch.zeros(1, 3, 32, 32), boxes, torch.zeros(1, 1, 32, 32), point)
+        x, y = (point_out[0, 0] + 0.5).tolist()
+        x1, y1, x2, y2 = (boxes_out[0, 0] + 0.5).tolist()
+
+        assert x1 <= x <= x2 and y1 <= y <= y2
+
+    def test_collate_and_unpack_filters_removed_instances_and_invisible_points(self) -> None:
+        """A removed box removes its joints; invisible and outside joints become zero."""
+        from rfdetr.datasets.kornia_transforms import collate_keypoints, unpack_boxes
+
+        targets = [
+            {
+                "boxes": torch.tensor([[1.0, 1.0, 8.0, 8.0], [10.0, 10.0, 14.0, 14.0]]),
+                "labels": torch.tensor([1, 2]),
+                "keypoints": torch.tensor(
+                    [
+                        [[3.0, 4.0, 2.0], [6.0, 7.0, 0.0]],
+                        [[11.0, 12.0, 2.0], [13.0, 14.0, 1.0]],
+                    ]
+                ),
+            }
+        ]
+        points, visibility = collate_keypoints(targets, torch.device("cpu"), n_max=2)
+        torch.testing.assert_close(points, torch.tensor([[[2.5, 3.5], [5.5, 6.5], [10.5, 11.5], [12.5, 13.5]]]))
+        boxes_aug = torch.tensor([[[1.0, 1.0, 8.0, 8.0], [10.0, 10.0, 10.0, 14.0]]])
+        points_aug = torch.tensor([[[3.0, 4.0], [6.0, 7.0], [11.0, 12.0], [13.0, 14.0]]])
+        points_aug[0, 0, 0] = 16.5
+
+        result = unpack_boxes(
+            boxes_aug,
+            torch.tensor([[True, True]]),
+            targets,
+            16,
+            16,
+            keypoints_aug=points_aug,
+            keypoint_visibility=visibility,
+        )
+
+        assert result[0]["keypoints"].shape == (1, 2, 3)
+        torch.testing.assert_close(result[0]["keypoints"], torch.zeros(1, 2, 3))
+
+    def test_unequal_instance_counts_do_not_leak_padded_points(self) -> None:
+        """Joint padding follows box padding for a mixed-size batch."""
+        from rfdetr.datasets.kornia_transforms import collate_boxes, collate_keypoints, unpack_boxes
+
+        targets = [
+            {
+                "boxes": torch.tensor([[1.0, 1.0, 5.0, 5.0]]),
+                "labels": torch.tensor([1]),
+                "keypoints": torch.tensor([[[3.0, 3.0, 2.0]]]),
+            },
+            {
+                "boxes": torch.tensor([[2.0, 2.0, 6.0, 6.0], [8.0, 8.0, 12.0, 12.0]]),
+                "labels": torch.tensor([2, 3]),
+                "keypoints": torch.tensor([[[4.0, 4.0, 1.0]], [[10.0, 10.0, 2.0]]]),
+            },
+        ]
+        boxes, valid = collate_boxes(targets, torch.device("cpu"))
+        points, visibility = collate_keypoints(targets, torch.device("cpu"), valid.shape[1])
+        result = unpack_boxes(boxes, valid, targets, 16, 16, keypoints_aug=points, keypoint_visibility=visibility)
+
+        assert [item["keypoints"].shape[0] for item in result] == [1, 2]
+        torch.testing.assert_close(result[0]["keypoints"], targets[0]["keypoints"])
+        torch.testing.assert_close(result[1]["keypoints"], targets[1]["keypoints"])
 
 
 # ---------------------------------------------------------------------------
