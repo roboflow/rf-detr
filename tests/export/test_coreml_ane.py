@@ -303,22 +303,37 @@ def nano_fp16_neural_engine_export(tmp_path_factory: pytest.TempPathFactory) -> 
     )
 
 
+#: The two-stage query-selection ops among ``_ANE_UNSUPPORTED_OPS``: ``topk`` and the ops that consume its indices.
+#: ``coreml_neural_engine=True`` exists to take exactly these off the CPU.
+_QUERY_SELECTION_OPS = frozenset({"topk", "gather_along_axis", "tile", "expand_dims"})
+
+
 @coreml_runtime_only
 @pytest.mark.integration
 @pytest.mark.e2e_coreml
 class TestCoreMLNeuralEngineRewrites:
-    """With ``coreml_neural_engine=True``, Core ML must schedule every op of the export onto the Neural Engine."""
+    """With ``coreml_neural_engine=True``, only the iOS 15 ``resample`` boundary may stay off the Neural Engine."""
 
-    def test_no_operation_prefers_the_cpu(self, nano_fp16_neural_engine_export: Path) -> None:
-        """The two-stage selection island of the default export (``topk``, ``gather``) must be gone."""
+    def test_only_the_resample_boundary_prefers_the_cpu(self, nano_fp16_neural_engine_export: Path) -> None:
+        """The query-selection ops leave the CPU; what stays there is within the known ``resample``/``cast`` set.
+
+        The iOS 15 program keeps ``resample`` and the ``cast`` ops beside it off the Neural Engine on purpose (see
+        ``TestCoreMLNeuralEngineFallbackBoundary``), so the rewrite cannot empty the CPU set: it must move the selection
+        island of the default export off the CPU and add nothing new.
+        """
         plan = _compute_plan(nano_fp16_neural_engine_export)
         operations = plan.model_structure.program.functions["main"].block.operations
 
-        off_neural_engine = sorted(
+        off_neural_engine = {
             operation.operator_name
             for operation in operations
             if (usage := plan.get_compute_device_usage_for_mlprogram_operation(operation)) is not None
             and "NeuralEngine" not in type(usage.preferred_compute_device).__name__
-        )
+        }
 
-        assert off_neural_engine == []
+        assert not off_neural_engine & _QUERY_SELECTION_OPS, (
+            f"query selection still prefers the CPU: {sorted(off_neural_engine & _QUERY_SELECTION_OPS)}"
+        )
+        assert off_neural_engine <= _ANE_UNSUPPORTED_OPS - _QUERY_SELECTION_OPS, (
+            f"ops newly off the Neural Engine: {sorted(off_neural_engine - _ANE_UNSUPPORTED_OPS)}"
+        )
