@@ -69,6 +69,15 @@ def one_hot_top_rows(scores: Tensor, k: int) -> Callable[[Tensor], Tensor]:
 
 
 def _conv_from_linear(linear: nn.Linear, scale: Tensor | None = None) -> nn.Conv2d:
+    """Convert a linear layer to an equivalent 1x1 convolution.
+
+    Args:
+        linear: Linear layer whose parameters are copied.
+        scale: Optional per-output-channel scale applied to the copied weight and bias.
+
+    Returns:
+        A 1x1 convolution with the transformed parameters.
+    """
     weight = linear.weight.detach().clone()
     bias = linear.bias.detach().clone() if linear.bias is not None else torch.zeros(linear.out_features)
     if scale is not None:
