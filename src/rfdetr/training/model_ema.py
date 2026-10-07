@@ -68,8 +68,9 @@ class BestMetricSingle:
         self.best_res = init_res
         self.best_ep = -1
 
+        if better not in ("large", "small"):
+            raise ValueError(f"'better' must be 'large' or 'small', got {better!r}")
         self.better = better
-        assert better in ["large", "small"]
 
     def isbetter(self, new_res: float, old_res: float) -> bool:
         if self.better == "large":
