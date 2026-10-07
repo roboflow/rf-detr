@@ -70,14 +70,17 @@ train = [
     "hotcoco==1.0.1",
     "faster-coco-eval>=1.7.2",
     # Third COCO evaluation backend, selected with TrainConfig.eval_backend="ufcoco" (BSD-2-Clause, numpy-only runtime
-    # dependency, wheels for CPython 3.8+ on manylinux/musllinux x86_64/aarch64, macOS x86_64/arm64 and win_amd64).
+    # dependency, wheels for CPython 3.8+ on manylinux x86_64/aarch64, macOS x86_64/arm64 and win_amd64).
     # Reproduces pycocotools' evaluator arrays byte for byte; the adapter summarizes its aggregate AP at the configured
     # eval_max_dets and hands its encoder uint8 masks, see _UfcocoBackend in src/rfdetr/training/coco_map.py. The floor
-    # is the release that fixed joint bbox/mask evaluation over images with no annotations
-    # (developer0hye/ultrafast-pycocotools#7); the ceiling keeps the parity-tested 0.1 line until the next series is
-    # verified against the adapter. The adapter's aggregate-AP override also calls CocoEval's private _summarize()
-    # method directly, so the ceiling additionally guards against that private surface changing shape upstream.
-    "ultrafast-pycocotools>=0.1.10,<0.2",
+    # is the release whose COCOeval subclasses evaluate NumPy result arrays without materializing them
+    # (developer0hye/ultrafast-pycocotools#24), which the box-only detection-array path relies on; below it that path
+    # is slower than the dict path it replaces. 0.1.10 (developer0hye/ultrafast-pycocotools#7, joint bbox/mask
+    # evaluation over images with no annotations) is the correctness floor beneath it: never relax this past 0.1.10.
+    # The ceiling keeps the parity-tested 0.1 line until the next series is verified against the adapter. The
+    # adapter's aggregate-AP override also calls CocoEval's private _summarize() method directly, so the ceiling
+    # additionally guards against that private surface changing shape upstream.
+    "ultrafast-pycocotools>=0.1.13,<0.2",
     # Fourth COCO evaluation backend, selected with TrainConfig.eval_backend="vernier"; defaulting to
     # "corrected" parity mode.
     "vernier>=0.5.3,<0.6",
@@ -212,7 +215,7 @@ visual = [
     "seaborn",
 ]
 cli = ["jsonargparse[signatures]>=4.27.7"]
-plus = ["rfdetr_plus>=1.0.1, <2.0.0"]
+plus = ["rfdetr_plus>=1.1.0, <2.0.0"]
 # XLA backend for TPU training AND hardware-free XLA validation on CPU/GPU PJRT.
 # torch_xla is built on top of torch (NOT mutually exclusive — it requires torch present) and its
 # _XLAC extension is ABI-locked to ONE torch minor (a mismatch surfaces as an `undefined symbol`
@@ -269,6 +272,10 @@ tests = [
   # instead of silently skipping.
   "onnx>=1.16.0,<2.0",
   "onnxconverter-common",
+  # tests/export/test_onnx_quantize.py runs quantize_int8 end to end on a synthetic graph, which needs the runtime
+  # that collects the activation ranges. Same 3.10 split as the [onnx] extra: 1.24+ ships no cp310 wheels.
+  "onnxruntime<1.24; python_version < '3.11'",
+  "onnxruntime; python_version >= '3.11'",
   "tomli>=2.0; python_version < '3.11'",
   # Generates the synthetic COCO fixtures in tests/conftest.py (replaced rfdetr.datasets.synthetic).
   # Pinned exactly: the project is pre-1.0 and only publishes dev releases, so a range would drift.
@@ -545,6 +552,7 @@ overrides = [
     "coreai", "coreai.*",
     "coreai_torch", "coreai_torch.*",
     "openvino", "openvino.*",
+    "nncf", "nncf.*",
     "litert_torch", "litert_torch.*",
     "ai_edge_litert", "ai_edge_litert.*",
     "roboflow", "roboflow.*",
