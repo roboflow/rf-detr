@@ -2424,9 +2424,14 @@ class RFDETR:
                 ANE-oriented bundle (expect larger numeric drift) whose outputs are still float32. Bundles
                 declare iOS 15 / macOS 12 as the minimum OS. Ignored for every other format.
             coreml_neural_engine: For ``format="coreml"``, rewrite the backbone attention as one einsum pair per head
-                in query chunks, and the two-stage top-k query selection as a one-hot matmul. Same weights; the
-                Apple Neural Engine then runs the whole graph, and an fp16 export is about 30-40% faster there. The
-                same artifact is 25-80% slower on the CPU and the GPU, so leave it off unless the app runs the model
+                in query chunks, and the two-stage top-k query selection as a one-hot matmul. No new parameters: the
+                attention and layer scales are folded into the rewritten weights. In an fp16 export the query selection
+                then leaves the CPU, and only the deformable-attention ``resample`` and its ``cast`` ops stay there, as
+                in the default iOS 15 export (compute plan checked for ``RFDETRNano``). On the Apple Neural Engine,
+                ``RFDETRNano``, ``RFDETRSmall`` and ``RFDETRMedium`` at their default resolutions (at most 1296 ranked
+                tokens) ran 30-37% faster. The ranking's cost grows with the square of the token count and is unmeasured
+                for other models and resolutions. The same artifact is 23-82% slower on the CPU and the GPU, and its
+                fp16 outputs drift slightly from the default export's, so leave it off unless the app runs the model
                 with ``CPU_AND_NE`` or ``ALL`` compute units. Ignored for every other format.
             coreai_precision: Precision the graph is traced and stored in for ``format="coreai"`` — ``None``
                 (default) or ``"float32"``, or ``"float16"`` for a half-size asset whose input and outputs are
