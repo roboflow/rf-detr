@@ -56,6 +56,10 @@ model.export(format="coreml", coreml_precision="float16")
 
     Output tensor names in the saved `.mlpackage` spec are coremltools-inferred, not renamed to `dets`/`labels`/etc. — match outputs by **position**, in the same order as the ONNX `output_names` contract (`dets, labels` for detection; `dets, labels, masks` for segmentation; `dets, labels, keypoints` for keypoints).
 
+!!! note "Provenance metadata"
+
+    `notes=` and the RF-DETR version are stored in the `.mlpackage` metadata, under `rfdetr_notes` and `rfdetr_version` in `MLModel.user_defined_metadata` (the same keys as the ONNX export). coremltools' own `com.github.apple.coremltools.*` keys stay. See [Read Embedded Notes](advanced.md#read-embedded-notes).
+
 !!! note "Raw tensors can differ more than the precision suggests"
 
     RF-DETR's two-stage encoder picks its queries with a `topk` over the encoder tokens' class scores. CoreML's fp32 arithmetic differs from eager PyTorch's in the last bits — measured at up to 1e-5 on a ranking score — so when two neighbouring scores sit closer together than that, the two can rank them in opposite order and run the decoder on a slightly different set of queries. Every raw output then shifts, by ~1e0 on logits, on an export that otherwise tracks eager to ~1e-4. This repo's own parity tests require a 1e-4 gap between neighbouring top-k scores before they compare raw tensors at all.

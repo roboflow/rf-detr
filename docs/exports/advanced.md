@@ -33,7 +33,7 @@ The `export()` method accepts several parameters to customize the export process
 | `trt_hardware_compatibility` | `None`     | Ask TensorRT for an engine that other GPUs may run: `"ampere_plus"` (NVIDIA Ampere, compute capability 8.x, and newer; build on one of them) or `"same_compute_capability"` (GPUs with the building GPU's compute capability). `None` builds for the building GPU only. Not supported on Jetson or DriveOS. A level your TensorRT lacks raises `ValueError`. See [TensorRT Export](tensorrt.md#portable-engines). Only used when `format="tensorrt"`; a non-`None` value for any other format emits a `UserWarning`.                                                             |
 | `trt_version_compatible`     | `False`    | Ask TensorRT for an engine that other releases of the same TensorRT major version may load (it worked between 11.2 and 11.3). Needs TensorRT's lean runtime package, such as [`tensorrt-lean-cu13-libs`](https://pypi.org/project/tensorrt-lean-cu13-libs/); without it the export raises `ImportError`. A TensorRT 11 engine then needs `engine_host_code_allowed=True` in `TRTInference`. See [TensorRT Export](tensorrt.md#portable-engines). Only used when `format="tensorrt"`; `True` for any other format emits a `UserWarning`.                                          |
 | `trt_timing_cache`           | `None`     | File that keeps the kernel timings TensorRT measures while building an engine. A build loads it when it exists and writes the merged timings back, so rebuilding the same model at the same precision and batch profile, on the same GPU and TensorRT version, skips most of the search. A directory raises `ValueError` and an unwritable location `OSError`, before the engine is built. See [TensorRT Export](tensorrt.md#reuse-the-timing-cache). Only used when `format="tensorrt"`; a non-`None` value for any other format emits a `UserWarning`.                         |
-| `notes`                      | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported ONNX model under the `"rfdetr_notes"` metadata property. For a format that embeds it, a value JSON cannot encode raises before the model runs: `ValueError` for `NaN`/`Infinity` or a circular reference, `TypeError` for an arbitrary object.                                                                                                                                                                                                                      |
+| `notes`                      | `None`     | Optional user-defined metadata (string, dict, list, or any JSON-serialisable value) to embed in the exported artifact under the `"rfdetr_notes"` metadata key (the ONNX `metadata_props`, the CoreML `user_defined_metadata`). For a format that embeds it, a value JSON cannot encode raises before the model runs: `ValueError` for `NaN`/`Infinity` or a circular reference, `TypeError` for an arbitrary object.                                                                                                                                                             |
 | `coreml_precision`           | `None`     | Compute precision for `format="coreml"`: `None`/`"float32"` (tight CPU parity with eager PyTorch) or `"float16"` (half the size, and the only precision the Apple Neural Engine runs, see [Native CoreML](coreml.md#neural-engine-compute-units-and-the-fallback-boundary)). Ignored for every other format.                                                                                                                                                                                                                                                                     |
 | `coreai_precision`           | `None`     | Compute precision for `format="coreai"`: `None`/`"float32"` (matches eager PyTorch on the GPU) or `"float16"` (half the size, and the precision Core AI runs on the Apple Neural Engine — at a measured accuracy cost, see [Core AI](coreai.md#precision-compute-units-and-latency)); a float16 keypoint model warns, since that asset aborts on the Neural Engine. Ignored for every other format.                                                                                                                                                                              |
 | `openvino_precision`         | `None`     | IR *storage* weight precision for `format="openvino"`: `None`/`"float16"` (OpenVINO's default FP16 weight compression) or `"float32"` (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename.                                                                                                                                                                                                                          |
@@ -51,7 +51,7 @@ What each format supports, as declared by its exporter. Parameters a format does
 | `openvino`   | `rfdetr[openvino]`   | no (IR accepts any batch) | no             | no           |
 | `executorch` | `rfdetr[executorch]` | no                        | no             | yes          |
 | `litert`     | `rfdetr[litert]`     | no                        | no             | yes          |
-| `coreml`     | `rfdetr[coreml]`     | no                        | no             | yes          |
+| `coreml`     | `rfdetr[coreml]`     | no                        | yes            | yes          |
 | `coreai`     | `rfdetr[coreai]`     | no                        | yes            | yes          |
 
 For a format without dynamic batch, export one artifact per batch size.
@@ -88,6 +88,15 @@ model.export(notes={"dataset": "v3", "run": "2026-10-01"})
 onnx_model = onnx.load("output/rfdetr-small.onnx")
 notes = {prop.key: prop.value for prop in onnx_model.metadata_props}["rfdetr_notes"]
 print(json.loads(notes))
+```
+
+A CoreML `.mlpackage` keeps it in `user_defined_metadata`, under the same key, next to `rfdetr_version`:
+
+```python
+import coremltools as ct
+
+metadata = ct.models.MLModel("output/rfdetr-small_fp32.mlpackage", skip_model_load=True).user_defined_metadata
+print(metadata["rfdetr_notes"], metadata["rfdetr_version"])
 ```
 
 ## Advanced Export Examples

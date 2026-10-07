@@ -43,9 +43,10 @@ import torch
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
-from rfdetr.export.base import ExportConfig, Exporter
+from rfdetr.export.base import ExportConfig, Exporter, serialize_notes
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.package import get_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -123,7 +124,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
     experimental = True
     experimental_note = "Dynamic batch is not supported."
     pip_extra = "coreml"
-    notes_reason = "CoreML .mlpackage has no ONNX-style metadata slot"
+    supports_notes = True
 
     def _check_capabilities(self) -> None:
         """Refuse an unrecognized precision string before the forward pass.
@@ -357,7 +358,11 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             raise RuntimeError(f"CoreML export failed: {exc}") from exc
 
     def _save_mlmodel(self, mlmodel: Any, output_file: Path) -> Path:
-        """Write the converted model to *output_file*.
+        """Stamp the RF-DETR provenance into the model's metadata and write it to *output_file*.
+
+        ``MLModel.user_defined_metadata`` is the ``.mlpackage``'s metadata slot: ``save`` persists it, and
+        ``ct.convert`` already fills it with its own ``com.github.apple.coremltools.*`` keys, which are kept. The
+        keys and the encoding of *notes* match the ONNX and Core AI exports.
 
         Args:
             mlmodel: The converted ``coremltools.models.MLModel``.
@@ -366,6 +371,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         Returns:
             *output_file*, now on disk.
         """
+        metadata = mlmodel.user_defined_metadata
+        rfdetr_version = get_version()
+        if rfdetr_version is not None:
+            metadata["rfdetr_version"] = rfdetr_version
+        if self.config.notes is not None:
+            metadata["rfdetr_notes"] = serialize_notes(self.config.notes)
         mlmodel.save(str(output_file))
         if self.config.verbose:
             logger.info(f"Successfully exported CoreML model to: {output_file}")

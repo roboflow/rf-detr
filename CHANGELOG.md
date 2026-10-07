@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `format="coreml"` now embeds `notes` in the `.mlpackage` metadata (`MLModel.user_defined_metadata`, key `rfdetr_notes`, encoded as in the ONNX export) instead of warning and dropping it, and stamps the RF-DETR version under `rfdetr_version`. A `notes` value JSON cannot encode (`NaN`, a circular reference) now raises before the model runs, as for the other formats that embed it. ([#1024](https://github.com/roboflow/rf-detr/issues/1024))
+
 - `rfdetr.RFDETRAtto`, `rfdetr.RFDETRFemto` and `rfdetr.RFDETRPico`: real-time detection models with a PE-Core-T backbone, provided by `rfdetr_plus` like the XLarge models (`pip install "rfdetr[plus]"`, Platform Model License 1.0). `RFDETR.from_checkpoint()` resolves their checkpoints; an outdated `rfdetr_plus` raises an upgrade hint, and a broken `rfdetr_plus` install no longer blocks loading core checkpoints.
 
 - `rfdetr.models.backbone.register_backbone(encoder, backbone_cls)`: an extension package can provide a non-DINOv2 encoder for a `ModelConfig.encoder` name by subclassing `Backbone` and overriding `_build_encoder`. A registered encoder that defines `set_export_shape(shape)` gets its position embeddings frozen for export, like DINOv2.

@@ -2412,11 +2412,12 @@ class RFDETR:
                 consumers must call ``json.loads()`` to recover a dict or
                 list. The same value can be passed to :meth:`train` so the
                 checkpoint and the ONNX file share the same provenance
-                information. **Ignored for ``format="executorch"``,
-                ``format="coreml"``, ``format="openvino"``, and ``format="litert"``**: those artifacts have
-                no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning`` instead of being
-                embedded. Every other format refuses a value JSON cannot encode (``NaN``, ``Infinity``, an
-                arbitrary object) before any model work.
+                information. For ``format="coreml"`` it is stored in the ``.mlpackage``'s
+                ``user_defined_metadata`` under ``"rfdetr_notes"``, together with ``"rfdetr_version"``.
+                **Ignored for ``format="executorch"``, ``format="openvino"``, and ``format="litert"``**: those
+                artifacts have no ONNX-style metadata slot, and a non-``None`` value emits a ``UserWarning``
+                instead of being embedded. Every other format refuses a value JSON cannot encode (``NaN``,
+                ``Infinity``, an arbitrary object) before any model work.
             coreml_precision: ``ct.convert`` compute precision for ``format="coreml"`` — ``None`` (default) or
                 ``"float32"`` selects FP32 (tight CPU parity with eager
                 PyTorch); ``"float16"`` selects a smaller
