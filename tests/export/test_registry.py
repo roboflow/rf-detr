@@ -217,6 +217,7 @@ class TestBuildConfig:
             pytest.param("onnx", {"opset_version": 18}, "opset_version", 18, id="onnx_opset"),
             pytest.param("openvino", {"openvino_precision": "float32"}, "precision", "float32", id="openvino"),
             pytest.param("coreml", {"coreml_precision": "float16"}, "compute_precision", "float16", id="coreml"),
+            pytest.param("coreml", {"coreml_neural_engine": True}, "neural_engine", True, id="coreml_neural_engine"),
             pytest.param("coreai", {"coreai_precision": "float16"}, "precision", "float16", id="coreai"),
             pytest.param("tflite", {"quantization": "int8"}, "quantization", "int8", id="tflite"),
             pytest.param("tensorrt", {"fp16": False}, "fp16", False, id="tensorrt"),

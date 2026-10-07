@@ -43,6 +43,7 @@ import torch
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._coreml.op_coverage import unsupported_coreml_ops
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
+from rfdetr.export._neural_engine import neural_engine_model
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -93,9 +94,14 @@ class CoreMLConfig(ExportConfig):
 
     Attributes:
         compute_precision: ``"float32"``, ``"float16"``, or ``None`` for coremltools' default.
+        neural_engine: Rewrite the backbone attention and the two-stage query selection into ops the Apple Neural
+            Engine runs natively (:func:`~rfdetr.export._neural_engine.neural_engine_model`). Same weights. Faster on
+            the Neural Engine, slower on the CPU and the GPU. A derived filename carries ``-ane`` after the precision
+            token; an explicit ``output_name`` is used as given.
     """
 
     compute_precision: str | None = None
+    neural_engine: bool = False
 
 
 class CoreMLExporter(Exporter[CoreMLConfig]):
@@ -114,7 +120,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
     """
 
     config_class = CoreMLConfig
-    setting_names = {"compute_precision": "coreml_precision"}
+    setting_names = {"compute_precision": "coreml_precision", "neural_engine": "coreml_neural_engine"}
     format = "coreml"
     display_name = "CoreML"
     dynamic_batch_reason = (
@@ -131,6 +137,9 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         A non-string value is passed through to ``coremltools``, as before: telling a ``coremltools.precision`` member
         apart needs ``coremltools``, and construction reads the configuration only, never the environment.
 
+        ``neural_engine=True`` with an unset or ``"float32"`` precision is legal but logs a warning: the Neural Engine
+        has no float32 path, so that artifact runs on the CPU or the GPU, where the rewritten graph is the slower one.
+
         Raises:
             ValueError: If the configured precision is a string naming neither ``"float32"`` nor ``"float16"``.
         """
@@ -140,6 +149,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
             raise ValueError(
                 f"compute_precision must be 'float32', 'float16', a coremltools.precision value, or "
                 f"None, got {compute_precision!r}"
+            )
+        if self.config.neural_engine and compute_precision in (None, "float32"):
+            logger.warning(
+                "coreml_neural_engine=True with float32 precision: the Neural Engine runs float16 only, so this "
+                "artifact runs on the CPU or the GPU, where it is slower than the default export. Pass "
+                "coreml_precision='float16' to run it on the Neural Engine."
             )
 
     @classmethod
@@ -237,7 +252,7 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         *,
         backbone_only: bool,
     ) -> Path:
-        """Name the ``.mlpackage`` bundle from the configured names, the precision, and the graph kind.
+        """Name the ``.mlpackage`` bundle from the configured names, the precision, the rewrite, and the graph kind.
 
         Args:
             output_dir: Directory the bundle is written into.
@@ -264,8 +279,12 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
                 f"Unrecognized CoreML compute precision {compute_precision!r}; using the fp32 filename label."
             )
         export_name = stem if is_custom else f"{stem}_{precision_token}"
-        # The marker goes on after the precision token: it names a distinct model graph, not a detail of
-        # how that graph was lowered.
+        # The Neural Engine rewrite lowers the same model to a graph that is slower on the CPU and the GPU: mark a
+        # derived name, so a default export of the same model in the same directory keeps its own file.
+        if self.config.neural_engine and not is_custom:
+            export_name = f"{export_name}-ane"
+        # The backbone marker goes on last, after the precision and rewrite tokens: it names a distinct model graph,
+        # not a detail of how that graph was lowered.
         export_name = append_backbone_marker(
             export_name, backbone_only=backbone_only, named=bool(variant_name or output_name)
         )
@@ -280,7 +299,8 @@ class CoreMLExporter(Exporter[CoreMLConfig]):
         Returns:
             The exported program, after ``run_decompositions``.
         """
-        model = graph.model.eval()
+        model = neural_engine_model(graph.model) if self.config.neural_engine else graph.model
+        model = model.eval()
         # strict=False: same rationale as ExecuTorch — submodule-lifted spatial_shapes constants
         # break lowering under strict=True on current torch.export + converter stacks.
         exported_program = torch.export.export(model, (graph.input_tensors,), strict=False)
