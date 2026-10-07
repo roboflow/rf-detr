@@ -6,10 +6,14 @@
 """Bilinear sampling for the deformable attention, in a form that litert-torch lowers to a fast ``.tflite`` graph.
 
 litert-torch lowers ``F.grid_sample`` to coordinate and index tensors that are expanded over every channel, and to
-``GATHER_ND`` with bounds checks. These run on LiteRT's default single-threaded kernels, outside the XNNPACK delegate,
-and they dominate the decoder time on CPU. :func:`pixel_row_grid_sample` computes the same values from whole pixel rows
-instead: one index per sample point and corner, computed in float32 so that XNNPACK runs the arithmetic, and one
-``EMBEDDING_LOOKUP`` (from ``F.embedding``) per corner, which has no bounds checks.
+``GATHER_ND``. These run on LiteRT's default single-threaded kernels, outside the XNNPACK delegate, and they dominate
+the decoder time on CPU. :func:`pixel_row_grid_sample` computes the same values from whole pixel rows instead: one index
+per sample point and corner, computed in float32 so that XNNPACK runs the arithmetic, and one ``EMBEDDING_LOOKUP`` (from
+``F.embedding``) per corner, which copies a whole row of ``channels`` values per index.
+
+The sampler is swapped on the model's deformable-attention modules before capture, by :func:`pixel_row_sampling`, rather
+than decomposed in the captured graph as ``format="coreai"`` does: this exporter hands ``litert_torch.convert`` the
+module, which captures and lowers it in one call, so there is no captured graph of ours to rewrite in between.
 """
 
 from __future__ import annotations
@@ -22,7 +26,10 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.tensors import _bilinear_grid_sample
+
+logger = get_logger()
 
 #: float32 represents every integer below 2**24 exactly, so a pixel-row index below it survives the float arithmetic.
 _EXACT_FLOAT32_INTEGERS = 2**24
@@ -38,16 +45,24 @@ def pixel_row_grid_sample(
 
     The value map gets a one-pixel ring of zeros, and each pixel becomes one row of ``channels`` values. A corner
     outside the image is clamped onto the zero ring, so it contributes zero, as the ``"zeros"`` padding requires,
-    and every index is in range.
+    and every index is in range. ``format="tflite"`` writes the same row gather into its ONNX graph, with
+    :func:`~rfdetr.export._tflite.exporter._replace_single_gridsample`.
+
+    The index arithmetic is exact only in float32, so other dtypes, and maps with ``2**24`` or more padded pixels,
+    also use the default sampler. The exported graph keeps that arithmetic as float ops, so it must also run in
+    float32: float16 represents integers exactly only up to 2048, and a reduced-precision run of the graph, such as
+    after a float16 pass with ai-edge-quantizer, reads wrong pixels.
+
+    Inputs must be well formed: ``grid.shape[0]`` must equal ``input.shape[0]``. A grid with another batch size goes
+    to the default sampler, which on CPU raises ``F.grid_sample``'s own error.
 
     Args:
         input: Value map of shape ``(N, C, H, W)``.
         grid: Sampling grid of shape ``(N, Hg, Wg, 2)`` with ``(x, y)`` in ``[-1, 1]`` for points inside the image.
+            Coordinates must be finite: for a NaN coordinate the result is undefined, and the ``.tflite`` may fail
+            at Invoke on x86 instead of returning NaN.
         padding_mode: Only ``"zeros"`` takes the pixel-row path. Other modes use the default sampler.
         align_corners: Only ``False`` takes the pixel-row path. ``True`` uses the default sampler.
-
-    The index arithmetic is exact only in float32, so other dtypes, and maps with ``2**24`` or more padded pixels,
-    also use the default sampler.
 
     Returns:
         Sampled tensor of shape ``(N, C, Hg, Wg)``.
@@ -65,9 +80,23 @@ def pixel_row_grid_sample(
         and not align_corners
         and input.dtype == torch.float32
         and grid.dtype == torch.float32
+        and grid.shape[0] == batch
         and batch * padded_height * padded_width < _EXACT_FLOAT32_INTEGERS
     )
     if not takes_pixel_rows:
+        logger.debug(
+            "pixel_row_grid_sample falls back to the default sampler; the pixel-row path needs padding_mode='zeros', "
+            "align_corners=False, float32 input and grid, equal batch sizes and fewer than %s padded pixels, got "
+            "padding_mode=%r, align_corners=%s, dtypes=%s/%s, batches=%s/%s, padded pixels=%s",
+            _EXACT_FLOAT32_INTEGERS,
+            padding_mode,
+            align_corners,
+            input.dtype,
+            grid.dtype,
+            batch,
+            grid.shape[0],
+            batch * padded_height * padded_width,
+        )
         return _bilinear_grid_sample(input, grid, padding_mode=padding_mode, align_corners=align_corners)
 
     grid_height, grid_width = grid.shape[1], grid.shape[2]
@@ -119,6 +148,9 @@ def pixel_row_sampling(model: nn.Module) -> Iterator[None]:
     Args:
         model: The model the LiteRT exporter captures.
 
+    Yields:
+        Nothing; the patched model is used inside the block.
+
     Examples:
         >>> attention = MSDeformAttn(d_model=16, n_levels=1, n_heads=2, n_points=2)
         >>> with pixel_row_sampling(attention):
@@ -128,14 +160,17 @@ def pixel_row_sampling(model: nn.Module) -> Iterator[None]:
         False
     """
     attentions = [module for module in model.modules() if isinstance(module, MSDeformAttn)]
-    overrides = [attention.__dict__.get("grid_sample") for attention in attentions]
-    for attention in attentions:
-        attention.grid_sample = pixel_row_grid_sample
+    snapshots = [
+        (attention, "grid_sample" in attention.__dict__, attention.__dict__.get("grid_sample"))
+        for attention in attentions
+    ]
     try:
+        for attention in attentions:
+            attention.grid_sample = pixel_row_grid_sample
         yield
     finally:
-        for attention, override in zip(attentions, overrides):
-            if override is None:
-                del attention.grid_sample
+        for attention, had_override, override in snapshots:
+            if had_override:
+                attention.__dict__["grid_sample"] = override
             else:
-                attention.grid_sample = override
+                attention.__dict__.pop("grid_sample", None)

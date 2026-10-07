@@ -151,7 +151,8 @@ class LiteRTExporter(Exporter[LiteRTConfig]):
             raise NotImplementedError(
                 f"LiteRT export writes a float32 .tflite; quantization={quantization!r} is not supported on this "
                 "route yet. Use format='tflite' for its fp16/int8 modes, or quantize the exported file with "
-                "ai-edge-quantizer."
+                "ai-edge-quantizer, leaving the deformable-attention sampling in float32 (its pixel indices are exact "
+                "only in float32)."
             )
         return {}
 
