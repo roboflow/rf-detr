@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-09-29T11:52:13">
+  <meta property="article:modified_time" content="2026-10-07T21:57:04">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-09-29T11:52:13",
+    "dateModified": "2026-10-07T21:57:04",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -2889,7 +2889,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>The single exported graph includes the two-stage query selection (<code>TOPK_V2</code> / <code>GATHER_ND</code>), which the LiteRT GPU delegate has no kernels for, so the file runs on the CPU (XNNPACK) delegate. Running the detector on a phone GPU needs further graph rewrites and a two-graph split that this route does not do yet.</li>
 </ul>
 </div>
-<p>LiteRT (formerly TensorFlow Lite) is Google's on-device runtime. <code>format="litert"</code> hands the PyTorch model to <a href="https://github.com/google-ai-edge/litert-torch">litert-torch</a>, which captures it with <code>torch.export</code> and lowers it to a <code>.tflite</code> file directly — no ONNX and no TensorFlow step, unlike the <a href="../tflite/">TFLite export</a> which converts ONNX → TensorFlow → TFLite with <code>onnx2tf</code>. Both routes produce a <code>.tflite</code> that the same <code>ai_edge_litert</code> interpreter runs; this one keeps PyTorch's NCHW layout and the deformable-attention sampling as litert-torch lowers it. On CPU the exported graphs track eager PyTorch closely. Measured with the pretrained Nano and Seg-Nano checkpoints on a real photo, the ten highest-confidence queries differ by at most about <code>1e-7</code> for boxes and <code>3e-5</code> for class logits and mask probabilities; across all 300 queries the maxima rise to about <code>6e-6</code> (boxes), <code>4e-4</code> (class logits) and <code>2e-3</code> (raw mask logits, about <code>3e-5</code> after sigmoid), because low-confidence proposals reorder slightly between backends. The <code>e2e_litert</code> test suite asserts looser bounds on the confident queries (boxes <code>1e-3</code>, logits <code>0.1</code>, mask probabilities <code>0.05</code>) as a regression gate; those bounds are not the measured precision.</p>
+<p>LiteRT (formerly TensorFlow Lite) is Google's on-device runtime. <code>format="litert"</code> hands the PyTorch model to <a href="https://github.com/google-ai-edge/litert-torch">litert-torch</a>, which captures it with <code>torch.export</code> and lowers it to a <code>.tflite</code> file directly — no ONNX and no TensorFlow step, unlike the <a href="../tflite/">TFLite export</a> which converts ONNX → TensorFlow → TFLite with <code>onnx2tf</code>. Both routes produce a <code>.tflite</code> that the same <code>ai_edge_litert</code> interpreter runs; this one keeps PyTorch's NCHW layout. The deformable attention samples its value maps from zero-padded pixel rows, with one <code>EMBEDDING_LOOKUP</code> per bilinear corner, instead of litert-torch's own <code>grid_sample</code> lowering, whose channel-expanded <code>GATHER_ND</code> indices run outside the XNNPACK delegate. The values are the same, and the detector runs about twice as fast on CPU. On CPU the exported graphs track eager PyTorch closely. Measured with the pretrained Nano and Seg-Nano checkpoints on a real photo, the ten highest-confidence queries differ by at most about <code>1e-7</code> for boxes and <code>3e-5</code> for class logits and mask probabilities; across all 300 queries the maxima rise to about <code>6e-6</code> (boxes), <code>4e-4</code> (class logits) and <code>2e-3</code> (raw mask logits, about <code>3e-5</code> after sigmoid), because low-confidence proposals reorder slightly between backends. The <code>e2e_litert</code> test suite asserts looser bounds on the confident queries (boxes <code>1e-3</code>, logits <code>0.1</code>, mask probabilities <code>0.05</code>) as a regression gate; those bounds are not the measured precision.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"rfdetr[litert]"</span>
 </span></code></pre></div>
@@ -2958,7 +2958,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="September 29, 2026 11:52:13 UTC">2026-09-29 11:52:13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 7, 2026 21:57:04 UTC">2026-10-07 21:57:04</span>
   </span>
 
     
