@@ -44,6 +44,7 @@ pycocotools_only = pytest.mark.skipif(not _IS_PYCOCOTOOLS_INSTALLED, reason="pyc
 # Every eval backend `CocoEvalBackend` names, each carrying the skip mark for the package it needs.
 _BACKEND_ONLY = {
     "hotcoco": pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed"),
+    "hotcoco_streaming": pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed"),
     "faster_coco_eval": pytest.mark.skipif(not _IS_FASTER_COCO_EVAL_INSTALLED, reason="faster_coco_eval not installed"),
     "ufcoco": pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed"),
     "vernier": pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed"),
@@ -208,7 +209,7 @@ def _module(compute_train_metrics: bool = False) -> MagicMock:
     """
     module = MagicMock(name="pl_module")
     module.device = "cpu"
-    module.model_config = SimpleNamespace(use_grouppose_keypoints=False)
+    module.model_config = SimpleNamespace(use_grouppose_keypoints=False, num_classes=2)
     module.train_config = SimpleNamespace(compute_train_metrics=compute_train_metrics)
     return module
 

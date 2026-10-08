@@ -6,6 +6,7 @@
 """Tests for transformer utilities, MS deformable attention core, and MSDeformAttn module."""
 
 import copy
+import inspect
 import io
 from collections.abc import Callable
 from unittest.mock import Mock
@@ -47,6 +48,9 @@ onnxruntime_only = pytest.mark.skipif(
     not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
     reason="onnx/onnxruntime not installed; skip ONNX dynamic-batch inference tests",
 )
+
+# Mirrors the production exporter: the dynamo exporter needs onnxscript, so pin the legacy path when torch offers one.
+_DYNAMO_KWARG = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
 
 
 @pytest.fixture(autouse=True)
@@ -1141,6 +1145,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
             output_names=["output_memory", "output_proposals"],
             dynamic_axes={"memory": {0: "batch"}},
             opset_version=17,
+            **_DYNAMO_KWARG,
         )
         buf.seek(0)
         onnx_bytes = buf.read()

@@ -8,6 +8,7 @@
 import warnings
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -173,12 +174,27 @@ class TestBuildTrainerCallbacks:
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._log_per_class_metrics is False
 
-    @pytest.mark.parametrize("backend", ["hotcoco", "faster_coco_eval", "ufcoco", "vernier"])
+    @pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming", "faster_coco_eval", "ufcoco", "vernier"])
     def test_coco_eval_uses_eval_backend(self, tmp_path: Path, backend: str) -> None:
         """COCOEvalCallback receives every eval_backend value TrainConfig accepts."""
         trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend=backend), _mc())
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._eval_backend == backend
+
+    def test_streaming_backend_receives_the_model_class_count(self, tmp_path: Path) -> None:
+        """``hotcoco_streaming`` gets ``num_classes`` from the model config, so it streams rather than falling back.
+
+        ``StreamingEval`` needs every category before the first batch; without the class count the metric would evaluate
+        in one batch on every run and the backend would never stream in production.
+        """
+        pytest.importorskip("hotcoco")
+        model_config = _mc()
+        trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), model_config)
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
+
+        assert len(coco_cb.map_metric._stream_categories) == model_config.num_classes + 1
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""

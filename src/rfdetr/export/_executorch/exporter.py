@@ -60,6 +60,7 @@ from typing import Any, Literal, cast
 import torch
 from torch import nn
 
+from rfdetr.export._executorch.xnnpack import decompose_attention, fold_constants
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -196,10 +197,15 @@ def _build_partitioner(backend: str) -> list[Any]:
         # No compile specs on purpose. Passing ExecuTorch's own
         # CoreMLBackend.generate_compile_specs(compute_precision=FLOAT16, minimum_deployment_target=iOS16) was
         # measured to be worse than the partitioner's own defaults on a pretrained RFDETRNano (Apple M3 Pro,
-        # macOS 27.0, COCO val2017, all 5000 images): 48.05 -> 45.06 mAP and 14.0 -> 18.4 ms p50. The default
-        # path already runs the delegate in fp16 and already reaches the Neural Engine (verified from the
-        # `com.apple.ane` unified log); the explicit specs additionally cast the weights, which is what costs
-        # the accuracy. With no compute-unit spec, ExecuTorch's CoreMLBackend converts with ct.ComputeUnit.ALL
+        # macOS 27.0.1, COCO val2017, all 5000 images): 48.05 -> 45.06 mAP. #1495 also recorded 14.0 -> 18.4 ms p50
+        # for that `.pte`; it was not re-measured and is not reconciled with the native `.mlpackage` measurements,
+        # where iOS16 is the faster program on the Neural Engine (10.8 vs 12.7 ms p50 back to back). The default path
+        # already runs the delegate in fp16 and already reaches the Neural Engine (verified from the `com.apple.ane`
+        # unified log). The two differ only in the deployment target: with no deployment-target compile spec,
+        # ExecuTorch passes minimum_deployment_target=None and coremltools defaults an mlprogram to its fixed lowest
+        # target, iOS15 (spec 6) (executorch 1.3.1, coremltools 9.0). That is the program the native CoreML export
+        # now also produces, while iOS16 puts `resample` on the Neural Engine in fp16, which is what costs the
+        # accuracy (#1024). With no compute-unit spec, ExecuTorch's CoreMLBackend converts with ct.ComputeUnit.ALL
         # (`compute_unit_from_compile_specs` fallback, applied in its `ct.convert` call at lowering time).
         return [CoreMLPartitioner()]
     # QNN uses _lower_qnn instead of this function; this raise is reached only if a new
@@ -465,7 +471,8 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
             An ExecuTorch program manager (``.buffer`` holds the ``.pte`` bytes).
 
         Raises:
-            ImportError: If the backend's ExecuTorch extension, or ``AddmmToLinearTransform``, is unavailable.
+            ImportError: If the backend's ExecuTorch extension, ``AddmmToLinearTransform`` or, for XNNPACK,
+                ``executorch.exir.passes.constant_prop_pass`` is unavailable.
         """
         from executorch.exir import to_edge_transform_and_lower
 
@@ -476,6 +483,10 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
         # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
         exported_program = torch.export.export(model, (input_tensors,), strict=False)
+        if backend == "xnnpack":
+            # Unmasked attention and constant weight slices keep the encoder and decoder inside the delegate (the
+            # CHANGELOG entry for PR #1601 has the measurements). Not applied to CoreML, which was not evaluated.
+            exported_program = fold_constants(decompose_attention(exported_program))
         # Imported in the non-QNN path only: the qnn backend never uses this transform, and
         # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
         # they never needed.
