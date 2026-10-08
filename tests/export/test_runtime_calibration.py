@@ -14,6 +14,7 @@ refusals that keep a mismatched array from failing later inside a runtime.
 from __future__ import annotations
 
 import inspect
+import logging
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -23,7 +24,7 @@ import pytest
 
 from rfdetr.export._runtime import calibration
 from rfdetr.export._runtime.calibration import IMAGE_SUFFIXES, _arrays_from_samples, _image_paths, calibration_batches
-from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+from rfdetr.export._runtime.preprocess import IMAGENET_MEAN, IMAGENET_STD, preprocess_to_nchw
 
 Image = pytest.importorskip("PIL.Image")
 
@@ -140,6 +141,30 @@ class TestArraysFromSamples:
         batches = list(_arrays_from_samples(samples, height=4, width=4, channels=3))
         assert [(b.shape, b.dtype) for b in batches] == [((1, 3, 4, 4), np.float32)] * 3
         np.testing.assert_array_equal(np.concatenate(batches), samples.astype(np.float32))
+
+    def test_each_unnormalized_sample_is_warned_about(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Raw 0-255 pixels stored as floats calibrate wrong, so every such sample gets its own warning."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        samples = np.random.default_rng(0).uniform(0, 255, (2, 3, 4, 4)).astype(np.float32)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            list(_arrays_from_samples(samples, height=4, width=4, channels=3))
+        assert [record.getMessage().split(" spans")[0] for record in caplog.records] == [
+            "Calibration sample 0",
+            "Calibration sample 1",
+        ]
+
+    def test_normalized_extremes_are_not_warned_about(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A black and a white image, normalized as predict() does, reach the range's edges and pass silently."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        mean, std = np.array(IMAGENET_MEAN)[:, None, None], np.array(IMAGENET_STD)[:, None, None]
+        samples = ((np.stack([np.zeros((3, 4, 4)), np.ones((3, 4, 4))]) - mean) / std).astype(np.float32)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            list(_arrays_from_samples(samples, height=4, width=4, channels=3))
+        assert caplog.records == []
 
 
 class TestCalibrationBatches:

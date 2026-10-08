@@ -107,8 +107,8 @@ class OnnxExporter(Exporter[OnnxConfig]):
         refusal rather than a default: random or absent data produces a model that loads, runs, and is quietly
         wrong. This is the opposite of TFLite's dynamic-range ``"int8"``, where calibration data is genuinely
         unused. What can be judged from the configuration alone -- a path that does not exist, a directory without
-        images, a file that is not ``.npy``, an array that is not rank 4 -- is judged here too, so it fails before the
-        forward pass instead of after the trace.
+        images, a file that is not ``.npy``, an array that is not a non-empty rank-4 float array, a *max_images* that is
+        not a positive integer -- is judged here too, so it fails before the forward pass instead of after the trace.
 
         Raises:
             ValueError: If *quantization* is not a recognized mode, or is ``"int8"`` without usable
@@ -127,7 +127,7 @@ class OnnxExporter(Exporter[OnnxConfig]):
                 "no meaningful default."
             )
         if self.config.quantization == "int8":
-            check_calibration_data(self.config.calibration_data)
+            check_calibration_data(self.config.calibration_data, max_images=self.config.max_images)
 
     @classmethod
     def check_dependencies(cls) -> None:

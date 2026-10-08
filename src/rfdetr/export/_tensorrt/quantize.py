@@ -47,7 +47,7 @@ import contextlib
 import os
 import tempfile
 from collections import Counter
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,12 +56,23 @@ import numpy as np
 from numpy.typing import NDArray
 
 from rfdetr.export._runtime.calibration import warn_if_too_few_samples
+from rfdetr.export._tensorrt._graph import (
+    _QUANTIZATION_OP_TYPES,
+    _iter_graphs,
+    _onnx_dynamic_batch_inputs,
+    _tensor_names,
+    _unique_name,
+)
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
 #: The only quantization mode a TensorRT export accepts besides ``None`` (FP16 or FP32, chosen with ``fp16``).
 INT8 = "int8"
+
+#: The graph outputs an INT8 export is measured for: a detector. Segmentation and keypoint models add outputs and are
+#: refused.
+_INT8_OUTPUT_NAMES = ("dets", "labels")
 
 #: Largest magnitude a symmetric INT8 value takes; TensorRT requires a zero point of 0.
 _INT8_MAX = 127
@@ -107,7 +118,10 @@ _FUSED_INT8_HEAD_SIZES = frozenset({16, 32, 64})
 #: TensorRT 11.3, COCO val2017).
 _INT8_ATTENTION_MAX_TOKENS = 325
 
-#: Node-name prefixes of the regions whose weight-bearing operations are quantized: backbone encoder and decoder.
+#: Node-name prefixes of the regions whose weight-bearing operations are quantized: backbone encoder and decoder. They
+#: are the scope names the TorchScript ONNX exporter gives nodes (``dynamo=False`` in ``export/_onnx/exporter.py``)
+#: under the current module attribute paths; another exporter or a renamed module matches no layer, and the planner
+#: refuses.
 _QUANTIZED_REGIONS = ("/backbone/backbone.0/encoder/", "/transformer/decoder/")
 
 #: Node-name prefix of the region whose attention may run as INT8 fused attention. The decoder self-attention fits the
@@ -561,7 +575,8 @@ def plan_int8(model: Any) -> Int8Plan:
     if not weighted:
         raise ValueError(
             "Found no backbone encoder or decoder layer to quantize in this graph; INT8 TensorRT export applies to "
-            "RF-DETR detector exports only."
+            "RF-DETR detector exports only. Layers are found by the node-name prefixes "
+            f"{list(_QUANTIZED_REGIONS)} that the TorchScript ONNX exporter (dynamo=False) gives them."
         )
     order = {name: index for index, name in enumerate(names)}
     activations = sorted(
@@ -601,7 +616,8 @@ def _graph_batches(batches: Iterable[NDArray[np.float32]], batch: int | None) ->
 def _calibration_graph(model: Any, tensors: list[str]) -> Any:
     """Return a copy of *model* that also outputs ``max(abs(t))`` for each of *tensors*.
 
-    Reducing inside the graph returns one scalar per tensor rather than every activation.
+    Reducing inside the graph returns one scalar per tensor rather than every activation. A NaN anywhere in a tensor is
+    measured as ``inf``, so a range check that refuses non-finite ranges sees it.
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -613,21 +629,27 @@ def _calibration_graph(model: Any, tensors: list[str]) -> Any:
         ['y', 'x__absmax']
     """
     import onnx
-    from onnx import TensorProto, helper
-
-    # Imported here: exporter.py imports this module at module scope.
-    from rfdetr.export._tensorrt.exporter import _tensor_names
+    from onnx import TensorProto, helper, numpy_helper
 
     probe = onnx.ModelProto()
     probe.CopyFrom(model)
     taken = _tensor_names(probe.graph)
+    # onnxruntime's ReduceMax skips a NaN anywhere but the first element, so NaN is swapped for +inf before reducing.
+    infinity = _unique_name("calibration_infinity", taken)
+    value = numpy_helper.from_array(np.array(np.inf, np.float32))
+    probe.graph.node.append(helper.make_node("Constant", [], [infinity], value=value))
     for tensor in tensors:
-        absolute, maximum = f"{tensor}__abs", f"{tensor}__absmax"
-        while absolute in taken or maximum in taken:
-            absolute, maximum = f"_{absolute}", f"_{maximum}"
-        taken.update((absolute, maximum))
-        probe.graph.node.append(helper.make_node("Abs", [tensor], [absolute]))
-        probe.graph.node.append(helper.make_node("ReduceMax", [absolute], [maximum], keepdims=0))
+        absolute, nan, guarded, maximum = (
+            _unique_name(f"{tensor}__{suffix}", taken) for suffix in ("abs", "isnan", "guarded", "absmax")
+        )
+        probe.graph.node.extend(
+            [
+                helper.make_node("Abs", [tensor], [absolute]),
+                helper.make_node("IsNaN", [tensor], [nan]),
+                helper.make_node("Where", [nan, infinity, absolute], [guarded]),
+                helper.make_node("ReduceMax", [guarded], [maximum], keepdims=0),
+            ]
+        )
         probe.graph.output.append(helper.make_tensor_value_info(maximum, TensorProto.FLOAT, []))
     return probe
 
@@ -648,10 +670,13 @@ def calibrate_ranges(
         Tensor name to the largest absolute value seen.
 
     Raises:
-        ValueError: If *batches* is empty or holds a NaN or infinite value.
+        ValueError: If *tensors* or *batches* is empty, or *batches* holds a NaN or infinite value.
 
     Logs a warning, after the last batch, when fewer than ``MIN_CALIBRATION_SAMPLES`` images were seen.
     """
+    if not tensors:
+        # onnxruntime treats an empty output list as every output, so the slice below would measure the wrong tensors.
+        raise ValueError("Calibration was given no tensor to measure.")
     import onnx
     import onnxruntime as ort
 
@@ -664,7 +689,11 @@ def calibrate_ranges(
         onnx.save(_calibration_graph(model, tensors), probe_path)
         # The CPU, not CUDA: at batch 32 the FP32 graph needs about 9 GB of GPU memory under onnxruntime, more than a
         # 12 GB card has left beside the export, while the CPU calibrates 128 images in about 15 s.
-        session = ort.InferenceSession(probe_path, providers=["CPUExecutionProvider"])
+        # Priority-based order: under the default one, the probe's added reductions raised peak host memory far above
+        # the plain graph's on an RF-DETR Nano export, for the same ranges.
+        options = ort.SessionOptions()
+        options.execution_order = ort.ExecutionOrder.PRIORITY_BASED
+        session = ort.InferenceSession(probe_path, sess_options=options, providers=["CPUExecutionProvider"])
         feed_name = session.get_inputs()[0].name
         dimension = session.get_inputs()[0].shape[0]
         # The probe outputs follow the model's own, one per tensor in order (names may carry a collision prefix).
@@ -680,7 +709,7 @@ def calibrate_ranges(
                 yield image
 
         for group in _graph_batches(tally(batches), dimension if isinstance(dimension, int) else None):
-            # onnxruntime's ReduceMax skips a NaN, so a NaN image would calibrate to a finite but wrong range.
+            # Refused here rather than as a non-finite range afterwards, so the message names the batch.
             if not np.isfinite(group).all():
                 raise ValueError(f"Calibration batch {count + 1} holds NaN or infinite values.")
             ranges = np.maximum(ranges, np.asarray(session.run(outputs, {feed_name: group}), dtype=np.float64))
@@ -691,8 +720,10 @@ def calibrate_ranges(
         logger.info(f"Calibrated {len(tensors)} INT8 activation ranges over {count} batch(es)")
         return dict(zip(tensors, ranges.tolist()))
     finally:
-        with contextlib.suppress(OSError):
+        try:
             Path(probe_path).unlink(missing_ok=True)
+        except OSError as error:
+            logger.warning(f"Could not delete the calibration probe graph {probe_path!r}: {error}")
 
 
 def _quantized_weight(weight: NDArray[Any], axis: int) -> tuple[NDArray[np.int8], NDArray[np.float16]]:
@@ -746,7 +777,8 @@ def _lift_opset(model: Any) -> None:
         model: ``ModelProto`` to lift; left untouched when its opset is already high enough.
 
     Raises:
-        ValueError: If the graph holds an op whose meaning the lift does not know how to keep.
+        ValueError: If the graph holds an op whose meaning the lift does not know how to keep, or one ONNX does not
+            define.
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -759,9 +791,6 @@ def _lift_opset(model: Any) -> None:
         (19, ['x', 'max_axes'])
     """
     from onnx import defs, helper
-
-    # Imported here: exporter.py imports this module at module scope.
-    from rfdetr.export._tensorrt.exporter import _iter_graphs, _tensor_names
 
     entries = [entry for entry in model.opset_import if entry.domain in ("", "ai.onnx")]
     current = max((entry.version for entry in entries), default=_FP16_QDQ_OPSET)
@@ -779,14 +808,22 @@ def _lift_opset(model: Any) -> None:
                 unsized = len(node.input) < 2 or not node.input[1]
                 if unsized and not any(attribute.name == "num_outputs" for attribute in node.attribute):
                     node.attribute.append(helper.make_attribute("num_outputs", len(node.output)))
-            elif node.op_type not in _TYPE_ONLY_CHANGES and (
-                defs.get_schema(node.op_type, current).since_version
-                != defs.get_schema(node.op_type, _FP16_QDQ_OPSET).since_version
-            ):
-                raise ValueError(
-                    f"Cannot quantize this graph for TensorRT: node {node.name!r} ({node.op_type}) changed meaning "
-                    f"between opset {current} and {_FP16_QDQ_OPSET}, which FP16 quantization scales need."
-                )
+            elif node.op_type not in _TYPE_ONLY_CHANGES:
+                try:
+                    changed = (
+                        defs.get_schema(node.op_type, current).since_version
+                        != defs.get_schema(node.op_type, _FP16_QDQ_OPSET).since_version
+                    )
+                except defs.SchemaError as error:  # not a ValueError
+                    raise ValueError(
+                        f"Cannot quantize this graph for TensorRT: node {node.name!r} ({node.op_type}) is not an ONNX "
+                        f"op at opset {current} or {_FP16_QDQ_OPSET}."
+                    ) from error
+                if changed:
+                    raise ValueError(
+                        f"Cannot quantize this graph for TensorRT: node {node.name!r} ({node.op_type}) changed meaning "
+                        f"between opset {current} and {_FP16_QDQ_OPSET}, which FP16 quantization scales need."
+                    )
     for entry in entries:
         entry.version = _FP16_QDQ_OPSET
 
@@ -808,9 +845,6 @@ def _move_axes_to_input(node: Any, graph: Any, taken: set[str]) -> None:
         (['x', 'mean_axes'], 'mean_axes')
     """
     from onnx import numpy_helper
-
-    # Imported here: exporter.py imports this module at module scope.
-    from rfdetr.export._tensorrt.exporter import _unique_name
 
     axes = next((attribute for attribute in node.attribute if attribute.name == "axes"), None)
     if axes is None:
@@ -837,9 +871,6 @@ def insert_qdq(model: Any, plan: Int8Plan, ranges: Mapping[tuple[str, int], floa
         ValueError: If the graph cannot be lifted to the opset FP16 scales need.
     """
     from onnx import helper, numpy_helper
-
-    # Imported here: exporter.py imports this module at module scope.
-    from rfdetr.export._tensorrt.exporter import _iter_graphs, _tensor_names, _unique_name
 
     _lift_opset(model)
     graph = model.graph
@@ -915,7 +946,7 @@ def insert_qdq(model: Any, plan: Int8Plan, ranges: Mapping[tuple[str, int], floa
 
 
 def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
-    """Refuse a graph INT8 quantization cannot start from: quantized, not float32, dynamic batch, or not a detector.
+    """Refuse a graph INT8 cannot start from: quantized, not float32, not a static image, or not a detector.
 
     Each would otherwise fail late or point the wrong way: a quantized graph plans nothing to quantize, and an FP16
     graph is calibrated in full before the FP16 cast refuses it with advice (``fp16=False``) that an INT8 request
@@ -926,8 +957,11 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
         onnx_path: The caller's file, named in the error.
 
     Raises:
-        ValueError: If the graph holds Q/DQ nodes, FP16 inputs or weights, or a dynamic batch axis, or its outputs are
-            not exactly a detector's ``dets`` and ``labels`` (a segmentation, keypoint or backbone-only export).
+        ValueError: If the graph holds Q/DQ nodes, FP16 inputs or weights, or a dynamic batch axis, lists an
+            initializer as a graph input too, or its first input is not rank 4 with fixed, positive channels, height
+            and width.
+        NotImplementedError: If its outputs are not exactly a detector's ``dets`` and ``labels`` (a segmentation,
+            keypoint or backbone-only export), matching what ``RFDETR.export`` raises for such a model.
 
     Examples:
         >>> from onnx import TensorProto, helper
@@ -940,14 +974,6 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
         ValueError: 'm.onnx' is not a float32 export; ...
     """
     from onnx import TensorProto
-
-    # Imported here: exporter.py imports this module at module scope.
-    from rfdetr.export._tensorrt.exporter import (
-        _INT8_OUTPUT_NAMES,
-        _QUANTIZATION_OP_TYPES,
-        _iter_graphs,
-        _onnx_dynamic_batch_inputs,
-    )
 
     if any(node.op_type in _QUANTIZATION_OP_TYPES for graph in _iter_graphs(model.graph) for node in graph.node):
         raise ValueError(
@@ -965,11 +991,30 @@ def _refuse_unquantizable_source(model: Any, onnx_path: str) -> None:
             f"'{onnx_path}' has a dynamic batch axis, and an INT8 engine is built for a static batch. Re-export the "
             "ONNX graph with a fixed batch_size and dynamic_batch=False."
         )
+    # A weight also listed as a graph input can be replaced at run time; quantizing bakes it in as an INT8 constant.
+    overridable = sorted({value.name for value in model.graph.input} & {init.name for init in model.graph.initializer})
+    if overridable:
+        raise ValueError(
+            f"'{onnx_path}' lists {len(overridable)} initializer(s) as graph inputs too, e.g. {overridable[0]!r}, so "
+            "they can be overridden at run time, while quantization='int8' bakes weights into the graph. Re-export "
+            "the ONNX graph with keep_initializers_as_inputs=False."
+        )
     outputs = tuple(output.name for output in model.graph.output)
     if outputs != _INT8_OUTPUT_NAMES:
-        raise ValueError(
+        # The type _convert raises for the same model before its ONNX export, so build_engine callers catch one type.
+        raise NotImplementedError(
             f"'{onnx_path}' outputs {list(outputs)}, and quantization='int8' is measured for detection models only, "
             f"whose outputs are {list(_INT8_OUTPUT_NAMES)}. Build this graph with quantization=None."
+        )
+    # Calibration preprocesses images to the input's own channels, height and width, so each must be a known size.
+    image = model.graph.input[0]
+    dims = image.type.tensor_type.shape.dim
+    if len(dims) != 4 or any(dim.WhichOneof("value") != "dim_value" or dim.dim_value <= 0 for dim in dims[1:]):
+        shape = [dim.dim_value if dim.WhichOneof("value") == "dim_value" else dim.dim_param or "?" for dim in dims]
+        raise ValueError(
+            f"'{onnx_path}' input {image.name!r} has shape {shape}, and quantization='int8' calibrates a "
+            "(batch, channels, height, width) image input whose channels, height and width are fixed and positive. "
+            "Build from the .onnx that RFDETR.export writes."
         )
 
 
@@ -980,6 +1025,7 @@ def int8_source_graph(
     calibration_data: str | Path | NDArray[Any],
     max_images: int,
     dynamic_batch: bool | None,
+    fp16_graph: Callable[..., contextlib.AbstractContextManager[str]],
 ) -> Iterator[str]:
     """Provide an INT8-quantized FP16 copy of *onnx_path* to build from, deleting it when the block exits.
 
@@ -989,30 +1035,45 @@ def int8_source_graph(
             :func:`~rfdetr.export._runtime.calibration.calibration_batches`.
         max_images: Maximum images read from a *calibration_data* directory.
         dynamic_batch: The batch request the engine is built for, forwarded to the FP16 cast.
+        fp16_graph: The FP16 cast, called as ``fp16_graph(onnx_path, dynamic_batch=dynamic_batch)`` once calibration
+            is done (the exporter passes :func:`~rfdetr.export._tensorrt.exporter.fp16_source_graph`). Passed in
+            rather than imported so this module never imports the exporter, which imports it.
 
     Yields:
         Path to the quantized graph, valid only inside the ``with`` block.
 
     Raises:
-        ValueError: If the graph is already quantized, is not float32, has a dynamic batch axis, cannot be lifted to
-            opset 19, is not a quantizable RF-DETR detector (its outputs must be exactly ``dets`` and ``labels``), or
-            holds attention INT8 cannot be placed around; or if the calibration data is unusable, holds a NaN or
-            infinite value, or gives a range that is not finite or does not fit an FP16 scale; or if a calibration
+        ValueError: If the graph is already quantized, is not float32, has a dynamic batch axis, an initializer that
+            is also a graph input, or an input that is not a static rank-4 image, cannot be lifted to opset 19, has no
+            backbone or decoder layer to quantize, or holds attention INT8 cannot be placed around or a NaN or
+            infinite weight it would quantize (checked before calibration); or if the calibration data is unusable,
+            holds a NaN or infinite value, or gives a range that is not finite (a NaN computed inside the graph
+            included) or does not fit an FP16 scale; or if a calibration
             image cannot be identified as an image (the message names the file). An image Pillow identifies but
             cannot decode (a truncated file) raises Pillow's own ``OSError``, which does not name the file.
+        NotImplementedError: If the graph's outputs are not exactly a detector's ``dets`` and ``labels`` (a
+            segmentation, keypoint or backbone-only export), as ``RFDETR.export`` raises for such a model.
     """
     import onnx
+    from onnx import numpy_helper
 
     from rfdetr.export._runtime.calibration import calibration_batches
-
-    # Imported here: exporter.py imports this module at module scope.
-    from rfdetr.export._tensorrt.exporter import fp16_source_graph
 
     source = onnx.load(onnx_path)
     _refuse_unquantizable_source(source, onnx_path)
     # Lifting the FP32 source too keeps its meaning and makes an unliftable graph fail here, before calibration.
     _lift_opset(source)
     plan = plan_int8(source)
+    # A NaN or infinite weight gets a NaN or infinite FP16 scale that only TensorRT would notice, after calibration.
+    weights = _constant_weights(source.graph)
+    planned = set(plan.weighted)
+    weight_names = sorted({node.input[1] for node in source.graph.node if node.name in planned})
+    non_finite = [name for name in weight_names if not np.isfinite(numpy_helper.to_array(weights[name])).all()]
+    if non_finite:
+        raise ValueError(
+            f"'{onnx_path}' holds {len(non_finite)} weight(s) with NaN or infinite values, e.g. {non_finite[0]!r}, "
+            "which INT8 cannot quantize. Export from a checkpoint whose weights are all finite."
+        )
     logger.info(
         f"INT8 plan: {len(plan.weighted)} weighted layer(s), {len(plan.activations)} quantized activation input(s)"
     )
@@ -1028,14 +1089,15 @@ def int8_source_graph(
     unusable = sorted(t for t, r in by_tensor.items() if not np.isfinite(r) or r / _INT8_MAX > _MAX_FP16)
     if unusable:
         raise ValueError(
-            f"Calibration gave {len(unusable)} tensor(s) a range that is not finite or does not fit an FP16 scale, "
-            f"e.g. {unusable[0]!r} = {by_tensor[unusable[0]]}. Check that calibration_data is normalized as predict() "
-            "normalizes."
+            f"Calibration gave {len(unusable)} tensor(s) a range that is not finite (the graph computed a NaN or "
+            f"infinite activation) or does not fit an FP16 scale, e.g. {unusable[0]!r} = {by_tensor[unusable[0]]}. "
+            "Check that calibration_data is normalized as predict() normalizes and that the model's outputs on it "
+            "are finite."
         )
     ranges = {key: by_tensor[_input_tensor(source.graph, *key)] for key in keys}
     del source
 
-    with fp16_source_graph(onnx_path, dynamic_batch=dynamic_batch) as fp16_path:
+    with fp16_graph(onnx_path, dynamic_batch=dynamic_batch) as fp16_path:
         model = onnx.load(fp16_path)
     insert_qdq(model, plan, ranges)
     stem = os.path.basename(os.path.splitext(onnx_path)[0])
@@ -1046,5 +1108,7 @@ def int8_source_graph(
         del model
         yield int8_path
     finally:
-        with contextlib.suppress(OSError):
+        try:
             Path(int8_path).unlink(missing_ok=True)
+        except OSError as error:
+            logger.warning(f"Could not delete the INT8 intermediate graph {int8_path!r}: {error}")

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import logging
 import os
 import pickle
 import sys
@@ -249,17 +250,17 @@ class TestInt8Request:
             TensorRTExporter(config)
 
     @pytest.mark.parametrize(
-        "data",
+        ("data", "message"),
         [
-            pytest.param(["a.jpg"], id="list"),
-            pytest.param(torch.zeros(1, 3, 8, 8), id="tensor"),
-            pytest.param(np.zeros((3, 8, 8), np.float32), id="rank-3"),
-            pytest.param(np.zeros((1, 3, 8, 8), np.uint8), id="uint8"),
-            pytest.param(np.zeros((0, 3, 8, 8), np.float32), id="empty"),
+            pytest.param(["a.jpg"], "calibration_data", id="list"),
+            pytest.param(torch.zeros(1, 3, 8, 8), "calibration_data", id="tensor"),
+            pytest.param(np.zeros((3, 8, 8), np.float32), "must be rank 4", id="rank-3"),
+            pytest.param(np.zeros((1, 3, 8, 8), np.uint8), "floating point", id="uint8"),
+            pytest.param(np.zeros((0, 3, 8, 8), np.float32), "at least one image", id="empty"),
         ],
     )
-    def test_unusable_calibration_data_is_refused(self, data: object) -> None:
-        with pytest.raises(ValueError, match="calibration_data"):
+    def test_unusable_calibration_data_is_refused(self, data: object, message: str) -> None:
+        with pytest.raises(ValueError, match=message):
             TensorRTExporter(TensorRTConfig(quantization="int8", calibration_data=data))  # type: ignore[arg-type]
 
     @pytest.mark.parametrize(
@@ -389,6 +390,89 @@ class TestInt8Host:
         with pytest.raises(ValueError, match=message):
             exporter.check_environment()
 
+    def test_timing_cache_that_is_the_calibration_file_is_refused_before_the_forward_pass(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A timing cache naming the calibration .npy, spelled another way, would be overwritten, so it is refused."""
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
+        calibration = tmp_path / "calibration.npy"
+        np.save(calibration, np.zeros((1, 3, 8, 8), np.float32))
+        exporter = TensorRTExporter(
+            TensorRTConfig(
+                quantization="int8", calibration_data=calibration, timing_cache=str(tmp_path / "." / calibration.name)
+            )
+        )
+        with pytest.raises(ValueError, match="same file as calibration_data"):
+            exporter.check_environment()
+
+    def test_timing_cache_preflight_refuses_the_calibration_file(self, tmp_path: Path) -> None:
+        """The cache preflight compares the calibration file too, and creates no lock file when it refuses."""
+        calibration = tmp_path / "calibration.npy"
+        np.save(calibration, np.zeros((1, 3, 8, 8), np.float32))
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=calibration, timing_cache=str(calibration))
+        )
+        with pytest.raises(ValueError, match="same file as"):
+            exporter._prepare_timing_cache()
+        assert not (tmp_path / "calibration.npy.lock").exists()
+
+    @pytest.mark.parametrize(
+        ("version", "warned"),
+        [
+            pytest.param("10.8.0.43", True, id="10.x-before-10.16"),
+            pytest.param("12.0.0.1", True, id="newer-major"),
+            pytest.param("10.16.1.11", False, id="10.16"),
+            pytest.param("11.3.0.99", False, id="11.3"),
+        ],
+    )
+    def test_unmeasured_tensorrt_is_warned_about_before_the_forward_pass(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+        version: str,
+        warned: bool,
+    ) -> None:
+        """An INT8 build on an unmeasured TensorRT release still runs, with a warning from check_environment."""
+        monkeypatch.setattr(TensorRTExporter, "_require_int8_host", classmethod(lambda cls: None))
+        monkeypatch.setitem(sys.modules, "tensorrt", types.SimpleNamespace(__version__=version))
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)))
+        )
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            exporter.check_environment()
+        assert (f"this build uses TensorRT {version}" in caplog.text) is warned
+
+    @pytest.mark.parametrize(
+        ("settings", "named"),
+        [
+            pytest.param({"version_compatible": True}, "trt_version_compatible=True", id="version-compatible"),
+            pytest.param(
+                {"hardware_compatibility": "ampere_plus"},
+                "trt_hardware_compatibility='ampere_plus'",
+                id="hardware-compatible",
+            ),
+        ],
+    )
+    def test_portability_flag_on_int8_is_warned_about(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+        settings: dict[str, Any],
+        named: str,
+    ) -> None:
+        """A portable INT8 engine was never measured, so the flag is named in a warning even on a measured TensorRT."""
+        monkeypatch.setitem(sys.modules, "tensorrt", types.SimpleNamespace(__version__="11.3.0.99"))
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        exporter = TensorRTExporter(
+            TensorRTConfig(quantization="int8", calibration_data=str(_calibration_dir(tmp_path)), **settings)
+        )
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            exporter._warn_if_int8_is_unmeasured()
+        assert f"this build uses {named}" in caplog.text
+
     def test_preprocessed_npy_is_accepted(self, tmp_path: Path) -> None:
         path = tmp_path / "images.npy"
         np.save(path, np.zeros((2, 3, 8, 8), np.float32))
@@ -513,7 +597,12 @@ class TestInt8BuildWiring:
 
         assert calls["source"] == (
             str(tmp_path / "model.onnx"),
-            {"calibration_data": str(_calibration_dir(tmp_path)), "max_images": 3, "dynamic_batch": False},
+            {
+                "calibration_data": str(_calibration_dir(tmp_path)),
+                "max_images": 3,
+                "dynamic_batch": False,
+                "fp16_graph": tensorrt_export.fp16_source_graph,
+            },
         )
         assert calls["parse"] == (str(tmp_path / "quantized.onnx"), {"strongly_typed": True})
         assert calls["saved"] == (("engine", ("config", {"fp16": False})), engine_path)
@@ -1632,6 +1721,22 @@ class TestLiftOpset:
         with pytest.raises(ValueError, match="'pad' \\(Pad\\) changed meaning"):
             quantize._lift_opset(model)
 
+    def test_unknown_op_is_refused(self) -> None:
+        """An op ONNX does not define is refused with a ValueError naming the node, not onnx's own SchemaError.
+
+        ``int8_source_graph`` promises a ValueError for a graph it cannot lift; onnx's schema lookup raises its own
+        error type, which is no ValueError.
+        """
+        graph = helper.make_graph(
+            [helper.make_node("NotAnOp", ["x"], ["y"], "mystery")],
+            "unknown",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [2])],
+        )
+        model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+        with pytest.raises(ValueError, match="'mystery' \\(NotAnOp\\) is not an ONNX op"):
+            quantize._lift_opset(model)
+
 
 class TestInt8SourceGraph:
     """A graph INT8 cannot start from is refused before any calibration, with advice an INT8 request can follow."""
@@ -1646,6 +1751,12 @@ class TestInt8SourceGraph:
             pytest.param("dynamic", "static batch", id="dynamic-batch"),
             pytest.param("pad", "changed meaning", id="unliftable"),
             pytest.param("masks", "detection models only", id="segmentation"),
+            pytest.param("rank-3", "image input", id="not-an-image"),
+            pytest.param("symbolic-height", "image input", id="symbolic-height"),
+            pytest.param("weight-input", "as graph inputs too", id="overridable-weight"),
+            # Refused before calibration: the calibration directory holds no image, which would fail differently.
+            pytest.param("nan-weight", "NaN or infinite values, e.g. 'w1'", id="nan-weight"),
+            pytest.param("inf-weight", "NaN or infinite values, e.g. 'w1'", id="inf-weight"),
         ],
     )
     def test_unquantizable_source_is_refused(self, tmp_path: Path, rewrite: str, message: str) -> None:
@@ -1679,23 +1790,41 @@ class TestInt8SourceGraph:
                     init.CopyFrom(numpy_helper.from_array(numpy_helper.to_array(init).astype(np.float16), init.name))
         elif rewrite == "dynamic":
             model.graph.input[0].type.tensor_type.shape.dim[0].dim_param = "batch"
+        elif rewrite == "weight-input":
+            weight = model.graph.initializer[0]
+            model.graph.input.append(helper.make_tensor_value_info(weight.name, weight.data_type, weight.dims))
         elif rewrite == "pad":
             model.graph.initializer.append(numpy_helper.from_array(np.zeros(6, np.int64), "pads"))
             model.graph.node.append(helper.make_node("Pad", [model.graph.input[0].name, "pads"], ["labels"], "pad"))
-        if rewrite in ("pad", "masks"):
+        elif rewrite in ("nan-weight", "inf-weight"):
+            w1 = next(init for init in model.graph.initializer if init.name == "w1")
+            values = numpy_helper.to_array(w1).copy()
+            values[0, 1] = np.nan if rewrite == "nan-weight" else np.inf
+            w1.CopyFrom(numpy_helper.from_array(values, "w1"))
+        if rewrite in ("pad", "symbolic-height", "nan-weight", "inf-weight"):
+            # An image input (never run here), so that only the rewrite under test can be what is refused.
+            height = "height" if rewrite == "symbolic-height" else 8
+            model.graph.input[0].CopyFrom(helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, height, 32]))
+        if rewrite in ("pad", "masks", "rank-3", "symbolic-height", "nan-weight", "inf-weight"):
             # A detector's outputs, so that only the rewrite under test can be what is refused.
             model.graph.node.append(helper.make_node("Identity", ["y"], ["dets"], "dets"))
             outputs = ["dets", "labels"] + (["masks"] if rewrite == "masks" else [])
-            if rewrite == "masks":
+            if rewrite != "pad":
                 model.graph.node.append(helper.make_node("Identity", ["y"], ["labels"], "labels"))
+            if rewrite == "masks":
                 model.graph.node.append(helper.make_node("Identity", ["y"], ["masks"], "masks"))
             del model.graph.output[:]
             model.graph.output.extend(helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in outputs)
         path = tmp_path / "source.onnx"
         onnx.save(model, path)
-        with pytest.raises(ValueError, match=message):
+        # A non-detector gets the type RFDETR.export raises for the same model; a malformed graph gets ValueError.
+        with pytest.raises(NotImplementedError if rewrite == "masks" else ValueError, match=message):
             with quantize.int8_source_graph(
-                str(path), calibration_data=str(tmp_path), max_images=1, dynamic_batch=False
+                str(path),
+                calibration_data=str(tmp_path),
+                max_images=1,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
 
@@ -1774,7 +1903,11 @@ class TestCalibration:
         images[1, 0, 1, 2] = np.nan
         with pytest.raises(ValueError, match="NaN or infinite"):
             with quantize.int8_source_graph(
-                str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
+                str(image_graph),
+                calibration_data=images,
+                max_images=2,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
         assert [inspect.getgeneratorstate(g) for g in generators] == [inspect.GEN_CLOSED]
@@ -1798,7 +1931,11 @@ class TestCalibration:
         pytest.importorskip("onnxruntime")
         images = np.random.default_rng(0).standard_normal((3, 3, 4, 6)).astype(np.float32)
         with quantize.int8_source_graph(
-            str(image_graph), calibration_data=images, max_images=10, dynamic_batch=False
+            str(image_graph),
+            calibration_data=images,
+            max_images=10,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
         ) as int8_path:
             model = onnx.load(int8_path)
         initializers = {i.name: numpy_helper.to_array(i) for i in model.graph.initializer}
@@ -1811,6 +1948,18 @@ class TestCalibration:
         pytest.importorskip("onnxruntime")
         with pytest.raises(ValueError, match="no image"):
             quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], [])
+
+    def test_no_tensor_is_refused_before_the_probe_is_written(self, image_graph: Path) -> None:
+        """Asking for no tensor is refused up front, with no probe file left beside the graph.
+
+        An empty output list would otherwise make the probe session return every model output, which then fails far from
+        the cause (a real detector's ``dets``/``labels`` are ragged).
+        """
+        with pytest.raises(ValueError, match="no tensor to measure"):
+            quantize.calibrate_ranges(
+                str(image_graph), onnx.load(image_graph), [], [np.zeros((1, 3, 4, 6), np.float32)]
+            )
+        assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
 
     def test_calibration_runs_on_the_cpu(self, monkeypatch: pytest.MonkeyPatch, image_graph: Path) -> None:
         ort = pytest.importorskip("onnxruntime")
@@ -1825,6 +1974,26 @@ class TestCalibration:
             quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], [np.zeros((1, 3, 4, 6))])
         assert requested == [["CPUExecutionProvider"]]
 
+    def test_calibration_runs_in_priority_based_order(self, monkeypatch: pytest.MonkeyPatch, image_graph: Path) -> None:
+        """The probe session runs its nodes in onnxruntime's priority-based order.
+
+        The probe adds one reduction per measured tensor; under the default order those raised peak host memory far
+        above the plain graph's at a large calibration batch.
+        """
+        ort = pytest.importorskip("onnxruntime")
+        requested: list[object] = []
+
+        def record(*_: object, sess_options: object = None, **__: object) -> None:
+            requested.append(sess_options)
+            raise RuntimeError("recorded")
+
+        monkeypatch.setattr(ort, "InferenceSession", record)
+        with pytest.raises(RuntimeError, match="recorded"):
+            quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], [np.zeros((1, 3, 4, 6))])
+        assert [getattr(options, "execution_order", None) for options in requested] == [
+            ort.ExecutionOrder.PRIORITY_BASED
+        ]
+
     @pytest.mark.parametrize("value", [np.nan, np.inf])
     def test_non_finite_calibration_image_is_refused(self, image_graph: Path, value: float) -> None:
         pytest.importorskip("onnxruntime")
@@ -1833,16 +2002,45 @@ class TestCalibration:
         images[1, 0, 1, 2] = value
         with pytest.raises(ValueError, match="NaN or infinite"):
             with quantize.int8_source_graph(
-                str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
+                str(image_graph),
+                calibration_data=images,
+                max_images=2,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
+
+    @pytest.mark.parametrize("opset", [17, 19])
+    def test_nan_computed_inside_the_graph_gives_an_infinite_range(self, tmp_path: Path, opset: int) -> None:
+        """A NaN the graph computes from a finite image calibrates to an infinite range, which the range check refuses.
+
+        onnxruntime's ``ReduceMax`` skips a NaN anywhere but the first element, so the probe would otherwise report a
+        finite range for activations that are not; ``Sqrt`` of a negative value puts the NaN at the second element. The
+        probe runs on the exported opset and on the lifted one.
+        """
+        pytest.importorskip("onnxruntime")
+        graph = helper.make_graph(
+            [helper.make_node("Sqrt", ["x"], ["root"], "sqrt")],
+            "nan",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3])],
+            [helper.make_tensor_value_info("root", TensorProto.FLOAT, [1, 3])],
+        )
+        path = tmp_path / "nan.onnx"
+        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", opset)], ir_version=10), path)
+        image = np.array([[1.0, -1.0, 4.0]], np.float32)
+        ranges = quantize.calibrate_ranges(str(path), onnx.load(path), ["root"], [image])
+        assert ranges == {"root": np.inf}
 
     def test_range_too_large_for_an_fp16_scale_is_refused(self, image_graph: Path) -> None:
         pytest.importorskip("onnxruntime")
         images = np.full((2, 3, 4, 6), 1e8, np.float32)  # finite, but 1e8 / 127 overflows FP16
         with pytest.raises(ValueError, match="does not fit an FP16 scale"):
             with quantize.int8_source_graph(
-                str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
+                str(image_graph),
+                calibration_data=images,
+                max_images=2,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
 
@@ -1857,7 +2055,11 @@ class TestCalibration:
         images = np.ones((2, 3, 4, 6), np.float32)
         with pytest.raises(ValueError, match="not finite"):
             with quantize.int8_source_graph(
-                str(image_graph), calibration_data=images, max_images=2, dynamic_batch=False
+                str(image_graph),
+                calibration_data=images,
+                max_images=2,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
 
@@ -1885,7 +2087,11 @@ class TestCalibration:
         calibration = np.zeros((2, 3, 4, 6), np.float32)
         with pytest.raises(RuntimeError, match="rewrite failed"):
             with quantize.int8_source_graph(
-                str(image_graph), calibration_data=calibration, max_images=10, dynamic_batch=False
+                str(image_graph),
+                calibration_data=calibration,
+                max_images=10,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
         assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
@@ -1908,7 +2114,11 @@ class TestCalibration:
         monkeypatch.setattr(quantize, "calibrate_ranges", count)
         with pytest.raises(RuntimeError, match="stop after counting"):
             with quantize.int8_source_graph(
-                str(image_graph), calibration_data=str(images), max_images=2, dynamic_batch=False
+                str(image_graph),
+                calibration_data=str(images),
+                max_images=2,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
             ):
                 pass
         assert seen == [2]
@@ -1918,13 +2128,89 @@ class TestCalibration:
         pytest.importorskip("onnxconverter_common")
         calibration = np.random.default_rng(0).standard_normal((3, 3, 4, 6)).astype(np.float32)
         with quantize.int8_source_graph(
-            str(image_graph), calibration_data=calibration, max_images=10, dynamic_batch=False
+            str(image_graph),
+            calibration_data=calibration,
+            max_images=10,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
         ) as path:
             model = onnx.load(path)
             assert path != str(image_graph)
             onnx.checker.check_model(model, full_check=True)
             assert sum(node.op_type == "QuantizeLinear" for node in model.graph.node) == 1
         assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
+
+    @pytest.mark.parametrize(
+        "error", [pytest.param(RuntimeError, id="error"), pytest.param(KeyboardInterrupt, id="interrupt")]
+    )
+    def test_quantized_graph_is_removed_when_the_build_fails(
+        self, image_graph: Path, error: type[BaseException]
+    ) -> None:
+        """The quantized graph is deleted when the code using it raises, an interrupt included.
+
+        TensorRT parses and builds inside the ``with`` block; a failure or Ctrl+C there must not leave the intermediate
+        graph beside the user's export.
+        """
+        pytest.importorskip("onnxruntime")
+        pytest.importorskip("onnxconverter_common")
+        images = np.zeros((2, 3, 4, 6), np.float32)
+        with pytest.raises(error):
+            with quantize.int8_source_graph(
+                str(image_graph),
+                calibration_data=images,
+                max_images=10,
+                dynamic_batch=False,
+                fp16_graph=tensorrt_export.fp16_source_graph,
+            ):
+                raise error()
+        assert sorted(os.listdir(image_graph.parent)) == ["image.onnx"]
+
+    def test_quantized_graph_that_cannot_be_removed_is_reported(
+        self, monkeypatch: pytest.MonkeyPatch, image_graph: Path
+    ) -> None:
+        """A quantized graph the cleanup cannot delete (a Windows file lock, say) is logged rather than left silently.
+
+        Deletion is patched to fail only inside the ``with`` block, so calibration and its own warnings run as usual.
+        """
+        pytest.importorskip("onnxruntime")
+        pytest.importorskip("onnxconverter_common")
+        messages: list[str] = []
+
+        def locked(self: Path, missing_ok: bool = False) -> None:
+            raise PermissionError("locked")
+
+        images = np.zeros((2, 3, 4, 6), np.float32)
+        with quantize.int8_source_graph(
+            str(image_graph),
+            calibration_data=images,
+            max_images=10,
+            dynamic_batch=False,
+            fp16_graph=tensorrt_export.fp16_source_graph,
+        ) as path:
+            monkeypatch.setattr(Path, "unlink", locked)
+            monkeypatch.setattr(quantize.logger, "warning", messages.append)
+        assert [path in message for message in messages] == [True]
+
+    def test_probe_that_cannot_be_removed_is_reported(self, monkeypatch: pytest.MonkeyPatch, image_graph: Path) -> None:
+        """A calibration probe the cleanup cannot delete is logged rather than left silently.
+
+        The session is made to fail so that calibration ends right after the probe was written.
+        """
+        ort = pytest.importorskip("onnxruntime")
+        messages: list[str] = []
+
+        def refuse(*_: object, **__: object) -> None:
+            raise RuntimeError("session failed")
+
+        def locked(self: Path, missing_ok: bool = False) -> None:
+            raise PermissionError("locked")
+
+        monkeypatch.setattr(ort, "InferenceSession", refuse)
+        monkeypatch.setattr(Path, "unlink", locked)
+        monkeypatch.setattr(quantize.logger, "warning", messages.append)
+        with pytest.raises(RuntimeError, match="session failed"):
+            quantize.calibrate_ranges(str(image_graph), onnx.load(image_graph), ["input"], [np.zeros((1, 3, 4, 6))])
+        assert ["image.calibration-" in message for message in messages] == [True]
 
 
 class TestNanoInt8Plan:

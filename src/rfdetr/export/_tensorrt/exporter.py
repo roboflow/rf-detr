@@ -28,7 +28,6 @@ import contextlib
 import ctypes
 import ctypes.util
 import importlib
-import operator
 import os
 import sys
 import tempfile
@@ -45,7 +44,15 @@ from numpy.typing import NDArray
 
 from rfdetr.export._naming import resolve_export_stem
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
-from rfdetr.export._runtime.calibration_checks import check_calibration_data
+from rfdetr.export._runtime.calibration_checks import calibration_array_problem, check_calibration_data
+from rfdetr.export._tensorrt._graph import (
+    _QUANTIZATION_OP_TYPES,
+    _iter_graphs,
+    _onnx_dynamic_batch_inputs,
+    _subgraphs,
+    _tensor_names,
+    _unique_name,
+)
 from rfdetr.export._tensorrt.metadata import (
     build_engine_metadata,
     gpu_facts,
@@ -55,7 +62,7 @@ from rfdetr.export._tensorrt.metadata import (
     sidecar_path,
     write_engine_metadata,
 )
-from rfdetr.export._tensorrt.quantize import INT8, int8_source_graph
+from rfdetr.export._tensorrt.quantize import _INT8_OUTPUT_NAMES, INT8, int8_source_graph
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import BATCH_AXIS, ExportGraph
 from rfdetr.utilities.logger import get_logger
@@ -113,18 +120,15 @@ _IS_FP16_CASTER_AVAILABLE = all(is_installed(name) for name in ("onnx", "onnxcon
 # rather than a sign of a lean/partial wheel.
 _STRONG_TYPING_MAJOR = 11
 
-# An explicitly quantized graph carries its precision in these nodes and their scale/zero-point
-# tensors, so a blanket fp16 cast contradicts it rather than converting it.
-_QUANTIZATION_OP_TYPES = frozenset({"QuantizeLinear", "DequantizeLinear", "DynamicQuantizeLinear"})
-
 #: Oldest TensorRT major an INT8 engine is built on. INT8 engines are strongly typed builds of an explicitly quantized
 #: graph; 10.16 and 11.3 are the only releases this was measured on (issue #1024). Earlier majors are refused rather
 #: than assumed to work; the 10.x releases before 10.16 are admitted but untested.
 _INT8_MIN_TENSORRT_MAJOR = 10
 
-#: The graph outputs an INT8 export is measured for: a detector. Segmentation and keypoint models add outputs and are
-#: refused.
-_INT8_OUTPUT_NAMES = ("dets", "labels")
+#: The measured TensorRT releases as bounds: an INT8 build on a 10.x release before ``(10, 16)``, or on a major above
+#: 11, is warned about rather than refused.
+_INT8_OLDEST_MEASURED_TENSORRT = (10, 16)
+_INT8_NEWEST_MEASURED_TENSORRT_MAJOR = 11
 
 #: Whether onnxruntime is installed: calibration runs the FP32 graph under it. The ``rfdetr[tensorrt]`` extra installs
 #: it as onnxruntime-gpu.
@@ -153,55 +157,9 @@ class Fp16Strategy(str, Enum):
     CAST_GRAPH = "cast_graph"
     #: Lean/partial weakly typed wheel: no FP16 route at all, so the build falls back to FP32.
     UNAVAILABLE = "unavailable"
-
-
-def _is_positive_integer(value: object) -> bool:
-    """Return whether *value* is an integer of at least 1, NumPy integers included and booleans excluded.
-
-    Examples:
-        >>> _is_positive_integer(np.int64(5)), _is_positive_integer(True), _is_positive_integer(0)
-        (True, False, False)
-    """
-    if isinstance(value, (bool, np.bool_)):
-        return False
-    try:
-        return operator.index(value) >= 1  # type: ignore[arg-type]
-    except TypeError:
-        return False
-
-
-def _describe(data: object) -> str:
-    """Name *data*'s type, plus its dtype and shape for an array, for an error message.
-
-    Examples:
-        >>> _describe(np.zeros((2, 3), np.uint8)), _describe(["a.jpg"])
-        ('uint8 array of shape (2, 3)', 'list')
-    """
-    if isinstance(data, np.ndarray):
-        return f"{data.dtype} array of shape {data.shape}"
-    return type(data).__name__
-
-
-def _is_calibration_source(data: object) -> bool:
-    """Return whether *data* has a form :func:`~rfdetr.export._runtime.calibration.calibration_batches` reads.
-
-    A path must be non-empty (what it names is judged by ``check_calibration_data``); an array must already be
-    preprocessed and hold at least one image, so an integer image array (raw pixels, not normalized) or an empty one
-    is refused here.
-
-    Examples:
-        >>> _is_calibration_source("images/"), _is_calibration_source(np.zeros((1, 3, 8, 8), np.float32))
-        (True, True)
-        >>> _is_calibration_source(np.zeros((1, 3, 8, 8), np.uint8)), _is_calibration_source(["a.jpg"])
-        (False, False)
-        >>> _is_calibration_source("")
-        False
-    """
-    if isinstance(data, (str, os.PathLike)):
-        return bool(os.fspath(data))
-    return (
-        isinstance(data, np.ndarray) and data.ndim == 4 and data.shape[0] > 0 and np.issubdtype(data.dtype, np.floating)
-    )
+    #: An INT8 request: precision comes from the explicitly quantized FP16 graph, built strongly typed on any TensorRT
+    #: major, so the FP16 probe above is not consulted. Never returned by :func:`resolve_fp16_strategy`.
+    QUANTIZED_GRAPH = "quantized_graph"
 
 
 def _tensorrt_major(version: str) -> int | None:
@@ -225,6 +183,28 @@ def _tensorrt_major(version: str) -> int | None:
     major, _, _ = version.partition(".")
     try:
         return int(major)
+    except ValueError:
+        return None
+
+
+def _tensorrt_release(version: str) -> tuple[int, int] | None:
+    """Extract the ``(major, minor)`` pair from a TensorRT version string.
+
+    Args:
+        version: Value of ``tensorrt.__version__``, e.g. ``"10.16.1.11"``.
+
+    Returns:
+        The two leading integers, or ``None`` when *version* does not start with both.
+
+    Examples:
+        >>> _tensorrt_release("10.16.1.11")
+        (10, 16)
+        >>> _tensorrt_release("11") is None
+        True
+    """
+    major, _, rest = version.partition(".")
+    try:
+        return int(major), int(rest.partition(".")[0])
     except ValueError:
         return None
 
@@ -320,37 +300,6 @@ def _dynamic_batch_inputs(network: Any) -> dict[str, tuple[int, ...]]:
     return dynamic_inputs
 
 
-def _onnx_dynamic_batch_inputs(graph: Any) -> list[str]:
-    """Collect the ONNX graph inputs whose batch axis is symbolic, in graph order.
-
-    The file-level twin of :func:`_dynamic_batch_inputs`, which asks the same question of an already parsed TensorRT
-    network. Reading it from the graph is what lets a request and a graph that disagree be refused before an fp16
-    cast rewrites every weight into a second copy of the model. An axis is symbolic when it carries a ``dim_param``
-    — how ``torch.onnx.export`` marks a dynamic dimension — or nothing at all, rather than a ``dim_value``.
-
-    Args:
-        graph: An ``onnx.GraphProto``.
-
-    Returns:
-        Each such input's name. A rank-0 input has no batch axis and is skipped rather than indexed into, as are
-        inputs that are not tensors.
-
-    Examples:
-        Needs an ``onnx.GraphProto``, so this is documentation rather than a doctest:
-
-        ```python
-        _onnx_dynamic_batch_inputs(onnx.load("output/rfdetr-medium.onnx").graph)
-        # -> ['input']
-        ```
-    """
-    dynamic_inputs = []
-    for value_info in graph.input:
-        dims = value_info.type.tensor_type.shape.dim
-        if len(dims) > BATCH_AXIS and dims[BATCH_AXIS].WhichOneof("value") != "dim_value":
-            dynamic_inputs.append(value_info.name)
-    return dynamic_inputs
-
-
 def _reject_dynamic_graph_under_static_request(onnx_path: str, dynamic_inputs: Iterable[str]) -> None:
     """Refuse a graph whose batch axis is dynamic when the engine was not asked to carry one.
 
@@ -383,99 +332,6 @@ def _reject_dynamic_graph_under_static_request(onnx_path: str, dynamic_inputs: I
         "TensorRTConfig(dynamic_batch=True, max_batch_size=<largest batch>), or export the ONNX graph without "
         "dynamic_batch for a fixed-batch engine."
     )
-
-
-def _subgraphs(node: Any) -> Iterator[Any]:
-    """Yield the graphs nested directly in a node's attributes (``If`` branches, ``Loop``/``Scan`` bodies).
-
-    Args:
-        node: ``NodeProto`` to inspect.
-
-    Yields:
-        Each ``GraphProto`` held by one of *node*'s attributes.
-
-    Examples:
-        Needs an ``onnx.NodeProto``; see ``TestCastOnnxToFp16`` for real invocations.
-
-        >>> list(_subgraphs(node))  # doctest: +SKIP
-        []
-    """
-    for attribute in node.attribute:
-        if attribute.HasField("g"):
-            yield attribute.g
-        yield from attribute.graphs
-
-
-def _iter_graphs(graph: Any) -> Iterator[Any]:
-    """Yield *graph* and every graph nested below it, depth first.
-
-    Args:
-        graph: ``GraphProto`` to walk.
-
-    Yields:
-        *graph* itself, then each subgraph reachable through its nodes' attributes.
-
-    Examples:
-        Needs an ``onnx.GraphProto``; see ``TestCastOnnxToFp16`` for real invocations.
-
-        >>> len(list(_iter_graphs(model.graph)))  # doctest: +SKIP
-        1
-    """
-    yield graph
-    for node in graph.node:
-        for subgraph in _subgraphs(node):
-            yield from _iter_graphs(subgraph)
-
-
-def _tensor_names(graph: Any) -> set[str]:
-    """Collect every tensor name bound anywhere in *graph*, subgraphs included.
-
-    Args:
-        graph: Graph to scan.
-
-    Returns:
-        Names claimed by inputs, outputs, initializers, ``value_info`` entries and node edges.
-
-    Examples:
-        Needs an ``onnx.GraphProto``; see ``TestCastOnnxToFp16`` for real invocations.
-
-        >>> sorted(_tensor_names(model.graph))  # doctest: +SKIP
-        ['input', 'output']
-    """
-    names: set[str] = set()
-    for nested in _iter_graphs(graph):
-        names.update(value.name for value in nested.input)
-        names.update(value.name for value in nested.output)
-        names.update(value.name for value in nested.value_info)
-        names.update(initializer.name for initializer in nested.initializer)
-        for node in nested.node:
-            names.update(node.input)
-            names.update(node.output)
-    return names
-
-
-def _unique_name(base: str, taken: set[str]) -> str:
-    """Derive a tensor name from *base* that no existing tensor claims, reserving it in *taken*.
-
-    Args:
-        base: Preferred name.
-        taken: Names already bound in the graph; the returned name is added to it.
-
-    Returns:
-        *base* when it is free, otherwise *base* with the smallest numeric suffix that is.
-
-    Examples:
-        >>> _unique_name("dets_fp16", {"dets"})
-        'dets_fp16'
-        >>> _unique_name("dets_fp16", {"dets_fp16"})
-        'dets_fp16_1'
-    """
-    candidate, suffix = base, 1
-    while candidate in taken:
-        candidate = f"{base}_{suffix}"
-        suffix += 1
-    taken.add(candidate)
-    return candidate
 
 
 def _rename_tensor_uses(graph: Any, old: str, new: str) -> None:
@@ -1056,9 +912,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         Raises:
             ValueError: If *quantization* is not ``None`` or ``"int8"``; if *calibration_data* is given without
                 ``"int8"``; if ``"int8"`` comes without *calibration_data*, with ``fp16=False``, with
-                ``dynamic_batch``, with ``backbone_only``, or with a *max_images* that is not a positive integer; or if
-                *calibration_data* is neither a non-empty path nor a non-empty rank-4 floating-point array, or is a
-                path that does not exist, a directory without an image, or a file that is not ``.npy``.
+                ``dynamic_batch`` or with ``backbone_only``; or for a *calibration_data* or *max_images*
+                :func:`~rfdetr.export._runtime.calibration_checks.check_calibration_data` refuses.
         """
         config = self.config
         if config.quantization not in (None, INT8):
@@ -1075,23 +930,13 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             (not config.fp16, "builds on the FP16 graph, so it cannot be combined with fp16=False"),
             (config.dynamic_batch, "is measured for a static batch only; drop dynamic_batch"),
             (config.backbone_only, "applies to the full detector, not a backbone_only export"),
-            (
-                not _is_positive_integer(config.max_images),
-                f"needs max_images to be a positive integer, got {config.max_images!r}",
-            ),
-            (
-                not _is_calibration_source(config.calibration_data),
-                "needs calibration_data to be a directory, a .npy path, or a preprocessed (N, C, H, W) float array "
-                "with at least one image, "
-                f"got {_describe(config.calibration_data)}",
-            ),
         )
         for refused, reason in refusals:
             if refused:
                 raise ValueError(f"TensorRT quantization='int8' {reason}.")
-        # What the path itself shows (missing, no image, not a .npy): the check ONNX and OpenVINO make at this point.
+        # The form of the data and of max_images: the check ONNX and OpenVINO make at this point.
         assert config.calibration_data is not None  # refused above
-        check_calibration_data(config.calibration_data)
+        check_calibration_data(config.calibration_data, max_images=config.max_images)
 
     @classmethod
     def _require_int8_host(cls) -> None:
@@ -1146,12 +991,65 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 f"TensorRT quantization='int8' could not read {path.name!r} as a .npy array: {error}"
             ) from error
         # Released before raising, so the error's traceback does not keep the file mapped (Windows would lock it).
-        usable, described = _is_calibration_source(array), _describe(array)
+        problem = calibration_array_problem(array)
         del array
-        if not usable:
+        if problem is not None:
             raise ValueError(
                 f"TensorRT quantization='int8' needs {path.name!r} to hold a preprocessed (N, C, H, W) float array "
-                f"with at least one image, got {described}."
+                f"with at least one image: {problem}"
+            )
+
+    def _refuse_timing_cache_over_calibration_data(self) -> None:
+        """Refuse a ``timing_cache`` that is the ``calibration_data`` file, which the build would overwrite.
+
+        Only the paths are compared, so nothing is created or opened: unlike :meth:`_prepare_timing_cache`, which makes
+        the cache's directory and lock file, this can run before the forward pass.
+
+        Raises:
+            ValueError: If ``timing_cache`` and a ``calibration_data`` file name the same file.
+        """
+        cache, data = self._timing_cache_path(), self.config.calibration_data
+        if cache is None or not isinstance(data, (str, os.PathLike)) or not os.path.isfile(data):
+            return
+        if _is_same_file(cache, os.fspath(data)):
+            raise ValueError(
+                f"trt_timing_cache {cache!r} is the same file as calibration_data {os.fspath(data)!r}, which the build "
+                "would overwrite with its timings. Pass a separate file for the timing cache."
+            )
+
+    def _warn_if_int8_is_unmeasured(self) -> None:
+        """Warn when an INT8 build leaves the TensorRT releases and settings its accuracy and speed were measured with.
+
+        Those are TensorRT 10.16 and 11.3, with neither ``version_compatible`` nor ``hardware_compatibility``. Outside
+        them the engine still builds and runs, and the failures the measurements turned up built cleanly too, so the
+        request is honoured with a warning rather than refused.
+        """
+        try:
+            import tensorrt as trt_module
+        except ImportError:
+            # A missing TensorRT is refused by _require_int8_host before this runs; there is no version to judge.
+            version = None
+        else:
+            version = trt_module.__version__
+        reasons: list[str] = []
+        if version is not None:
+            release = _tensorrt_release(version)
+            if (
+                release is None
+                or release < _INT8_OLDEST_MEASURED_TENSORRT
+                or release[0] > _INT8_NEWEST_MEASURED_TENSORRT_MAJOR
+            ):
+                reasons.append(f"TensorRT {version}")
+        if self.config.version_compatible:
+            reasons.append("trt_version_compatible=True")
+        if self.config.hardware_compatibility is not None:
+            reasons.append(f"trt_hardware_compatibility={self.config.hardware_compatibility!r}")
+        if reasons:
+            logger.warning(
+                "TensorRT quantization='int8' was measured on TensorRT 10.16 and 11.3 without trt_version_compatible "
+                f"or trt_hardware_compatibility; this build uses {' and '.join(reasons)}. The engine may build and "
+                "still lose accuracy or speed: compare its COCO AP and latency with the FP16 engine before relying on "
+                "it."
             )
 
     def _check_portability(self) -> None:
@@ -1233,11 +1131,13 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             ValueError: If ``hardware_compatibility`` names a level this TensorRT does not have, or is
                 ``"ampere_plus"`` while the current CUDA device is older than Ampere (compute capability below 8.0);
                 or if ``quantization="int8"`` is set and ``calibration_data`` is a path that
-                :meth:`_require_calibration_path` refuses.
+                :meth:`_require_calibration_path` refuses, or the same file as ``timing_cache``.
         """
         if self.config.quantization == INT8:
             self._require_int8_host()
             self._require_calibration_path()
+            self._refuse_timing_cache_over_calibration_data()
+            self._warn_if_int8_is_unmeasured()
         self._require_lean_runtime()
         if self.config.hardware_compatibility is not None:
             self._hardware_compatibility_level(self.config.hardware_compatibility)
@@ -1424,10 +1324,13 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                 none; or if ``hardware_compatibility`` names a level the installed TensorRT does not have; or if
                 ``timing_cache`` names a directory or another non-regular file, or the same file as *onnx_path* or
                 the engine being written. For ``quantization="int8"``, also if the graph is already quantized or FP16,
-                has a dynamic batch axis, cannot be lifted to opset 19, is not an RF-DETR detector export (a
-                segmentation, keypoint or backbone-only graph included), or holds attention INT8 cannot be placed
-                around; or if the calibration data is missing, unusable, holds a NaN or infinite value, or gives a
-                range that does not fit FP16.
+                has a dynamic batch axis, an input that is not a static image or is also an initializer, cannot be
+                lifted to opset 19, has no backbone or decoder layer to quantize, or holds attention INT8 cannot be
+                placed around; or if the
+                calibration data is missing, unusable, holds a NaN or infinite value, or gives a range that does not
+                fit FP16.
+            NotImplementedError: If ``quantization="int8"`` is asked of a graph whose outputs are not exactly a
+                detector's ``dets`` and ``labels`` (a segmentation, keypoint or backbone-only export).
             OSError: If ``timing_cache`` cannot be written.
 
         Examples:
@@ -1488,8 +1391,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
 
         fp16 = self.config.fp16
         if self.config.quantization == INT8:
-            # Strongly typed whatever the TensorRT major: precision comes from the quantized FP16 graph.
-            strategy, trt_version = Fp16Strategy.CAST_GRAPH, ""
+            strategy, trt_version = Fp16Strategy.QUANTIZED_GRAPH, "unknown"
         else:
             strategy, trt_version = self._fp16_strategy() if fp16 else (Fp16Strategy.BUILDER_FLAG, "unknown")
 
@@ -1662,7 +1564,8 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             onnx_path: Path to the source ``.onnx`` file.
             engine_path: Path the serialized engine is written to.
             fp16: The precision the engine is built with, after the FP16 availability probe.
-            strategy: How FP16 is obtained from the installed TensorRT (see :func:`resolve_fp16_strategy`).
+            strategy: How FP16 is obtained from the installed TensorRT (see :func:`resolve_fp16_strategy`), or
+                :attr:`Fp16Strategy.QUANTIZED_GRAPH` for an INT8 build.
             trt_version: The version TensorRT reports, for logging.
             timing_cache: The resolved cache path from :meth:`_prepare_timing_cache`, loaded and saved by the build,
                 or ``None`` without a cache.
@@ -1679,8 +1582,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             # Only the builder reads the cast intermediate; onnx_path keeps naming the caller's own model.
             build_source = onnx_path
 
-            int8 = self.config.quantization == INT8
-            if int8:
+            if strategy is Fp16Strategy.QUANTIZED_GRAPH:
                 # The quantized graph carries its own precision: INT8 where it holds Q/DQ pairs, FP16 elsewhere.
                 assert self.config.calibration_data is not None, "_check_quantization requires it for int8"
                 build_source = cleanup.enter_context(
@@ -1689,6 +1591,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
                         calibration_data=self.config.calibration_data,
                         max_images=self.config.max_images,
                         dynamic_batch=self.config.dynamic_batch,
+                        fp16_graph=fp16_source_graph,
                     )
                 )
                 builder_fp16 = False
@@ -1714,7 +1617,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
             # Only the INT8 path asks for a strongly typed network explicitly: TensorRT 10 is weakly typed by default.
             parsed = (
                 network_from_onnx_path(build_source, strongly_typed=True)
-                if int8
+                if strategy is Fp16Strategy.QUANTIZED_GRAPH
                 else network_from_onnx_path(build_source)
             )
             try:
@@ -1880,6 +1783,7 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         Args:
             artifacts: Files the build reads or writes besides the cache (the ONNX model and the engine). A cache that
                 is one of them would overwrite it, or be overwritten by it, so it is refused before anything is created.
+                A ``calibration_data`` path is always compared too.
 
         Returns:
             The resolved cache path the build loads, saves and locks, or ``None`` when no cache is configured.
@@ -1908,6 +1812,11 @@ class TensorRTExporter(Exporter[TensorRTConfig]):
         # Resolved only after the link check above: a resolved path is never itself a link, so resolving first would
         # silently disable that check.
         resolved = os.path.realpath(path)
+        calibration = self.config.calibration_data
+        if isinstance(calibration, (str, os.PathLike)):
+            # check_environment refuses this before the forward pass; repeated for a caller that reaches the build
+            # without it.
+            artifacts = (*artifacts, os.fspath(calibration))
         clash = next((artifact for artifact in artifacts if _is_same_file(resolved, artifact)), None)
         if clash is not None:
             raise ValueError(
