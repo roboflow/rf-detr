@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """Tests for static INT8 quantization of OpenVINO exports (:mod:`rfdetr.export._openvino.quantize`)."""
 
-import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -17,10 +16,11 @@ import torch
 
 from rfdetr.export._openvino.exporter import OpenVINOConfig, OpenVINOExporter
 from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
+from rfdetr.export.imports import _IS_NNCF_INSTALLED, _IS_OPENVINO_INSTALLED
 from rfdetr.export.prepare import ExportGraph
 
 openvino_nncf_only = pytest.mark.skipif(
-    not (importlib.util.find_spec("openvino") and importlib.util.find_spec("nncf")),
+    not (_IS_OPENVINO_INSTALLED and _IS_NNCF_INSTALLED),
     reason="openvino/nncf not installed; `pip install nncf` to run the INT8 export",
 )
 

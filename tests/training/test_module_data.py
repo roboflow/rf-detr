@@ -20,7 +20,10 @@ from torch.utils.data import DataLoader
 from rfdetr.config import AugmentationBackend, KeypointTrainConfig, RFDETRBaseConfig, TrainConfig
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
+from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
 from rfdetr.utilities.tensors import NestedTensor, PackedTargets, pack_targets
+
+kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
 
 # ---------------------------------------------------------------------------
 # Private helpers — used by both module-level fixtures and class-level _setup_*
@@ -2094,9 +2097,9 @@ class TestOnAfterBatchTransfer:
         assert result_samples.mask.dtype == torch.bool
         assert torch.equal(result_samples.mask, padding_masks_aug[:, 0].to(torch.bool))
 
+    @kornia_only
     def test_perspective_warps_padding_mask_with_real_pipeline(self, tmp_path) -> None:
         """Perspective transports unequal-size batch padding through the real Kornia sequence."""
-        pytest.importorskip("kornia")
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, collate_boxes
         from rfdetr.utilities.tensors import nested_tensor_from_tensor_list
 

@@ -11,7 +11,7 @@ description: Overview of exporting RF-DETR models to ONNX, TensorRT, TFLite, Lit
     - Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment
     - Export to LiteRT (`.tflite`) straight from PyTorch with `litert-torch` — no ONNX or TensorFlow step
     - TensorRT conversion delivers the lowest latency on NVIDIA GPUs — 2.3 ms for Nano on a T4, TensorRT FP16, model only, batch 1 (the architecture headline on the [Benchmarks page](../learn/benchmarks.md); this page's own L4 end-to-end numbers below are a different measurement, see "Which latency number is this?")
-    - INT8 quantization: dynamic-range for TFLite (no calibration data), static for ONNX and OpenVINO (calibration data required)
+    - INT8 quantization: dynamic-range for TFLite (no calibration data), static for ONNX, OpenVINO and TensorRT (calibration data required; see [TensorRT INT8](tensorrt.md#int8))
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
     - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment
@@ -63,7 +63,7 @@ Each cookbook also scores every exported model and precision at batch 1 on the s
     - **Deployed product** (L4, Roboflow Inference, scope not stated, batch 1) — what a Roboflow Inference user gets. See [Roboflow's RF-DETR model page](https://docs.roboflow.com/models/supported-models/rf-detr).
     - **Export cookbooks** (this page and below) — end-to-end and forward-only timings for every export format, on one machine per cookbook. Their value is **ratios within one machine**, not absolute milliseconds to set against the other two pages.
 
-    Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The CUDA cookbook's own L4 forward-only times (ONNX 7.35 ms, TensorRT 2.16 ms) are lower than the 12.9 and 8.3 ms on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled — see the [CUDA cookbook's Results section](../cookbooks/export-cuda/#8-results).
+    Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The CUDA cookbook's own L4 forward-only times (ONNX 7.35 ms, TensorRT 2.16 ms) are lower than the 12.9 and 8.3 ms on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled — see the [CUDA cookbook's Results section](../cookbooks/export-cuda/#9-results).
 
 !!! warning "fp16 pays off only where the silicon implements it"
 
