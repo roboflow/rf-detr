@@ -18,6 +18,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import AugmentationBackend, KeypointTrainConfig, RFDETRBaseConfig, TrainConfig
+from rfdetr.datasets.kornia_transforms import IMAGENET_MEAN, IMAGENET_STD
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
@@ -2044,8 +2045,11 @@ class TestOnAfterBatchTransfer:
         expected_padding = torch.zeros_like(padding)
         expected_padding[:, :, 4:] = padding[:, :, :-4]
         torch.testing.assert_close(samples_out.mask, expected_padding, rtol=0, atol=0)
-        assert samples_out.tensors[0, 0, 30, 34] > 2
-        assert samples_out.tensors[0, 0, 30, 30] < -2
+        mean = torch.tensor(IMAGENET_MEAN, device=device)
+        std = torch.tensor(IMAGENET_STD, device=device)
+        # The white square moved onto column 34 (input 1.0) and vacated column 30 (input 0.0); ImageNet-normalized.
+        torch.testing.assert_close(samples_out.tensors[0, :, 30, 34], (1.0 - mean) / std, rtol=0, atol=1e-5)
+        torch.testing.assert_close(samples_out.tensors[0, :, 30, 30], (0.0 - mean) / std, rtol=0, atol=1e-5)
 
     @kornia_only
     def test_pixel_affine_drops_box_and_mask_shifted_out_of_frame(self, tmp_path: Path) -> None:
