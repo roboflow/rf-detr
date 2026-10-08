@@ -54,36 +54,36 @@ model.export(format="tensorrt", quantization="int8", calibration_data="path/to/i
 
 This writes `output/rfdetr-small_int8.trt` (next to the intermediate `output/rfdetr-small.onnx`). The export runs the first `max_images` (default `100`) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as `predict()` does, and records each quantized tensor's largest absolute value. Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. `calibration_data` also accepts a `.npy` path or an array shaped `(N, C, H, W)`, already normalized the way `predict()` normalizes; an integer array, raw pixels, is refused. `max_images` caps only a directory of images; an array or `.npy` file is used whole, so pass as many samples as you want calibrated. Calibration runs the graph at the export's `batch_size`, so its host memory grows with the batch: about 9.5 GB for Nano at batch 32.
 
-Measured with TensorRT 11.3 on an RTX 5070 (sm_120) and a Tesla T4 (sm_75), calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from a captured CUDA graph and from back-to-back `execute_async_v3` calls with no synchronization in between. Each speedup in parentheses divides the FP16 latency by the INT8 latency measured the same way, so the two columns have different FP16 bases: a plain call adds CPU launch time that a graph replay removes. That gap is large only where the engine is launch-bound, at batch 1 on the RTX 5070 (1.675 ms plain against 0.922 ms graph for Nano), and small on the T4 and at larger batches. On the RTX 5070, Nano across batch sizes:
+Measured with TensorRT 11.3 on an RTX 5070 (sm_120) and a Tesla T4 (sm_75), calibrated on 128 COCO `train2017` images (`max_images=128`) and scored on all 5000 `val2017` images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from back-to-back `execute_async_v3` calls with no synchronization in between (the plain call) and from a captured CUDA graph. Each speedup in parentheses divides the FP16 latency by the INT8 latency measured the same way, so the two columns have different FP16 bases: a plain call adds CPU launch time that a graph replay removes. That gap is large only where the engine is launch-bound, at batch 1 on the RTX 5070 (1.675 ms plain against 0.922 ms graph for Nano), and small on the T4 and at larger batches. On the RTX 5070, Nano across batch sizes:
 
-| Batch | Precision | AP    | AP50  | Latency, CUDA graph | Latency, plain call | Engine    |
+| Batch | Precision | AP    | AP50  | Latency, plain call | Latency, CUDA graph | Engine    |
 | ----- | --------- | ----- | ----- | ------------------- | ------------------- | --------- |
-| 1     | FP16      | 48.03 | 67.10 | 0.922 ms            | 1.675 ms            | 62 MB     |
-| 1     | INT8      | 47.40 | 66.23 | 0.693 ms (1.33×)    | 1.582 ms (1.06×)    | 41 MB     |
-| 8     | FP16      | 48.02 | 67.11 | 0.497 ms            | 0.554 ms            | 73 MB     |
-| 8     | INT8      | 47.29 | 66.19 | 0.363 ms (1.37×)    | 0.426 ms (1.30×)    | 51 MB     |
-| 32    | FP16      | 48.03 | 67.12 | 0.482 ms            | 0.494 ms            | 68–108 MB |
-| 32    | INT8      | 47.30 | 66.18 | 0.338 ms (1.43×)    | 0.350 ms (1.41×)    | 49–87 MB  |
+| 1     | FP16      | 48.03 | 67.10 | 1.675 ms            | 0.922 ms            | 62 MB     |
+| 1     | INT8      | 47.40 | 66.23 | 1.582 ms (1.06×)    | 0.693 ms (1.33×)    | 41 MB     |
+| 8     | FP16      | 48.02 | 67.11 | 0.554 ms            | 0.497 ms            | 73 MB     |
+| 8     | INT8      | 47.29 | 66.19 | 0.426 ms (1.30×)    | 0.363 ms (1.37×)    | 51 MB     |
+| 32    | FP16      | 48.03 | 67.12 | 0.494 ms            | 0.482 ms            | 68–108 MB |
+| 32    | INT8      | 47.30 | 66.18 | 0.350 ms (1.41×)    | 0.338 ms (1.43×)    | 49–87 MB  |
 
 Every model at batch 1, measured the same way:
 
-| Model  | AP, FP16 | AP, INT8      | CUDA graph, FP16 | CUDA graph, INT8 | Plain call, FP16 | Plain call, INT8 | Engine, FP16 | Engine, INT8 |
+| Model  | AP, FP16 | AP, INT8      | Plain call, FP16 | Plain call, INT8 | CUDA graph, FP16 | CUDA graph, INT8 | Engine, FP16 | Engine, INT8 |
 | ------ | -------- | ------------- | ---------------- | ---------------- | ---------------- | ---------------- | ------------ | ------------ |
-| Nano   | 48.03    | 47.40 (−0.63) | 0.922 ms         | 0.693 ms (1.33×) | 1.675 ms         | 1.582 ms (1.06×) | 62 MB        | 41 MB        |
-| Small  | 52.79    | 52.18 (−0.61) | 1.432 ms         | 1.157 ms (1.24×) | 2.221 ms         | 1.998 ms (1.11×) | 67 MB        | 45 MB        |
-| Medium | 54.69    | 53.84 (−0.85) | 1.625 ms         | 1.370 ms (1.19×) | 2.536 ms         | 2.412 ms (1.05×) | 71 MB        | 48 MB        |
-| Large  | 56.52    | 56.02 (−0.50) | 2.000 ms         | 1.820 ms (1.10×) | 2.806 ms         | 2.682 ms (1.05×) | 68 MB        | 51 MB        |
+| Nano   | 48.03    | 47.40 (−0.63) | 1.675 ms         | 1.582 ms (1.06×) | 0.922 ms         | 0.693 ms (1.33×) | 62 MB        | 41 MB        |
+| Small  | 52.79    | 52.18 (−0.61) | 2.221 ms         | 1.998 ms (1.11×) | 1.432 ms         | 1.157 ms (1.24×) | 67 MB        | 45 MB        |
+| Medium | 54.69    | 53.84 (−0.85) | 2.536 ms         | 2.412 ms (1.05×) | 1.625 ms         | 1.370 ms (1.19×) | 71 MB        | 48 MB        |
+| Large  | 56.52    | 56.02 (−0.50) | 2.806 ms         | 2.682 ms (1.05×) | 2.000 ms         | 1.820 ms (1.10×) | 68 MB        | 51 MB        |
 
 The same on a Tesla T4, from a Colab notebook run (INT8 loses 0.55 to 0.85 AP, 1.0% to 1.6% of the FP16 AP, and is faster everywhere):
 
-| Model, batch | AP, FP16 | AP, INT8      | CUDA graph, FP16 | CUDA graph, INT8 | Plain call, FP16 | Plain call, INT8 | Engine, FP16 | Engine, INT8 |
+| Model, batch | AP, FP16 | AP, INT8      | Plain call, FP16 | Plain call, INT8 | CUDA graph, FP16 | CUDA graph, INT8 | Engine, FP16 | Engine, INT8 |
 | ------------ | -------- | ------------- | ---------------- | ---------------- | ---------------- | ---------------- | ------------ | ------------ |
-| Nano, 1      | 48.07    | 47.31 (−0.77) | 3.21 ms          | 2.65 ms (1.21×)  | 3.26 ms          | 2.68 ms (1.22×)  | 60 MB        | 48 MB        |
-| Small, 1     | 52.83    | 52.23 (−0.60) | 5.31 ms          | 4.60 ms (1.16×)  | 5.25 ms          | 4.68 ms (1.12×)  | 64 MB        | 59 MB        |
-| Medium, 1    | 54.66    | 53.80 (−0.85) | 6.71 ms          | 5.76 ms (1.16×)  | 6.69 ms          | 5.89 ms (1.14×)  | 69 MB        | 67 MB        |
-| Large, 1     | 56.51    | 55.96 (−0.55) | 10.18 ms         | 9.14 ms (1.11×)  | 10.13 ms         | 9.28 ms (1.09×)  | 70 MB        | 83 MB        |
-| Nano, 8      | 47.98    | 47.23 (−0.75) | 2.72 ms          | 2.13 ms (1.28×)  | 2.72 ms          | 2.16 ms (1.26×)  | 70 MB        | 120 MB       |
-| Nano, 32     | 48.02    | 47.28 (−0.75) | 2.97 ms          | 2.31 ms (1.28×)  | 2.98 ms          | 2.33 ms (1.28×)  | 113 MB       | 366 MB       |
+| Nano, 1      | 48.07    | 47.31 (−0.77) | 3.26 ms          | 2.68 ms (1.22×)  | 3.21 ms          | 2.65 ms (1.21×)  | 60 MB        | 48 MB        |
+| Small, 1     | 52.83    | 52.23 (−0.60) | 5.25 ms          | 4.68 ms (1.12×)  | 5.31 ms          | 4.60 ms (1.16×)  | 64 MB        | 59 MB        |
+| Medium, 1    | 54.66    | 53.80 (−0.85) | 6.69 ms          | 5.89 ms (1.14×)  | 6.71 ms          | 5.76 ms (1.16×)  | 69 MB        | 67 MB        |
+| Large, 1     | 56.51    | 55.96 (−0.55) | 10.13 ms         | 9.28 ms (1.09×)  | 10.18 ms         | 9.14 ms (1.11×)  | 70 MB        | 83 MB        |
+| Nano, 8      | 47.98    | 47.23 (−0.75) | 2.72 ms          | 2.16 ms (1.26×)  | 2.72 ms          | 2.13 ms (1.28×)  | 70 MB        | 120 MB       |
+| Nano, 32     | 48.02    | 47.28 (−0.75) | 2.98 ms          | 2.33 ms (1.28×)  | 2.97 ms          | 2.31 ms (1.28×)  | 113 MB       | 366 MB       |
 
 The larger models gain less: their global attention, which stays FP16, is a bigger share of the work, and Large keeps its windowed attention in FP16 as well (see below).
 
