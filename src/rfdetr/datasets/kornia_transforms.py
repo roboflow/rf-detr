@@ -95,7 +95,8 @@ def resolve_augmentation_backend(backend: str, *, has_cuda: bool | None = None) 
 
     Auto-pick priority (for ``"cpu"``/``"auto"``) is implemented by
     :meth:`AugmentationBackend.from_str`; this function supplies the fork-safe CUDA check that
-    gates ``"auto"``'s GPU-Kornia preference and fails fast when ``"albumentations"``/``"albu"``
+    gates every Kornia pick for ``"cpu"``/``"auto"`` (neither resolves to Kornia without CUDA) and
+    fails fast when ``"albumentations"``/``"albu"``
     is explicitly requested but Albumentations is not installed.
 
     This is a pure resolution step — explicit ``"kornia"``/``"gpu"`` requests always pass through
@@ -1170,6 +1171,11 @@ def unpack_boxes(
     After Kornia augmentation the padded ``[B, N_max, 4]`` tensor is unpacked back into per-image target dicts.  Boxes
     are clamped to ``[0, W] x [0, H]`` and any that collapse to zero area are removed along with their corresponding
     ``labels``, ``area``, ``iscrowd``, and (if provided) ``masks`` entries.
+
+    Keypoint visibility is decided once, from the final coordinates after every augmentation op has run; it is not
+    tracked per op. A joint that one op moves outside the image and a later op moves back inside therefore keeps its
+    original visibility. This matches the default Albumentations CPU path, which also judges joints only on the
+    pipeline's final output.
 
     Args:
         boxes_aug: Augmented boxes tensor ``[B, N_max, 4]`` in xyxy format.
