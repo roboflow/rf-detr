@@ -1657,14 +1657,24 @@ class TestAffinePixelTranslation:
     @pytest.mark.parametrize(
         "translation,other,diagnostic",
         [
-            pytest.param(True, {}, "integers", id="boolean"),
-            pytest.param(1.5, {}, "integers", id="fractional-pixel"),
+            pytest.param(True, {}, "not booleans", id="boolean"),
+            pytest.param(1.5, {}, "whole pixels.*got 1.5", id="fractional-pixel"),
+            pytest.param((0, 2.5), {}, "whole pixels.*got 2.5", id="fractional-range-bound"),
+            pytest.param({"x": 0.5}, {}, "whole pixels.*got 0.5", id="fractional-axis"),
             pytest.param((3, -3), {}, "minimum", id="reversed-range"),
-            pytest.param((1, 2, 3), {}, "integers", id="three-element-range"),
+            pytest.param((1, 2, 3), {}, "two-element", id="three-element-range"),
             pytest.param({"z": 4}, {}, "keys", id="wrong-axis"),
             pytest.param(4, {"translate_percent": 0.1}, "either", id="two-translation-units"),
-            pytest.param(4, {"border_mode": 2}, "border", id="unsupported-reflect-mode"),
-            pytest.param(4, {"border_mode": 4}, "border", id="reflected-box-duplication"),
+            pytest.param(4, {"rotate": 10}, "got rotate=10", id="nonzero-rotate"),
+            pytest.param(4, {"rotate": (-5, 5)}, r"got rotate=\(-5, 5\)", id="nonzero-rotate-range"),
+            pytest.param(4, {"shear": 5}, "got shear=5", id="nonzero-shear"),
+            pytest.param(4, {"scale": 1.2}, "got scale=1.2", id="nonunit-scalar-scale"),
+            pytest.param(4, {"interpolation": 5}, "got interpolation=5", id="unknown-interpolation"),
+            pytest.param(4, {"mask_interpolation": 7}, "got mask_interpolation=7", id="unknown-mask-interpolation"),
+            pytest.param(4, {"fill_mask": 1}, "requires fill_mask=0", id="unsupported-nonzero-fill-mask"),
+            pytest.param(4, {"border_mode": 2}, "got border_mode=2", id="unsupported-reflect-mode"),
+            pytest.param(4, {"border_mode": 3}, "got border_mode=3", id="unsupported-wrap-mode"),
+            pytest.param(4, {"border_mode": 4}, "got border_mode=4", id="reflected-box-duplication"),
             pytest.param(4, {"fill": 1}, "fill", id="unsupported-nonzero-fill"),
             pytest.param(4, {"fit_output": True}, "fit_output", id="output-shape-change"),
             pytest.param(4, {"scale": {"x": (0.8, 1.2)}}, "scale=1", id="unsupported-axis-scale"),
@@ -1763,6 +1773,209 @@ class TestAffinePixelTranslation:
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
         build_kornia_pipeline({"Affine": {"translate_px": 4, "scale": scale, "p": 1.0}}, resolution=32)
+
+
+#: Non-square frame shared by the per-image alignment tests, so an x/y axis mix-up cannot cancel out.
+_ALIGN_HEIGHT, _ALIGN_WIDTH = 6, 8
+
+#: Per-image ``(tx, ty)`` pixel offsets for a four-image batch. ``_ALIGN_WIDTH=8`` and ``_ALIGN_HEIGHT=6`` make the
+#: ``fully-off-frame-*`` cases satisfy ``|t| >= extent`` on the shifted axis, and each case mixes signs across images
+#: so a batch-order or per-image mix-up cannot pass.
+_ALIGNMENT_OFFSETS = [
+    pytest.param([(2, 1), (-3, -2), (0, 0), (4, -1)], id="in-frame-mixed-signs"),
+    pytest.param([(0, -1), (0, -3), (1, -2), (-1, -5)], id="negative-y"),
+    pytest.param([(6, 0), (-6, 0), (0, 4), (0, -4)], id="partly-off-frame"),
+    pytest.param([(8, 0), (-8, 0), (0, 6), (0, -6)], id="fully-off-frame-at-extent"),
+    pytest.param([(20, 3), (-9, -2), (2, 25), (-8, -7)], id="fully-off-frame-beyond-extent"),
+]
+
+__doctest_requires__ = {"_translated_batch": ["kornia"]}
+
+
+def _numpy_shift(array: np.ndarray, tx: int, ty: int, border_mode: int) -> np.ndarray:
+    """Shift a ``(C, H, W)`` array right by ``tx`` and down by ``ty`` pixels, filling from the border.
+
+    This is the reference for pixel translation: pad by the largest offset (constant zeros for ``border_mode=0``,
+    replicated edge for ``border_mode=1``), then slice the shifted window. It shares no indexing code with the
+    implementation under test.
+
+    Args:
+        array: Channel-first array to shift.
+        tx: Horizontal shift in pixels; positive moves content right.
+        ty: Vertical shift in pixels; positive moves content down.
+        border_mode: ``0`` fills uncovered pixels with zeros, ``1`` replicates the nearest edge pixel.
+
+    Returns:
+        The shifted array with the same shape as ``array``.
+
+    Examples:
+        >>> row = np.array([[[1, 2, 3, 4]]])
+        >>> _numpy_shift(row, 1, 0, 0).tolist()
+        [[[0, 1, 2, 3]]]
+        >>> _numpy_shift(row, 1, 0, 1).tolist()
+        [[[1, 1, 2, 3]]]
+        >>> _numpy_shift(row, -9, 0, 0).tolist()
+        [[[0, 0, 0, 0]]]
+    """
+    _, height, width = array.shape
+    pad = max(abs(tx), abs(ty))
+    padded = np.pad(array, ((0, 0), (pad, pad), (pad, pad)), mode="constant" if border_mode == 0 else "edge")
+    return padded[:, pad - ty : pad - ty + height, pad - tx : pad - tx + width]
+
+
+def _translated_batch(images: torch.Tensor, border_mode: int, offsets: list[tuple[int, int]]) -> tuple[Any, Any, Any]:
+    """Build a pixel-translation transform and fix its sampled per-image offsets.
+
+    The transform comes from the public builder, so ``border_mode`` goes through the same mapping as a real config.
+    ``generate_parameters`` supplies the full Kornia parameter set for the batch; only ``translations`` is then
+    overwritten with ``offsets`` so every case is deterministic and RNG-free while covering offsets (such as
+    ``|t| >= W``) that a random draw would rarely produce.
+
+    Args:
+        images: Batch the transform will be applied to; only its shape is used here.
+        border_mode: Albumentations border mode, ``0`` constant or ``1`` replicate.
+        offsets: One ``(tx, ty)`` pixel offset per image in ``images``.
+
+    Returns:
+        The transform, its parameter dict, and the per-image affine matrices for ``images``.
+
+    Examples:
+        >>> images = torch.zeros(2, 1, 6, 8)
+        >>> transform, params, matrix = _translated_batch(images, 1, [(2, -1), (-3, 0)])
+        >>> params["translations"].tolist()
+        [[2.0, -1.0], [-3.0, 0.0]]
+        >>> matrix.shape
+        torch.Size([2, 3, 3])
+    """
+    from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+    config = {"Affine": {"translate_px": {"x": (-1, 1), "y": (-1, 1)}, "border_mode": border_mode, "p": 1.0}}
+    transform = next(iter(build_kornia_pipeline(config, resolution=_ALIGN_WIDTH, with_masks=True).children()))
+    params = transform.generate_parameters(tuple(images.shape))
+    params["translations"] = torch.tensor(offsets, dtype=params["translations"].dtype)
+    matrix = transform.compute_transformation(images, params, transform.flags)
+    return transform, params, matrix
+
+
+@kornia_only
+class TestAffinePixelTranslationBatchAlignment:
+    """Every image, box, and mask in a batch must move by its own sampled offset, matching a NumPy oracle.
+
+    Border modes ``0`` and ``1`` are constant and replicate fill (Albumentations numbering).
+    """
+
+    @pytest.mark.parametrize("border_mode", [0, 1])
+    @pytest.mark.parametrize("offsets", _ALIGNMENT_OFFSETS)
+    def test_images_match_numpy_shift_per_image(self, offsets: list[tuple[int, int]], border_mode: int) -> None:
+        """Each image in a batch is shifted by its own offset, including offsets at or past the frame extent.
+
+        Distinct non-zero pixel values make a wrong source pixel, a swapped axis, or a zero fill that should have been a
+        replicated edge (and the reverse) all change the output.
+        """
+        batch = len(offsets)
+        images = torch.arange(1, batch * 3 * _ALIGN_HEIGHT * _ALIGN_WIDTH + 1, dtype=torch.float32).reshape(
+            batch, 3, _ALIGN_HEIGHT, _ALIGN_WIDTH
+        )
+        transform, params, matrix = _translated_batch(images, border_mode, offsets)
+
+        out = transform.apply_transform(images, params, transform.flags, transform=matrix)
+
+        expected = np.stack(
+            [_numpy_shift(image, tx, ty, border_mode) for image, (tx, ty) in zip(images.numpy(), offsets)]
+        )
+        torch.testing.assert_close(out, torch.from_numpy(expected), rtol=0, atol=0)
+
+    @pytest.mark.parametrize("border_mode", [0, 1])
+    @pytest.mark.parametrize("offsets", _ALIGNMENT_OFFSETS)
+    def test_masks_match_numpy_shift_per_image(self, offsets: list[tuple[int, int]], border_mode: int) -> None:
+        """Instance and padding masks move exactly like the image: whole pixels, no interpolation, same border mode.
+
+        Masks are binary, so any interpolation would produce fractional values and any offset disagreement with the
+        image would show up as a misaligned mask against the same NumPy oracle.
+        """
+        batch = len(offsets)
+        masks = ((torch.arange(batch * 2 * _ALIGN_HEIGHT * _ALIGN_WIDTH) * 7) % 5 < 2).float()
+        masks = masks.reshape(batch, 2, _ALIGN_HEIGHT, _ALIGN_WIDTH)
+        transform, params, matrix = _translated_batch(masks, border_mode, offsets)
+
+        out = transform.apply_transform_mask(masks, params, dict(transform.flags), transform=matrix)
+
+        expected = np.stack([_numpy_shift(mask, tx, ty, border_mode) for mask, (tx, ty) in zip(masks.numpy(), offsets)])
+        torch.testing.assert_close(out, torch.from_numpy(expected), rtol=0, atol=0)
+
+    @pytest.mark.parametrize("offsets", _ALIGNMENT_OFFSETS)
+    def test_boxes_translate_by_per_image_offset(self, offsets: list[tuple[int, int]]) -> None:
+        """Boxes shift by their image's offset, so they stay aligned with its pixels even when they leave the frame.
+
+        Clipping or dropping boxes that end up outside the frame is a later stage (see the data-module tests); this
+        transform must move all four coordinates unclamped, which is what keeps partly and fully off-frame boxes
+        consistent with the shifted image.
+        """
+        from kornia.geometry.boxes import Boxes
+
+        batch = len(offsets)
+        boxes = torch.tensor([[1.0, 1.0, 4.0, 3.0], [5.0, 2.0, 8.0, 5.0]]).expand(batch, -1, -1).clone()
+        images = torch.zeros(batch, 1, _ALIGN_HEIGHT, _ALIGN_WIDTH)
+        transform, params, matrix = _translated_batch(images, 0, offsets)
+
+        out = transform.apply_transform_box(
+            Boxes.from_tensor(boxes, mode="xyxy"), params, transform.flags, transform=matrix
+        ).to_tensor(mode="xyxy")
+
+        shifts = torch.tensor([[tx, ty, tx, ty] for tx, ty in offsets], dtype=torch.float32)[:, None, :]
+        torch.testing.assert_close(out, boxes + shifts, rtol=0, atol=0)
+
+    @pytest.mark.parametrize("border_mode", [0, 1])
+    @pytest.mark.parametrize(
+        "offset",
+        [
+            pytest.param((3, 2), id="positive-both-axes"),
+            pytest.param((-2, -3), id="negative-both-axes"),
+            pytest.param((-2, 2), id="mixed-signs"),
+        ],
+    )
+    @albumentations_only
+    def test_in_frame_translation_matches_albumentations(self, offset: tuple[int, int], border_mode: int) -> None:
+        """Image, box, and mask geometry matches the CPU backend for in-frame shifts on both axes.
+
+        The box stays fully inside the frame after every shift here: Albumentations clips and filters boxes that leave
+        the frame, so parity is only defined for in-frame shifts. Offsets at or past the frame extent are covered
+        against the NumPy oracle above, never against Albumentations.
+        """
+        import albumentations
+
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        tx, ty = offset
+        config = {
+            "translate_px": {"x": (tx, tx), "y": (ty, ty)},
+            "rotate": 0.0,
+            "scale": 1.0,
+            "shear": 0.0,
+            "border_mode": border_mode,
+            "interpolation": 1,
+            "p": 1.0,
+        }
+        image = np.arange(7 * 9 * 3, dtype=np.uint8).reshape(7, 9, 3)
+        object_mask = np.zeros((7, 9), dtype=np.uint8)
+        object_mask[3:5, 3:6] = 1
+        padding_mask = np.zeros((7, 9), dtype=np.uint8)
+        padding_mask[:, 7:] = 1
+        cpu = albumentations.Compose(
+            [albumentations.Affine(**config)], bbox_params=albumentations.BboxParams(format="pascal_voc")
+        )(image=image, bboxes=[(3, 3, 6, 5)], masks=[object_mask, padding_mask])
+        pipeline = build_kornia_pipeline({"Affine": config}, resolution=7, with_masks=True)
+        image_tensor = torch.from_numpy(image.copy()).permute(2, 0, 1).float().unsqueeze(0) / 255
+        boxes = torch.tensor([[[3.0, 3.0, 6.0, 5.0]]])
+        masks = torch.from_numpy(np.stack((object_mask, padding_mask))).float().unsqueeze(0)
+
+        image_out, boxes_out, masks_out = pipeline(image_tensor, boxes, masks)
+
+        cpu_image = torch.from_numpy(cpu["image"].copy()).permute(2, 0, 1).float().unsqueeze(0) / 255
+        cpu_masks = torch.from_numpy(np.stack(cpu["masks"]).copy()).float().unsqueeze(0)
+        torch.testing.assert_close(image_out, cpu_image, rtol=0, atol=1e-5)
+        torch.testing.assert_close(boxes_out, torch.tensor([cpu["bboxes"]]), rtol=0, atol=1e-5)
+        torch.testing.assert_close(masks_out, cpu_masks, rtol=0, atol=0)
 
 
 @kornia_only

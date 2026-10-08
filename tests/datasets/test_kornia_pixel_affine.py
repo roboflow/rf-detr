@@ -114,3 +114,39 @@ class TestPixelTranslatedAffineSameOnBatch:
         translations = transform.generate_parameters((0, 1, 8, 8))["translations"]
 
         assert translations.shape == (0, 2)
+
+
+@kornia_only
+class TestPixelTranslatedAffineMaskDtype:
+    """``apply_transform`` must return masks in the dtype they arrived in."""
+
+    @pytest.mark.parametrize(
+        "dtype",
+        [
+            pytest.param(torch.bool, id="bool"),
+            pytest.param(torch.uint8, id="uint8"),
+            pytest.param(torch.float16, id="float16"),
+            pytest.param(torch.float32, id="float32"),
+        ],
+    )
+    def test_shift_preserves_dtype_and_values(self, dtype: torch.dtype) -> None:
+        """A shift by 1 right and 2 down keeps the mask dtype and moves each set pixel by exactly that offset.
+
+        Masks reach the transform as bool, integer or float tensors, and the zero-padding path multiplies the gathered
+        values in place by a boolean validity mask, which must neither promote nor reject any of them. The pixel in row
+        0 would be smeared into the two rows the shift exposes if that masking were skipped.
+        """
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+
+        transform = PixelTranslatedAffine(((1, 1), (2, 2)), p=1.0, padding_mode="zeros")
+        mask = torch.zeros(1, 1, 4, 5, dtype=dtype)
+        mask[0, 0, 0, 3] = 1
+        mask[0, 0, 1, 1] = 1
+
+        shifted = transform.apply_transform(mask, {"translations": torch.tensor([[1.0, 2.0]])}, transform.flags)
+
+        expected = torch.zeros(1, 1, 4, 5, dtype=dtype)
+        expected[0, 0, 2, 4] = 1
+        expected[0, 0, 3, 2] = 1
+        assert shifted.dtype == dtype
+        assert torch.equal(shifted, expected)

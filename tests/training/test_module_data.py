@@ -1994,12 +1994,19 @@ class TestOnAfterBatchTransfer:
                 boxes[0], torch.tensor([0.375, 0.375, 0.5, 0.5], dtype=torch.float32), rtol=1e-4, atol=1e-6
             )
 
-    @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+    @kornia_only
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=[pytest.mark.gpu, pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")],
+            ),
+        ],
+    )
     def test_pixel_affine_reaches_segmentation_training_batch(self, tmp_path: Path, device: str) -> None:
         """The real transfer hook moves pixels, boxes, instance masks, and padding masks together."""
-        pytest.importorskip("kornia")
-        if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA is unavailable")
         config = {"Affine": {"translate_px": {"x": (4, 4), "y": (0, 0)}, "p": 1.0}}
         dm = RFDETRDataModule(
             _base_model_config(segmentation_head=True),
@@ -2040,9 +2047,9 @@ class TestOnAfterBatchTransfer:
         assert samples_out.tensors[0, 0, 30, 34] > 2
         assert samples_out.tensors[0, 0, 30, 30] < -2
 
+    @kornia_only
     def test_pixel_affine_drops_box_and_mask_shifted_out_of_frame(self, tmp_path: Path) -> None:
         """A translated-out object must not remain as a zero-area training target."""
-        pytest.importorskip("kornia")
         dm = RFDETRDataModule(
             _base_model_config(segmentation_head=True),
             _base_train_config(
