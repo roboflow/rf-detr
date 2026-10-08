@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for the WebDataset shard pack and streaming-load package.
 
-Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind an a
+Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a
 ``skipif`` decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
 :class:`~rfdetr.datasets.coco.CocoDetection` the shards were packed from.
 """
