@@ -200,44 +200,40 @@ class TestStreamedDetectionForms:
 
 
 @_requires_hotcoco
-class TestEmptySideState:
-    """An epoch that stored no detection or no ground truth reports exactly what the batch path reports."""
+@pytest.mark.parametrize("iou_type", ["bbox", "segm", ("bbox", "segm")])
+@pytest.mark.parametrize(
+    ("predicted", "annotated"),
+    [pytest.param(0, 1, id="no-detections"), pytest.param(1, 0, id="no-ground-truth")],
+)
+def test_empty_side_state_matches_batch_hotcoco(iou_type: Any, predicted: int, annotated: int) -> None:
+    """An epoch with no detection or no ground truth reports exactly what the batch path reports.
 
-    @pytest.mark.parametrize("iou_type", ["bbox", "segm", ("bbox", "segm")])
-    @pytest.mark.parametrize(
-        ("predicted", "annotated"),
-        [pytest.param(0, 1, id="no-detections"), pytest.param(1, 0, id="no-ground-truth")],
-    )
-    def test_matches_batch_hotcoco(self, iou_type: Any, predicted: int, annotated: int) -> None:
-        """The batch path owns the ``-1`` sentinels COCO reports for an empty side; streaming must not diverge.
+    The batch path owns the ``-1`` sentinels COCO reports for an empty side; streaming must not diverge. A segm-only
+    epoch without predicted masks is where the paths split: TorchMetrics drops every prediction image, so the batch
+    path reports sentinels while a stream would still finalize its ground-truth images.
+    """
+    predictions, targets = _disc_records(predicted=predicted, annotated=annotated)
+    kwargs: dict[str, Any] = {"iou_type": iou_type, "class_metrics": True, "num_classes": 2}
+    streamed = OnePassCocoMeanAveragePrecision(backend="hotcoco_streaming", **kwargs)
+    streamed.update(predictions, targets)
+    batch = OnePassCocoMeanAveragePrecision(backend="hotcoco", **kwargs)
+    batch.update(predictions, targets)
 
-        A segm-only epoch without predicted masks is where the paths split: TorchMetrics drops every prediction
-        image, so the batch path reports sentinels while a stream would still finalize its ground-truth images.
-        """
-        predictions, targets = _disc_records(predicted=predicted, annotated=annotated)
-        kwargs: dict[str, Any] = {"iou_type": iou_type, "class_metrics": True, "num_classes": 2}
-        streamed = OnePassCocoMeanAveragePrecision(backend="hotcoco_streaming", **kwargs)
-        streamed.update(predictions, targets)
-        batch = OnePassCocoMeanAveragePrecision(backend="hotcoco", **kwargs)
-        batch.update(predictions, targets)
-
-        _assert_same_metrics(streamed.compute(), batch.compute())
+    _assert_same_metrics(streamed.compute(), batch.compute())
 
 
 @_requires_hotcoco
-class TestCallbackTrainSplit:
-    """``hotcoco_streaming`` streams validation only; the train-split metric evaluates in one batch on ``hotcoco``."""
+def test_callback_streams_validation_only_not_the_train_split() -> None:
+    """``hotcoco_streaming`` streams validation only; the train-split metric evaluates in one batch on ``hotcoco``.
 
-    def test_train_metric_does_not_stream(self) -> None:
-        """Training-step updates must not run matching, so only the validation metric gets the streaming backend.
+    Training-step updates must not run matching, so only the validation metric gets the streaming backend. With
+    ``compute_train_metrics=True`` a streaming train metric would match inside ``on_train_batch_end``.
+    """
+    callback = COCOEvalCallback(eval_backend="hotcoco_streaming")
 
-        With ``compute_train_metrics=True`` a streaming train metric would match inside ``on_train_batch_end``.
-        """
-        callback = COCOEvalCallback(eval_backend="hotcoco_streaming")
+    callback.setup(_make_trainer(), _make_pl_module(), stage="fit")
 
-        callback.setup(_make_trainer(), _make_pl_module(), stage="fit")
-
-        assert (callback.map_metric._coco_backend.streams, callback.map_metric_train._coco_backend.streams) == (
-            True,
-            False,
-        )
+    assert (callback.map_metric._coco_backend.streams, callback.map_metric_train._coco_backend.streams) == (
+        True,
+        False,
+    )

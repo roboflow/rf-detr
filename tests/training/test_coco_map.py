@@ -82,6 +82,26 @@ def _require_backend(backend: str) -> None:
     pytest.importorskip(_BACKEND_PACKAGES[backend])
 
 
+def _warning_messages(records: list[logging.LogRecord]) -> list[str]:
+    """List the message of each distinct WARNING emission among *records*, in order.
+
+    pytest 9.1 installs its capture handler on the non-propagating ``rf-detr`` logger *and* on the root logger, so
+    once a test forces ``propagate = True`` one emission lands in ``caplog.records`` twice. Both entries are the same
+    ``LogRecord`` object; two real emissions are two objects, so counting objects still tells them apart.
+
+    Examples:
+        >>> def _record(message, level=logging.WARNING):
+        ...     return logging.LogRecord("rf-detr", level, __file__, 0, message, (), None)
+        >>> once, again, info = _record("once"), _record("once"), _record("fyi", logging.INFO)
+        >>> _warning_messages([once, once, info])
+        ['once']
+        >>> _warning_messages([once, again])
+        ['once', 'once']
+    """
+    distinct = {id(record): record for record in records if record.levelno == logging.WARNING}
+    return [record.getMessage() for record in distinct.values()]
+
+
 def test_one_pass_metric_matches_noncontiguous_per_class_results() -> None:
     """One global evaluation must preserve class IDs and AP/AR values, including prediction-only classes."""
     predictions = [
@@ -2489,7 +2509,7 @@ class TestHotcocoStreaming:
         with caplog.at_level(logging.WARNING, logger="rf-detr"):
             OnePassCocoMeanAveragePrecision(backend="hotcoco_streaming", sync_on_compute=False)
 
-        assert [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING] == [
+        assert _warning_messages(caplog.records) == [
             "eval_backend='hotcoco_streaming' evaluates in one batch at epoch end instead: "
             "the model's num_classes is unknown."
         ]
