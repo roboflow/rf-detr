@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PANDAS_INSTALLED, _IS_SEABORN_INSTALLED
 from rfdetr.visualize.training import (
     _build_metric_groups,
     _plot_map_columns,
@@ -22,10 +22,6 @@ from rfdetr.visualize.training import (
     plot_map_metrics,
     plot_metrics,
 )
-
-_IS_MATPLOTLIB_INSTALLED = importlib.util.find_spec("matplotlib") is not None
-_IS_PANDAS_INSTALLED = importlib.util.find_spec("pandas") is not None
-_IS_SEABORN_INSTALLED = importlib.util.find_spec("seaborn") is not None
 
 pandas_only = pytest.mark.skipif(not _IS_PANDAS_INSTALLED, reason="pandas not installed; skip metrics DataFrame tests")
 plot_only = pytest.mark.skipif(

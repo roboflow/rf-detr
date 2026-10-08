@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 
 onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX export tests")
-onnx_runtime_only = pytest.mark.skipif(not _IS_ONNXRUNTIME_INSTALLED, reason="onnxruntime not installed")
+onnxruntime_only = pytest.mark.skipif(not _IS_ONNXRUNTIME_INSTALLED, reason="onnxruntime not installed")
 
 
 @contextmanager
@@ -1330,7 +1330,7 @@ class TestExportOnnxVariantNaming:
 
 @pytest.mark.gpu
 @pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed, run: pip install rfdetr[onnx]")
-@onnx_runtime_only
+@onnxruntime_only
 @pytest.mark.parametrize("model_class", [RFDETRNano, RFDETRSegNano, RFDETRKeypointPreview])
 @pytest.mark.parametrize("projector_scale", [["P4"], ["P4", "P5"]])
 @pytest.mark.parametrize("dynamic_batch", [False, True])

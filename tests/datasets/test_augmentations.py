@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """Tests for Albumentations augmentation wrappers."""
 
-import importlib.util
 from unittest import mock
 
 import numpy as np
@@ -22,8 +21,7 @@ from rfdetr.datasets.aug_configs import AUG_AGGRESSIVE
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize, _build_albu_transform
 from rfdetr.utilities import collate_fn
-
-_IS_ALBUMENTATIONS_INSTALLED = importlib.util.find_spec("albumentations") is not None
+from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED
 
 albumentations_only = pytest.mark.skipif(
     not _IS_ALBUMENTATIONS_INSTALLED, reason="albumentations not installed; skip Albumentations wrapper tests"
@@ -34,7 +32,11 @@ __doctest_requires__ = {"_has_albumentations_transform": ["albumentations"]}
 
 
 def _has_albumentations_transform(name: str) -> bool:
-    """Report whether the installed Albumentations exports a transform, without importing it at module scope.
+    """Report whether the installed Albumentations exports a transform.
+
+    Albumentations is imported inside the call, not at module scope. The call still runs at collection time, because
+    ``skipif`` conditions and parametrize arguments evaluate it, so an Albumentations that is installed but fails to
+    import errors during collection instead of skipping.
 
     Args:
         name: Albumentations attribute name, e.g. ``"SquareSymmetry"``.

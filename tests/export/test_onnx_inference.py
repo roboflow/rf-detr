@@ -25,7 +25,7 @@ from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
 
 # ``tiny_onnx_model`` builds the graph with ``onnx`` and the session tests run it with ``onnxruntime``; a fixture cannot
 # carry a skipif, so the consuming class is decorated instead.
-onnx_runtime_only = pytest.mark.skipif(
+onnx_and_onnxruntime_only = pytest.mark.skipif(
     not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED), reason="onnx/onnxruntime not installed"
 )
 
@@ -205,7 +205,7 @@ def tiny_onnx_model(tmp_path: Path) -> Path:
     return onnx_path
 
 
-@onnx_runtime_only
+@onnx_and_onnxruntime_only
 @pytest.mark.integration
 @pytest.mark.e2e_onnx
 class TestCreateOnnxSession:

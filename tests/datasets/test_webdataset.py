@@ -5,14 +5,13 @@
 # ------------------------------------------------------------------------
 """Tests for the WebDataset shard pack and streaming-load package.
 
-Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a
-``skipif`` decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
+Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a ``skipif``
+decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
 :class:`~rfdetr.datasets.coco.CocoDetection` the shards were packed from.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import tarfile
 import types
@@ -51,12 +50,9 @@ from rfdetr.datasets.webdataset.load import (
     plan_samples_per_worker,
 )
 from rfdetr.datasets.webdataset.pack import _pack_generation, pack_coco_to_shards, tar_member_bytes
+from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PYTORCH_LIGHTNING_INSTALLED, _IS_WEBDATASET_INSTALLED
 from rfdetr.utilities.tensors import make_collate_fn
 from tests.datasets._memory import peak_traced_bytes
-
-_IS_WEBDATASET_INSTALLED = importlib.util.find_spec("webdataset") is not None
-_IS_PYTORCH_LIGHTNING_INSTALLED = importlib.util.find_spec("pytorch_lightning") is not None
-_IS_MATPLOTLIB_INSTALLED = importlib.util.find_spec("matplotlib") is not None
 
 webdataset_only = pytest.mark.skipif(
     not _IS_WEBDATASET_INSTALLED, reason="webdataset not installed; skip streaming tests (optional `data` extra)"

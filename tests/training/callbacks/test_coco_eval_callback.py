@@ -18,9 +18,9 @@ from torch.utils.data import DistributedSampler, SequentialSampler
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _UfcocoBackend, _VernierBackend
-from rfdetr.utilities.imports import _IS_TORCH_XLA_INSTALLED, _IS_UFCOCO_INSTALLED, _IS_VERNIER_INSTALLED
+from rfdetr.utilities.imports import _IS_UFCOCO_INSTALLED, _IS_VERNIER_INSTALLED
+from tests._markers import requires_torch_xla
 
-torch_xla_only = pytest.mark.skipif(not _IS_TORCH_XLA_INSTALLED, reason="torch_xla not installed")
 ufcoco_only = pytest.mark.skipif(not _IS_UFCOCO_INSTALLED, reason="ultrafast_pycocotools not installed")
 vernier_only = pytest.mark.skipif(not _IS_VERNIER_INSTALLED, reason="vernier not installed")
 
@@ -585,7 +585,7 @@ class TestValidationBatchEndDeviceRouting:
             cb._sync_xla_metric_inputs(SimpleNamespace(device=torch.device("cpu")))
 
     @pytest.mark.xla
-    @torch_xla_only
+    @requires_torch_xla
     def test_sync_xla_metric_inputs_runs_against_real_torch_xla(self) -> None:
         """Real PJRT execution: the fully-mocked ordering tests below stand in for ``torch_xla.sync``, so they cannot
         catch a signature mismatch with the actual installed API.

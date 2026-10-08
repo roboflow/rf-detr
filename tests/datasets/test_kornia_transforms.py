@@ -9,7 +9,6 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 ``@pytest.mark.gpu`` is needed.
 """
 
-import importlib.util
 from typing import Any
 
 import pytest
@@ -21,9 +20,7 @@ from rfdetr.datasets.aug_configs import (
     AUG_CONSERVATIVE,
     AUG_INDUSTRIAL,
 )
-
-_IS_KORNIA_INSTALLED = importlib.util.find_spec("kornia") is not None
-_IS_ALBUMENTATIONS_INSTALLED = importlib.util.find_spec("albumentations") is not None
+from rfdetr.utilities.imports import _IS_ALBUMENTATIONS_INSTALLED, _IS_KORNIA_INSTALLED
 
 #: Skip every test in a class that calls into ``kornia_transforms`` directly (optional extra not installed in CPU CI);
 #: classes that only exercise backend-selection logic without importing Kornia stay undecorated and keep running.

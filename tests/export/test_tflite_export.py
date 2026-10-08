@@ -51,7 +51,7 @@ from rfdetr.export._tflite.exporter import (
     _patch_validation_download,
     _prepare_calibration_data,
 )
-from rfdetr.export.imports import _IS_ONNX_INSTALLED
+from rfdetr.export.imports import _IS_ONNX_GRAPHSURGEON_INSTALLED, _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
 
 onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed")
@@ -1222,9 +1222,7 @@ class TestCheckOnnx2tfAvailable:
 # ---------------------------------------------------------------------------
 
 onnx_gs_available = pytest.mark.skipif(
-    not all(
-        __import__("importlib").util.find_spec(p) is not None for p in ("onnx", "onnx_graphsurgeon", "onnxruntime")
-    ),
+    not (_IS_ONNX_INSTALLED and _IS_ONNX_GRAPHSURGEON_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
     reason="onnx, onnx_graphsurgeon, and onnxruntime required",
 )
 

@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 
 import contextlib
-import importlib.util
 import inspect
 import json
 import re
@@ -26,8 +25,8 @@ from rfdetr.export._tensorrt import inference as trt_inference
 from rfdetr.export._tensorrt.exporter import TensorRTExporter
 from rfdetr.export._tensorrt.inference import TimeProfiler, TRTInference
 from rfdetr.export.benchmark import infer_transforms
+from rfdetr.utilities.imports import _IS_FASTER_COCO_EVAL_INSTALLED
 
-_IS_FASTER_COCO_EVAL_INSTALLED = importlib.util.find_spec("faster_coco_eval") is not None
 faster_coco_eval_only = pytest.mark.skipif(
     not _IS_FASTER_COCO_EVAL_INSTALLED, reason="faster_coco_eval not installed; skip evaluator test"
 )

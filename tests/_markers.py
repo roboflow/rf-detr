@@ -7,11 +7,12 @@
 
 from __future__ import annotations
 
-import importlib.util
 import sys
 
 import pytest
 import torch
+
+from rfdetr.utilities.imports import _IS_TORCH_XLA_INSTALLED
 
 #: Skip a test node that invokes CPU-backend `torch.compile` (Inductor codegen). Windows CI runners
 #: have no MSVC (``cl.exe``) on ``PATH``, so Inductor's CPU C++ codegen fails with
@@ -32,6 +33,6 @@ cuda_marks = [pytest.mark.gpu, requires_cuda]
 #: Skip a test node that drives a real XLA device when ``torch_xla`` is not installed (the ``xla`` extra). Pair it with
 #: ``@pytest.mark.xla`` so the XLA CI job selects it.
 requires_torch_xla = pytest.mark.skipif(
-    importlib.util.find_spec("torch_xla") is None,
+    not _IS_TORCH_XLA_INSTALLED,
     reason="torch_xla not installed; skip XLA device tests",
 )

@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """Tests for static INT8 quantization of ONNX exports (:mod:`rfdetr.export._onnx.quantize`)."""
 
-import importlib.util
 from pathlib import Path
 
 import numpy as np
@@ -16,12 +15,10 @@ from rfdetr.export._onnx.quantize import VALID_QUANTIZATIONS, nodes_to_exclude, 
 from rfdetr.export._runtime.calibration import calibration_batches
 from rfdetr.export._tensorrt.exporter import TensorRTConfig
 from rfdetr.export._tflite.exporter import TFLiteConfig
-
-_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
-_IS_ONNXRUNTIME_INSTALLED = importlib.util.find_spec("onnxruntime") is not None
+from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
 
 onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX quantization tests")
-onnx_runtime_only = pytest.mark.skipif(
+onnx_and_onnxruntime_only = pytest.mark.skipif(
     not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
     reason="onnx/onnxruntime not installed; skip end-to-end quantization",
 )
@@ -457,7 +454,7 @@ class TestSettingPlumbing:
         assert exporter.config.quantization is None
 
 
-@onnx_runtime_only
+@onnx_and_onnxruntime_only
 class TestQuantizeInt8EndToEnd:
     """``quantize_int8`` run against a real ONNX Runtime on a small synthetic graph.
 

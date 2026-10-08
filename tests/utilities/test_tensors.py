@@ -14,7 +14,6 @@ Covers:
 """
 
 import collections.abc
-import importlib.util
 import pickle
 from unittest.mock import patch
 
@@ -33,9 +32,7 @@ from rfdetr.utilities.tensors import (
     nested_tensor_from_tensor_list,
     pack_targets,
 )
-
-_IS_TORCH_XLA_INSTALLED = importlib.util.find_spec("torch_xla") is not None
-xla_only = pytest.mark.skipif(not _IS_TORCH_XLA_INSTALLED, reason="torch_xla not installed; skip real-XLA tests")
+from tests._markers import requires_torch_xla
 
 
 def _grid_sample_reference(
@@ -403,7 +400,7 @@ class TestBilinearGridSampleDeviceRouting:
 class TestBilinearGridSampleXLAExecution:
     """Real torch_xla PJRT execution -- proves the gather path takes no aten:: CPU fallback (T1 lane, WP2)."""
 
-    @xla_only
+    @requires_torch_xla
     @pytest.mark.xla
     def test_gather_path_no_cpu_fallback_on_real_xla_device(self, seed):
         """On a real XLA device (any PJRT backend) the gather path runs with zero aten:: fallback ops."""
@@ -1438,7 +1435,7 @@ class TestNearestGridSampleLowPrecision:
 class TestNearestGridSampleXLAExecution:
     """Real torch_xla PJRT execution -- proves the nearest gather path takes no aten:: CPU fallback."""
 
-    @xla_only
+    @requires_torch_xla
     @pytest.mark.xla
     def test_nearest_gather_path_no_cpu_fallback_on_real_xla_device(self, seed: int) -> None:
         """``point_sample(mode="nearest")`` used to lower to aten::grid_sampler_2d on XLA."""

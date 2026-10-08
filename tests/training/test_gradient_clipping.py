@@ -34,11 +34,9 @@ from pytorch_lightning.plugins.precision import MixedPrecision
 from rfdetr.config import RFDETRBaseConfig, TrainConfig
 from rfdetr.training.module_data import RFDETRDataModule
 from rfdetr.training.module_model import RFDETRModelModule
-from rfdetr.utilities.imports import _IS_TORCH_XLA_INSTALLED
+from tests._markers import requires_torch_xla
 
 from .helpers import _fake_postprocess, _FakeCriterion, _FakeDataset, _make_param_dicts, _TinyModel
-
-torch_xla_only = pytest.mark.skipif(not _IS_TORCH_XLA_INSTALLED, reason="torch_xla not installed")
 
 _CLIP_MAX_NORM = 0.1
 _INIT_SCALE = 2.0**16
@@ -414,7 +412,7 @@ def test_zero_clip_max_norm_disables_clipping_on_manual_path(tmp_path: Path) -> 
 
 
 @pytest.mark.xla
-@torch_xla_only
+@requires_torch_xla
 def test_xla_reduces_gradients_before_manual_clipping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The XLA precision closure must reduce a local gradient before RF-DETR clips it.
 

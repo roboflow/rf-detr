@@ -5,7 +5,6 @@
 # ------------------------------------------------------------------------
 """Hardening tests for static INT8 ONNX quantization (:mod:`rfdetr.export._onnx.quantize`)."""
 
-import importlib.util
 import shutil
 import sys
 import types
@@ -17,8 +16,7 @@ import pytest
 
 from rfdetr.export._onnx.quantize import nodes_to_exclude, quantize_int8
 from rfdetr.export._runtime import calibration
-
-_IS_ONNX_INSTALLED = importlib.util.find_spec("onnx") is not None
+from rfdetr.export.imports import _IS_ONNX_INSTALLED
 
 onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX quantization tests")
 
