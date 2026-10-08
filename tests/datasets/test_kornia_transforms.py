@@ -1115,8 +1115,8 @@ class TestKeypointTargetTransport(_RequiresKornia):
     def test_flip_mask_tracks_each_image(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A batch can flip one image without relabeling joints in another.
 
-        The pipeline is a real one-flip ``AugmentationSequential`` whose sampled draws are replaced by a known
-        per-image pattern, so the mask must follow the draw of each image.
+        The pipeline is a real one-flip ``AugmentationSequential`` whose sampled draws are replaced by a known per-image
+        pattern, so the mask must follow the draw of each image.
         """
         from types import SimpleNamespace
 
@@ -1260,9 +1260,9 @@ class TestKeypointTargetTransport(_RequiresKornia):
     def test_fixed_rotation_moves_keypoint_to_analytic_position(self, config: dict[str, dict[str, Any]]) -> None:
         """A 90-degree Affine or ShiftScaleRotate turns a joint about the image center.
 
-        With rotation pinned to ``(90, 90)`` and no shift or scale, the joint at ``(10, 12)`` on a 32-pixel image
-        sits at ``(-6, -4)`` from the center ``(16, 16)``. Kornia's ``RandomAffine`` maps ``(dx, dy)`` to
-        ``(-dy, dx)``, so the joint must land at ``(20, 10)``; an untransformed joint stays at ``(10, 12)``.
+        With rotation pinned to ``(90, 90)`` and no shift or scale, the joint at ``(10, 12)`` on a 32-pixel image sits
+        at ``(-6, -4)`` from the center ``(16, 16)``. Kornia's ``RandomAffine`` maps ``(dx, dy)`` to ``(-dy, dx)``, so
+        the joint must land at ``(20, 10)``; an untransformed joint stays at ``(10, 12)``.
         """
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
@@ -1309,9 +1309,9 @@ class TestKeypointTargetTransport(_RequiresKornia):
     def test_keypoint_lands_on_the_warped_image_marker(self, config: dict[str, dict[str, Any]]) -> None:
         """A one-hot marker pixel and the joint placed on it end up at the same warped position.
 
-        The marker sits at row 26, column 26 where the joint is. After the warp, the brightest pixel of the output
-        image must be within one pixel of the transported joint, and that joint must have moved well away from its
-        start so an untransformed joint cannot pass.
+        The marker sits at row 26, column 26 where the joint is. After the warp, the brightest pixel of the output image
+        must be within one pixel of the transported joint, and that joint must have moved well away from its start so an
+        untransformed joint cannot pass.
         """
         from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
 
@@ -1333,8 +1333,8 @@ class TestKeypointTargetTransport(_RequiresKornia):
     def test_collate_keypoints_copies_coordinates_without_frame_shift(self) -> None:
         """Collated joints keep the caller's coordinate frame; any half-pixel shift is the caller's job.
 
-        The data module shifts boxes and joints by ``-0.5`` around the pipeline itself, so the collate step must
-        hand over the annotation coordinates untouched and park the visibility values in a separate tensor.
+        The data module shifts boxes and joints by ``-0.5`` around the pipeline itself, so the collate step must hand
+        over the annotation coordinates untouched and park the visibility values in a separate tensor.
         """
         from rfdetr.datasets.kornia_transforms import collate_keypoints
 
@@ -1350,8 +1350,8 @@ class TestKeypointTargetTransport(_RequiresKornia):
     def test_dropped_leading_instance_leaves_the_trailing_survivor_keypoints(self) -> None:
         """Dropping the first instance keeps the second instance's own joints, not the first's.
 
-        Instance 0 collapses to zero width while instance 1 stays visible and in bounds, so an unpacker that
-        keeps the first ``n_kept`` rows instead of the rows selected by the keep mask returns the wrong joints.
+        Instance 0 collapses to zero width while instance 1 stays visible and in bounds, so an unpacker that keeps the
+        first ``n_kept`` rows instead of the rows selected by the keep mask returns the wrong joints.
         """
         from rfdetr.datasets.kornia_transforms import collate_keypoints, unpack_boxes
 
