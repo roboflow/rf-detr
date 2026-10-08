@@ -212,7 +212,44 @@ class _RfdetrCocoBackend(CocoBackend):
     requires_bbox: bool = False
     unused_backend_methods: tuple[str, ...] = ()
     uses_coco_evaluator: bool = True
+    #: Whether :meth:`open_stream` is implemented, so the metric matches each batch in ``update()``.
     streams: bool = False
+
+    def open_stream(
+        self,
+        categories: list[dict[str, Any]],
+        iou_type: str,
+        *,
+        iou_thresholds: list[float],
+        rec_thresholds: list[float],
+        max_detection_thresholds: list[int],
+    ) -> Any:
+        """Return an evaluator that matches each batch as it arrives, for a backend that sets :attr:`streams`.
+
+        Subclass hook. The metric relies on nothing but this duck-typed contract, so a backend that streams through
+        another package needs no change to the metric:
+
+        - ``update(images, gt_anns, dt_anns)`` matches one batch: ``images`` and ``gt_anns`` in ``COCO(dict)`` form,
+          ``dt_anns`` in a form ``loadRes`` accepts -- the ``(N, 7)`` detection array for ``bbox``, one dict per
+          detection carrying only its ``segmentation`` for ``segm``.
+        - ``finalize()`` returns a COCO evaluator, already evaluated, that supports ``accumulate()`` and
+          ``summarize()`` and then exposes ``stats`` and an ``eval`` dict whose ``precision``/``recall`` arrays index
+          their category axis by category id, since ``categories`` holds every id from 0 up.
+
+        Args:
+            categories: Every category the stream may see, as COCO category records.
+            iou_type: The IoU type the evaluator runs.
+            iou_thresholds: IoU thresholds, the grid ``compute()`` evaluates the batch path on.
+            rec_thresholds: Recall thresholds of that grid.
+            max_detection_thresholds: Maximum-detection thresholds of that grid.
+
+        Returns:
+            A fresh streaming evaluator.
+
+        Raises:
+            NotImplementedError: If the backend does not stream.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not stream; only a backend with streams=True does")
 
 
 class _PackageCocoBackend(_RfdetrCocoBackend):
@@ -281,6 +318,38 @@ class _HotCocoStreamingBackend(_HotCocoBackend):
     """
 
     streams = True
+
+    def open_stream(
+        self,
+        categories: list[dict[str, Any]],
+        iou_type: str,
+        *,
+        iou_thresholds: list[float],
+        rec_thresholds: list[float],
+        max_detection_thresholds: list[int],
+    ) -> Any:
+        """Return a ``hotcoco.StreamingEval`` frozen to the grid ``compute()`` sets on the batch path.
+
+        Args:
+            categories: Every category the stream may see, as COCO category records.
+            iou_type: The IoU type the evaluator runs.
+            iou_thresholds: IoU thresholds of the evaluation grid.
+            rec_thresholds: Recall thresholds of the evaluation grid.
+            max_detection_thresholds: Maximum-detection thresholds of the evaluation grid.
+
+        Returns:
+            A fresh ``StreamingEval``; it fills the empty ``cat_ids`` of its ``Params`` from ``categories``.
+        """
+        package = self._package()
+        params = package.Params(iou_type=iou_type)
+        params.iou_thrs = np.asarray(iou_thresholds, dtype=np.float64)
+        params.rec_thrs = np.asarray(rec_thresholds, dtype=np.float64)
+        params.max_dets = max_detection_thresholds
+        return package.StreamingEval(categories, iou_type=iou_type, params=params)
+
+
+#: Key :meth:`OnePassCocoMeanAveragePrecision.__getstate__` sets when it drops an open stream, read back on restore.
+_STREAM_DROPPED_ON_COPY = "_stream_dropped_on_copy"
 
 
 @functools.lru_cache(maxsize=None)
@@ -579,16 +648,31 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         """Return the picklable state, without the open streaming evaluators.
 
         Returns:
-            The metric state. A stream in progress is dropped, and ``compute()`` then evaluates the stored state in
-            one batch; every image streamed so far is still in that state.
+            The metric state. A stream in progress is dropped, and the copy's ``compute()`` then evaluates the stored
+            state in one batch; every image streamed so far is still in that state. The state carries a marker so
+            :meth:`__setstate__` logs the fallback on the copy, the object that takes it -- this object keeps its
+            stream.
         """
         state = super().__getstate__()
         if state.get("_streams") is not None:
-            # TODO(hotcoco): drop once `StreamingEval` pickles (rfdetr hotcoco proposal 2). Lightning's DDP spawn,
-            # checkpointing and `copy.deepcopy` all pickle the metric, and `StreamingEval` raises TypeError.
+            # TODO(hotcoco): keep the stream instead. hotcoco 1.2 pickles `StreamingEval` (proposal 2 landed), and a
+            # copy that keeps streaming reports the same metrics; the drop stays only while the documented
+            # copy-falls-back contract and its tests are unchanged.
             state["_streams"] = None
             state["_stream_stopped"] = True
+            state[_STREAM_DROPPED_ON_COPY] = True
         return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore a pickled or copied metric, logging when its open stream was dropped on the way.
+
+        Args:
+            state: The state :meth:`__getstate__` returned.
+        """
+        stream_dropped = state.pop(_STREAM_DROPPED_ON_COPY, False)
+        super().__setstate__(state)
+        if stream_dropped:
+            _warn_streaming_fallback("the metric was copied or unpickled mid-epoch, which drops its open stream")
 
     def _stop_streaming(self, reason: str) -> None:
         """Abandon this epoch's stream; ``compute()`` then evaluates the stored state in one batch.
@@ -615,14 +699,22 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         categories = cast(list[dict[str, Any]], self._stream_categories)
         labels = torch.cat([*self.detection_labels[-num_images:], *self.groundtruth_labels[-num_images:]])
         if labels.numel() and (int(labels.min()) < 0 or int(labels.max()) >= len(categories)):
-            # TODO(hotcoco): drop this guard once `StreamingEval.update` rejects an unknown category instead of
-            # silently dropping its annotations (rfdetr hotcoco proposal 1).
+            # hotcoco 1.2 rejects an undeclared category with `KeyError`, but a negative id in the detection array
+            # with `ValueError`, the type it also raises for a NaN score. One range check ahead of `update()` keeps
+            # both ends of the label range on the same fallback without catching a genuine input error.
             self._stop_streaming(f"a label falls outside the declared categories [0, {len(categories) - 1}]")
             return
         if self._streams is None:
-            hotcoco = _hotcoco()
+            # TorchMetrics declares the attribute as its own `CocoBackend`; the registry only builds RF-DETR ones.
+            backend = cast(_RfdetrCocoBackend, self._coco_backend)
             self._streams = {
-                iou_type: hotcoco.StreamingEval(categories, iou_type=iou_type, params=self._stream_params(iou_type))
+                iou_type: backend.open_stream(
+                    categories,
+                    iou_type,
+                    iou_thresholds=self.iou_thresholds,
+                    rec_thresholds=self.rec_thresholds,
+                    max_detection_thresholds=self.max_detection_thresholds,
+                )
                 for iou_type in self.iou_type
             }
         images, ground_truth, detections = self._stream_records(num_images)
@@ -632,24 +724,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             stream.update(images, ground_truth, detections[iou_type])
         self._streamed_images += num_images
 
-    def _stream_params(self, iou_type: str) -> Any:
-        """Return the evaluation grid one ``StreamingEval`` is frozen to, the same grid ``compute()`` sets.
-
-        Args:
-            iou_type: The IoU type the evaluator runs.
-
-        Returns:
-            A ``hotcoco.Params`` whose empty ``cat_ids`` ``StreamingEval`` fills from its categories.
-        """
-        params = _hotcoco().Params(iou_type=iou_type)
-        params.iou_thrs = np.asarray(self.iou_thresholds, dtype=np.float64)
-        params.rec_thrs = np.asarray(self.rec_thresholds, dtype=np.float64)
-        params.max_dets = self.max_detection_thresholds
-        return params
-
-    def _stream_records(
-        self, num_images: int
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    def _stream_records(self, num_images: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
         """Return the last ``num_images`` stored images as ``StreamingEval.update`` inputs.
 
         TorchMetrics' ``_get_coco_format`` builds the ground truth, so its ``area`` follows the same rule as the
@@ -678,17 +753,21 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             annotation["image_id"] += offset
         return target["images"], target["annotations"], self._stream_detections(num_images, offset)
 
-    def _stream_detections(self, num_images: int, offset: int) -> dict[str, list[dict[str, Any]]]:
+    def _stream_detections(self, num_images: int, offset: int) -> dict[str, Any]:
         """Return the last ``num_images`` stored images' detections as raw results, one list per IoU type.
 
         Built from the stored state directly rather than through ``_get_coco_format``, which converts each
-        detection's score separately and dominated streaming's cost. Each IoU type gets detections carrying only its
-        own geometry, so ``StreamingEval`` derives their area the way the batch path switches it: box area for
-        ``bbox``, mask area for ``segm``. Within an image, detections keep state order, the tie order the batch
-        path ranks equal scores in.
+        detection's score separately and dominated streaming's cost. ``StreamingEval`` derives each detection's area
+        from the geometry it is given, so each IoU type gets the form that yields the area the batch path switches
+        to:
 
-        TODO(hotcoco): pass the ``(N, 7)`` detection array once ``StreamingEval.update`` accepts what ``load_res``
-        does (rfdetr hotcoco proposal 6); one Python dict per detection is still most of the streaming cost.
+        - ``bbox``: the ``(N, 7)`` array ``[image_id, x, y, width, height, score, category_id]`` that
+          ``StreamingEval.update`` takes since hotcoco 1.2, one row per detection, box area, no Python dict per
+          detection. Boxes are already COCO ``xywh``, as TorchMetrics stores them.
+        - ``segm``: one dict per detection carrying only its ``segmentation``, so its area is the mask's. The array
+          with ``segmentation=`` would give every row its box area, moving masks between the area buckets.
+
+        Within an image, detections keep state order, the tie order the batch path ranks equal scores in.
 
         Args:
             num_images: How many images at the end of the stored state to convert.
@@ -703,28 +782,27 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         scores = self.detection_scores[-num_images:]
         self._validate_detection_scores(scores)
         labels = self.detection_labels[-num_images:]
-        # `_fix_empty_tensors` stores an image without boxes as `(1, 0)`; reshaping restores `(0, 4)`.
-        boxes = [image.reshape(-1, 4).tolist() for image in self.detection_box[-num_images:]]
-        masks = self.detection_mask[-num_images:]
-        detections: dict[str, list[dict[str, Any]]] = {iou_type: [] for iou_type in self.iou_type}
-        for index, (image_labels, image_scores) in enumerate(zip(labels, scores)):
-            image_id = offset + index
-            records = list(zip(image_labels.tolist(), image_scores.tolist()))
-            if "bbox" in detections:
-                detections["bbox"] += [
-                    {"image_id": image_id, "category_id": label, "bbox": box, "score": score}
-                    for (label, score), box in zip(records, boxes[index])
-                ]
-            if "segm" in detections:
-                detections["segm"] += [
-                    {
-                        "image_id": image_id,
-                        "category_id": label,
-                        "segmentation": {"size": size, "counts": counts},
-                        "score": score,
-                    }
-                    for (label, score), (size, counts) in zip(records, masks[index])
-                ]
+        detections: dict[str, Any] = {}
+        if "bbox" in self.iou_type:
+            # `_fix_empty_tensors` stores an image without boxes as `(1, 0)`; reshaping restores `(0, 4)`.
+            boxes = [image.reshape(-1, 4) for image in self.detection_box[-num_images:]]
+            image_ids = torch.repeat_interleave(
+                torch.arange(offset, offset + num_images), torch.tensor([len(image) for image in boxes])
+            )
+            columns = (image_ids, torch.cat(boxes), torch.cat(scores), torch.cat(labels))
+            detections["bbox"] = torch.column_stack([column.double() for column in columns]).numpy()
+        if "segm" in self.iou_type:
+            masks = self.detection_mask[-num_images:]
+            detections["segm"] = [
+                {
+                    "image_id": offset + index,
+                    "category_id": label,
+                    "segmentation": {"size": size, "counts": counts},
+                    "score": score,
+                }
+                for index, (image_labels, image_scores) in enumerate(zip(labels, scores))
+                for label, score, (size, counts) in zip(image_labels.tolist(), image_scores.tolist(), masks[index])
+            ]
         return detections
 
     def merge_distributed_state(self) -> None:
@@ -758,8 +836,16 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         if isinstance(self._coco_backend, _VernierBackend):
             return {**self._vernier_results(classes), "classes": torch.tensor(classes, dtype=torch.int32)}
         # A stream is used only if it saw every stored image: one opened after a mid-epoch unpickle, or one the
-        # state outgrew in `merge_distributed_state()`, falls through to the batch path with the full state.
-        if self._streams is not None and self._streamed_images == len(self.groundtruth_labels):
+        # state outgrew in `merge_distributed_state()`, falls through to the batch path with the full state. So does
+        # a state with no detection or no ground truth at all: the batch path owns the `-1` sentinels for an empty
+        # side, and TorchMetrics drops every prediction image of a segm state without masks, which a stream would
+        # still finalize against its ground truth. Evaluating an empty side in one batch costs next to nothing.
+        if (
+            self._streams is not None
+            and self._streamed_images == len(self.groundtruth_labels)
+            and any(labels.numel() for labels in self.detection_labels)
+            and any(labels.numel() for labels in self.groundtruth_labels)
+        ):
             return {**self._streaming_results(classes), "classes": torch.tensor(classes, dtype=torch.int32)}
         coco_preds, coco_target, prediction_dataset = self._coco_datasets(classes)
 

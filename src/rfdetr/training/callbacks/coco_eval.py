@@ -296,7 +296,12 @@ class COCOEvalCallback(Callback):
         self._num_classes = num_classes if isinstance(num_classes, int) else None
         kwargs["num_classes"] = self._num_classes
         self.map_metric = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
-        self.map_metric_train = OnePassCocoMeanAveragePrecision(iou_type=iou_type, **kwargs)
+        # The train split evaluates in one batch: streaming it would put matching inside every training step, which
+        # `hotcoco_streaming` exists to keep out of the hot loop. `hotcoco` reports identical metrics.
+        train_backend = "hotcoco" if self._eval_backend == "hotcoco_streaming" else self._eval_backend
+        self.map_metric_train = OnePassCocoMeanAveragePrecision(
+            iou_type=iou_type, **{**kwargs, "backend": train_backend}
+        )
         # Separate metric for the EMA model.  Created deterministically on EVERY rank in
         # on_validation_epoch_start / on_test_epoch_start (see _prepare_ema_metric) so its
         # cross-rank compute() sync is issued symmetrically and cannot deadlock DDP val.
