@@ -47,7 +47,7 @@ nav:
           - Custom Training API: learn/train/customization.md
           - Augmentations: learn/train/augmentations.md
           - Training Loggers: learn/train/loggers.md
-      - Export Model: exports/index.md
+      - Overview: exports/index.md
       - Deploy Model: learn/deploy.md
       - Benchmarks: learn/benchmarks.md
   - Export:
