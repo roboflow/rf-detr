@@ -88,6 +88,7 @@ from typing import Any, Generator, cast
 import numpy as np
 from numpy.typing import NDArray
 
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -458,10 +459,8 @@ def _replace_gridsample_for_tflite(onnx_path: Path, output_dir: Path) -> Path:
         import onnx.shape_inference
         import onnx_graphsurgeon as gs
     except ImportError as exc:
-        raise ImportError(
-            "onnx and onnx_graphsurgeon are required for the GridSample TFLite "
-            "patch.  Install with: pip install rfdetr[tflite]"
-        ) from exc
+        # No install hint here: the only caller logs this message inside its own warning, which carries the hint.
+        raise ImportError("onnx and onnx_graphsurgeon are required for the GridSample TFLite patch") from exc
 
     model = onnx.load(str(onnx_path))
     model = onnx.shape_inference.infer_shapes(model)
@@ -512,6 +511,23 @@ def _check_tf_keras_available() -> None:
     """
     if sys.modules.get("tf_keras") is None and not is_installed("tf_keras"):
         raise ImportError(f"TFLite export requires tf-keras, which onnx2tf does not install. {_TFLITE_INSTALL_HINT}")
+
+
+def _check_onnx_graphsurgeon_available() -> None:
+    """Verify that ``onnx_graphsurgeon`` is installed, without importing it.
+
+    The GridSample rewrite needs it, and onnx2tf's own GridSample lowering produces wrong scores, so converting without
+    the rewrite yields a ``.tflite`` that looks fine and detects badly. ``rfdetr[onnx]`` does not install it.
+
+    Raises:
+        ImportError: If ``onnx_graphsurgeon`` is not installed.
+    """
+    if not is_installed("onnx_graphsurgeon"):
+        raise ImportError(
+            "TFLite export requires onnx_graphsurgeon for its GridSample rewrite; without it the .tflite produces "
+            'incorrect scores. Install it with: pip install onnx_graphsurgeon ("rfdetr[tflite]" includes it, on '
+            "Python 3.12)."
+        )
 
 
 def _check_onnx2tf_available() -> None:
@@ -889,7 +905,7 @@ class TFLiteConfig(ExportConfig):
     calibration_data: Any = None
     max_images: int = 100
 
-    def onnx_stage(self) -> Any:
+    def onnx_stage(self) -> OnnxConfig:
         """Return the configuration for the ONNX export this format converts from.
 
         Returns:
@@ -899,10 +915,6 @@ class TFLiteConfig(ExportConfig):
             >>> TFLiteConfig(quantization="int8").onnx_stage().opset_version
             17
         """
-        # Imported here, not at module scope: the ONNX exporter pulls in the ONNX C extension, which must not load
-        # before TensorFlow on this path (see the registry's `preimport` hook for the format).
-        from rfdetr.export._onnx.exporter import OnnxConfig
-
         return OnnxConfig.derive(self, opset_version=self.opset_version)
 
 
@@ -970,15 +982,15 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
 
     @classmethod
     def check_dependencies(cls) -> None:
-        """Verify TensorFlow, ``tf_keras``, ``onnx`` and ``onnx2tf``, loading TensorFlow first so it comes before ONNX.
+        """Verify TensorFlow, ``tf_keras``, ``onnx``, ``onnx_graphsurgeon`` and ``onnx2tf``, loading TensorFlow first.
 
         Only the top-level ``onnx2tf`` package is imported here, which defines lazy wrappers and nothing else.
         ``onnx2tf.onnx2tf`` seeds ``random``/``numpy`` and silences every warning when it is imported, so it is left to
         :meth:`_prepare_onnx2tf`, after the forward pass and the ONNX stage.
 
         Raises:
-            ImportError: If TensorFlow, ``tf_keras`` or ``onnx`` is not installed, or ``onnx2tf`` cannot be imported or
-                is below 2.4.0.
+            ImportError: If TensorFlow, ``tf_keras``, ``onnx`` or ``onnx_graphsurgeon`` is not installed, or ``onnx2tf``
+                cannot be imported or is below 2.4.0.
         """
         from rfdetr.export._backend import check_onnx_available, preload_tensorflow_before_onnx
 
@@ -993,6 +1005,7 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         # check_onnx_available() imports onnx itself, lazily, only when called here -- after TensorFlow's preload
         # above, so the ordering preload_tensorflow_before_onnx() exists to protect still holds.
         check_onnx_available(_TFLITE_INSTALL_HINT, stage="TFLite export")
+        _check_onnx_graphsurgeon_available()
         _check_onnx2tf_available()
 
     def _convert(self, graph: ExportGraph) -> Path:
@@ -1006,9 +1019,6 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         """
         # Exporter.__call__ ran check_dependencies, which loads TensorFlow before anything imports onnx's C extension:
         # onnx and TensorFlow share weakly-exported Abseil symbols, and the wrong load order deadlocks the conversion.
-        # This is why OnnxExporter is imported here rather than at module scope — that import pulls in onnx.
-        from rfdetr.export._onnx.exporter import OnnxExporter
-
         onnx_path = OnnxExporter(self.config.onnx_stage())(graph)
         return self.convert_onnx(onnx_path)
 
@@ -1145,15 +1155,15 @@ class TFLiteExporter(Exporter[TFLiteConfig]):
         # before invoking onnx2tf.  onnx2tf's default GridSample lowering produces
         # wrong values in TFLite, and its pseudo-op replacement is independently
         # broken.  The patched path becomes the input for everything downstream.
-        # Best-effort: skip the rewrite when onnx/onnx_graphsurgeon are not installed
-        # (e.g. test environments that only mock onnx2tf).
+        # Best-effort: skip the rewrite when onnx/onnx_graphsurgeon are not installed (e.g. test environments that only
+        # mock onnx2tf, or an onnx2tf installed next to rfdetr[onnx], which does not include onnx_graphsurgeon).
         try:
             return _replace_gridsample_for_tflite(onnx_path, output_dir)
         except ImportError as exc:
             logger.warning(
                 "GridSample TFLite patch skipped — onnx/onnx_graphsurgeon not available (%s). "
                 "TFLite inference may produce incorrect scores if the model contains GridSample nodes. "
-                "Install with: pip install rfdetr[tflite]",
+                'Install with: pip install onnx_graphsurgeon ("rfdetr[tflite]" includes it, on Python 3.12)',
                 exc,
             )
             return onnx_path

@@ -119,15 +119,12 @@ data = [
 ]
 onnx = [
     "onnx>=1.16.0,<2.0",
-    "onnxsim>=0.7.0",  # 0.7.0 ships wheels for cp310/311/312-abi3 (3.10-3.13) on linux x86_64+aarch64, win_amd64 and macOS arm64. The old <0.6.0 pin resolved to 0.5.0, which lacks cp311/cp313/aarch64 wheels, so pip built onnxsim's bundled onnxruntime/onnx from source and the install hung (#749).
-    "onnx_graphsurgeon",
     # onnxruntime dropped cp310 wheels after 1.23.2; 1.24.0+ ship cp311-cp314 only. Unpinned,
     # a 3.10 resolve picks the newest release and then fails at install with "no source
     # distribution or wheel for the current platform". Remove the split when the project's
     # requires-python floor moves past 3.10.
     "onnxruntime<1.24; python_version < '3.11'",
     "onnxruntime; python_version >= '3.11'",
-    "polygraphy",
 ]
 tensorrt = [
     "onnxruntime-gpu",
@@ -147,14 +144,14 @@ tensorrt-bench = [
     "pycuda>=2024.1",
 ]
 tflite = [
-    # TFLite conversion routes every export through the ONNX pipeline first (the ONNX exporter's
-    # graph optimization/simplification), so these are needed here directly rather than via
-    # the separate [onnx] extra — onnxruntime is NOT included: it's only for running ONNX
-    # inference, never touched by the TFLite export path.
+    # TFLite export writes the ONNX graph first (onnx), rewrites its GridSample nodes for the converter
+    # (onnx_graphsurgeon), then converts it with onnx2tf. onnx2tf lists TensorFlow and tf-keras only as an
+    # optional extra, so they are listed here; it pins its own onnxruntime, so that one is not. onnx2tf shells out
+    # to the onnxsim console script for its own simplification pass, and its own pinned onnxsim-prebuilt already
+    # provides one, so the onnxsim line below overlaps it; its removal is tracked in the onnxsim follow-up.
     "onnx>=1.20.0,<2.0; python_version >= '3.12' and python_version < '3.13'",
     "onnxsim>=0.7.0; python_version >= '3.12' and python_version < '3.13'",  # 0.7.0 ships a cp312 abi3 wheel; the old <0.6.0 pin resolved to 0.5.0 whose wheels don't cover every platform, so pip built from source and hung (#749).
     "onnx_graphsurgeon; python_version >= '3.12' and python_version < '3.13'",
-    "polygraphy; python_version >= '3.12' and python_version < '3.13'",
     "onnx2tf>=2.4.0,<3.0.0; python_version >= '3.12' and python_version < '3.13'",
     "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
     "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
@@ -540,7 +537,6 @@ overrides = [
     "onnxconverter_common", "onnxconverter_common.*",
     "onnx_graphsurgeon", "onnx_graphsurgeon.*",
     "onnxruntime", "onnxruntime.*",
-    "onnxsim", "onnxsim.*",
     "polygraphy", "polygraphy.*",
     "tensorrt", "tensorrt.*",
     "pycuda", "pycuda.*",

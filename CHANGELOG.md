@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Removed `rfdetr.datasets.yolo.REQUIRED_DATA_SUBDIRS`. `is_valid_yolo_dataset` resolves split directories through the YAML-aware resolver, which derives the labels directory from the resolved images path, so the constant no longer described how any code finds a split's subdirectories. Nothing inside the package read it; an external importer should inline `["images", "labels"]`. ([#1570](https://github.com/roboflow/rf-detr/pull/1570))
 
+- `rfdetr[onnx]` no longer installs `polygraphy` or `onnx_graphsurgeon`, so a host that exports to TensorRT or TFLite with `rfdetr[onnx]` plus a separately installed `tensorrt` or `onnx2tf` must install the missing package itself; see the matching entry under Removed. ([#1588](https://github.com/roboflow/rf-detr/issues/1588))
+
 ### Added
 
 - `rfdetr.RFDETRAtto`, `rfdetr.RFDETRFemto` and `rfdetr.RFDETRPico`: real-time detection models with a PE-Core-T backbone, provided by `rfdetr_plus` like the XLarge models (`pip install "rfdetr[plus]"`, Platform Model License 1.0). `RFDETR.from_checkpoint()` resolves their checkpoints; an outdated `rfdetr_plus` raises an upgrade hint, and a broken `rfdetr_plus` install no longer blocks loading core checkpoints.
@@ -82,6 +84,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `format="tflite"` warns with a `UserWarning` when `calibration_data` is passed, replacing the INFO log: the argument is not consumed when building the generated `.tflite` models. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
 
 - `format="openvino", dynamic_batch=True` is still refused, but the message now explains that the converted IR already has a dynamic input shape, so one export runs at any batch size. ([#1585](https://github.com/roboflow/rf-detr/pull/1585))
+
+### Removed
+
+- `rfdetr[onnx]` no longer installs `onnxsim`, `onnx_graphsurgeon` or `polygraphy`, and `rfdetr[tflite]` no longer installs `polygraphy`. ONNX export and ONNX Runtime inference have not used them since graph simplification was removed ([#861](https://github.com/roboflow/rf-detr/pull/861), [#1102](https://github.com/roboflow/rf-detr/pull/1102)); the ONNX exporter imported them only for the graph optimizer left behind in `rfdetr.export._onnx`, which nothing called, and that optimizer is removed too. If you exported to TensorRT with `rfdetr[onnx]` or `rfdetr[tflite]` and a separately installed `tensorrt`, install `polygraphy` yourself (it has no dependencies) or use `rfdetr[tensorrt]`. If you exported to TFLite with `rfdetr[onnx]` and a separately installed `onnx2tf`, install `onnx_graphsurgeon` yourself, or use `rfdetr[tflite]` on Python 3.12, the only version it installs on: without `onnx_graphsurgeon` the export is now refused before the forward pass, with an `ImportError` naming `pip install onnx_graphsurgeon`, because it would skip the GridSample rewrite and write a `.tflite` that produces incorrect scores. The warning that `_rewrite_gridsample` still logs when the rewrite's import fails names the same install command rather than `rfdetr[tflite]` alone. `rfdetr[onnx]` also no longer installs `onnxsim>=0.7.0`, so onnx2tf's own simplification pass now runs on the `onnxsim` that your onnx2tf release depends on (`onnxsim-prebuilt` for onnx2tf 2.4.x, `onnxsim` 0.6.5 for 2.6.9), and the `.tflite` it writes can differ from one built with `rfdetr[tflite]`. ([#1588](https://github.com/roboflow/rf-detr/issues/1588))
+
+- The private, unused `rfdetr.export._onnx.OnnxOptimizer`, `rfdetr.export._onnx.exporter.onnx_simplify` and the `rfdetr.export._onnx.symbolic` module (`CustomOpSymbolicRegistry`, `register_optimizer`). Importing `rfdetr.export._onnx` no longer imports its submodules; import `rfdetr.export._onnx.exporter` directly. ([#1588](https://github.com/roboflow/rf-detr/issues/1588))
 
 ### Fixed
 
