@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="420" viewBox="0 0 1000 420" role="img" aria-labelledby="title desc">
+  <!-- Sources: conceptual diagram, no numeric data to keep in sync. -->
+  <title id="title">Dense prediction with NMS versus set prediction</title>
+  <desc id="desc">Left: a convolutional detector predicts a box at every grid cell, producing many overlapping candidates that non-maximum suppression prunes to one per object. Right: a detection transformer uses a small set of learned queries; each query claims at most one object, and queries trained as duplicates answer no object, so the network learns not to produce duplicates.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 24px; }
+    .s { font-size: 15px; fill: #B8B8B8; }
+    .lbl { font-size: 15px; }
+    .img { fill: #22252C; stroke: #4A4F5A; stroke-width: 1.5; }
+    .grid line { stroke: #3A3F49; stroke-width: 1; }
+    .objA { fill: #1C758A; fill-opacity: .55; stroke: #58C4DD; stroke-width: 2; }
+    .objB { fill: #8A5A1C; fill-opacity: .55; stroke: #F0AC5F; stroke-width: 2; }
+    /* Base state = final frame, so reduced-motion readers see the result. */
+    .cand { fill: none; stroke: #F4D345; stroke-width: 1.6; opacity: 0; animation: cand 9s infinite; }
+    .keep { fill: none; stroke: #83C167; stroke-width: 3; opacity: 1; animation: keep 9s infinite; }
+    .nms { opacity: 1; animation: nms 9s infinite; }
+    .link { fill: none; stroke-width: 2.5; stroke-dasharray: 420; stroke-dashoffset: 0; animation: draw 9s infinite; }
+    .qbox { fill: none; stroke: #83C167; stroke-width: 3; opacity: 1; animation: qbox 9s infinite; }
+    .q { stroke: #16181D; stroke-width: 2; }
+    .idle { opacity: .35; animation: idle 9s infinite; }
+    @keyframes cand { 0%, 5% { opacity: 0; } 18%, 45% { opacity: .8; } 60%, 100% { opacity: 0; } }
+    @keyframes keep { 0%, 5% { opacity: 0; stroke: #F4D345; } 18%, 45% { opacity: .9; stroke: #F4D345; } 60%, 92% { opacity: 1; stroke: #83C167; } 100% { opacity: 0; } }
+    @keyframes nms { 0%, 45% { opacity: 0; } 55%, 92% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes draw { 0%, 8% { stroke-dashoffset: 420; } 35%, 92% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 420; } }
+    @keyframes qbox { 0%, 30% { opacity: 0; } 40%, 92% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes idle { 0%, 20% { opacity: 1; } 40%, 100% { opacity: .35; } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+  <rect width="1000" height="420" rx="16" fill="#16181D"/>
+
+  <!-- Left: dense prediction -->
+  <text class="h" x="40" y="44">Convolutional detector</text>
+  <text class="s" x="40" y="68">one guess per grid cell, then clean up</text>
+  <rect class="img" x="40" y="90" width="360" height="250" rx="6"/>
+  <g class="grid">
+    <line x1="85" y1="90" x2="85" y2="340"/><line x1="130" y1="90" x2="130" y2="340"/><line x1="175" y1="90" x2="175" y2="340"/>
+    <line x1="220" y1="90" x2="220" y2="340"/><line x1="265" y1="90" x2="265" y2="340"/><line x1="310" y1="90" x2="310" y2="340"/>
+    <line x1="355" y1="90" x2="355" y2="340"/>
+    <line x1="40" y1="132" x2="400" y2="132"/><line x1="40" y1="173" x2="400" y2="173"/><line x1="40" y1="215" x2="400" y2="215"/>
+    <line x1="40" y1="257" x2="400" y2="257"/><line x1="40" y1="298" x2="400" y2="298"/>
+  </g>
+  <ellipse class="objA" cx="140" cy="215" rx="48" ry="62"/>
+  <rect class="objB" x="262" y="185" width="108" height="108" rx="10"/>
+  <!-- candidate boxes around object A -->
+  <rect class="cand" x="84" y="144" width="110" height="140"/>
+  <rect class="cand" x="96" y="158" width="92" height="118"/>
+  <rect class="cand" x="80" y="150" width="122" height="128"/>
+  <rect class="cand" x="90" y="140" width="100" height="150"/>
+  <rect class="cand" x="100" y="166" width="80" height="104"/>
+  <!-- candidate boxes around object B -->
+  <rect class="cand" x="250" y="174" width="132" height="130"/>
+  <rect class="cand" x="266" y="190" width="100" height="98"/>
+  <rect class="cand" x="246" y="186" width="136" height="110"/>
+  <rect class="cand" x="258" y="172" width="116" height="134"/>
+  <!-- spurious low-score guesses -->
+  <rect class="cand" x="196" y="104" width="60" height="50"/>
+  <rect class="cand" x="300" y="112" width="70" height="48"/>
+  <!-- the survivors -->
+  <rect class="keep" x="90" y="151" width="100" height="128"/>
+  <rect class="keep" x="256" y="180" width="120" height="120"/>
+  <g class="nms">
+    <text class="lbl" x="40" y="372" fill="#83C167">NMS: drop every box that overlaps a higher-scoring one</text>
+  </g>
+  <text class="s" x="40" y="398">thresholds to tune · runtime grows with crowd size</text>
+
+  <!-- Right: set prediction -->
+  <text class="h" x="520" y="44">Detection transformer</text>
+  <text class="s" x="520" y="68">a few learned questions, one answer each</text>
+  <rect class="img" x="600" y="90" width="360" height="250" rx="6"/>
+  <ellipse class="objA" cx="700" cy="215" rx="48" ry="62"/>
+  <rect class="objB" x="822" y="185" width="108" height="108" rx="10"/>
+  <!-- queries -->
+  <path class="link" stroke="#58C4DD" d="M 540 120 C 590 120, 600 170, 650 175"/>
+  <path class="link" stroke="#F0AC5F" d="M 540 250 C 640 250, 720 280, 816 250"/>
+  <circle class="q" cx="540" cy="120" r="9" fill="#58C4DD"/>
+  <g class="idle"><circle class="q" cx="540" cy="155" r="9" fill="#9A72AC"/><text class="s" x="556" y="160">∅</text></g>
+  <g class="idle"><circle class="q" cx="540" cy="190" r="9" fill="#5CD0B3"/><text class="s" x="556" y="195">∅</text></g>
+  <g class="idle"><circle class="q" cx="540" cy="220" r="9" fill="#FC6255"/><text class="s" x="556" y="225">∅</text></g>
+  <circle class="q" cx="540" cy="250" r="9" fill="#F0AC5F"/>
+  <g class="idle"><circle class="q" cx="540" cy="285" r="9" fill="#D147BD"/><text class="s" x="556" y="290">∅</text></g>
+  <g class="idle"><circle class="q" cx="540" cy="320" r="9" fill="#83C167"/><text class="s" x="556" y="325">∅</text></g>
+  <rect class="qbox" x="650" y="151" width="100" height="128"/>
+  <rect class="qbox" x="816" y="180" width="120" height="120"/>
+  <text class="lbl" x="520" y="372" fill="#83C167">each query claims at most one object; the rest say “no object”</text>
+  <text class="s" x="520" y="398">trained not to produce duplicates · no NMS step</text>
+</svg>
