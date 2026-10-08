@@ -7894,8 +7894,8 @@ forward pass, so both models are evaluated from independent predictions.</p>
               <div class="doc-md-description">
                 <p>COCO evaluation backend, mirroring :attr:<code>~rfdetr.config.TrainConfig.eval_backend</code>.
 <code>"vernier"</code> is the default and computes fastest, <code>"faster_coco_eval"</code> is the previous
-evaluator and <code>"ufcoco"</code> selects ultrafast-pycocotools; all four ship with <code>rfdetr[train]</code> and return
-identical metrics.
+evaluator, <code>"ufcoco"</code> selects ultrafast-pycocotools and <code>"hotcoco_streaming"</code> matches each batch as
+it arrives; all of them ship with <code>rfdetr[train]</code> and return identical metrics.
 Appended after the existing parameters rather than grouped with the other evaluation knobs, so that
 positional callers keep binding the arguments they always did.</p>
               </div>
