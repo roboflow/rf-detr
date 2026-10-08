@@ -872,8 +872,10 @@ def build_kornia_pipeline(
             Defaults to ``False`` for direct detection-only callers.
         include_keypoints: Preserve the existing flip-safety behavior: drop
             horizontal flips when no flip pairs are provided.
-        with_keypoints: When ``True``, add ``"keypoints"`` to ``data_keys``.
-            This is separate from ``include_keypoints`` so existing direct
+        with_keypoints: When ``True``, add ``"keypoints"`` to ``data_keys``. The pipeline then takes one extra
+            trailing input, keypoint xy coordinates ``[B, N, 2]`` (as built by :func:`collate_keypoints`), and
+            returns one extra trailing output: ``(img, boxes, keypoints)``, or ``(img, boxes, masks, keypoints)``
+            with *with_masks*. This is separate from ``include_keypoints`` so existing direct
             callers using that flag keep the same input arity.
         keypoint_flip_pairs: Flat left/right joint pairs. A nonempty list keeps
             horizontal flips; the caller swaps joint slots after each flip.
@@ -882,7 +884,8 @@ def build_kornia_pipeline(
         A ``kornia.augmentation.AugmentationSequential`` instance.
 
     Raises:
-        ValueError: If *aug_config* contains an unsupported augmentation key, or if *keypoint_flip_pairs* is
+        ValueError: If *aug_config* contains an unsupported augmentation key; if *keypoint_flip_pairs* has an odd
+            number of entries while *include_keypoints* or *with_keypoints* is set; or if *keypoint_flip_pairs* is
             non-empty while *with_keypoints* is ``False``.
 
     Examples:
@@ -1068,7 +1071,12 @@ def collate_keypoints(targets: list[dict[str, Any]], device: torch.device, n_max
 
     Returns:
         Kornia xy points ``[B, n_max * K, 2]`` in the input coordinate frame and visibility
-        ``[B, n_max, K]``. Both are float32.
+        ``[B, n_max, K]``. Both are float32; rows past an image's own instance count stay zero, and
+        :func:`unpack_boxes` later zeroes joints that end up outside the image or invisible.
+
+    Raises:
+        ValueError: If a target's keypoints are not shaped ``[N, K, 3]`` with ``N <= n_max`` and the joint count
+            ``K`` of the first target.
 
     Examples:
         >>> points, visibility = collate_keypoints(
@@ -1097,7 +1105,8 @@ def keypoint_horizontal_flip_mask(pipeline: Any, batch_size: int, device: torch.
 
     Kornia exposes sampled parameters through ``_params`` after a forward pass;
     the transform matrix alone cannot distinguish horizontal from vertical
-    reflection. Only the horizontal-flip transform needs joint-slot relabeling.
+    reflection. This mirrors the CPU-backend convention: only horizontal flips relabel left/right joint slots, and
+    ``VerticalFlip`` is intentionally not relabeled.
 
     Args:
         pipeline: The just-executed AugmentationSequential.
@@ -1106,6 +1115,10 @@ def keypoint_horizontal_flip_mask(pipeline: Any, batch_size: int, device: torch.
 
     Returns:
         Boolean ``[B]`` tensor marking odd horizontal-flip parity.
+
+    Raises:
+        RuntimeError: If the pipeline contains a horizontal flip but exposed no horizontal-flip draws, so paired
+            joints cannot be relabeled safely.
 
     Examples:
         >>> keypoint_horizontal_flip_mask(None, 2, torch.device("cpu")).tolist()
@@ -1159,7 +1172,17 @@ def unpack_boxes(
         keypoint_flip_mask: Per-image horizontal-flip draws ``[B]``.
 
     Returns:
-        A new list of target dicts with aligned boxes and per-instance fields.
+        A new list of target dicts with updated ``boxes``, ``labels``, ``area``, ``iscrowd``, and (when *masks_aug* is
+        given) ``masks`` entries. When *keypoints_aug* is given, each dict also gets ``keypoints`` ``[N_kept, K, 3]``
+        in the same coordinate frame as *keypoints_aug* (no frame shift is applied here): rows follow the same
+        ``keep`` mask as boxes, and a joint whose xy falls outside ``[0, W] x [0, H]`` or whose visibility is
+        ``<= 0`` is zeroed entirely (x, y and v). On images whose *keypoint_flip_mask* entry is set, joint slots are
+        then swapped per *keypoint_flip_pairs*.
+
+    Raises:
+        ValueError: If *keypoints_aug* is given without *keypoint_visibility*, or its batch and point dimensions
+            do not equal ``(B, N_max * K)`` for the padded box count and the joint count ``K`` of
+            *keypoint_visibility*.
     """
     if masks_aug is not None:
         assert masks_aug.shape[:2] == valid.shape, (
