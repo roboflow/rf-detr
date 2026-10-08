@@ -63,7 +63,7 @@ Each cookbook also scores every exported model and precision at batch 1 on the s
     - **Deployed product** (L4, Roboflow Inference, scope not stated, batch 1) — what a Roboflow Inference user gets. See [Roboflow's RF-DETR model page](https://docs.roboflow.com/models/supported-models/rf-detr).
     - **Export cookbooks** (this page and below) — end-to-end and forward-only timings for every export format, on one machine per cookbook. Their value is **ratios within one machine**, not absolute milliseconds to set against the other two pages.
 
-    Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The CUDA cookbook's own L4 forward-only times (ONNX 7.35 ms, TensorRT 2.16 ms) are lower than the 12.9 and 8.3 ms on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled — see the [CUDA cookbook's Results section](../cookbooks/export-cuda/#8-results).
+    Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The CUDA cookbook's own L4 forward-only times (ONNX 7.35 ms, TensorRT 2.16 ms) are lower than the 12.9 and 8.3 ms on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled — see the [CUDA cookbook's Results section](../cookbooks/export-cuda/#9-results).
 
 !!! warning "fp16 pays off only where the silicon implements it"
 
