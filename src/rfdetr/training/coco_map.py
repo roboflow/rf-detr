@@ -201,11 +201,12 @@ def _silenced_backend_diagnostics() -> Iterator[None]:
 class _RfdetrCocoBackend(CocoBackend):
     """Typed capability-flag defaults every RF-DETR COCO backend shares.
 
-    :meth:`OnePassCocoMeanAveragePrecision._validate_private_contract` and its constructor read three capability
-    flags off the active backend -- :attr:`requires_bbox`, :attr:`unused_backend_methods`,
-    :attr:`uses_coco_evaluator` -- and previously did so through ``getattr(backend, name, default)`` at each call
-    site, repeating the same default three times with no typed declaration anywhere a backend could see. Declaring
-    them here as typed class attributes gives every backend the same shared default and one place to override it.
+    :meth:`OnePassCocoMeanAveragePrecision._validate_private_contract` and its constructor read capability flags
+    off the active backend -- :attr:`requires_bbox`, :attr:`unused_backend_methods`, :attr:`uses_coco_evaluator`
+    and :attr:`streams` (whether ``update()`` matches each batch as it arrives) -- and previously did so through
+    ``getattr(backend, name, default)`` at each call site, repeating the same default at every read with no typed
+    declaration anywhere a backend could see. Declaring each flag here as a typed class attribute gives every
+    backend the same shared default and one place to override it; a new flag belongs here too.
     """
 
     requires_bbox: bool = False

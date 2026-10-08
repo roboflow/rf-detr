@@ -44,7 +44,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- The `hotcoco` evaluation backend requires hotcoco 1.1 (`hotcoco>=1.1.0,<1.2`, previously pinned to 1.0.1). A bbox+segm evaluation now switches prediction areas between IoU types with `COCO.update_anns` instead of rebuilding the prediction dataset per IoU type. On the same synthetic data, `compute()` took 0.185 s instead of 0.293 s for a bbox+segm run of 20,000 detections and 0.401 s instead of 0.874 s for 900,000 box detections; most of the box-only gain comes from hotcoco 1.1 itself.
+- The `hotcoco` evaluation backend requires hotcoco 1.2 (`hotcoco>=1.2.0,<1.3`, previously pinned to 1.0.1). A bbox+segm evaluation now switches prediction areas between IoU types with `COCO.update_anns` instead of rebuilding the prediction dataset per IoU type; its faster `compute()` is the combined effect of the hotcoco bump and `update_anns`. Box-only evaluation does not use `update_anns`; its gain comes from the hotcoco bump. No absolute timings are given, because they depend on the core count, which was not recorded.
 
 - The `rfdetr[plus]` extra now requires `rfdetr_plus>=1.1.0` (was `>=1.0.1`). An older `rfdetr_plus` that is already installed still works for the XLarge models, because the PE models are imported in their own block.
 

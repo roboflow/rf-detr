@@ -1376,8 +1376,10 @@ class TrainConfig(BaseConfig):
             "produce identical metrics; 'vernier' is the default and computes fastest, both several times "
             "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools. "
             "'hotcoco_streaming' matches each validation batch as it arrives, which shortens the end-of-epoch "
-            "evaluation but costs more CPU time in total and does not lower memory; it applies to "
-            "single-process runs and otherwise evaluates in one batch like 'hotcoco'."
+            "evaluation but costs more CPU time in total. It keeps the stored evaluation state for the fallback "
+            "and adds the stream's matching state during the epoch, but skips the full COCO dataset build at the "
+            "end; peak memory has not been measured. It applies to single-process runs and otherwise evaluates in "
+            "one batch like 'hotcoco'."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during
