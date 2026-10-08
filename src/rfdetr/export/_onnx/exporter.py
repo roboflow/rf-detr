@@ -6,7 +6,12 @@
 # Copied and modified from LW-DETR (https://github.com/Atten4Vis/LW-DETR)
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # ------------------------------------------------------------------------
-"""ONNX export: trace the prepared graph with ``torch.onnx.export`` and embed the optional notes."""
+"""ONNX export: trace the prepared graph with ``torch.onnx.export`` and embed the optional notes.
+
+Loading this module imports no ONNX package: ``onnx`` is imported when it is used. The TFLite and TensorRT exporters
+import this module at module scope, and TFLite must load TensorFlow before anything loads ``onnx`` (#1322); the
+subprocess guard in ``tests/export/test_export.py`` pins the rule.
+"""
 
 from __future__ import annotations
 
