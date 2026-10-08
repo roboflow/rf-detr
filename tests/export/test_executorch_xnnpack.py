@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+import sys
+from unittest import mock
+
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -51,6 +54,18 @@ class _EncoderSelfAttention(nn.Module):
         self.query, self.key, self.value = (nn.Linear(channels, channels) for _ in range(3))
 
     def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """Split the channels of *x* into attention heads.
+
+        Args:
+            x: Tensor of shape ``(batch, length, channels)``.
+
+        Returns:
+            A permuted view of shape ``(batch, heads, length, channels // heads)``.
+
+        Examples:
+            >>> tuple(_EncoderSelfAttention()._split_heads(torch.zeros(2, 6, 32)).shape)
+            (2, 4, 6, 8)
+        """
         batch, length, channels = x.shape
         return x.view(batch, length, self.heads, channels // self.heads).permute(0, 2, 1, 3)
 
@@ -85,11 +100,50 @@ class _MaskedAttention(nn.Module):
         return F.scaled_dot_product_attention(query, key, value, attn_mask=mask)
 
 
+class _Doubler(nn.Module):
+    """A program with no weights and no constants, so there is nothing to fold."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * 2
+
+
+class _FilledConstant(nn.Module):
+    """Adds a filled tensor, which ``fold_constants`` must leave as a call."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + torch.full((8, 8), 3.0)
+
+
 def _export(module: nn.Module, *inputs: torch.Tensor) -> torch.export.ExportedProgram:
+    """Capture *module* in eval mode as a program, without strict mode.
+
+    Args:
+        module: The module to capture.
+        *inputs: Example inputs of the module.
+
+    Returns:
+        The captured program.
+
+    Examples:
+        >>> isinstance(_export(_Doubler(), torch.zeros(2)), torch.export.ExportedProgram)
+        True
+    """
     return torch.export.export(module.eval(), inputs, strict=False)
 
 
 def _call_targets(program: torch.export.ExportedProgram) -> set[str]:
+    """Name every operator that *program* calls.
+
+    Args:
+        program: The captured program.
+
+    Returns:
+        The target of each ``call_function`` node, such as ``"aten.mul.Tensor"``.
+
+    Examples:
+        >>> sorted(_call_targets(_export(_Doubler(), torch.zeros(2))))
+        ['aten.mul.Tensor']
+    """
     return {str(node.target) for node in program.graph.nodes if node.op == "call_function"}
 
 
@@ -142,6 +196,29 @@ class TestUnmaskedAttention:
     def test_other_calls_keep_the_default_decomposition(self, kwargs: dict[str, object]) -> None:
         assert unmasked_attention(*_query_key_value(2, 3), **kwargs) is NotImplemented
 
+    @pytest.mark.parametrize(
+        ("shapes", "dtype"),
+        [
+            pytest.param(((2, 3, 7, 16), (1, 3, 9, 16), (1, 3, 9, 16)), torch.float32, id="broadcast-key-value"),
+            pytest.param(((1, 3, 7, 16), (2, 3, 9, 16), (2, 3, 9, 16)), torch.float32, id="broadcast-query"),
+            pytest.param(((2, 3, 7, 16), (9, 16), (9, 16)), torch.float32, id="2d-key-value"),
+            pytest.param(((2, 3, 7, 16), (2, 3, 0, 16), (2, 3, 0, 16)), torch.float32, id="empty-source"),
+            pytest.param(((2, 3, 0, 16), (2, 3, 9, 16), (2, 3, 9, 16)), torch.float32, id="empty-query"),
+            pytest.param(((2, 3, 7, 16), (2, 3, 9, 16), (2, 3, 9, 16)), torch.float16, id="float16"),
+            pytest.param(((2, 3, 7, 16), (2, 3, 9, 16), (2, 3, 9, 16)), torch.bfloat16, id="bfloat16"),
+        ],
+    )
+    def test_inputs_the_decomposition_cannot_take_keep_the_default_decomposition(
+        self, shapes: tuple[tuple[int, ...], ...], dtype: torch.dtype
+    ) -> None:
+        """Broadcast leading dimensions, empty tensors and low-precision dtypes are left to the operator.
+
+        The decomposition flattens the leading dimensions for ``bmm``, which raised ``RuntimeError`` for the broadcast
+        and empty shapes, and it normalizes in the dtype of its inputs, which loses accuracy in float16 and bfloat16.
+        """
+        query, key, value = (torch.zeros(shape, dtype=dtype) for shape in shapes)
+        assert unmasked_attention(query, key, value) is NotImplemented
+
 
 class TestDecomposeAttention:
     """``decompose_attention`` removes unmasked attention from the captured program and keeps its values."""
@@ -167,13 +244,44 @@ class TestDecomposeAttention:
 
 
 @executorch_only
+@pytest.mark.e2e_executorch
 class TestFoldConstants:
-    """``fold_constants`` computes the weight slices of ``nn.MultiheadAttention`` at export time."""
+    """``fold_constants`` computes the weight slices of ``nn.MultiheadAttention`` at export time.
+
+    Marked ``e2e_executorch`` so the ExecuTorch rows of ``ci-integrations.yml``, which select that marker, run it: the
+    CPU jobs install no ExecuTorch, and these tests lower a real program.
+    """
 
     @staticmethod
     def _program() -> tuple[torch.export.ExportedProgram, torch.Tensor]:
+        """Capture the decoder attention with its unmasked attention decomposed.
+
+        Returns:
+            The captured program and the example input it was captured with.
+
+        Examples:
+            >>> program, x = TestFoldConstants._program()
+            >>> tuple(x.shape), isinstance(program, torch.export.ExportedProgram)
+            ((2, 6, 32), True)
+        """
         x = torch.randn(2, 6, 32)
         return decompose_attention(_export(_DecoderSelfAttention(), x)), x
+
+    def test_filled_tensors_are_not_folded(self) -> None:
+        """``aten.full`` stays a call instead of becoming a stored constant of its full size.
+
+        ExecuTorch's pass skips ``aten.full`` by default for that reason, but it names the op in the Edge dialect, so a
+        plain call to the pass on an ATen program folds it.
+        """
+        program = fold_constants(_export(_FilledConstant(), torch.randn(8, 8)))
+        assert "aten.full.default" in _call_targets(program)
+
+    def test_program_without_constants_is_unchanged(self) -> None:
+        """A program with nothing to fold gains no constants and computes the same values."""
+        x = torch.randn(4)
+        program = fold_constants(_export(_Doubler(), x))
+        assert not program.constants
+        torch.testing.assert_close(program.module()(x), x * 2)
 
     def test_weight_slices_become_constants_with_their_own_storage(self) -> None:
         program = fold_constants(self._program()[0])
@@ -182,6 +290,22 @@ class TestFoldConstants:
         for tensor in slices:
             assert tensor.storage_offset() == 0
             assert tensor.untyped_storage().nbytes() == tensor.numel() * tensor.element_size()
+
+    @pytest.mark.parametrize(
+        "rows",
+        [
+            pytest.param(slice(0, 32), id="query"),
+            pytest.param(slice(32, 64), id="key"),
+            pytest.param(slice(64, 96), id="value"),
+        ],
+    )
+    def test_weight_slices_hold_the_rows_of_in_proj_weight(self, rows: slice) -> None:
+        """Each folded weight is the query, key or value rows of the packed ``in_proj_weight``."""
+        module = _DecoderSelfAttention()
+        program = fold_constants(decompose_attention(_export(module, torch.randn(2, 6, 32))))
+        expected = module.attention.in_proj_weight[rows]
+        folded = [constant for constant in program.constants.values() if isinstance(constant, torch.Tensor)]
+        assert any(torch.equal(constant, expected) for constant in folded)
 
     def test_output_is_unchanged(self) -> None:
         program, x = self._program()
@@ -204,3 +328,13 @@ class TestFoldConstants:
         buffer = lowered.to_executorch().buffer
         method = runtime.Runtime.get().load_program(buffer).load_method("forward")
         torch.testing.assert_close(method.execute([x])[0], expected)
+
+
+class TestFoldConstantsWithoutConstantPropPass:
+    """``fold_constants`` names what to upgrade when this ExecuTorch install ships without its pass."""
+
+    def test_missing_pass_raises_an_actionable_import_error(self) -> None:
+        """A bare ``ModuleNotFoundError`` after ``torch.export`` ran would say nothing about the install to fix."""
+        with mock.patch.dict(sys.modules, {"executorch.exir.passes.constant_prop_pass": None}):
+            with pytest.raises(ImportError, match="upgrade executorch"):
+                fold_constants(mock.MagicMock())

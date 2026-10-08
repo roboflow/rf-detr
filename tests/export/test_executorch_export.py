@@ -42,6 +42,8 @@ from tests.export.conftest import _structured_parity_input, eager_reference_tens
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
+_EXPORTER_MODULE = "rfdetr.export._executorch.exporter"
+
 
 def _export_graph(*, backbone_only: bool = False) -> ExportGraph:
     """Build a throwaway :class:`ExportGraph` for exporter calls that never trace a real model.
@@ -735,6 +737,40 @@ class TestExecuTorchExporterBody:
         lower_kwargs = mods["executorch.exir"].to_edge_transform_and_lower.call_args.kwargs
         assert lower_kwargs.get("transform_passes") == [transform_cls.return_value]
 
+    def test_xnnpack_prepares_the_captured_program_before_lowering(self, tmp_path: Path) -> None:
+        """XNNPACK decomposes attention, then folds constants, then lowers the folded program.
+
+        ``torch.export.export`` and both passes are mocked, so the program each call receives is the only evidence that
+        the passes run once, in this order, and that the lowering gets their result.
+        """
+        mods = self._generic_modules()
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="xnnpack"))
+        with (
+            mock.patch.dict(sys.modules, mods),
+            mock.patch("torch.export.export") as export,
+            mock.patch(f"{_EXPORTER_MODULE}.decompose_attention") as decompose,
+            mock.patch(f"{_EXPORTER_MODULE}.fold_constants") as fold,
+        ):
+            exporter(_export_graph())
+        decompose.assert_called_once_with(export.return_value)
+        fold.assert_called_once_with(decompose.return_value)
+        assert mods["executorch.exir"].to_edge_transform_and_lower.call_args.args[0] is fold.return_value
+
+    def test_coreml_lowers_the_captured_program_unchanged(self, tmp_path: Path) -> None:
+        """CoreML gets neither XNNPACK pass: the lowering receives the program ``torch.export.export`` captured."""
+        mods = self._generic_modules()
+        exporter = ExecuTorchExporter(ExecutorchConfig(output_dir=tmp_path, backend="coreml"))
+        with (
+            mock.patch.dict(sys.modules, mods),
+            mock.patch("torch.export.export") as export,
+            mock.patch(f"{_EXPORTER_MODULE}.decompose_attention") as decompose,
+            mock.patch(f"{_EXPORTER_MODULE}.fold_constants") as fold,
+        ):
+            exporter(_export_graph())
+        decompose.assert_not_called()
+        fold.assert_not_called()
+        assert mods["executorch.exir"].to_edge_transform_and_lower.call_args.args[0] is export.return_value
+
     def test_variant_name_sanitized_to_basename(self, tmp_path: Path) -> None:
         """A path-like ``variant_name`` is reduced to its basename stem (mirrors the ONNX exporter)."""
         exporter = ExecuTorchExporter(
@@ -951,8 +987,8 @@ def validate_segmentation_executorch_vs_pytorch(pte_path: Path, model: Any, exam
 
 
 _EXECUTORCH_E2E_VARIANTS = [
-    ("RFDETRNano", validate_detection_executorch_vs_pytorch),
-    ("RFDETRSegNano", validate_segmentation_executorch_vs_pytorch),
+    pytest.param(("RFDETRNano", validate_detection_executorch_vs_pytorch), id="detection"),
+    pytest.param(("RFDETRSegNano", validate_segmentation_executorch_vs_pytorch), id="segmentation"),
 ]
 
 
@@ -968,6 +1004,13 @@ def _export_variant(
 
     Returns:
         The eager model in export mode, an example input, the ``.pte`` path and the validate function.
+
+    Examples:
+        Needs a real model and the ``executorch`` package, so only the helper itself is checked here.
+        See ``TestExecutorchEndToEnd`` for real invocations.
+
+        >>> callable(_export_variant)
+        True
     """
     import rfdetr
 
@@ -986,7 +1029,7 @@ def _export_variant(
     return model, example, Path(pte_path), validate_fn
 
 
-@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS, ids=["detection", "segmentation"])
+@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS)
 def exported(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> tuple[Any, torch.Tensor, Path, Any]:
@@ -994,7 +1037,7 @@ def exported(
     return _export_variant(request, tmp_path_factory, pretrain_weights=None)
 
 
-@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS, ids=["detection", "segmentation"])
+@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS)
 def exported_pretrained(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> tuple[Any, torch.Tensor, Path, Any]:
@@ -1134,14 +1177,25 @@ class TestExecutorchEndToEnd:
 
         ``F.scaled_dot_product_attention`` lowers to a softmax with ``eq``/``any``/``where`` guards and scalar
         multiplications, and ``nn.MultiheadAttention`` to linear layers that slice their weight at run time. XNNPACK
-        runs none of these. ``decompose_attention`` and ``fold_constants`` in the lowering keep both in the delegate
-        (167 -> 107 ms on RFDETRNano, Xeon CPU); this guards that they stay wired in. The two-stage query selection also
-        uses portable ``any``/``where``/``logical_not``, so the test checks the calls that only attention makes: the
-        guard ``eq``, the scalar ``mul``, the sliced-weight ``linear``, and the ``bmm`` and ``_softmax`` kernels.
+        runs none of these. ``decompose_attention`` and ``fold_constants`` in the lowering keep both in the delegate;
+        this guards that they stay wired in. The two-stage query selection also uses portable
+        ``any``/``where``/``logical_not``, so the test checks the calls that only attention makes: the guard ``eq``, the
+        scalar ``mul``, the sliced-weight ``linear``, the ``bmm`` and ``_softmax`` kernels, and the copies that the
+        decomposition adds around its matrix multiplications (``clone``, ``_clone_dim_order``, ``permute_copy``), which
+        XNNPACK runs.
         """
         _, _, pte_path, _ = exported
         portable_ops = _portable_kernel_call_names(pte_path)
-        attention_ops = {"aten::eq", "aten::mul", "aten::linear", "aten::bmm", "aten::_softmax"}
+        attention_ops = {
+            "aten::eq",
+            "aten::mul",
+            "aten::linear",
+            "aten::bmm",
+            "aten::_softmax",
+            "aten::clone",
+            "dim_order_ops::_clone_dim_order",
+            "aten::permute_copy",
+        }
         attention_calls = [op for op in portable_ops if op.split(".")[0] in attention_ops]
         assert not attention_calls, (
             f"{len(attention_calls)} portable attention kernel call(s) in {pte_path.name}: "
@@ -1187,7 +1241,7 @@ class TestExecutorchEndToEnd:
         )
 
     def test_preprocessed_image_detections_match_pytorch(
-        self, exported_pretrained: tuple[Any, torch.Tensor, Path, Any], photo_asset: Path
+        self, photo_asset: Path, exported_pretrained: tuple[Any, torch.Tensor, Path, Any]
     ) -> None:
         """Detections from an image fed through ``infer_transforms`` must match the eager forward.
 
