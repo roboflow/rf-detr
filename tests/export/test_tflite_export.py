@@ -52,9 +52,9 @@ from rfdetr.export._tflite.exporter import (
     _prepare_calibration_data,
 )
 from rfdetr.export.imports import _IS_ONNX_GRAPHSURGEON_INSTALLED, _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
+from tests._markers import onnx_only
 
 onnx2tf_available = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
-onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed")
 
 # ---------------------------------------------------------------------------
 # Helpers — fake onnx2tf module injected into sys.modules

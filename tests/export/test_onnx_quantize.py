@@ -15,13 +15,7 @@ from rfdetr.export._onnx.quantize import VALID_QUANTIZATIONS, nodes_to_exclude, 
 from rfdetr.export._runtime.calibration import calibration_batches
 from rfdetr.export._tensorrt.exporter import TensorRTConfig
 from rfdetr.export._tflite.exporter import TFLiteConfig
-from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
-
-onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX quantization tests")
-onnx_and_onnxruntime_only = pytest.mark.skipif(
-    not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
-    reason="onnx/onnxruntime not installed; skip end-to-end quantization",
-)
+from tests._markers import onnx_and_onnxruntime_only, onnx_only
 
 # The helper doctests build real ONNX graphs, so they need the package a class-level skipif cannot gate.
 __doctest_requires__ = {

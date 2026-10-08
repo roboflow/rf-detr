@@ -100,10 +100,10 @@ repos:
         files: ^tests/.*\.py$
         # Two groups of files stay out. Fake import finders and module-path lookups call find_spec on purpose:
         # test_detr_shim, test_fused_adamw_ema_routing, test_from_checkpoint, test_public_facades, test_export.
-        # The rest still call pytest.importorskip and are migrated to flags in a follow-up:
-        # test_build_trainer, test_tensorrt_int8, test_tensorrt_export, test_executorch_xnnpack, test_runtime_calibration.
+        # test_tensorrt_int8 keeps one module-level importorskip("onnx"), because its parametrized cases build ONNX nodes at
+        # collection time; moving them behind local imports is a follow-up.
         exclude: >-
-          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|training/test_build_trainer|export/test_tensorrt_int8|export/test_tensorrt_export|export/test_executorch_xnnpack|export/test_runtime_calibration)\.py$
+          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/test_tensorrt_int8)\.py$
 
       - id: mypy
         name: mypy

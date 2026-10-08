@@ -28,8 +28,8 @@ import pytest
 import torch
 from torch import nn
 
-from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
 from rfdetr.models.transformer import Transformer
+from tests._markers import onnx_and_onnxruntime_only, onnx_only
 
 if TYPE_CHECKING:
     import onnx
@@ -43,11 +43,6 @@ if TYPE_CHECKING:
 # collection-time skipif markers below. The TYPE_CHECKING import above only satisfies
 # the "onnx.ModelProto" string annotations used as return/parameter types.
 
-onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX export tests")
-onnxruntime_only = pytest.mark.skipif(
-    not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
-    reason="onnx/onnxruntime not installed; skip ONNX runtime inference tests",
-)
 
 # CI guard: torch._shape_as_tensor is a private ATen API used on the live forward path in
 # Transformer.forward(). If a future PyTorch upgrade removes it, this assertion fails
@@ -346,7 +341,7 @@ def test_spatial_shapes_export_is_shape_derived(exported_static_onnx: "onnx.Mode
 # ---------------------------------------------------------------------------
 
 
-@onnxruntime_only
+@onnx_and_onnxruntime_only
 @pytest.mark.parametrize("batch_size", [pytest.param(1, id="batch1"), pytest.param(2, id="batch2")])
 def test_spatial_shapes_dynamic_batch_inference(
     exported_dynamic_onnx_bytes: bytes,

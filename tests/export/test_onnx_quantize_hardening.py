@@ -16,9 +16,7 @@ import pytest
 
 from rfdetr.export._onnx.quantize import nodes_to_exclude, quantize_int8
 from rfdetr.export._runtime import calibration
-from rfdetr.export.imports import _IS_ONNX_INSTALLED
-
-onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX quantization tests")
+from tests._markers import onnx_only
 
 # The helper doctests build real ONNX graphs, so they need the package a class-level skipif cannot gate.
 __doctest_requires__ = {("_identity_model", "_score_graph", "_head_graph"): ["onnx"]}

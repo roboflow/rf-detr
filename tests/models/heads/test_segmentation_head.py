@@ -17,11 +17,9 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
-from rfdetr.export.imports import _IS_ONNX_INSTALLED
 from rfdetr.models.heads.segmentation import DepthwiseConvBlock, SegmentationHead, point_sample
 from rfdetr.utilities.tensors import _nearest_grid_sample
-
-onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX export tests")
+from tests._markers import onnx_only
 
 
 @pytest.fixture(autouse=True)

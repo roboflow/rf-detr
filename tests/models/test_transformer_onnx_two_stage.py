@@ -20,14 +20,13 @@ import pytest
 import torch
 from torch import nn
 
-from rfdetr.export.imports import _IS_ONNX_INSTALLED
 from rfdetr.models.math import MLP
 from rfdetr.models.transformer import Transformer, gen_encoder_output_proposals
+from tests._markers import onnx_only
 
 if TYPE_CHECKING:
     import onnx
 
-onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX export tests")
 
 __doctest_requires__ = {
     ("find_single_input_concat_nodes", "find_zero_dim_float_concat_nodes"): ["onnx"],

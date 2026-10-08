@@ -34,9 +34,10 @@ from rfdetr.training.trainer import (
     _requests_multiple_devices,
     _xla_resolves_to_single_device,
 )
-from rfdetr.utilities.imports import _IS_TRANSFORMER_ENGINE_INSTALLED
+from rfdetr.utilities.imports import _IS_HOTCOCO_INSTALLED, _IS_TRANSFORMER_ENGINE_INSTALLED
 from tests._markers import requires_torch_xla
 
+hotcoco_only = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco not installed")
 transformer_engine_only = pytest.mark.skipif(
     not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires the 'cuda' extra (transformer-engine)"
 )
@@ -179,13 +180,13 @@ class TestBuildTrainerCallbacks:
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
         assert coco_cb._eval_backend == backend
 
+    @hotcoco_only
     def test_streaming_backend_receives_the_model_class_count(self, tmp_path: Path) -> None:
         """``hotcoco_streaming`` gets ``num_classes`` from the model config, so it streams rather than falling back.
 
         ``StreamingEval`` needs every category before the first batch; without the class count the metric would evaluate
         in one batch on every run and the backend would never stream in production.
         """
-        pytest.importorskip("hotcoco")
         model_config = _mc()
         trainer = build_trainer(_tc(tmp_path, use_ema=False, eval_backend="hotcoco_streaming"), model_config)
         coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))

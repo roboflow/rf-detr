@@ -21,13 +21,7 @@ import pytest
 from PIL import Image as PILImage
 
 from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference
-from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
-
-# ``tiny_onnx_model`` builds the graph with ``onnx`` and the session tests run it with ``onnxruntime``; a fixture cannot
-# carry a skipif, so the consuming class is decorated instead.
-onnx_and_onnxruntime_only = pytest.mark.skipif(
-    not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED), reason="onnx/onnxruntime not installed"
-)
+from tests._markers import onnx_and_onnxruntime_only
 
 _INPUT_SHAPE = [1, 3, 224, 224]
 

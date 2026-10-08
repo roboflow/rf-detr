@@ -14,10 +14,8 @@ import torch
 import torch.nn as nn
 
 from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
-from rfdetr.export.imports import _IS_ONNX_INSTALLED
 from rfdetr.export.prepare import ExportGraph
-
-onnx_only = pytest.mark.skipif(not _IS_ONNX_INSTALLED, reason="onnx not installed; skip ONNX notes tests")
+from tests._markers import onnx_only
 
 # The helper doctest exports a real ONNX model, so it needs the package a class-level skipif cannot gate.
 __doctest_requires__ = {("_export_tiny_model",): ["onnx"]}

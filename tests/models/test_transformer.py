@@ -20,7 +20,6 @@ from torch.utils.hooks import RemovableHandle
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
-from rfdetr.export.imports import _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
 from rfdetr.models.lwdetr import build_criterion_from_config, build_model, build_model_from_config
 from rfdetr.models.math import MLP
 from rfdetr.models.ops.functions import ms_deform_attn_core_pytorch
@@ -41,13 +40,8 @@ from rfdetr.models.transformer import (
 )
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor, _bilinear_grid_sample
-from tests._markers import cuda_marks, requires_cuda
+from tests._markers import cuda_marks, onnx_and_onnxruntime_only, requires_cuda
 from tests.models._transformer_support import decoder_layer, record_apply_calls
-
-onnxruntime_only = pytest.mark.skipif(
-    not (_IS_ONNX_INSTALLED and _IS_ONNXRUNTIME_INSTALLED),
-    reason="onnx/onnxruntime not installed; skip ONNX dynamic-batch inference tests",
-)
 
 # Mirrors the production exporter: the dynamo exporter needs onnxscript, so pin the legacy path when torch offers one.
 _DYNAMO_KWARG = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}
@@ -1111,7 +1105,7 @@ class TestGenEncoderOutputProposalsDynamicBatch:
         assert output_memory.shape == (batch_size, total_hw, dim)
         assert output_proposals.shape == (batch_size, total_hw, 4)
 
-    @onnxruntime_only
+    @onnx_and_onnxruntime_only
     @pytest.mark.parametrize("batch_size", [1, 4, 8])
     def test_onnx_export_with_dynamic_batch_axis(self, batch_size: int) -> None:
         """ONNX export with dynamic batch axis must run inference for batch sizes other than the trace batch.

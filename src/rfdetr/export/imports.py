@@ -24,6 +24,8 @@ _IS_ONNX_INSTALLED = is_installed("onnx")
 _IS_ONNXRUNTIME_INSTALLED = is_installed("onnxruntime")
 #: Whether the optional ONNX GraphSurgeon package is installed.
 _IS_ONNX_GRAPHSURGEON_INSTALLED = is_installed("onnx_graphsurgeon")
+#: Whether the optional ONNX Converter Common package (the FP16 graph rewrite) is installed.
+_IS_ONNXCONVERTER_COMMON_INSTALLED = is_installed("onnxconverter_common")
 #: Whether the optional OpenVINO package is installed.
 _IS_OPENVINO_INSTALLED = is_installed("openvino")
 #: Whether the optional NNCF package is installed.
