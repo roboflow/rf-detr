@@ -24,6 +24,7 @@ _MC_NAMESPACE_FIELDS = {
     "dec_layers",
     "dec_n_points",
     "device",
+    "dim_feedforward",
     "encoder",
     "freeze_encoder",
     "gradient_checkpointing",
