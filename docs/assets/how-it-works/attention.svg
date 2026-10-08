@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="420" viewBox="0 0 1000 420" role="img" aria-labelledby="title desc">
+  <!-- Sources: RF-DETR Small in src/rfdetr/config.py (resolution 512, patch_size 16, num_windows 2); 3 of 12 blocks global from compute_window_block_indexes in src/rfdetr/models/backbone/dinov2.py. -->
   <title id="title">Windowed versus global self-attention</title>
   <desc id="desc">Left: with windowed attention the token grid is split into 2 by 2 windows and a token only compares itself with tokens in its own window. Right: with global attention every token compares itself with every other token. RF-DETR interleaves both kinds of block.</desc>
   <style>

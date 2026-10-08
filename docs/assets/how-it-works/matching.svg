@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="460" viewBox="0 0 1000 460" role="img" aria-labelledby="title desc">
+  <!-- Sources: 13 query groups (group_detr) and 300 queries (num_queries) from src/rfdetr/config.py. -->
   <title id="title">One-to-one matching between queries and ground-truth objects</title>
   <desc id="desc">A cost matrix scores every pair of predicted query and ground-truth object. The Hungarian algorithm picks the cheapest assignment in which each object gets exactly one query. Query 3 is close to object A but loses to query 2, so it is trained to predict no object.</desc>
   <style>
@@ -55,5 +56,5 @@
   <text class="s" x="700" y="298">A near-duplicate is told “no object”,</text>
   <text class="s" x="700" y="318">so the network learns not to make one.</text>
   <text class="lbl" x="40" y="410">Training only: 13 query groups, each matched on its own, so every object gets 13 positive queries.</text>
-  <text class="s" x="40" y="436">At inference one group of 300 queries remains, and the scores are already de-duplicated.</text>
+  <text class="s" x="40" y="436">At inference one group of 300 queries remains, and the network has learned not to produce duplicates.</text>
 </svg>

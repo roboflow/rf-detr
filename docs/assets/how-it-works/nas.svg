@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" role="img" aria-labelledby="title desc">
+  <!-- Sources: N/S/M/L points use latency and COCO AP50:95 from the RF-DETR-N/S/M/L rows of docs/learn/benchmarks.md; update them when those rows change. Grey dots are illustrative, not measured. -->
   <title id="title">One trained network, many model sizes</title>
-  <desc id="desc">Five architecture knobs (patch size, resolution, number of attention windows, decoder layers and queries) are sampled at random during a single training run. Afterwards, every setting can be evaluated without retraining; the released Nano, Small, Medium and Large models are points on the resulting accuracy-latency curve.</desc>
+  <desc id="desc">Five architecture knobs (patch size, resolution, number of attention windows, decoder layers and queries) are sampled at random during a single training run. Afterwards, every setting can be evaluated without retraining; in the RF-DETR paper, the Nano, Small, Medium and Large sizes are points on the resulting accuracy-latency curve. The grey dots are illustrative, not measured.</desc>
   <style>
     text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
     .h { font-size: 24px; }

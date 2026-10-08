@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="380" viewBox="0 0 1000 380" role="img" aria-labelledby="title desc">
+  <!-- Sources: RF-DETR Small in src/rfdetr/config.py (resolution 512, patch_size 16, dec_layers 3, num_queries 300). -->
   <title id="title">RF-DETR pipeline, shown for RF-DETR Small</title>
-  <desc id="desc">A 512 by 512 image is cut into 16 by 16 pixel patches, giving 1,024 tokens. A DINOv2 vision transformer with mostly windowed and a few global attention blocks processes them; four intermediate outputs feed a projector that produces a single stride-16 feature map called memory. The 300 highest-scoring memory tokens seed the queries. Three deformable decoder layers refine them into boxes, class scores and optionally masks.</desc>
+  <desc id="desc">A 512 by 512 image is cut into 16 by 16 pixel patches, giving 1,024 tokens. A DINOv2 vision transformer with mostly windowed and a few global attention blocks processes them; four intermediate outputs feed a projector that produces a single stride-16 feature map called memory. The 300 highest-scoring memory tokens give the queries their reference boxes. Three deformable decoder layers turn the queries into boxes, class scores and optionally masks.</desc>
   <style>
     text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
     .h { font-size: 17px; }
@@ -96,7 +97,7 @@
   <rect x="734" y="154" width="104" height="36" rx="4" fill="#2C313A" stroke="#9A72AC"/><text class="s" x="742" y="177">layer 3</text>
   <text class="s" x="722" y="250">self-attention among queries,</text>
   <text class="s" x="722" y="267">deformable look at memory,</text>
-  <text class="s" x="722" y="284">nudge each box</text>
+  <text class="s" x="722" y="284">predict each box</text>
   <path class="arrow" d="M 854 130 L 876 130"/>
 
   <!-- 6. output -->

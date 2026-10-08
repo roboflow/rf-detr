@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="420" viewBox="0 0 1000 420" role="img" aria-labelledby="title desc">
+  <!-- Sources: conceptual diagram, no numeric data to keep in sync. -->
   <title id="title">Dense prediction with NMS versus set prediction</title>
-  <desc id="desc">Left: a convolutional detector predicts a box at every grid cell, producing many overlapping candidates that non-maximum suppression prunes to one per object. Right: a detection transformer uses a small set of learned queries; each query claims at most one object, so duplicates never appear.</desc>
+  <desc id="desc">Left: a convolutional detector predicts a box at every grid cell, producing many overlapping candidates that non-maximum suppression prunes to one per object. Right: a detection transformer uses a small set of learned queries; each query claims at most one object, and queries trained as duplicates answer no object, so the network learns not to produce duplicates.</desc>
   <style>
     text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
     .h { font-size: 24px; }
@@ -82,5 +83,5 @@
   <rect class="qbox" x="650" y="151" width="100" height="128"/>
   <rect class="qbox" x="816" y="180" width="120" height="120"/>
   <text class="lbl" x="520" y="372" fill="#83C167">each query claims at most one object; the rest say “no object”</text>
-  <text class="s" x="520" y="398">no duplicates by construction · no NMS step</text>
+  <text class="s" x="520" y="398">trained not to produce duplicates · no NMS step</text>
 </svg>
