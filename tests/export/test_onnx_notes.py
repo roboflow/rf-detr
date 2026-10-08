@@ -155,11 +155,18 @@ class TestExportOnnxNotes:
         meta = {prop.key: prop.value for prop in model.metadata_props}
         assert meta["rfdetr_notes"] == notes
 
-    def test_notes_are_embedded_when_onnx_was_installed_after_the_module_loaded(
+    def test_embedding_notes_does_not_read_a_module_level_onnx_binding(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Notes still reach the file when the exporter module bound ``onnx`` before the install (a notebook retry)."""
-        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None)
+        """Notes still reach the file when the exporter module carries a stale ``onnx = None`` binding.
+
+        The exporter module used to bind ``onnx`` at import, to ``None`` without the package, and ``_embed_notes`` read
+        it, so a notebook that installed ``onnx`` after the import lost its notes. ``_embed_notes`` now imports ``onnx``
+        when it runs and nothing binds the name at module level; the planted binding fails this test only if a read of
+        such a binding comes back. The late-install scenario itself is covered by
+        ``test_onnx_installed_after_a_refused_check_is_found``.
+        """
+        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None, raising=False)
         output_file = _export_tiny_model(tmp_path, notes={"run": 1})
 
         meta = {prop.key: prop.value for prop in onnx.load(output_file).metadata_props}
