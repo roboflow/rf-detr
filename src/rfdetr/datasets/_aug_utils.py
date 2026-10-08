@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 # Albumentations aliases that carry the same horizontal-flip semantics.
@@ -47,6 +47,33 @@ def resolve_keypoint_flip_pairs(args: Any, *, include_keypoints: bool) -> list[i
         list (possibly empty).
     """
     return (getattr(args, "keypoint_flip_pairs", []) or []) if include_keypoints else None
+
+
+def keypoint_flip_permutation(flip_pairs: Sequence[int], num_keypoints: int) -> list[int]:
+    """Build the joint-slot permutation that swaps left/right keypoints after a horizontal flip.
+
+    *flip_pairs* is read two entries at a time as ``[left0, right0, left1, right1, ...]`` and is not validated here.
+    A pair with an index not below *num_keypoints* is skipped silently, so one pair list can serve skeletons with
+    fewer joints.
+
+    Args:
+        flip_pairs: Flat list of left/right joint index pairs.
+        num_keypoints: Number of joint slots ``K`` per instance.
+
+    Returns:
+        Index list of length *num_keypoints*; indexing the joint axis with it (``keypoints[:, permutation]``) swaps
+        every in-range pair.
+
+    Examples:
+        >>> keypoint_flip_permutation([0, 1, 2, 5], 4)
+        [1, 0, 2, 3]
+    """
+    permutation = list(range(num_keypoints))
+    for i in range(0, len(flip_pairs), 2):
+        left, right = flip_pairs[i], flip_pairs[i + 1]
+        if left < num_keypoints and right < num_keypoints:
+            permutation[left], permutation[right] = permutation[right], permutation[left]
+    return permutation
 
 
 def _warn_keypoint_hflip_disabled(

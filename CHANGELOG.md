@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Keypoint training accepts Kornia augmentation on CUDA. The default backend remains `cpu`; users can select `kornia`/`gpu` explicitly, or select `auto` to use Kornia when available. Image geometry, boxes, padding masks and keypoints share each augmentation draw; keypoint visibility, dropped instances and paired-joint flips stay synchronized. ([#1606](https://github.com/roboflow/rf-detr/pull/1606))
+
 - `TrainConfig.eval_backend="hotcoco_streaming"` matches each validation batch with hotcoco's `StreamingEval` as it arrives, so the end-of-epoch COCO evaluation only accumulates and summarizes. Metrics are bit-identical to `eval_backend="hotcoco"`. On an Apple M-series CPU with synthetic data, the end-of-epoch step dropped from 0.238 s to 0.025 s for 600,000 box detections and from 0.178 s to 0.005 s for a bbox+segm run of 20,000 detections. Total CPU time is higher for box-only runs (1.05 s vs 0.29 s) and about equal for bbox+segm (0.66 s vs 0.71 s), because matching moves into the validation step. Streaming applies to single-process runs whose labels fall within `[0, num_classes]`; under DDP, or after the metric is pickled mid-epoch, it evaluates in one batch as `"hotcoco"` does and logs why.
 
 - `rfdetr.RFDETRAtto`, `rfdetr.RFDETRFemto` and `rfdetr.RFDETRPico`: real-time detection models with a PE-Core-T backbone, provided by `rfdetr_plus` like the XLarge models (`pip install "rfdetr[plus]"`, Platform Model License 1.0). `RFDETR.from_checkpoint()` resolves their checkpoints; an outdated `rfdetr_plus` raises an upgrade hint, and a broken `rfdetr_plus` install no longer blocks loading core checkpoints.
