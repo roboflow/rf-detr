@@ -1809,7 +1809,7 @@ def _assert_confident_detections_match(fp16_engine: Path, int8_engine: Path, exa
 
     A match is an INT8 box with IoU above 0.85 and a score within 0.1 of the FP16 one, and at least three FP16
     detections must be confident for the check to mean anything. The INT8 engine must also give every row of the batch
-    the same answer.
+    the same boxes for its confident queries.
 
     Examples:
         Needs a GPU, TensorRT and two built engines, so it is documentation rather than a doctest:
@@ -1825,7 +1825,12 @@ def _assert_confident_detections_match(fp16_engine: Path, int8_engine: Path, exa
         results.append((outputs["dets"].float().cpu(), outputs["labels"].float().sigmoid().max(dim=-1).values.cpu()))
     (fp16_boxes, fp16_scores), (int8_boxes, int8_scores) = results
     assert torch.isfinite(int8_boxes).all() and torch.isfinite(int8_scores).all()
-    assert torch.allclose(int8_boxes, int8_boxes[:1].expand_as(int8_boxes), atol=2e-2), "rows of one batch differ"
+    # Rows are compared on the queries the INT8 engine is confident about: the boxes of near-zero-score queries are
+    # unconstrained, and a different INT8 tactic per batch row moves them by more than any useful tolerance.
+    confident_int8 = int8_scores[0] > 0.5
+    assert torch.allclose(
+        int8_boxes[:, confident_int8], int8_boxes[:1, confident_int8].expand(batch, -1, -1), atol=2e-2
+    ), "rows of one batch differ"
     for row in range(batch):
         confident = fp16_scores[row] > 0.5
         assert int(confident.sum()) >= 3, "the photo must give the FP16 engine several confident people"
