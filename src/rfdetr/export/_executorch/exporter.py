@@ -471,7 +471,8 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
             An ExecuTorch program manager (``.buffer`` holds the ``.pte`` bytes).
 
         Raises:
-            ImportError: If the backend's ExecuTorch extension, or ``AddmmToLinearTransform``, is unavailable.
+            ImportError: If the backend's ExecuTorch extension, ``AddmmToLinearTransform`` or, for XNNPACK,
+                ``executorch.exir.passes.constant_prop_pass`` is unavailable.
         """
         from executorch.exir import to_edge_transform_and_lower
 
@@ -483,9 +484,8 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
         exported_program = torch.export.export(model, (input_tensors,), strict=False)
         if backend == "xnnpack":
-            # Unmasked attention and constant weight slices keep the encoder and decoder inside the delegate:
-            # 87 -> 57 partitions on RFDETRNano, 167 -> 107 ms on a Xeon (Haswell) CPU and 51 -> 34 ms on an
-            # Apple M4 Max CPU. CoreML runs these ops itself.
+            # Unmasked attention and constant weight slices keep the encoder and decoder inside the delegate (the
+            # CHANGELOG entry for PR #1601 has the measurements). Not applied to CoreML, which was not evaluated.
             exported_program = fold_constants(decompose_attention(exported_program))
         # Imported in the non-QNN path only: the qnn backend never uses this transform, and
         # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
