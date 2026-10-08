@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T14:26:55">
+  <meta property="article:modified_time" content="2026-10-08T17:02:29">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T14:26:55",
+    "dateModified": "2026-10-08T17:02:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3089,7 +3089,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Export to TFLite (FP32, FP16, INT8) for mobile and edge deployment</li>
 <li>Export to LiteRT (<code>.tflite</code>) straight from PyTorch with <code>litert-torch</code> — no ONNX or TensorFlow step</li>
 <li>TensorRT conversion delivers the lowest latency on NVIDIA GPUs — 2.3 ms for Nano on a T4, TensorRT FP16, model only, batch 1 (the architecture headline on the <a href="../learn/benchmarks/">Benchmarks page</a>; this page's own L4 end-to-end numbers below are a different measurement, see "Which latency number is this?")</li>
-<li>INT8 quantization: dynamic-range for TFLite (no calibration data), static for ONNX and OpenVINO (calibration data required)</li>
+<li>INT8 quantization: dynamic-range for TFLite (no calibration data), static for ONNX, OpenVINO and TensorRT (calibration data required; see <a href="tensorrt/#int8">TensorRT INT8</a>)</li>
 <li>Custom input resolutions supported (must be divisible by <code>patch_size × num_windows</code>, which varies by model variant)</li>
 <li>Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)</li>
 <li>Export directly to native CoreML (<code>.mlpackage</code>) for Xcode / Apple-platform deployment</li>
@@ -3182,7 +3182,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>Deployed product</strong> (L4, Roboflow Inference, scope not stated, batch 1) — what a Roboflow Inference user gets. See <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a>.</li>
 <li><strong>Export cookbooks</strong> (this page and below) — end-to-end and forward-only timings for every export format, on one machine per cookbook. Their value is <strong>ratios within one machine</strong>, not absolute milliseconds to set against the other two pages.</li>
 </ul>
-<p>Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The CUDA cookbook's own L4 forward-only times (ONNX 7.35 ms, TensorRT 2.16 ms) are lower than the 12.9 and 8.3 ms on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled — see the <a href="../cookbooks/export-cuda/#8-results">CUDA cookbook's Results section</a>.</p>
+<p>Never compare milliseconds across these three without checking hardware, precision, batch size, and scope (model-only vs end-to-end) match. The CUDA cookbook's own L4 forward-only times (ONNX 7.35 ms, TensorRT 2.16 ms) are lower than the 12.9 and 8.3 ms on Roboflow's model page, which does not state what its timing covers. The two harnesses have not been run side by side yet, so treat all of these as unreconciled — see the <a href="../cookbooks/export-cuda/#9-results">CUDA cookbook's Results section</a>.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">fp16 pays off only where the silicon implements it</p>
@@ -3226,7 +3226,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 14:26:55 UTC">2026-10-06 14:26:55</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 17:02:29 UTC">2026-10-08 17:02:29</span>
   </span>
 
     

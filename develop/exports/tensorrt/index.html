@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-06T19:23:17">
+  <meta property="article:modified_time" content="2026-10-08T17:02:29">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-06T19:23:17",
+    "dateModified": "2026-10-08T17:02:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1660,6 +1660,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#int8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        INT8
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#engine-description-file" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3003,6 +3014,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#int8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        INT8
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#engine-description-file" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3074,7 +3096,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </blockquote>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Install the TensorRT extra: <code>pip install rfdetr[tensorrt]</code> (provides <code>tensorrt</code>, <code>polygraphy</code>, <code>onnx</code>, and <code>onnxconverter-common</code>; the latter two cast the ONNX graph to FP16 on TensorRT 11+; no <code>trtexec</code> binary needed)</li>
+<li>Install the TensorRT extra: <code>pip install rfdetr[tensorrt]</code> (provides <code>tensorrt</code>, <code>polygraphy</code>, <code>onnx</code>, <code>onnxconverter-common</code> and <code>onnxruntime-gpu</code>; <code>onnx</code> and <code>onnxconverter-common</code> cast the ONNX graph to FP16 on TensorRT 11+, and onnxruntime calibrates <a href="#int8">INT8</a> engines; no <code>trtexec</code> binary needed)</li>
 <li>A CUDA GPU (by default the engine is built for the local GPU architecture)</li>
 <li>Export an ONNX model first (for example: <code>output/inference_model.onnx</code>)</li>
 </ul>
@@ -3086,7 +3108,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">)</span>
 </span></code></pre></div>
-<p>This exports <code>output/inference_model.onnx</code> first and then produces <code>output/inference_model_fp16.trt</code> (the <code>_fp16</code>/<code>_fp32</code> suffix always reflects the precision actually built — see <code>fp16</code> in <a href="../advanced/#export-parameters">Export Parameters</a> — unless <code>output_name</code> is set).</p>
+<p>This exports <code>output/inference_model.onnx</code> first and then produces <code>output/inference_model_fp16.trt</code> (the <code>_fp16</code>/<code>_fp32</code>/<code>_int8</code> suffix always reflects the precision actually built — see <code>fp16</code> in <a href="../advanced/#export-parameters">Export Parameters</a> — unless <code>output_name</code> is set).</p>
 <div class="admonition note">
 <p class="admonition-title">Dynamic batch</p>
 <p>Pass <code>dynamic_batch=True</code> together with <code>max_batch_size</code> to build one engine that accepts any batch from 1 to <code>max_batch_size</code>. The engine gets a single TensorRT optimization profile with <code>min=1</code>, <code>opt=batch_size</code> and <code>max=max_batch_size</code>, so <code>batch_size</code> should be the batch you serve most often; other sizes inside the range run, TensorRT just tunes its kernels for <code>opt</code>. Without <code>dynamic_batch</code> the engine accepts only the batch size baked into the intermediate ONNX graph.</p>
@@ -3094,6 +3116,252 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span></code></pre></div>
 <p><strong>Why a single profile with <code>min=1</code>, not several.</strong> The engine always builds with one TensorRT optimization profile spanning the full <code>1 .. max_batch_size</code> range, rather than several narrower profiles picked at runtime with <code>set_optimization_profile_async</code>. This is a deliberate trade-off, not a limitation: it keeps the export API and the runtime simple (one engine, one profile, no profile-selection logic in the caller), and the measured cost at the tuned <code>opt</code> batch is small (see the <a href="https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md">changelog</a> for per-GPU numbers). A deployment that never serves batches below some floor — for example a DeepStream or Triton pipeline always fed a fixed batch of frames (see <a href="https://github.com/roboflow/rf-detr/issues/376">#376</a>) — pays for optimizing kernels down to batch 1 even though it never uses them, foreclosing per-batch-band multi-profile support (<code>set_optimization_profile_async</code> plus several <code>Profile()</code> entries), which is TensorRT's own standard mitigation for the away-from-opt penalty. A <code>min_batch_size</code> (paired with <code>max_batch_size</code>) or a list of <code>opt_batch_sizes</code> each with its own profile may become configurable in a future release if a narrow-band deployment need arises; today, export one profile spanning the batches you plan to serve.</p>
 </div>
+<h2 id="int8">INT8<a class="headerlink" href="#int8" title="Permanent link">&para;</a></h2>
+<p>Pass <code>quantization="int8"</code> and a directory of representative images to build an engine that runs most of the backbone encoder and decoder in INT8 and the rest in FP16:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRSmall</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">model</span> <span class="o">=</span> <span class="n">RFDETRSmall</span><span class="p">(</span><span class="n">pretrain_weights</span><span class="o">=</span><span class="s2">"&lt;path/to/checkpoint.pth&gt;"</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span> <span class="n">calibration_data</span><span class="o">=</span><span class="s2">"path/to/images"</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span></code></pre></div>
+<p>This writes <code>output/rfdetr-small_int8.trt</code> (next to the intermediate <code>output/rfdetr-small.onnx</code>). The export runs the first <code>max_images</code> (default <code>100</code>) calibration images by file name through the FP32 graph with onnxruntime on the CPU, preprocessed exactly as <code>predict()</code> does, and records each quantized tensor's largest absolute value. Those ranges decide the engine's accuracy, so use images from the deployment domain: out-of-domain images give an engine that loads, runs and is quietly less accurate. <code>calibration_data</code> also accepts a <code>.npy</code> path or an array shaped <code>(N, C, H, W)</code>, already normalized the way <code>predict()</code> normalizes; an integer array, raw pixels, is refused. <code>max_images</code> caps only a directory of images; an array or <code>.npy</code> file is used whole, so pass as many samples as you want calibrated. Calibration runs the graph at the export's <code>batch_size</code>, so its host memory grows with the batch: about 9.5 GB for Nano at batch 32.</p>
+<p>Measured with TensorRT 11.3 on an RTX 5070 (sm_120) under WSL2 and a Tesla T4 (sm_75) on Colab, calibrated on 128 COCO <code>train2017</code> images (<code>max_images=128</code>) and scored on all 5000 <code>val2017</code> images. Latency is GPU time per image (CUDA events, median of 15 rounds of 200 executions, FP16 and INT8 interleaved) from back-to-back <code>execute_async_v3</code> calls with no synchronization in between (the plain call) and from a captured CUDA graph. Each speedup in parentheses divides the FP16 latency by the INT8 latency measured the same way, so the two columns have different FP16 bases: a plain call adds CPU launch time that a graph replay removes. That gap is large only where the engine is launch-bound, at batch 1 on the RTX 5070 (1.675 ms plain against 0.922 ms graph for Nano), and small on the T4 and at larger batches. The speedups and the AP differences in parentheses are computed from the unrounded values, so recomputing them from the rounded cells can differ in the last digit. The RTX 5070 ran under WSL2 and was not measured on native Linux, so how much of that launch time WSL2 adds is not known. On the RTX 5070, Nano across batch sizes:</p>
+<table>
+<thead>
+<tr>
+<th>Batch</th>
+<th>Precision</th>
+<th>AP</th>
+<th>AP50</th>
+<th>Latency, plain call</th>
+<th>Latency, CUDA graph</th>
+<th>Engine</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>FP16</td>
+<td>48.03</td>
+<td>67.10</td>
+<td>1.675 ms</td>
+<td>0.922 ms</td>
+<td>62 MB</td>
+</tr>
+<tr>
+<td>1</td>
+<td>INT8</td>
+<td>47.40</td>
+<td>66.23</td>
+<td>1.582 ms (1.06×)</td>
+<td>0.693 ms (1.33×)</td>
+<td>41 MB</td>
+</tr>
+<tr>
+<td>8</td>
+<td>FP16</td>
+<td>48.02</td>
+<td>67.11</td>
+<td>0.554 ms</td>
+<td>0.497 ms</td>
+<td>73 MB</td>
+</tr>
+<tr>
+<td>8</td>
+<td>INT8</td>
+<td>47.29</td>
+<td>66.19</td>
+<td>0.426 ms (1.30×)</td>
+<td>0.363 ms (1.37×)</td>
+<td>51 MB</td>
+</tr>
+<tr>
+<td>32</td>
+<td>FP16</td>
+<td>48.03</td>
+<td>67.12</td>
+<td>0.494 ms</td>
+<td>0.482 ms</td>
+<td>68–108 MB</td>
+</tr>
+<tr>
+<td>32</td>
+<td>INT8</td>
+<td>47.30</td>
+<td>66.18</td>
+<td>0.350 ms (1.41×)</td>
+<td>0.338 ms (1.43×)</td>
+<td>49–87 MB</td>
+</tr>
+</tbody>
+</table>
+<p>Every model at batch 1, measured the same way:</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>AP, FP16</th>
+<th>AP, INT8</th>
+<th>Plain call, FP16</th>
+<th>Plain call, INT8</th>
+<th>CUDA graph, FP16</th>
+<th>CUDA graph, INT8</th>
+<th>Engine, FP16</th>
+<th>Engine, INT8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nano</td>
+<td>48.03</td>
+<td>47.40 (−0.63)</td>
+<td>1.675 ms</td>
+<td>1.582 ms (1.06×)</td>
+<td>0.922 ms</td>
+<td>0.693 ms (1.33×)</td>
+<td>62 MB</td>
+<td>41 MB</td>
+</tr>
+<tr>
+<td>Small</td>
+<td>52.79</td>
+<td>52.18 (−0.61)</td>
+<td>2.221 ms</td>
+<td>1.998 ms (1.11×)</td>
+<td>1.432 ms</td>
+<td>1.157 ms (1.24×)</td>
+<td>67 MB</td>
+<td>45 MB</td>
+</tr>
+<tr>
+<td>Medium</td>
+<td>54.69</td>
+<td>53.84 (−0.85)</td>
+<td>2.536 ms</td>
+<td>2.412 ms (1.05×)</td>
+<td>1.625 ms</td>
+<td>1.370 ms (1.19×)</td>
+<td>71 MB</td>
+<td>48 MB</td>
+</tr>
+<tr>
+<td>Large</td>
+<td>56.52</td>
+<td>56.02 (−0.50)</td>
+<td>2.806 ms</td>
+<td>2.682 ms (1.05×)</td>
+<td>2.000 ms</td>
+<td>1.820 ms (1.10×)</td>
+<td>68 MB</td>
+<td>51 MB</td>
+</tr>
+</tbody>
+</table>
+<p>The same on a Tesla T4, from a Colab run of the same external harness (INT8 loses 0.55 to 0.85 AP, 1.0% to 1.6% of the FP16 AP, and is faster everywhere):</p>
+<table>
+<thead>
+<tr>
+<th>Model, batch</th>
+<th>AP, FP16</th>
+<th>AP, INT8</th>
+<th>Plain call, FP16</th>
+<th>Plain call, INT8</th>
+<th>CUDA graph, FP16</th>
+<th>CUDA graph, INT8</th>
+<th>Engine, FP16</th>
+<th>Engine, INT8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nano, 1</td>
+<td>48.07</td>
+<td>47.31 (−0.77)</td>
+<td>3.26 ms</td>
+<td>2.68 ms (1.22×)</td>
+<td>3.21 ms</td>
+<td>2.65 ms (1.21×)</td>
+<td>60 MB</td>
+<td>48 MB</td>
+</tr>
+<tr>
+<td>Small, 1</td>
+<td>52.83</td>
+<td>52.23 (−0.60)</td>
+<td>5.25 ms</td>
+<td>4.68 ms (1.12×)</td>
+<td>5.31 ms</td>
+<td>4.60 ms (1.16×)</td>
+<td>64 MB</td>
+<td>59 MB</td>
+</tr>
+<tr>
+<td>Medium, 1</td>
+<td>54.66</td>
+<td>53.80 (−0.85)</td>
+<td>6.69 ms</td>
+<td>5.89 ms (1.14×)</td>
+<td>6.71 ms</td>
+<td>5.76 ms (1.16×)</td>
+<td>69 MB</td>
+<td>67 MB</td>
+</tr>
+<tr>
+<td>Large, 1</td>
+<td>56.51</td>
+<td>55.96 (−0.55)</td>
+<td>10.13 ms</td>
+<td>9.28 ms (1.09×)</td>
+<td>10.18 ms</td>
+<td>9.14 ms (1.11×)</td>
+<td>70 MB</td>
+<td>83 MB</td>
+</tr>
+<tr>
+<td>Nano, 8</td>
+<td>47.98</td>
+<td>47.23 (−0.75)</td>
+<td>2.72 ms</td>
+<td>2.16 ms (1.26×)</td>
+<td>2.72 ms</td>
+<td>2.13 ms (1.28×)</td>
+<td>70 MB</td>
+<td>120 MB</td>
+</tr>
+<tr>
+<td>Nano, 32</td>
+<td>48.02</td>
+<td>47.28 (−0.75)</td>
+<td>2.98 ms</td>
+<td>2.33 ms (1.28×)</td>
+<td>2.97 ms</td>
+<td>2.31 ms (1.28×)</td>
+<td>113 MB</td>
+<td>366 MB</td>
+</tr>
+</tbody>
+</table>
+<p>The larger models gain less: their global attention, which stays FP16, is a bigger share of the work, and Large keeps its windowed attention in FP16 as well (see below).</p>
+<p>These tables come from a benchmark harness outside this repository. <a href="../../cookbooks/export-cuda/#8-tensorrt-int8">Section 8 of the CUDA cookbook</a> runs the same kind of calibration (128 COCO images, there <code>val2017</code> images held out of the scored subset), export and FP16-against-INT8 comparison for Small at batch 1 on a <code>val2017</code> subset, from a synchronous call and a CUDA graph, so you can measure it on your own GPU; it does not regenerate these tables.</p>
+<div class="admonition warning">
+<p class="admonition-title">Engine size on the T4</p>
+<p>On the T4 the INT8 engine is larger than the FP16 one for Large at batch 1 (83 against 70 MB) and for Nano at batch 4, 8 and 32 (79, 120 and 366 MB against 65, 70 and 113 MB), where the RTX 5070 shows the opposite. The cause has not been diagnosed. What TensorRT's engine inspector shows on the T4: the layers' constants are the same at every batch (29 MB for INT8, 51 MB for FP16 on Nano), so it is not the weights; the bytes outside them grow by 10.3 MB per image of batch for INT8 against 1.5 MB for FP16, and by about 31 MB more than FP16 on Large at batch 1, so the cost follows the image size; and it does not change with INT8 attention switched off or with <code>builder_optimization_level=1</code>. Speed and accuracy are unaffected, but check the file size if disk or load time matters.</p>
+</div>
+<p>The INT8 weights take 32 MB against FP16's 54 MB on Nano. On the RTX 5070 both engines also store a block of zeros: TensorRT pads the 3-channel image of the FP16 patch embedding to 4 or 8 channels, picked per build, and keeps the added channels as a constant of 0.3 or 1.5 MB per image of batch. Two builds of the same graph can therefore differ by up to 1.2 MB per image, which is why the batch-32 sizes are ranges.</p>
+<p>The INT8 placement follows what was measured, not "quantize every matrix multiply":</p>
+<ul>
+<li><strong>INT8:</strong> every backbone MLP, the windowed backbone blocks' attention with its projections (up to 325 tokens; see below), and the decoder's cross-attention, feed-forward and reference-point layers. Q/DQ pairs carry FP16 scales on the FP16 graph, so every layer left unquantized stays FP16.</li>
+<li><strong>FP16:</strong> the projector, the two-stage proposal head and the detection heads (quantizing them cost accuracy and bought nothing), plus the attention blocks below.</li>
+<li><strong>The patch embedding stays FP16.</strong> TensorRT ran it in INT8 on the image padded to 32 channels and stored the 29 added zero channels in the engine, a constant the size of the batch. On Nano that made the engine 110 MB at batch 8 and 315 MB at batch 32, and INT8 1.21× instead of 1.37× faster than FP16 at batch 8. Every convolution whose input channels are not a multiple of 32 stays FP16.</li>
+<li><strong>Attention is all INT8 or all FP16.</strong> A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, which TensorRT fuses into one INT8 attention kernel: the windowed backbone blocks of Nano (145 tokens), Small (257) and Medium (325). 325 is the largest window measured to pay (Medium: 5% faster from a CUDA graph, about equal with a plain call, −0.28 AP); on Large's 485-token windows INT8 attention ran no faster and cost 1.0 AP, so Large keeps them FP16. Windows of 326 to 484 tokens are not measured and stay FP16. The global blocks (580 tokens on Nano) and the decoder self-attention keep projections and attention in FP16 too. A windowed block has <code>(resolution / patch_size / num_windows)² + 1</code> tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.</li>
+</ul>
+<p>Requirements and limits:</p>
+<ul>
+<li>Detection models only. Segmentation and keypoint models raise <code>NotImplementedError</code>; export them with <code>quantization=None</code>.</li>
+<li>A static batch (<code>dynamic_batch=True</code> is refused), <code>fp16=True</code>, and TensorRT 10 or newer. Only TensorRT 10.16 and 11.3 were measured; the 10.x releases before 10.16 are accepted but untested.</li>
+<li>On the RTX 5070 under WSL2, at batch 1 the engine is launch-bound: the gain needs a CUDA-graph replay, and without one INT8 gains only 1.05–1.11× (the plain-call column above). The T4 gains about as much without a graph (1.09–1.22×).</li>
+<li>Measured on two GPUs (sm_120 and sm_75), without <code>trt_hardware_compatibility</code>, <code>trt_version_compatible</code> or a shared <code>trt_timing_cache</code>: those settings are accepted with <code>quantization="int8"</code>, but INT8 engines built with them were not measured, and a portable engine may not get the fused INT8 attention kernel the gain relies on. The attention placement relies on TensorRT's INT8 fused-attention kernel, which NVIDIA lists for sm_75 to sm_90, sm_120 and sm_121; on other GPUs (for example sm_100, B200) INT8 attention would run unfused, so measure on your GPU before deploying.</li>
+</ul>
 <div class="admonition note">
 <p class="admonition-title">Who consumes the <code>.trt</code> engine?</p>
 <p>The <code>.trt</code> engine produced by <code>format="tensorrt"</code> is a standalone artifact for raw TensorRT deployment. By default it is locked to the GPU architecture and TensorRT version of the machine that built it, so it is not portable across different GPUs or TensorRT releases; see <a href="#portable-engines">Portable Engines</a> for the options that widen that.</p>
@@ -3101,19 +3369,19 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </div>
 <h2 id="engine-description-file">Engine Description File<a class="headerlink" href="#engine-description-file" title="Permanent link">&para;</a></h2>
 <p>A <code>.trt</code> file has no slot for user metadata, so a consumer that does not import the model, such as a C++ service, <a href="https://developer.nvidia.com/triton-inference-server">Triton</a> or <a href="https://developer.nvidia.com/deepstream-sdk">DeepStream</a>, cannot learn what the engine expects from the file itself. Pass <code>trt_metadata=True</code> to write <code>&lt;engine&gt;.json</code> next to it, with the same name and a <code>.json</code> suffix:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># engine -&gt; output/rfdetr-medium_fp16.trt, described by output/rfdetr-medium_fp16.json</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">engine</span><span class="p">)</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">".json"</span><span class="p">))</span> <span class="k">as</span> <span class="n">description_file</span><span class="p">:</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">description</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">description_file</span><span class="p">)</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">engine_bytes</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">engine</span><span class="p">)</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span>  <span class="c1"># deserialize these bytes, not a second read of the file</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="k">if</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">engine_bytes</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span> <span class="o">!=</span> <span class="n">description</span><span class="p">[</span><span class="s2">"engine"</span><span class="p">][</span><span class="s2">"sha256"</span><span class="p">]:</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">engine</span><span class="si">}</span><span class="s2"> is not the engine this description was written for"</span><span class="p">)</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">description</span><span class="p">[</span><span class="s2">"input"</span><span class="p">][</span><span class="s2">"height"</span><span class="p">],</span> <span class="n">description</span><span class="p">[</span><span class="s2">"input"</span><span class="p">][</span><span class="s2">"width"</span><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_metadata</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># engine -&gt; output/rfdetr-medium_fp16.trt, described by output/rfdetr-medium_fp16.json</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">engine</span><span class="p">)</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="s2">".json"</span><span class="p">))</span> <span class="k">as</span> <span class="n">description_file</span><span class="p">:</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">description</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">description_file</span><span class="p">)</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">engine_bytes</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">engine</span><span class="p">)</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span>  <span class="c1"># deserialize these bytes, not a second read of the file</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">if</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">engine_bytes</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span> <span class="o">!=</span> <span class="n">description</span><span class="p">[</span><span class="s2">"engine"</span><span class="p">][</span><span class="s2">"sha256"</span><span class="p">]:</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">engine</span><span class="si">}</span><span class="s2"> is not the engine this description was written for"</span><span class="p">)</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">description</span><span class="p">[</span><span class="s2">"input"</span><span class="p">][</span><span class="s2">"height"</span><span class="p">],</span> <span class="n">description</span><span class="p">[</span><span class="s2">"input"</span><span class="p">][</span><span class="s2">"width"</span><span class="p">]</span>
 </span></code></pre></div>
 <table>
 <thead>
@@ -3157,7 +3425,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 <tr>
 <td><code>build</code></td>
-<td>How the engine was built: <code>precision</code> (the one actually built, which can differ from <code>fp16</code> on a lean TensorRT wheel; on TensorRT before 11 it records that the FP16 builder flag was set, so FP16 is allowed but not forced, while on TensorRT 11 and later it records an fp16 cast graph, so read <code>tensorrt_version</code> to tell which applies), <code>opset</code>, <code>tensorrt_version</code> and <code>gpu</code> (<code>name</code> and <code>compute_capability</code>, or <code>null</code> when PyTorch has no CUDA).</td>
+<td>How the engine was built: <code>precision</code> (the one actually built, which can differ from <code>fp16</code> on a lean TensorRT wheel, and is <code>int8</code> for a <code>quantization="int8"</code> engine; on TensorRT before 11 it records that the FP16 builder flag was set, so FP16 is allowed but not forced, while on TensorRT 11 and later it records an fp16 cast graph, so read <code>tensorrt_version</code> to tell which applies), <code>opset</code>, <code>tensorrt_version</code> and <code>gpu</code> (<code>name</code> and <code>compute_capability</code>, or <code>null</code> when PyTorch has no CUDA).</td>
 </tr>
 <tr>
 <td><code>notes</code></td>
@@ -3175,25 +3443,25 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The engine's file name doesn't include its batch profile or input size, so a later export of the same model overwrites the engine and can leave an old <code>.json</code> next to it. When a build doesn't write a description file (<code>export()</code> without <code>trt_metadata=True</code>, or <code>build_engine</code>) and one with the engine's name is already there, you get a warning that it may no longer match. The warning repeats on every rebuild of that engine name for as long as the old description file stays in place. The file is never deleted, because this build didn't write it; a program that checks its <code>engine.sha256</code> finds out whether it still matches.</p>
 <h2 id="portable-engines">Portable Engines<a class="headerlink" href="#portable-engines" title="Permanent link">&para;</a></h2>
 <p>By default an engine only runs on the kind of GPU and the TensorRT version that built it. Two options ask TensorRT for more portable engines. Both are off by default, and the default build doesn't change. An engine built with either option gets its own file name, like <code>&lt;variant&gt;_fp16_ampere_plus.trt</code>, so it doesn't overwrite a default engine in the same folder (unless you set <code>output_name</code>, which is used as is).</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Ask for an engine that NVIDIA Ampere GPUs (compute capability 8.x) and newer can run.</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_hardware_compatibility</span><span class="o">=</span><span class="s2">"ampere_plus"</span><span class="p">)</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Ask for an engine that other releases of the same TensorRT major version may load.</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Ask for an engine that NVIDIA Ampere GPUs (compute capability 8.x) and newer can run.</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_hardware_compatibility</span><span class="o">=</span><span class="s2">"ampere_plus"</span><span class="p">)</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Ask for an engine that other releases of the same TensorRT major version may load.</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>trt_hardware_compatibility</code> is <code>"ampere_plus"</code> or <code>"same_compute_capability"</code>. The first targets Ampere and every newer GPU, and has to be built on one of them; the second targets GPUs with the same compute capability as the one you build on. TensorRT records the level in the engine. We only had one GPU, so we haven't tested running such an engine on a second one. NVIDIA doesn't support hardware compatibility on Jetson (JetPack) or DriveOS (<a href="https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/engine-compatibility.html">engine compatibility</a>). If your TensorRT doesn't have the level, you get a <code>ValueError</code> before the export runs the model.</p>
 <p><code>trt_version_compatible=True</code> asks for an engine that other releases of the same TensorRT major version may load. It worked between TensorRT 11.2 and 11.3, in both directions. It didn't work across major versions (10 and 11), or between TensorRT 10.13 and 10.16, so test your pair of releases before you rely on it. The build needs TensorRT's lean runtime, which is a separate package: install the lean wheel that matches your <code>tensorrt</code> wheel, for example <a href="https://pypi.org/project/tensorrt-lean-cu13-libs/"><code>tensorrt-lean-cu13-libs</code></a> next to <a href="https://pypi.org/project/tensorrt-cu13-libs/"><code>tensorrt-cu13-libs</code></a> (the version may differ by a <code>.post</code> suffix), or use the library from the TensorRT archive or system package. Without it the export raises <code>ImportError</code> naming the library, before it runs the model.</p>
 <p>The options have a cost, so measure on your own model. In our FP16 tests, <code>ampere_plus</code> made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. <code>same_compute_capability</code> cost nothing we could measure. <code>trt_version_compatible</code> added about 105 MB to an <code>RFDETRNano</code> engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The <a href="https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md">changelog</a> has the numbers.</p>
 <p>An engine built by TensorRT 11 with <code>trt_version_compatible=True</code> contains host code, and TensorRT only loads it if you say you trust the file. <code>TRTInference</code> and <code>rfdetr.export.benchmark</code> take <code>engine_host_code_allowed</code> for that; it's off by default:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">TRTInference</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">runtime</span> <span class="o">=</span> <span class="n">TRTInference</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">engine</span><span class="p">),</span> <span class="n">sync_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">engine_host_code_allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">TRTInference</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">engine</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_version_compatible</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">runtime</span> <span class="o">=</span> <span class="n">TRTInference</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">engine</span><span class="p">),</span> <span class="n">sync_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">engine_host_code_allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Only turn it on for a file you built yourself or otherwise trust. <code>TRTInference</code> lives in a private module, so like the classes under <a href="#python-api-conversion">Python API Conversion</a> it can change without notice; <code>sync_mode=True</code> avoids the <a href="https://pypi.org/project/pycuda/"><code>pycuda</code></a> dependency of its default mode.</p>
 <h2 id="reuse-the-timing-cache">Reuse the Timing Cache<a class="headerlink" href="#reuse-the-timing-cache" title="Permanent link">&para;</a></h2>
 <p>A large share of an engine build goes into timing candidate kernels for each layer. TensorRT can save those timings in a cache file, and a later build that uses the file skips the timing it already did. Pass <code>trt_timing_cache</code> to keep one across exports:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_timing_cache</span><span class="o">=</span><span class="s2">"output/rfdetr.cache"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"tensorrt"</span><span class="p">,</span> <span class="n">trt_timing_cache</span><span class="o">=</span><span class="s2">"output/rfdetr.cache"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The first export creates the file (and its folder). Later exports load it and write the merged timings back. It pays off when you rebuild the same model at the same precision and batch profile, on the same GPU and TensorRT version, for example after fine-tuning: the timings depend on the layers' shapes, not on the weights. In our tests, a cache from the pretrained model saved about as much time for a model fine-tuned to 3 classes, whose class head has a different shape. A different resolution changes every layer's shape, and we haven't measured it. A cache from a matching dynamic-batch build (batch 1-8) helps too: it cut the build time by 74-76% in fp16 and 42-43% in fp32. We did not measure reusing a cache between a static and a dynamic batch profile, or across precisions.</p>
 <p>A cache TensorRT can't use doesn't stop the export. For a file written by another TensorRT major version, or an empty or corrupt one, TensorRT logs a serialization error, builds as if there were no cache, and the file is replaced with the new timings. A timing cache is specific to the GPU, the CUDA version and the TensorRT version, so keep one cache file per GPU and per software stack. TensorRT's API reference says a cache whose recorded CUDA device properties differ from the current environment is reported as a failure; we had one GPU and could not test that. We tested TensorRT 10.16 and 11.3 with Polygraphy 0.53.4, while the supported range is <code>tensorrt&gt;=8.6.1</code> and the Polygraphy version is not pinned, so behavior on other versions is untested.</p>
@@ -3206,16 +3474,16 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Internal API</p>
 <p><code>rfdetr.export._tensorrt.exporter</code> is a private module — the leading underscore means it carries no stability guarantee and may move or change signature in any release. <code>RFDETR.export(format="tensorrt")</code> is the supported entry point; use the class below only when you need to convert an already-exported <code>.onnx</code> file.</p>
 </div>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorRTConfig</span><span class="p">,</span> <span class="n">TensorRTExporter</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._tensorrt.exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">TensorRTConfig</span><span class="p">,</span> <span class="n">TensorRTExporter</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># -&gt; "output/inference_model_fp16.trt"</span>
 </span></code></pre></div>
 <p><code>TensorRTExporter.build_engine</code> builds the engine in-process via the TensorRT Python API (no <code>trtexec</code> subprocess) and returns the path to the generated <code>.trt</code> engine file. Precision and progress logging come from the <code>TensorRTConfig</code> the exporter is constructed with — pass <code>TensorRTConfig(output_name="my-engine")</code> to write <code>output/my-engine.trt</code> verbatim instead. <code>TensorRTConfig(timing_cache="output/rfdetr.cache")</code> reuses a timing cache here too; see <a href="#reuse-the-timing-cache">Reuse the Timing Cache</a>.</p>
 <p>An <code>.onnx</code> file exported with <code>dynamic_batch=True</code> needs <code>dynamic_batch=True</code> here as well, plus <code>max_batch_size</code>, the largest batch the engine accepts. <code>opt_batch_size</code> (default <code>1</code>) is the batch its kernels are tuned for. Without <code>dynamic_batch=True</code>, <code>build_engine</code> raises <code>ValueError</code> rather than building an engine that accepts batch 1 only.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_batch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">opt_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">exporter</span> <span class="o">=</span> <span class="n">TensorRTExporter</span><span class="p">(</span><span class="n">TensorRTConfig</span><span class="p">(</span><span class="n">fp16</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_batch</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_batch_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span> <span class="n">opt_batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">engine_path</span> <span class="o">=</span> <span class="n">exporter</span><span class="o">.</span><span class="n">build_engine</span><span class="p">(</span><span class="s2">"output/inference_model.onnx"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The portability options work here too, as <code>TensorRTConfig(hardware_compatibility="ampere_plus")</code> and <code>TensorRTConfig(version_compatible=True)</code>; see <a href="#portable-engines">Portable Engines</a>.</p>
 
@@ -3238,7 +3506,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 6, 2026 19:23:17 UTC">2026-10-06 19:23:17</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 17:02:29 UTC">2026-10-08 17:02:29</span>
   </span>
 
     

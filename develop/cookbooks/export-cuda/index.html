@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-05T22:28:32">
+  <meta property="article:modified_time" content="2026-10-08T17:02:29">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-05T22:28:32",
+    "dateModified": "2026-10-08T17:02:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3069,10 +3069,71 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-results" class="md-nav__link">
+  <a href="#8-tensorrt-int8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Results
+        8. TensorRT INT8
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. TensorRT INT8">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#calibration-set-held-out-of-the-eval-subset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Calibration set, held out of the eval subset
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inference-and-latency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inference and latency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coco-val2017-accuracy-fp16-against-int8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        COCO val2017 accuracy, FP16 against INT8
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Results
       
     </span>
   </a>
@@ -3866,9 +3927,14 @@ exported, run once for a correctness check, then benchmarked.</p>
 <td><code>model.export(format="trt")</code> → <code>.trt</code></td>
 <td><a href="https://github.com/roboflow/inference/tree/main/inference_models"><code>inference-models</code></a> (selects and loads its own prebuilt TensorRT engine — see note below), <strong>and</strong> <code>rfdetr</code>'s own <code>TRTInference</code> loading the <code>.trt</code> file directly</td>
 </tr>
+<tr>
+<td><strong>TensorRT INT8</strong></td>
+<td><code>model.export(format="trt", quantization="int8", calibration_data=...)</code> → <code>*_int8.trt</code></td>
+<td><code>rfdetr</code>'s own <code>TRTInference</code>, compared with a batch-1 FP16 engine on latency, size and COCO mAP</td>
+</tr>
 </tbody>
 </table>
-<p>Every format is benchmarked at <strong>batch 1, 4, and 8</strong> — see
+<p>Every format is benchmarked at <strong>batch 1, 4, and 8</strong> (the TensorRT INT8 comparison of Section 8 is batch 1 only) — see
 <a href="https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/registry.py"><code>src/rfdetr/export/registry.py</code></a>
 for which formats can hold one artifact across batch sizes and which cannot: ONNX and TensorRT
 both bake a <em>dynamic</em> batch axis (<code>supports_dynamic_batch=True</code>), so one exported artifact serves
@@ -3904,7 +3970,7 @@ milliseconds against the architecture headline on the
 model only, batch 1) or the number on
 <a href="https://docs.roboflow.com/models/supported-models/rf-detr">Roboflow's RF-DETR model page</a> (L4,
 Roboflow Inference, scope not stated, batch 1) without checking hardware, precision, batch size, and scope
-match. See <a href="#8-results">Section 8</a> for where this notebook's own TensorRT number disagrees with
+match. See <a href="#9-results">Section 9</a> for where this notebook's own TensorRT number disagrees with
 Roboflow's model page.</p>
 </blockquote>
 </div>
@@ -3919,7 +3985,9 @@ Roboflow's model page.</p>
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h2 id="1-install">1. Install<a class="anchor-link" href="#1-install">¶</a></h2><p><code>RFDETR_SPEC</code> holds the install source and defaults to the <code>develop</code> branch. The public
 <code>rfdetr.export.benchmark</code> and <code>rfdetr.export.inference</code> helpers this notebook imports ship in
-1.11.2; to install from PyPI instead, swap in the commented <code>&gt;=1.11.2,&lt;2</code> line.
+1.11.2; to install from PyPI instead, swap in the commented <code>&gt;=1.11.2,&lt;2</code> line. Section 8's
+<code>quantization="int8"</code> TensorRT export and <code>TRTInference(cuda_graph=True)</code> are not in 1.11.x, so that section needs the <code>develop</code> install until
+it is released.
 Colab ships mutually inconsistent
 preinstalled packages that otherwise crash <code>import rfdetr</code>, so two are aligned: <code>torchaudio</code> is
 uninstalled (RF-DETR never uses it, but <code>transformers</code> imports it when present and a
@@ -3988,7 +4056,8 @@ loaded until a restart.</p>
 <code>MEASURE_RUNS</code> then collects the steady-state timing distribution. <code>BATCH_SIZES</code> is the batch
 matrix every export format below measures — <code>(1, 4, 8)</code>, not a single number, so each export
 format contributes three rows to the final results table. The direct CUDA Graph comparison
-retains its measured fixed-batch-1 row and is not presented as a batch-scaling result.</p>
+retains its measured fixed-batch-1 row and is not presented as a batch-scaling result, and so do the
+static batch-1 FP16 and INT8 engines of Section 8, which have a table of their own.</p>
 <p><code>measure_latency</code> and <code>measure_memory</code> come from the public <code>rfdetr.export.benchmark</code> module;
 <code>measure_memory(device="cuda")</code> measures device-memory growth via <code>torch.cuda.mem_get_info()</code> —
 device-wide, so it also captures ONNX Runtime's CUDA execution provider and TensorRT's own
@@ -5371,11 +5440,13 @@ they cannot be scored against COCO ground truth without that check.</p>
 <span class="n">FULL_VAL</span> <span class="o">=</span> <span class="kc">False</span>
 <span class="n">COCO_SEED</span> <span class="o">=</span> <span class="mi">0</span>
 <span class="n">COCO_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"coco"</span><span class="p">)</span>
+<span class="n">N_CALIB</span> <span class="o">=</span> <span class="mi">128</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-20">N_EVAL = 500
 FULL_VAL = False
 COCO_SEED = 0
-COCO_ROOT = Path("coco")</div>
+COCO_ROOT = Path("coco")
+N_CALIB = 128</div>
 </div>
 </div>
 </div>
@@ -5819,13 +5890,554 @@ display(
 </div>
 </div>
 </div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=f4d66783">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h2 id="8-tensorrt-int8">8. TensorRT INT8<a class="anchor-link" href="#8-tensorrt-int8">¶</a></h2><p><code>quantization="int8"</code> builds an engine that runs most of the backbone and decoder matrix multiplies in INT8 and the rest in
+FP16. It is <em>static</em> quantization: the export runs <code>calibration_data</code> through the FP32 graph with onnxruntime and records each
+quantized tensor's largest absolute value, so the calibration images decide the engine's accuracy and must look like
+what the model will see in deployment. Out-of-domain images give an engine that loads, runs and is quietly less accurate.
+Detection models only; the batch is static (<code>dynamic_batch=True</code> is refused) and <code>fp16=True</code>. See the
+<a href="https://rfdetr.roboflow.com/latest/exports/tensorrt/#int8">INT8 section of the TensorRT export docs</a> for what stays FP16 and why.</p>
+<p>Nothing here is assumed to be faster or accurate. Both engines below are exported for batch 1, timed the same way, and
+scored on the same COCO subset as Section 7, so the FP16 row is the baseline for the INT8 row. The calibration images are
+held out of the scored images, so a drop from the FP16 row is the quantization itself.</p>
+<p>This section repeats the method behind the docs page's INT8 tables for one model, so you can run it on your own GPU. It
+does not regenerate those tables. They were measured with a separate harness: calibration on the first 128 COCO
+train2017 images by file name, scoring on all 5000 val2017 images, Nano to Large at batch 1, 8 and 32, and latency as
+the median of 15 rounds of 200 executions with FP16 and INT8 interleaved. Here it is Small at batch 1, calibration on <code>N_CALIB</code> val2017 images held out of
+the scored images, scoring on a seeded subset of <code>N_EVAL</code> val2017 images, FP16 then INT8 rather than interleaved, the mean of <code>MEASURE_RUNS</code> calls of the two runtimes
+below, on your machine. Expect the same direction, not the same numbers.</p>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3e2f756f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="calibration-set-held-out-of-the-eval-subset">Calibration set, held out of the eval subset<a class="anchor-link" href="#calibration-set-held-out-of-the-eval-subset">¶</a></h3><p><code>N_CALIB</code> images are drawn from COCO val2017 with a different seed than the eval subset, and any that fall inside the
+subset are dropped, so no scored image was used for calibration. The directory is emptied first, so a rerun with other
+settings cannot leave images from an earlier selection behind. The TensorRT and onnxruntime versions are printed with
+the calibration source: the engine's INT8 placement and its calibration ranges depend on them.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=06846eee">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-30">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">tensorrt</span>
+
+<span class="c1"># With FULL_VAL every val2017 image is scored, so none is left over to calibrate on.</span>
+<span class="k">assert</span> <span class="ow">not</span> <span class="n">FULL_VAL</span><span class="p">,</span> <span class="s2">"Set FULL_VAL = False, or edit this cell to copy your own held-out images into CALIBRATION_DIR."</span>
+
+<span class="c1"># Draw N_EVAL + N_CALIB images with a different seed: at least N_CALIB of them cannot be in the eval subset.</span>
+<span class="n">calibration_pool</span> <span class="o">=</span> <span class="n">fetch_coco_val2017</span><span class="p">(</span><span class="n">COCO_ROOT</span><span class="p">,</span> <span class="n">n_images</span><span class="o">=</span><span class="n">N_EVAL</span> <span class="o">+</span> <span class="n">N_CALIB</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="n">COCO_SEED</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+<span class="n">_eval_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">coco_subset</span><span class="o">.</span><span class="n">image_ids</span><span class="p">)</span>
+<span class="n">calibration_ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">image_id</span> <span class="k">for</span> <span class="n">image_id</span> <span class="ow">in</span> <span class="n">calibration_pool</span><span class="o">.</span><span class="n">image_ids</span> <span class="k">if</span> <span class="n">image_id</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_eval_ids</span><span class="p">][:</span><span class="n">N_CALIB</span><span class="p">]</span>
+<span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">calibration_ids</span><span class="p">)</span> <span class="o">==</span> <span class="n">N_CALIB</span> <span class="ow">and</span> <span class="n">_eval_ids</span><span class="o">.</span><span class="n">isdisjoint</span><span class="p">(</span><span class="n">calibration_ids</span><span class="p">)</span>
+
+<span class="n">CALIBRATION_DIR</span> <span class="o">=</span> <span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"calibration_images"</span>
+<span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">CALIBRATION_DIR</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">CALIBRATION_DIR</span><span class="o">.</span><span class="n">mkdir</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_image_id</span> <span class="ow">in</span> <span class="n">calibration_ids</span><span class="p">:</span>
+    <span class="n">_image_path</span> <span class="o">=</span> <span class="n">calibration_pool</span><span class="o">.</span><span class="n">images_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">_image_id</span><span class="si">:</span><span class="s2">012d</span><span class="si">}</span><span class="s2">.jpg"</span>
+    <span class="n">shutil</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">_image_path</span><span class="p">,</span> <span class="n">CALIBRATION_DIR</span> <span class="o">/</span> <span class="n">_image_path</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">"Calibration images: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">calibration_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> in </span><span class="si">{</span><span class="n">CALIBRATION_DIR</span><span class="si">}</span><span class="s2">, disjoint from the </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">_eval_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> eval images"</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">tensorrt</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">, onnxruntime </span><span class="si">{</span><span class="n">ort</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">, "</span>
+    <span class="sa">f</span><span class="s2">"calibration: </span><span class="si">{</span><span class="n">N_CALIB</span><span class="si">}</span><span class="s2"> COCO val2017 images (selection seed </span><span class="si">{</span><span class="n">COCO_SEED</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">)"</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-30">import shutil
+
+import tensorrt
+
+# With FULL_VAL every val2017 image is scored, so none is left over to calibrate on.
+assert not FULL_VAL, "Set FULL_VAL = False, or edit this cell to copy your own held-out images into CALIBRATION_DIR."
+
+# Draw N_EVAL + N_CALIB images with a different seed: at least N_CALIB of them cannot be in the eval subset.
+calibration_pool = fetch_coco_val2017(COCO_ROOT, n_images=N_EVAL + N_CALIB, seed=COCO_SEED + 1)
+_eval_ids = set(coco_subset.image_ids)
+calibration_ids = [image_id for image_id in calibration_pool.image_ids if image_id not in _eval_ids][:N_CALIB]
+assert len(calibration_ids) == N_CALIB and _eval_ids.isdisjoint(calibration_ids)
+
+CALIBRATION_DIR = EXPORT_DIR / "calibration_images"
+shutil.rmtree(CALIBRATION_DIR, ignore_errors=True)
+CALIBRATION_DIR.mkdir()
+for _image_id in calibration_ids:
+    _image_path = calibration_pool.images_dir / f"{_image_id:012d}.jpg"
+    shutil.copy(_image_path, CALIBRATION_DIR / _image_path.name)
+print(
+    f"Calibration images: {len(calibration_ids)} in {CALIBRATION_DIR}, disjoint from the {len(_eval_ids)} eval images"
+)
+print(
+    f"TensorRT {tensorrt.__version__}, onnxruntime {ort.__version__}, "
+    f"calibration: {N_CALIB} COCO val2017 images (selection seed {COCO_SEED + 1})"
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a49749b9">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="export">Export<a class="anchor-link" href="#export">¶</a></h3><p>Two static batch-1 engines: FP16 as the baseline, and INT8 calibrated on <code>CALIBRATION_DIR</code>. Each goes to its own
+directory, so neither overwrites the Section 5 ONNX file or the Section 6 engine of the same name. <code>max_images=N_CALIB</code>
+makes the export use every copied image (the default reads the first 100 by file name). The INT8 build also runs the
+calibration, so it takes noticeably longer than the FP16 one. The INT8 file is named <code>*_int8.trt</code>; a release without
+INT8 TensorRT export would write an FP16 engine instead, which the assert below catches.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=84a50078">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-31">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">trt_fp16_b1_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="nb">format</span><span class="o">=</span><span class="s2">"trt"</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"trt_fp16_b1"</span><span class="p">))</span>
+<span class="n">trt_int8_path</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
+    <span class="nb">format</span><span class="o">=</span><span class="s2">"trt"</span><span class="p">,</span>
+    <span class="n">quantization</span><span class="o">=</span><span class="s2">"int8"</span><span class="p">,</span>
+    <span class="n">calibration_data</span><span class="o">=</span><span class="n">CALIBRATION_DIR</span><span class="p">,</span>
+    <span class="n">max_images</span><span class="o">=</span><span class="n">N_CALIB</span><span class="p">,</span>
+    <span class="n">output_dir</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">EXPORT_DIR</span> <span class="o">/</span> <span class="s2">"trt_int8_b1"</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="k">assert</span> <span class="n">Path</span><span class="p">(</span><span class="n">trt_int8_path</span><span class="p">)</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">"_int8.trt"</span><span class="p">),</span> <span class="sa">f</span><span class="s2">"Expected an INT8 engine, got </span><span class="si">{</span><span class="n">trt_int8_path</span><span class="si">}</span><span class="s2">"</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT FP16 (batch 1): </span><span class="si">{</span><span class="n">trt_fp16_b1_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">trt_fp16_b1_path</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT INT8 (batch 1): </span><span class="si">{</span><span class="n">trt_int8_path</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">trt_int8_path</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB)"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-31">trt_fp16_b1_path = model.export(format="trt", output_dir=str(EXPORT_DIR / "trt_fp16_b1"))
+trt_int8_path = model.export(
+    format="trt",
+    quantization="int8",
+    calibration_data=CALIBRATION_DIR,
+    max_images=N_CALIB,
+    output_dir=str(EXPORT_DIR / "trt_int8_b1"),
+)
+assert Path(trt_int8_path).name.endswith("_int8.trt"), f"Expected an INT8 engine, got {trt_int8_path}"
+print(f"TensorRT FP16 (batch 1): {trt_fp16_b1_path}  ({_artifact_size_mb(trt_fp16_b1_path):.1f} MB)")
+print(f"TensorRT INT8 (batch 1): {trt_int8_path}  ({_artifact_size_mb(trt_int8_path):.1f} MB)")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=6eec1a88">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="inference-and-latency">Inference and latency<a class="anchor-link" href="#inference-and-latency">¶</a></h3><p>Each engine is timed two ways at batch 1, with the input already on the device, synchronous call first:</p>
+<ul>
+<li><strong>Synchronous call:</strong> <code>TRTInference(sync_mode=True)</code>, the runtime of Section 6, which launches with <code>execute_v2</code> and
+returns once the engine has run. It includes the CPU launch time of every call.</li>
+<li><strong>CUDA graph:</strong> <code>TRTInference(cuda_graph=True)</code>, which captures the engine's launch into a CUDA graph on its first call
+and replays it on every later call instead of launching each kernel from the CPU. How much that saves depends on
+how long the launches take on your host; where they are fast, the two can be close. It needs an engine with fixed input
+shapes, which a static batch-1 engine is, and no pycuda.</li>
+</ul>
+<p>The docs page's CUDA-graph column replays the same kind of graph 200 times back to back; here each call also copies
+its input into the graph's buffer and waits for the result, so expect it slower than that column on the same host. The docs page's plain call is different again: 200 back-to-back <code>execute_async_v3</code> calls with no synchronization
+in between, so its figures do not carry over to the synchronous call here. <code>Memory [MB]</code> covers constructing the
+synchronous runtime plus its first call; the CUDA-graph runtime's memory is not measured here.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3d8f617f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-32">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">_load_trt_b1</span><span class="p">(</span><span class="n">engine_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Load one static batch-1 engine with the names, shape and dtype its inputs and outputs need."""</span>
+    <span class="n">runtime</span> <span class="o">=</span> <span class="n">TRTInference</span><span class="p">(</span><span class="n">engine_path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">sync_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">input_name</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">input_names</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">binding</span> <span class="o">=</span> <span class="n">runtime</span><span class="o">.</span><span class="n">bindings</span><span class="p">[</span><span class="n">input_name</span><span class="p">]</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">channels</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">binding</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"runtime"</span><span class="p">:</span> <span class="n">runtime</span><span class="p">,</span>
+        <span class="s2">"input_name"</span><span class="p">:</span> <span class="n">input_name</span><span class="p">,</span>
+        <span class="s2">"shape"</span><span class="p">:</span> <span class="p">(</span><span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">channels</span><span class="p">),</span>
+        <span class="s2">"dtype"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">binding</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
+        <span class="s2">"boxes_name"</span><span class="p">:</span> <span class="nb">next</span><span class="p">(</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">runtime</span><span class="o">.</span><span class="n">output_names</span> <span class="k">if</span> <span class="s2">"dets"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span>
+        <span class="s2">"logits_name"</span><span class="p">:</span> <span class="nb">next</span><span class="p">(</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">runtime</span><span class="o">.</span><span class="n">output_names</span> <span class="k">if</span> <span class="s2">"labels"</span> <span class="ow">in</span> <span class="n">name</span><span class="p">),</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_trt_b1_input</span><span class="p">(</span><span class="n">engine</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Preprocess *img* into the engine's input, on the device and in its dtype."""</span>
+    <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">channels</span> <span class="o">=</span> <span class="n">engine</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">]</span>
+    <span class="n">single</span> <span class="o">=</span> <span class="n">preprocess_to_nchw</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">channels</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">engine</span><span class="p">[</span><span class="s2">"input_name"</span><span class="p">]:</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">single</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">engine</span><span class="p">[</span><span class="s2">"dtype"</span><span class="p">])</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_trt_b1_call</span><span class="p">(</span><span class="n">engine</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">img</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Run one image through *engine*: preprocess, one call, raw ``(boxes, logits)`` arrays."""</span>
+    <span class="n">outputs</span> <span class="o">=</span> <span class="n">engine</span><span class="p">[</span><span class="s2">"runtime"</span><span class="p">](</span><span class="n">_trt_b1_input</span><span class="p">(</span><span class="n">engine</span><span class="p">,</span> <span class="n">img</span><span class="p">))</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">outputs</span><span class="p">[</span><span class="n">engine</span><span class="p">[</span><span class="s2">"boxes_name"</span><span class="p">]]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+        <span class="n">outputs</span><span class="p">[</span><span class="n">engine</span><span class="p">[</span><span class="s2">"logits_name"</span><span class="p">]]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+    <span class="p">)</span>
+
+
+<span class="n">trt_b1</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">trt_b1_results</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">trt_b1_graph_results</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">trt_b1_memory_mb</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">for</span> <span class="n">_name</span><span class="p">,</span> <span class="n">_path</span> <span class="ow">in</span> <span class="p">((</span><span class="s2">"FP16"</span><span class="p">,</span> <span class="n">trt_fp16_b1_path</span><span class="p">),</span> <span class="p">(</span><span class="s2">"INT8"</span><span class="p">,</span> <span class="n">trt_int8_path</span><span class="p">)):</span>
+    <span class="k">with</span> <span class="n">measure_memory</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="k">as</span> <span class="n">mem</span><span class="p">:</span>
+        <span class="n">trt_b1</span><span class="p">[</span><span class="n">_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">_load_trt_b1</span><span class="p">(</span><span class="n">_path</span><span class="p">)</span>
+        <span class="n">_trt_b1_call</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="n">_name</span><span class="p">],</span> <span class="n">image</span><span class="p">)</span>
+    <span class="n">trt_b1_memory_mb</span><span class="p">[</span><span class="n">_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">mem</span><span class="o">.</span><span class="n">delta_mb</span>
+    <span class="n">_feed</span> <span class="o">=</span> <span class="n">_trt_b1_input</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="n">_name</span><span class="p">],</span> <span class="n">image</span><span class="p">)</span>
+    <span class="n">trt_b1_results</span><span class="p">[</span><span class="n">_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="n">_name</span><span class="p">][</span><span class="s2">"runtime"</span><span class="p">],</span> <span class="n">_feed</span><span class="p">),</span>
+        <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">_name</span><span class="si">}</span><span class="s2"> synchronous call batch=1"</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+        <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+        <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="c1"># The first call of a cuda_graph runtime captures the graph, so it is made here, before any timed call.</span>
+    <span class="n">_graph_runtime</span> <span class="o">=</span> <span class="n">TRTInference</span><span class="p">(</span><span class="n">_path</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">cuda_graph</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">_graph_runtime</span><span class="p">(</span><span class="n">_feed</span><span class="p">)</span>
+    <span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="n">_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
+        <span class="n">partial</span><span class="p">(</span><span class="n">_graph_runtime</span><span class="p">,</span> <span class="n">_feed</span><span class="p">),</span>
+        <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"TensorRT </span><span class="si">{</span><span class="n">_name</span><span class="si">}</span><span class="s2"> CUDA graph batch=1"</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span>
+        <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP_RUNS</span><span class="p">,</span>
+        <span class="n">runs</span><span class="o">=</span><span class="n">MEASURE_RUNS</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">del</span> <span class="n">_graph_runtime</span>
+    <span class="n">_sync</span><span class="p">,</span> <span class="n">_graph</span> <span class="o">=</span> <span class="n">trt_b1_results</span><span class="p">[</span><span class="n">_name</span><span class="p">],</span> <span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="n">_name</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">_name</span><span class="si">}</span><span class="s2">  synchronous call </span><span class="si">{</span><span class="n">_sync</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_sync</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">"</span>
+        <span class="sa">f</span><span class="s2">"   CUDA graph </span><span class="si">{</span><span class="n">_graph</span><span class="o">.</span><span class="n">mean_ms</span><span class="si">:</span><span class="s2">6.2f</span><span class="si">}</span><span class="s2"> ms ± </span><span class="si">{</span><span class="n">_graph</span><span class="o">.</span><span class="n">std_ms</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   engine </span><span class="si">{</span><span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">_path</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> MB"</span>
+    <span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-32">def _load_trt_b1(engine_path: Path) -&gt; dict:
+    """Load one static batch-1 engine with the names, shape and dtype its inputs and outputs need."""
+    runtime = TRTInference(engine_path, device="cuda", sync_mode=True)
+    input_name = runtime.input_names[0]
+    binding = runtime.bindings[input_name]
+    _, channels, height, width = binding.shape
+    return {
+        "runtime": runtime,
+        "input_name": input_name,
+        "shape": (height, width, channels),
+        "dtype": torch.from_numpy(np.empty(0, dtype=binding.dtype)).dtype,
+        "boxes_name": next(name for name in runtime.output_names if "dets" in name),
+        "logits_name": next(name for name in runtime.output_names if "labels" in name),
+    }
+
+
+def _trt_b1_input(engine: dict, img: Image.Image) -&gt; dict[str, torch.Tensor]:
+    """Preprocess *img* into the engine's input, on the device and in its dtype."""
+    height, width, channels = engine["shape"]
+    single = preprocess_to_nchw(img, height, width, channels)
+    return {engine["input_name"]: torch.from_numpy(single).to(device="cuda", dtype=engine["dtype"]).contiguous()}
+
+
+def _trt_b1_call(engine: dict, img: Image.Image) -&gt; tuple[np.ndarray, np.ndarray]:
+    """Run one image through *engine*: preprocess, one call, raw ``(boxes, logits)`` arrays."""
+    outputs = engine["runtime"](_trt_b1_input(engine, img))
+    return (
+        outputs[engine["boxes_name"]].detach().float().cpu().numpy(),
+        outputs[engine["logits_name"]].detach().float().cpu().numpy(),
+    )
+
+
+trt_b1 = {}
+trt_b1_results = {}
+trt_b1_graph_results = {}
+trt_b1_memory_mb = {}
+for _name, _path in (("FP16", trt_fp16_b1_path), ("INT8", trt_int8_path)):
+    with measure_memory(device="cuda") as mem:
+        trt_b1[_name] = _load_trt_b1(_path)
+        _trt_b1_call(trt_b1[_name], image)
+    trt_b1_memory_mb[_name] = mem.delta_mb
+    _feed = _trt_b1_input(trt_b1[_name], image)
+    trt_b1_results[_name] = measure_latency(
+        partial(trt_b1[_name]["runtime"], _feed),
+        label=f"TensorRT {_name} synchronous call batch=1",
+        device="cuda",
+        warmup=WARMUP_RUNS,
+        runs=MEASURE_RUNS,
+    )
+    # The first call of a cuda_graph runtime captures the graph, so it is made here, before any timed call.
+    _graph_runtime = TRTInference(_path, device="cuda", cuda_graph=True)
+    _graph_runtime(_feed)
+    trt_b1_graph_results[_name] = measure_latency(
+        partial(_graph_runtime, _feed),
+        label=f"TensorRT {_name} CUDA graph batch=1",
+        device="cuda",
+        warmup=WARMUP_RUNS,
+        runs=MEASURE_RUNS,
+    )
+    del _graph_runtime
+    _sync, _graph = trt_b1_results[_name], trt_b1_graph_results[_name]
+    print(
+        f"  {_name}  synchronous call {_sync.mean_ms:6.2f} ms ± {_sync.std_ms:5.2f}"
+        f"   CUDA graph {_graph.mean_ms:6.2f} ms ± {_graph.std_ms:5.2f}   engine {_artifact_size_mb(_path):.1f} MB"
+    )</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=9d40048a">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>A correctness call before scoring, on the sample image. <code>parity</code> compares the raw outputs query by query, and INT8 can
+move a detection to another query or change a low score a lot without changing what is detected, so a large drift on
+that line is not an error by itself. The detection counts, how well each FP16 box
+is matched by an INT8 one, and the COCO mAP after them are the accuracy check; a detection near the threshold can
+land on either side of it, which the printed FP16 scores show.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=edb8016f">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-33">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">_fp16_boxes</span><span class="p">,</span> <span class="n">_fp16_logits</span> <span class="o">=</span> <span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">array</span> <span class="ow">in</span> <span class="n">_trt_b1_call</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="s2">"FP16"</span><span class="p">],</span> <span class="n">image</span><span class="p">))</span>
+<span class="n">_int8_boxes</span><span class="p">,</span> <span class="n">_int8_logits</span> <span class="o">=</span> <span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">array</span> <span class="ow">in</span> <span class="n">_trt_b1_call</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="s2">"INT8"</span><span class="p">],</span> <span class="n">image</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"TensorRT INT8 vs FP16: </span><span class="si">{</span><span class="n">parity</span><span class="p">(</span><span class="n">_fp16_boxes</span><span class="p">,</span><span class="w"> </span><span class="n">_fp16_logits</span><span class="p">,</span><span class="w"> </span><span class="n">_int8_boxes</span><span class="p">,</span><span class="w"> </span><span class="n">_int8_logits</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="n">fp16_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">_fp16_boxes</span><span class="p">,</span> <span class="n">_fp16_logits</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="n">int8_decoded</span> <span class="o">=</span> <span class="n">decode_detections</span><span class="p">(</span><span class="n">_int8_boxes</span><span class="p">,</span> <span class="n">_int8_logits</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Detections above </span><span class="si">{</span><span class="n">CONFIDENCE_THRESHOLD</span><span class="si">}</span><span class="s2">: FP16 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">fp16_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="si">}</span><span class="s2">, INT8 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">int8_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"FP16 scores: </span><span class="si">{</span><span class="p">[</span><span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">score</span><span class="p">),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">score</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">fp16_decoded</span><span class="o">.</span><span class="n">confidence</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">fp16_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">int8_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">):</span>
+    <span class="n">_best_iou</span> <span class="o">=</span> <span class="n">sv</span><span class="o">.</span><span class="n">box_iou_batch</span><span class="p">(</span><span class="n">fp16_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">,</span> <span class="n">int8_decoded</span><span class="o">.</span><span class="n">xyxy</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Best IoU of each FP16 detection with an INT8 one: </span><span class="si">{</span><span class="p">[</span><span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">iou</span><span class="p">),</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">iou</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">_best_iou</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-33">_fp16_boxes, _fp16_logits = (array[0] for array in _trt_b1_call(trt_b1["FP16"], image))
+_int8_boxes, _int8_logits = (array[0] for array in _trt_b1_call(trt_b1["INT8"], image))
+print(f"TensorRT INT8 vs FP16: {parity(_fp16_boxes, _fp16_logits, _int8_boxes, _int8_logits)}")
+fp16_decoded = decode_detections(_fp16_boxes, _fp16_logits, image.size, threshold=CONFIDENCE_THRESHOLD)
+int8_decoded = decode_detections(_int8_boxes, _int8_logits, image.size, threshold=CONFIDENCE_THRESHOLD)
+print(f"Detections above {CONFIDENCE_THRESHOLD}: FP16 {len(fp16_decoded.xyxy)}, INT8 {len(int8_decoded.xyxy)}")
+print(f"FP16 scores: {[round(float(score), 2) for score in fp16_decoded.confidence]}")
+if len(fp16_decoded.xyxy) and len(int8_decoded.xyxy):
+    _best_iou = sv.box_iou_batch(fp16_decoded.xyxy, int8_decoded.xyxy).max(axis=1)
+    print(f"Best IoU of each FP16 detection with an INT8 one: {[round(float(iou), 2) for iou in _best_iou]}")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=16c41ed0">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h3 id="coco-val2017-accuracy-fp16-against-int8">COCO val2017 accuracy, FP16 against INT8<a class="anchor-link" href="#coco-val2017-accuracy-fp16-against-int8">¶</a></h3><p>The same harness and the same images as Section 7, through the synchronous runtimes, so the INT8 row compares directly
+with the FP16 row.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=5a55ff6d">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-34">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">map_results</span><span class="p">[</span><span class="s2">"TensorRT (raw .trt engine) TRTInference, fp16, batch 1"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">img</span><span class="p">:</span> <span class="n">_trt_b1_call</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="s2">"FP16"</span><span class="p">],</span> <span class="n">img</span><span class="p">),</span> <span class="n">coco_subset</span>
+<span class="p">)</span>
+<span class="n">map_results</span><span class="p">[</span><span class="s2">"TensorRT (raw .trt engine) TRTInference, int8, batch 1"</span><span class="p">]</span> <span class="o">=</span> <span class="n">evaluate_coco_map</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">img</span><span class="p">:</span> <span class="n">_trt_b1_call</span><span class="p">(</span><span class="n">trt_b1</span><span class="p">[</span><span class="s2">"INT8"</span><span class="p">],</span> <span class="n">img</span><span class="p">),</span> <span class="n">coco_subset</span>
+<span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-34">map_results["TensorRT (raw .trt engine) TRTInference, fp16, batch 1"] = evaluate_coco_map(
+    lambda img: _trt_b1_call(trt_b1["FP16"], img), coco_subset
+)
+map_results["TensorRT (raw .trt engine) TRTInference, int8, batch 1"] = evaluate_coco_map(
+    lambda img: _trt_b1_call(trt_b1["INT8"], img), coco_subset
+)</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=1af4f3ec">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<p>FP16 against INT8 on this machine: accuracy, latency from both runtimes, engine size and device memory, and the INT8
+speedup of each runtime, the FP16 latency divided by the INT8 latency measured the same way. Measure the trade on your
+own data and GPU before deploying: the gain depends on the GPU, the model size and how much of the call is launch time.</p>
+</div>
+</div>
+</div>
+</div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=3b206628">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea">
+<div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
+<div class="CodeMirror cm-s-jupyter">
+<div class="zeroclipboard-container">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-35">
+<div>
+<span class="notice" hidden="">Copied!</span>
+<svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
+<path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+<path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z" fill="currentColor" fill-rule="evenodd"></path>
+</svg>
+</div>
+</clipboard-copy>
+</div>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">_int8_rows</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">_name</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"FP16"</span><span class="p">,</span> <span class="s2">"INT8"</span><span class="p">):</span>
+    <span class="n">_map</span> <span class="o">=</span> <span class="n">map_results</span><span class="p">[</span><span class="sa">f</span><span class="s2">"TensorRT (raw .trt engine) TRTInference, </span><span class="si">{</span><span class="n">_name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="si">}</span><span class="s2">, batch 1"</span><span class="p">]</span>
+    <span class="n">_path</span> <span class="o">=</span> <span class="n">trt_fp16_b1_path</span> <span class="k">if</span> <span class="n">_name</span> <span class="o">==</span> <span class="s2">"FP16"</span> <span class="k">else</span> <span class="n">trt_int8_path</span>
+    <span class="n">_int8_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="s2">"Precision"</span><span class="p">:</span> <span class="n">_name</span><span class="p">,</span>
+            <span class="s2">"mAP@50:95 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">_map</span><span class="o">.</span><span class="n">map50_95</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+            <span class="s2">"mAP@50 [%]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="mi">100</span> <span class="o">*</span> <span class="n">_map</span><span class="o">.</span><span class="n">map50</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+            <span class="s2">"Synchronous call [ms]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">trt_b1_results</span><span class="p">[</span><span class="n">_name</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+            <span class="s2">"CUDA graph [ms]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="n">_name</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+            <span class="s2">"Engine [MB]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">_artifact_size_mb</span><span class="p">(</span><span class="n">_path</span><span class="p">),</span> <span class="mi">1</span><span class="p">),</span>
+            <span class="s2">"Memory [MB]"</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">trt_b1_memory_mb</span><span class="p">[</span><span class="n">_name</span><span class="p">],</span> <span class="mi">1</span><span class="p">),</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+<span class="n">display</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">_int8_rows</span><span class="p">)</span><span class="o">.</span><span class="n">set_index</span><span class="p">(</span><span class="s2">"Precision"</span><span class="p">))</span>
+<span class="n">_sync_speedup</span> <span class="o">=</span> <span class="n">trt_b1_results</span><span class="p">[</span><span class="s2">"FP16"</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span> <span class="o">/</span> <span class="n">trt_b1_results</span><span class="p">[</span><span class="s2">"INT8"</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span>
+<span class="n">_graph_speedup</span> <span class="o">=</span> <span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="s2">"FP16"</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span> <span class="o">/</span> <span class="n">trt_b1_graph_results</span><span class="p">[</span><span class="s2">"INT8"</span><span class="p">]</span><span class="o">.</span><span class="n">mean_ms</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"INT8 speedup at batch 1: synchronous call </span><span class="si">{</span><span class="n">_sync_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x, CUDA graph </span><span class="si">{</span><span class="n">_graph_speedup</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x"</span><span class="p">)</span>
+</pre></div>
+<div class="clipboard-copy-txt" id="cell-35">_int8_rows = []
+for _name in ("FP16", "INT8"):
+    _map = map_results[f"TensorRT (raw .trt engine) TRTInference, {_name.lower()}, batch 1"]
+    _path = trt_fp16_b1_path if _name == "FP16" else trt_int8_path
+    _int8_rows.append(
+        {
+            "Precision": _name,
+            "mAP@50:95 [%]": round(100 * _map.map50_95, 1),
+            "mAP@50 [%]": round(100 * _map.map50, 1),
+            "Synchronous call [ms]": round(trt_b1_results[_name].mean_ms, 2),
+            "CUDA graph [ms]": round(trt_b1_graph_results[_name].mean_ms, 2),
+            "Engine [MB]": round(_artifact_size_mb(_path), 1),
+            "Memory [MB]": round(trt_b1_memory_mb[_name], 1),
+        }
+    )
+display(pd.DataFrame(_int8_rows).set_index("Precision"))
+_sync_speedup = trt_b1_results["FP16"].mean_ms / trt_b1_results["INT8"].mean_ms
+_graph_speedup = trt_b1_graph_results["FP16"].mean_ms / trt_b1_graph_results["INT8"].mean_ms
+print(f"INT8 speedup at batch 1: synchronous call {_sync_speedup:.2f}x, CUDA graph {_graph_speedup:.2f}x")</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 <div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=886355b0">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="8-results">8. Results<a class="anchor-link" href="#8-results">¶</a></h2><!-- TODO: replace <VERSION> with the rfdetr version printed by the Setup cell on the next run. -->
+<h2 id="9-results">9. Results<a class="anchor-link" href="#9-results">¶</a></h2><!-- TODO: replace <VERSION> with the rfdetr version printed by the Setup cell on the next run. -->
 <p>Measured on an <strong>NVIDIA L4</strong> (compute capability 8.9, 22 GB), Colab GPU runtime, <code>rfdetr &lt;VERSION&gt;</code>,
 batches 1/4/8, 20 warmup + 100 timed runs per row, <code>RFDETRSmall</code>. Numbers vary by GPU model,
 TensorRT version, and driver — rerun the cells below to get yours. <code>Config</code> is the precision/EP
@@ -6030,8 +6642,10 @@ as costing the same memory as the fp16+JIT row.</p>
 </tbody>
 </table>
 <p><strong><code>mAP@50:95 [%]</code></strong> (COCO val2017, batch 1, per format and precision): not measured yet. Run the
-<a href="#coco-val2017-accuracy">COCO val2017 accuracy</a> section above. Its summary table holds the
+<a href="#7-coco-val2017-accuracy">COCO val2017 accuracy</a> section above. Its summary table holds the
 numbers, which are not yet copied here.</p>
+<p>The FP16 and INT8 <code>.trt</code> engines of <a href="#8-tensorrt-int8">Section 8</a> are batch 1 only and are not in this table; their
+latency, size and mAP are in that section's own summary table, which is not yet copied here either.</p>
 <p>Measured on an NVIDIA L4, Colab GPU runtime, 100 timed + 20 warmup runs per row. <strong>Every
 batch-4/8 TensorRT row reads <code>0.0 MB</code>, on both the managed engine and the raw engine, and this is
 expected, not a bug</strong>: the raw engine is exported <code>dynamic_batch=True, max_batch_size=8</code>, so
@@ -6073,7 +6687,7 @@ by side.</p>
 <div class="jp-InputPrompt jp-InputArea-prompt">In [ ]:</div><div class="jp-CodeMirrorEditor jp-Editor jp-InputArea-editor" data-type="inline">
 <div class="CodeMirror cm-s-jupyter">
 <div class="zeroclipboard-container">
-<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-30">
+<clipboard-copy ,="" aria-label="Copy to Clipboard" for="cell-36">
 <div>
 <span class="notice" hidden="">Copied!</span>
 <svg aria-hidden="true" class="clipboard-copy-icon" data-view-component="true" height="20" version="1.1" viewbox="0 0 16 16" width="20">
@@ -6150,7 +6764,7 @@ by side.</p>
     <span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="n">MEASURE_RUNS</span><span class="si">}</span><span class="s2"> timed + </span><span class="si">{</span><span class="n">WARMUP_RUNS</span><span class="si">}</span><span class="s2"> warmup runs per row, batches </span><span class="si">{</span><span class="n">BATCH_SIZES</span><span class="si">}</span><span class="s2">, GPU: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">."</span>
 <span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-30">import pandas as pd
+<div class="clipboard-copy-txt" id="cell-36">import pandas as pd
 from IPython.display import display
 
 _rows = []
@@ -6267,7 +6881,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 5, 2026 22:28:32 UTC">2026-10-05 22:28:32</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 17:02:29 UTC">2026-10-08 17:02:29</span>
   </span>
 
     

@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-10-07T21:29:44">
+  <meta property="article:modified_time" content="2026-10-08T17:02:29">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-10-07T21:29:44",
+    "dateModified": "2026-10-08T17:02:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3170,17 +3170,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>quantization</code></td>
 <td><code>None</code></td>
-<td>Quantization mode, per format. <code>format="tflite"</code>: <code>None</code>/<code>"fp32"</code>, <code>"fp16"</code>, or <code>"int8"</code> (dynamic-range). <code>format="onnx"</code> and <code>format="openvino"</code>: <code>None</code>/<code>"fp32"</code> or <code>"int8"</code> (static; requires <code>calibration_data</code>). <code>format="litert"</code> accepts only <code>None</code>/<code>"fp32"</code> and raises <code>NotImplementedError</code> otherwise.</td>
+<td>Quantization mode, per format. <code>format="tflite"</code>: <code>None</code>/<code>"fp32"</code>, <code>"fp16"</code>, or <code>"int8"</code> (dynamic-range). <code>format="onnx"</code> and <code>format="openvino"</code>: <code>None</code>/<code>"fp32"</code> or <code>"int8"</code> (static; requires <code>calibration_data</code>). <code>format="tensorrt"</code>: <code>None</code> (FP16/FP32 as <code>fp16</code> says) or <code>"int8"</code> (static INT8 calibrated on <code>calibration_data</code>; detection models, static batch, TensorRT 10+; see <a href="../tensorrt/#int8">TensorRT INT8</a>); any other value raises <code>ValueError</code>. <code>format="litert"</code> accepts only <code>None</code>/<code>"fp32"</code> and raises <code>NotImplementedError</code> otherwise.</td>
 </tr>
 <tr>
 <td><code>calibration_data</code></td>
 <td><code>None</code></td>
-<td>Image directory, <code>.npy</code> file path, NumPy array, or <code>None</code>. <strong>Required</strong> for static INT8 (<code>format="onnx"</code> / <code>format="openvino"</code>), where activation ranges are read from it. Ignored for <code>format="tflite"</code>: passing it warns, since <code>.tflite</code> INT8 is dynamic-range.</td>
+<td>Image directory, <code>.npy</code> file path, NumPy array, or <code>None</code>. <strong>Required</strong> for static INT8 (<code>format="onnx"</code>, <code>format="openvino"</code>, <code>format="tensorrt"</code> with <code>quantization="int8"</code>), where activation ranges are read from it (images are preprocessed as <code>predict()</code> does; arrays are <code>(N, C, H, W)</code>, already normalized). <code>format="tensorrt"</code> raises <code>ValueError</code> for it without <code>"int8"</code>. Ignored for <code>format="tflite"</code>: passing it warns, since <code>.tflite</code> INT8 is dynamic-range.</td>
 </tr>
 <tr>
 <td><code>max_images</code></td>
 <td><code>100</code></td>
-<td>Maximum number of images to load from a <code>calibration_data</code> directory. Ignored for other calibration data formats.</td>
+<td>Maximum number of images to load from a <code>calibration_data</code> directory (the first ones by file name). Ignored for other calibration data formats.</td>
 </tr>
 <tr>
 <td><code>infer_dir</code></td>
@@ -3399,8 +3399,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 <tr>
 <td><code>tensorrt</code></td>
-<td><code>fp16</code></td>
-<td><code>True</code> (default) or <code>False</code></td>
+<td><code>fp16</code>, <code>quantization</code></td>
+<td><code>fp16=True</code> (default) or <code>False</code>; <code>quantization=None</code> or <code>"int8"</code> (calibrated, with <code>fp16=True</code>)</td>
 </tr>
 <tr>
 <td><code>openvino</code></td>
@@ -3485,7 +3485,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 7, 2026 21:29:44 UTC">2026-10-07 21:29:44</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="October 8, 2026 17:02:29 UTC">2026-10-08 17:02:29</span>
   </span>
 
     
