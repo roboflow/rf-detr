@@ -58,16 +58,14 @@ train = [
     # Default COCO evaluation backend (MIT, numpy-only runtime dependency, cp39-abi3 wheels for manylinux2014
     # x86_64/aarch64, macOS x86_64/arm64 and win_amd64 — no musllinux). Produces metrics identical to
     # faster-coco-eval, which stays available through TrainConfig.eval_backend and is still required: torchmetrics
-    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The exact pin is
-    # deliberate: one of the hotcoco behaviors the adapter works around still fails silently rather than loudly on
-    # 1.0.1 — its `dataset` getter returns a copy, so an in-place annotation edit is invisible to it. (1.0.1 fixed
-    # the other: `mask.encode` emitting RLE counts as bytes that its own COCO constructor read back as an empty
-    # mask, collapsing mask AP to 0.0 without raising.) Pinning exactly makes every hotcoco release an explicit,
-    # parity-tested upgrade rather than something a user's resolver can pick up unverified. Installing it also
-    # puts a generically-named `coco` console script on PATH.
-    # TODO: once a hotcoco release fixes the dataset-copy behavior too, drop the matching workaround
-    # in src/rfdetr/training/coco_map.py (_prediction_dataset_for_iou_type) and reconsider widening this to a range.
-    "hotcoco==1.0.1",
+    # resolves its COCO helpers from a closed backend-name enum that has no hotcoco member. The floor is the release
+    # that added the column-form APIs the adapter builds its datasets with: `COCO.from_arrays` for the ground truth,
+    # `COCO.load_res(array, segmentation=...)` for box and mask predictions, and `COCO.update_anns(ids=..., area=...)`
+    # to switch prediction areas between IoU types in place (its `dataset` getter returns a copy, so an edit through
+    # it never lands). `_HotCocoBackend` refuses an older install at construction. The ceiling keeps the
+    # parity-tested 1.2 line until the next minor is verified against the adapter. Installing it also puts a
+    # generically-named `coco` console script on PATH.
+    "hotcoco>=1.2.0,<1.3",
     "faster-coco-eval>=1.7.2",
     # Third COCO evaluation backend, selected with TrainConfig.eval_backend="ufcoco" (BSD-2-Clause, numpy-only runtime
     # dependency, wheels for CPython 3.8+ on manylinux x86_64/aarch64, macOS x86_64/arm64 and win_amd64).
