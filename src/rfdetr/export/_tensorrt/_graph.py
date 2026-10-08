@@ -16,8 +16,8 @@ from typing import Any
 
 from rfdetr.export.prepare import BATCH_AXIS
 
-# An explicitly quantized graph carries its precision in these nodes and their scale/zero-point
-# tensors, so a blanket fp16 cast contradicts it rather than converting it.
+#: An explicitly quantized graph carries its precision in these nodes and their scale/zero-point
+#: tensors, so a blanket fp16 cast contradicts it rather than converting it.
 _QUANTIZATION_OP_TYPES = frozenset({"QuantizeLinear", "DequantizeLinear", "DynamicQuantizeLinear"})
 
 

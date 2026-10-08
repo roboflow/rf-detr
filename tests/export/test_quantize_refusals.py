@@ -101,7 +101,13 @@ class _ForwardPassReachedError(Exception):
 
 @pytest.fixture
 def layout(tmp_path: Path) -> CalibrationLayout:
-    """Lay out every calibration input the tests need under ``tmp_path``."""
+    """Lay out every calibration input the tests need under ``tmp_path``.
+
+    Examples:
+        A pytest fixture cannot be called directly.
+
+        >>> calibration = layout(tmp_path)  # doctest: +SKIP
+    """
     (tmp_path / "empty").mkdir()
     (tmp_path / "text_only").mkdir()
     (tmp_path / "text_only" / "notes.txt").write_text("not an image")

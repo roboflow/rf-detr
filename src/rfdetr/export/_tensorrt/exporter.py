@@ -125,9 +125,11 @@ _STRONG_TYPING_MAJOR = 11
 #: than assumed to work; the 10.x releases before 10.16 are admitted but untested.
 _INT8_MIN_TENSORRT_MAJOR = 10
 
-#: The measured TensorRT releases as bounds: an INT8 build on a 10.x release before ``(10, 16)``, or on a major above
-#: 11, is warned about rather than refused.
+#: The oldest measured TensorRT release: an INT8 build on a 10.x release before ``(10, 16)`` is warned about rather
+#: than refused.
 _INT8_OLDEST_MEASURED_TENSORRT = (10, 16)
+
+#: The newest measured TensorRT major: an INT8 build on a major above 11 is warned about rather than refused.
 _INT8_NEWEST_MEASURED_TENSORRT_MAJOR = 11
 
 #: Whether onnxruntime is installed: calibration runs the FP32 graph under it. The ``rfdetr[tensorrt]`` extra installs
