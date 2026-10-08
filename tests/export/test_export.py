@@ -2401,25 +2401,35 @@ class TestExportDependencyCheck:
 
         assert (result.returncode, result.stdout.strip().splitlines()[-1:]) == (0, ["False"]), result.stderr
 
-    @pytest.mark.parametrize("module", ["rfdetr.export._onnx.exporter", "rfdetr.export._tflite.exporter"])
-    def test_loading_the_exporter_imports_no_onnx_package(self, module: str) -> None:
-        """Loading the ONNX or TFLite exporter module imports none of the ONNX packages; ``onnx`` loads only when used.
+    @pytest.mark.parametrize(
+        "module, allowed",
+        [
+            pytest.param("rfdetr.export._onnx.exporter", [], id="onnx"),
+            pytest.param("rfdetr.export._tflite.exporter", [], id="tflite"),
+            pytest.param("rfdetr.export._tensorrt.exporter", ["polygraphy"], id="tensorrt"),
+        ],
+    )
+    def test_loading_the_exporter_imports_no_onnx_package(self, module: str, allowed: list[str]) -> None:
+        """Loading the ONNX, TFLite or TensorRT exporter module imports no ONNX package beyond ``allowed``.
 
         The TFLite exporter must load TensorFlow before anything loads ``onnx`` (#1322), and it imports the ONNX
-        exporter at module scope. A finder first on ``sys.meta_path`` claims every module of these packages, records
-        each one an import executes and refuses it, so the result does not depend on which of them the host has
-        installed: CPU CI has no ``onnx_graphsurgeon``, so a test that only looked for ``onnx`` in ``sys.modules`` would
-        pass there with a guarded ``import onnx_graphsurgeon`` added. Its specs carry an origin, so ``is_installed``
-        reports them installed and an import guarded by it still runs and is recorded; the probe itself executes
-        nothing. Runs in a fresh interpreter because this suite has already imported them.
+        exporter at module scope, as the TensorRT exporter does. A finder first on ``sys.meta_path`` claims every
+        module of these packages, records each one an import executes and refuses it, so the result does not depend on
+        which of them the host has installed: CPU CI has no ``onnx_graphsurgeon``, so a test that only looked for
+        ``onnx`` in ``sys.modules`` would pass there with a guarded ``import onnx_graphsurgeon`` added. Its specs carry
+        an origin, so ``is_installed`` reports them installed and an import guarded by it still runs and is recorded;
+        the probe itself executes nothing. ``allowed`` names the packages a module imports on purpose: the TensorRT
+        exporter runs a guarded ``polygraphy`` import, and every other package stays refused. Runs in a fresh
+        interpreter because this suite has already imported them.
         """
         script = (
             "import importlib.abc, importlib.util, sys\n"
+            f"allowed = {allowed!r}\n"
             "class Refuse(importlib.abc.MetaPathFinder, importlib.abc.Loader):\n"
             "    executed = []\n"
             "    def find_spec(self, name, path, target=None):\n"
             "        package = name.partition('.')[0]\n"
-            "        if package in {'onnx', 'onnx_graphsurgeon', 'onnxsim', 'polygraphy'}:\n"
+            "        if package in {'onnx', 'onnx_graphsurgeon', 'onnxruntime', 'onnxsim', 'polygraphy'}:\n"
             "            return importlib.util.spec_from_loader(name, self, origin='refused')\n"
             "        return None\n"
             "    def create_module(self, spec):\n"
@@ -2427,13 +2437,16 @@ class TestExportDependencyCheck:
             "    def exec_module(self, module):\n"
             "        self.executed.append(module.__name__)\n"
             "        raise ImportError(module.__name__)\n"
+            "assert 'onnx' not in sys.modules, 'onnx was imported before the finder was installed'\n"
             "sys.meta_path.insert(0, Refuse())\n"
             f"import {module}\n"
-            "print(sorted(Refuse.executed))\n"
+            "print(sorted(name for name in Refuse.executed if name.partition('.')[0] not in allowed))\n"
         )
         source_root = str(Path(_detr_module.__file__).resolve().parents[1])
         env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [source_root, os.environ.get("PYTHONPATH")]))}
-        result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env)
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env, timeout=120
+        )
 
         assert (result.returncode, result.stdout.strip().splitlines()[-1:]) == (0, ["[]"]), result.stderr
 
