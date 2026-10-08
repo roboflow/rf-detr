@@ -38,9 +38,12 @@ Used by:
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import functools
+import importlib.metadata
 import inspect
 import io
+import operator
 import os
 import warnings
 from collections.abc import Callable, Iterator
@@ -295,12 +298,49 @@ class _PackageCocoBackend(_RfdetrCocoBackend):
 
 
 class _HotCocoBackend(_PackageCocoBackend):
-    """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``."""
+    """TorchMetrics COCO backend that resolves to ``hotcoco`` instead of ``faster-coco-eval``.
+
+    The ``train`` extra's version floor is enforced only when the environment is resolved, so a stale install (an
+    older venv, a pinned lockfile elsewhere) would otherwise fail with an ``AttributeError`` deep inside ``compute()``
+    after a whole validation epoch. The constructor refuses such an install up front instead. It checks the symbols
+    the adapter calls rather than parsing a version string, which also refuses an older release for the single-IoU
+    box runs that would not have reached the missing symbol: one actionable error at construction beats a run that
+    works or fails depending on the IoU types.
+    """
 
     # hotcoco never reaches `_get_coco_datasets`: it builds its index in the constructor, so this adapter always
     # assembles the COCO-format dictionaries itself on that path. Guarding a call a backend does not make would
     # block its users over an upstream rename that cannot affect them.
     unused_backend_methods = ("_get_coco_datasets",)
+    #: hotcoco attributes, dotted from the package, that this backend calls and whose absence means the installed
+    #: release predates the ``rfdetr[train]`` floor.
+    required_symbols: tuple[str, ...] = ("COCO.update_anns", "COCO.from_arrays")
+
+    def __init__(self) -> None:
+        """Import hotcoco and refuse an installed release that lacks a symbol this backend calls.
+
+        Raises:
+            ImportError: If hotcoco is not installed, or if the installed release is too old to provide every
+                entry of :attr:`required_symbols`.
+        """
+        super().__init__()
+        package = self._package()
+        missing = []
+        for symbol in self.required_symbols:
+            try:
+                operator.attrgetter(symbol)(package)
+            except AttributeError:
+                missing.append(f"hotcoco.{symbol}")
+        if missing:
+            # Read from the distribution, not the module: hotcoco 1.1 exposes no `__version__`.
+            try:
+                installed = importlib.metadata.version("hotcoco")
+            except importlib.metadata.PackageNotFoundError:
+                installed = "(unknown version)"
+            raise ImportError(
+                f"the installed hotcoco {installed} is too old for RF-DETR's COCO evaluation: it lacks "
+                f"{', '.join(missing)}. Upgrade it with: pip install -U 'rfdetr[train]'"
+            )
 
     def _package(self) -> Any:
         """Import and return ``hotcoco``."""
@@ -318,6 +358,7 @@ class _HotCocoStreamingBackend(_HotCocoBackend):
     """
 
     streams = True
+    required_symbols = (*_HotCocoBackend.required_symbols, "StreamingEval")
 
     def open_stream(
         self,
@@ -518,6 +559,36 @@ _BACKENDS: dict[CocoEvalBackend, Callable[[], _RfdetrCocoBackend]] = {
 }
 
 
+def _rle_dicts(masks: list[Any]) -> list[dict[str, Any]]:
+    """Return stored per-image ``(size, counts)`` masks as one flat list of COCO RLE dictionaries, in state order.
+
+    Args:
+        masks: Per-image tuples of ``(size, counts)`` pairs, as TorchMetrics stores ``detection_mask`` and
+            ``groundtruth_mask``.
+
+    Returns:
+        One RLE dictionary for each stored mask.
+
+    Examples:
+        >>> _rle_dicts([(((2, 3), b"06"),), ()])
+        [{'size': (2, 3), 'counts': b'06'}]
+    """
+    return [{"size": size, "counts": counts} for image in masks for size, counts in image]
+
+
+@dataclasses.dataclass(frozen=True)
+class _PredictionAreaColumns:
+    """Per-IoU-type ``area`` columns of a hotcoco prediction set loaded from the detection array.
+
+    Entry ``i`` of each column belongs to annotation ID ``i + 1``: ``load_res`` numbers array rows from 1 in order.
+
+    Attributes:
+        by_iou_type: One float64 area column for each evaluated IoU type, keyed by that type.
+    """
+
+    by_iou_type: dict[str, np.ndarray[Any, Any]]
+
+
 class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
     """Compute compact COCO AP/AR with CPU state and one global evaluation.
 
@@ -541,7 +612,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             ship with ``rfdetr[train]`` and return identical metrics.
         num_classes: The model's class count; predicted and target labels lie in ``[0, num_classes]``. Only
             ``"hotcoco_streaming"`` reads it, because ``StreamingEval`` needs every category before the first
-            batch. ``None`` makes that backend evaluate in one batch at epoch end.
+            batch. ``None`` makes that backend evaluate in one batch at epoch end. Its epoch-end accumulate and
+            summarize therefore scale with this declared count, not with the classes a run actually observes.
         kwargs: TorchMetrics configuration. ``sync_on_compute`` defaults to and must remain ``False`` because the
             callback invokes :meth:`merge_distributed_state` explicitly at rank-symmetric sites.
 
@@ -1030,7 +1102,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             ]
         return detection_columns, target_columns
 
-    def _coco_datasets(self, classes: list[int]) -> tuple[Any, Any, dict[str, Any] | None]:
+    def _coco_datasets(self, classes: list[int]) -> tuple[Any, Any, dict[str, Any] | _PredictionAreaColumns | None]:
         """Return the COCO prediction and target datasets, hoisting prediction scores out of the annotation loop.
 
         TorchMetrics' ``_get_coco_format`` hoists boxes and labels to Python lists once per image but reads scores
@@ -1050,11 +1122,12 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
 
         Returns:
             The prediction and target datasets in the order ``_get_coco_datasets`` returns them, followed by the
-            COCO-format dictionary the prediction dataset was built from, or ``None`` when it was loaded from a
-            detection array instead. That dictionary is the source of the per-IoU-type ``area_bbox``/``area_segm``
-            values a multi-IoU-type evaluation switches between; reading it back from hotcoco's ``dataset`` getter
-            would copy the whole prediction set. ``None`` is safe because the array path is taken only for
-            single-IoU-type evaluation, where no area switching happens.
+            source of the per-IoU-type prediction areas a multi-IoU-type evaluation switches between: the
+            COCO-format dictionary the prediction dataset was built from (its ``area_bbox``/``area_segm`` values;
+            reading them back from hotcoco's ``dataset`` getter would copy the whole prediction set), or
+            :class:`_PredictionAreaColumns` when hotcoco loaded a multi-IoU-type set from the detection array.
+            ``None`` when the predictions were loaded from the array for a single IoU type, where no area switching
+            happens.
 
         Raises:
             ValueError: If stored detection scores are not one-dimensional floating-point tensors, or, on the
@@ -1088,6 +1161,8 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         # Built before the target: a float detection label is also a category ID there, which hotcoco's `COCO`
         # constructor rejects with a `TypeError` before the array's own label check would have run.
         detections = self._detection_results_array() if self._loads_detections_from_array(detection_boxes) else None
+        if detections is not None and isinstance(backend, _HotCocoBackend):
+            return self._hotcoco_datasets_from_arrays(detections, classes)
         # `_get_coco_datasets` passes this same list of Python ints (helpers.py:216) even though the parameter is
         # annotated `list[Tensor]`; the values only ever become COCO category IDs.
         all_labels = cast(list[Tensor], classes)
@@ -1122,16 +1197,107 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             self._assign_detection_scores(prediction_dataset["annotations"], self.detection_scores)
         return self._build_coco(prediction_dataset), coco_target, prediction_dataset
 
+    def _hotcoco_datasets_from_arrays(
+        self, detections: np.ndarray[Any, Any], classes: list[int]
+    ) -> tuple[Any, Any, _PredictionAreaColumns | None]:
+        """Return hotcoco's prediction and target datasets built from the stored columns, with no dict per annotation.
+
+        The target comes from ``COCO.from_arrays`` (see :meth:`_hotcoco_target_from_arrays`) and the predictions from
+        ``load_res`` over the detection array, with the stored masks handed over as ``segmentation=`` when ``segm``
+        is evaluated. ``load_res`` keeps each row's box rather than deriving one from its mask and numbers the rows
+        ``1..N`` in order, as pycocotools does; it sets every prediction ``area`` to the box area, which a
+        multi-IoU-type evaluation then switches per IoU type through :meth:`_prediction_dataset_for_iou_type`.
+
+        Args:
+            detections: The detection array from :meth:`_detection_results_array`.
+            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+
+        Returns:
+            The prediction dataset, the target dataset, and, for a multi-IoU-type evaluation, the per-IoU-type
+            prediction areas; ``None`` for a single IoU type, which keeps the box area ``load_res`` set.
+
+        Raises:
+            ValueError: If a non-empty image's target labels are a floating-point or complex tensor.
+        """
+        coco_target = self._hotcoco_target_from_arrays(classes)
+        detection_rles = _rle_dicts(self.detection_mask) if "segm" in self.iou_type else None
+        coco_preds = coco_target.load_res(detections, segmentation=detection_rles)
+        if len(self.iou_type) == 1:
+            return coco_preds, coco_target, None
+        # The box area is the product of the array's width and height columns, the same float64 product
+        # TorchMetrics' `area_bbox` computes from the converted Python floats.
+        area_columns = {"bbox": detections[:, 3] * detections[:, 4], "segm": self._mask_areas(detection_rles or [])}
+        return coco_preds, coco_target, _PredictionAreaColumns(area_columns)
+
+    def _hotcoco_target_from_arrays(self, classes: list[int]) -> Any:
+        """Return the hotcoco ground-truth dataset built from the stored target columns by ``COCO.from_arrays``.
+
+        Reproduces what TorchMetrics' ``_get_coco_format`` writes for each target annotation
+        (``helpers.py:504-571``): annotation IDs ``1..N`` in state order (``from_arrays``' default), the stored
+        ``iscrowd``, and the stored ``area`` where it is positive, otherwise the mask area when ``segm`` is evaluated
+        and the box area when not. Target areas are never switched per IoU type, so a box evaluation that runs
+        beside ``segm`` also reads the mask-area fallback, as upstream's does. Each image takes its height and width
+        from its first mask when ``segm`` is evaluated, and every stored image is listed: with boxes present,
+        upstream drops none.
+
+        Args:
+            classes: Sorted class IDs observed in predictions or targets, used as COCO category IDs.
+
+        Returns:
+            The indexed hotcoco target dataset.
+
+        Raises:
+            ValueError: If a non-empty image's target labels are a floating-point or complex tensor, which upstream
+                rejects per annotation and ``from_arrays`` would reject with a ``TypeError``.
+        """
+        self._validate_detection_labels(self.groundtruth_labels)
+        boxes = torch.cat([image.reshape(-1, 4) for image in self.groundtruth_box]).double().numpy()
+        rles = _rle_dicts(self.groundtruth_mask) if "segm" in self.iou_type else None
+        fallback_area = self._mask_areas(rles) if rles is not None else boxes[:, 2] * boxes[:, 3]
+        stored_area = torch.cat(self.groundtruth_area).double().numpy()
+        images: list[dict[str, Any]] = [{"id": image_id} for image_id in range(len(self.groundtruth_labels))]
+        if rles is not None:
+            for image, masks in zip(images, self.groundtruth_mask):
+                if len(masks) > 0:
+                    image["height"], image["width"] = masks[0][0]
+        annotations_per_image = torch.tensor([len(labels) for labels in self.groundtruth_labels])
+        coco_type = cast(Any, self._coco_backend.coco)
+        return coco_type.from_arrays(
+            images,
+            [{"id": class_id, "name": str(class_id)} for class_id in classes],
+            torch.repeat_interleave(torch.arange(len(images)), annotations_per_image).numpy(),
+            # Validated above, so only an empty floating-point tensor can have promoted the concatenation.
+            torch.cat(self.groundtruth_labels).to(torch.int64).numpy(),
+            boxes,
+            area=np.where(stored_area > 0, stored_area, fallback_area),
+            iscrowd=torch.cat(self.groundtruth_crowds).to(torch.int64).numpy(),
+            segmentation=rles,
+        )
+
+    def _mask_areas(self, rles: list[dict[str, Any]]) -> np.ndarray[Any, Any]:
+        """Return the pixel area of each RLE mask as float64, through the backend's own mask utilities.
+
+        Args:
+            rles: COCO RLE dictionaries.
+
+        Returns:
+            One area for each mask, in order.
+        """
+        mask_utils = cast(Any, self._coco_backend.mask_utils)
+        return np.asarray(mask_utils.area(rles), dtype=np.float64) if rles else np.zeros(0)
+
     def _loads_detections_from_array(self, detection_boxes: list[Tensor] | None) -> bool:
         """Return whether predictions can be loaded from a detection array instead of built as annotation dicts.
 
         Building the prediction dataset is the dominant cost of ``compute()`` once the evaluator is fast: at COCO
         validation scale TorchMetrics materializes one Python dict per detection, over a million of them, which
         takes longer than hotcoco or ufcoco needs to evaluate them. ``loadRes`` accepts the same detections as one
-        array and parses it in Rust. ufcoco keeps the array rows in columns through evaluation even under the
-        adapter's ``COCOeval`` subclass from ultrafast-pycocotools 0.1.13, the floor ``rfdetr[train]`` pins.
-        faster-coco-eval is excluded because its own ``loadRes`` is slower than the dict path it would replace, and
-        mask evaluation is excluded because an array carries no segmentation.
+        array and parses it in Rust. hotcoco takes every IoU type this way, with masks handed over beside the array
+        (``load_res(array, segmentation=...)``); a mask-only state has no boxes to fill the array and keeps the dict
+        path. ufcoco keeps the array rows in columns through evaluation even under the adapter's ``COCOeval``
+        subclass from ultrafast-pycocotools 0.1.13, the floor ``rfdetr[train]`` pins, but its ``loadRes`` takes no
+        masks, so it is box-only. faster-coco-eval is excluded because its own ``loadRes`` is slower than the dict
+        path it would replace.
 
         Args:
             detection_boxes: Stored detection boxes, or ``None`` when the state holds none.
@@ -1139,11 +1305,11 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         Returns:
             Whether the detection-array path applies.
         """
-        return (
-            isinstance(self._coco_backend, (_HotCocoBackend, _UfcocoBackend))
-            and detection_boxes is not None
-            and tuple(self.iou_type) == ("bbox",)
-        )
+        if detection_boxes is None:
+            return False
+        if isinstance(self._coco_backend, _HotCocoBackend):
+            return True
+        return isinstance(self._coco_backend, _UfcocoBackend) and tuple(self.iou_type) == ("bbox",)
 
     def _detection_results_array(self) -> np.ndarray[Any, Any]:
         """Return stored detections as the array COCO's ``loadRes`` accepts, which is also vernier's ``(N, 7)``.
@@ -1164,7 +1330,7 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                 image's detection labels are not an integer tensor.
         """
         self._validate_detection_scores(self.detection_scores)
-        self._validate_detection_labels()
+        self._validate_detection_labels(self.detection_labels)
         # TorchMetrics' `_fix_empty_tensors` reshapes a per-image 1-D empty box tensor to `(1, 0)` rather than
         # `(0, 4)` (avoiding a DDP all-reduce hang), which `torch.cat` rejects against a `(N, 4)` tensor from
         # another image, and whose `len()` would otherwise miscount that image as holding one detection instead
@@ -1207,19 +1373,24 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
                     f"Invalid input score of sample {image_id} (expected floating point, got {image_scores.dtype})"
                 )
 
-    def _validate_detection_labels(self) -> None:
-        """Restate the per-annotation label check TorchMetrics performs during conversion, for the array path.
+    @staticmethod
+    def _validate_detection_labels(labels: list[Tensor]) -> None:
+        """Restate the per-annotation label check TorchMetrics performs during conversion, for the array paths.
 
-        Upstream rejects any detection label that is not a Python ``int`` once converted, one annotation at a time --
-        a whole-valued ``3.0`` included. The detection array never makes that conversion: its category column is
-        float64 whatever the stored dtype was, so the check is restated here on the stored tensor's dtype, which
+        Upstream rejects any detection or target label that is not a Python ``int`` once converted, one annotation
+        at a time -- a whole-valued ``3.0`` included. The array paths never make that conversion: the detection
+        array's category column is float64 whatever the stored dtype was, and hotcoco's ``from_arrays`` rejects a
+        float category column with a ``TypeError``, so the check is restated here on the stored tensor's dtype, which
         every element shares. Integer and boolean tensors pass, as their elements do upstream; an empty tensor
         passes whatever its dtype, because upstream has no element to check.
 
+        Args:
+            labels: Per-image labels, as stored in ``detection_labels`` or ``groundtruth_labels``.
+
         Raises:
-            ValueError: If a non-empty image's detection labels are a floating-point or complex tensor.
+            ValueError: If a non-empty image's labels are a floating-point or complex tensor.
         """
-        for image_id, image_labels in enumerate(self.detection_labels):
+        for image_id, image_labels in enumerate(labels):
             if image_labels.numel() > 0 and (torch.is_floating_point(image_labels) or torch.is_complex(image_labels)):
                 raise ValueError(
                     f"Invalid input class of sample {image_id} (expected integer labels, got {image_labels.dtype})"
@@ -1245,41 +1416,50 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
         return coco_factory(dataset)
 
     def _prediction_dataset_for_iou_type(
-        self, coco_preds: Any, prediction_dataset: dict[str, Any] | None, iou_type: str
+        self, coco_preds: Any, prediction_dataset: dict[str, Any] | _PredictionAreaColumns | None, iou_type: str
     ) -> Any:
         """Point prediction annotation areas at one IoU type of a multi-type evaluation.
 
         Args:
             coco_preds: The prediction COCO dataset built by :meth:`_coco_datasets`.
-            prediction_dataset: The COCO-format dictionary ``coco_preds`` was built from. Never ``None`` here: the
-                array path that returns ``None`` is restricted to single-IoU-type evaluation, which never reaches
-                this method.
+            prediction_dataset: What :meth:`_coco_datasets` returned beside ``coco_preds``: the COCO-format
+                dictionary it was built from, or the per-IoU-type area columns of a hotcoco set loaded from the
+                detection array. Never ``None`` here: ``None`` comes only from a single-IoU-type array load, which
+                never reaches this method.
             iou_type: The IoU type whose per-annotation area should become the active ``area``.
 
         Returns:
             The prediction dataset to evaluate for this IoU type.
 
         Raises:
-            RuntimeError: If a multi-IoU-type evaluation reached the array-built prediction dataset.
+            RuntimeError: If a multi-IoU-type evaluation reached a prediction dataset loaded from the detection array
+                with no area columns, which only the box-only ufcoco path builds.
         """
+        if isinstance(prediction_dataset, _PredictionAreaColumns):
+            areas = prediction_dataset.by_iou_type[iou_type]
+            # Its evaluator keeps the annotations it was built with, so this must run before `compute()` constructs
+            # the evaluator for this IoU type.
+            coco_preds.update_anns(ids=np.arange(1, areas.size + 1), area=areas)
+            return coco_preds
         if prediction_dataset is None:
             raise RuntimeError(
                 "OnePassCocoMeanAveragePrecision cannot switch annotation areas on an array-built prediction "
-                "dataset; the detection-array path must stay restricted to single-IoU-type evaluation."
+                "dataset without area columns; only hotcoco loads multi-IoU-type predictions from an array."
             )
-        for annotation in prediction_dataset["annotations"]:
-            annotation["area"] = annotation[f"area_{iou_type}"]
+        annotations = prediction_dataset["annotations"]
         if isinstance(self._coco_backend, _HotCocoBackend):
-            # hotcoco copies the dictionary into its own index at construction, so the areas just written are
-            # invisible to it; `update_anns` edits that index in place. Its evaluator keeps the annotations it was
-            # built with, so this must run before `compute()` constructs the evaluator for this IoU type.
+            # hotcoco copies the dictionary into its own index at construction, so writing `area` into it would be
+            # invisible there; the column form of `update_anns` edits that index in place, with no dict per
+            # annotation. Its evaluator keeps the annotations it was built with, so this must run before `compute()`
+            # constructs the evaluator for this IoU type.
             coco_preds.update_anns(
-                [
-                    {"id": annotation["id"], "area": annotation["area"]}
-                    for annotation in prediction_dataset["annotations"]
-                ]
+                ids=[annotation["id"] for annotation in annotations],
+                area=[annotation[f"area_{iou_type}"] for annotation in annotations],
             )
-        # faster-coco-eval indexes the assigned dictionary itself, so the areas just written are already live there.
+            return coco_preds
+        # faster-coco-eval indexes the assigned dictionary itself, so the areas written here are live there at once.
+        for annotation in annotations:
+            annotation["area"] = annotation[f"area_{iou_type}"]
         return coco_preds
 
     def _quiet_evaluation(self) -> contextlib.AbstractContextManager[Any]:
