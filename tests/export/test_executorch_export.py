@@ -16,6 +16,7 @@ Tests cover:
 from __future__ import annotations
 
 import contextlib
+import functools
 import importlib.metadata
 import os
 import sys
@@ -37,8 +38,10 @@ from rfdetr.export._executorch.exporter import (
 )
 from rfdetr.export._executorch.inference import load_executorch_method
 from rfdetr.export.prepare import ExportGraph
+from rfdetr.utilities.reproducibility import seed_all
 from tests._online import is_online
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors, max_abs_output_diffs
+from tests.export.test_coreml_export import _MIN_TWO_STAGE_RANK_MARGIN, _two_stage_rank_margin
 
 executorch_only = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
@@ -897,76 +900,111 @@ _EXECUTORCH_DETECTION_MAX_ABS_DIFF = 5e-5
 _EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF = 2e-4
 
 
-def validate_detection_executorch_vs_pytorch(pte_path: Path, model: Any, example: torch.Tensor) -> None:
-    """Compare ExecuTorch detection outputs (boxes, logits) to eager export-mode PyTorch.
+def validate_executorch_vs_pytorch(
+    pte_path: Path, model: Any, example: torch.Tensor, *, output_names: tuple[str, ...], bound: float
+) -> None:
+    """Compare ExecuTorch outputs to eager export-mode PyTorch, one bound for every output.
 
     Args:
         pte_path: Path to the exported ``.pte``.
         model: Export-mode PyTorch module on CPU.
         example: ``(N, C, H, W)`` tensor used for both forwards.
+        output_names: The outputs the head yields, in order, for the failure message.
+        bound: Largest accepted max-abs-diff over any output.
 
     Raises:
-        AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
+        AssertionError: When the output count or shape disagrees or a max-abs-diff reaches *bound*.
 
     Examples:
-        Requires a real ``.pte`` artifact and the ``executorch`` package — not runnable standalone.
-        See ``TestExecutorchEndToEnd`` for real invocations.
+        Skipped: needs a real ``.pte`` artifact and the ``executorch`` package; ``TestExecutorchEndToEnd`` calls it.
 
-        >>> callable(validate_detection_executorch_vs_pytorch)
-        True
+        >>> names = ("boxes", "logits")
+        >>> validate_executorch_vs_pytorch(pte_path, model, example, output_names=names, bound=5e-5)  # doctest: +SKIP
     """
     diffs = _runtime_parity(model, example, pte_path)
-    assert len(diffs) == 2, f"detection export must yield (boxes, logits), got {len(diffs)} outputs"
-    assert max(diffs) < _EXECUTORCH_DETECTION_MAX_ABS_DIFF, (
-        f"ExecuTorch detection outputs diverge from PyTorch: max abs diff {max(diffs)} "
-        f"(boxes={diffs[0]}, logits={diffs[1]}, bound={_EXECUTORCH_DETECTION_MAX_ABS_DIFF})"
+    assert len(diffs) == len(output_names), f"export must yield {output_names}, got {len(diffs)} outputs"
+    assert max(diffs) < bound, (
+        f"ExecuTorch outputs diverge from PyTorch: max abs diff {max(diffs)} "
+        f"({dict(zip(output_names, diffs))}, bound={bound})"
     )
 
 
-def validate_segmentation_executorch_vs_pytorch(pte_path: Path, model: Any, example: torch.Tensor) -> None:
-    """Compare ExecuTorch segmentation outputs (boxes, logits, masks) to eager export-mode PyTorch.
+def _assert_well_conditioned(model: torch.nn.Module, example_input: torch.Tensor) -> None:
+    """Fail with an explicit precondition message when the input's two-stage ranking has a near-tie.
+
+    The runtime and eager PyTorch round differently in fp32, so two neighbouring selection scores closer than their
+    difference can swap which queries ``torch.topk`` selects. Each selected proposal is paired with a positional learned
+    embedding, so a swap changes the decoder output and not only its order.
 
     Args:
-        pte_path: Path to the exported ``.pte``.
-        model: Export-mode PyTorch segmentation module on CPU.
-        example: ``(N, C, H, W)`` tensor used for both forwards.
+        model: Export-mode module whose forward makes exactly one ``torch.topk`` call.
+        example_input: ``(N, C, H, W)`` parity input.
 
     Raises:
-        AssertionError: When output count/shape disagrees or max-abs-diff exceeds tolerance.
+        AssertionError: If the ranking margin is below ``_MIN_TWO_STAGE_RANK_MARGIN``.
 
     Examples:
-        Requires a real ``.pte`` artifact and the ``executorch`` package — not runnable standalone.
-        See ``TestExecutorchEndToEnd`` for real invocations.
-
-        >>> callable(validate_segmentation_executorch_vs_pytorch)
-        True
+        >>> from tests.export.test_coreml_export import _TopkRanker
+        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[1.0, 0.0]]))
+        >>> _assert_well_conditioned(_TopkRanker(1), torch.tensor([[0.5, 0.5]]))
+        Traceback (most recent call last):
+            ...
+        AssertionError: parity input is ill-conditioned: ...
     """
-    diffs = _runtime_parity(model, example, pte_path)
-    assert len(diffs) == 3, f"segmentation export must yield (boxes, logits, masks), got {len(diffs)} outputs"
-    assert max(diffs) < _EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF, (
-        f"ExecuTorch segmentation outputs diverge from PyTorch: max abs diff {max(diffs)} "
-        f"(boxes={diffs[0]}, logits={diffs[1]}, masks={diffs[2]}, bound={_EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF})"
+    margin = _two_stage_rank_margin(model, example_input)
+    assert margin >= _MIN_TWO_STAGE_RANK_MARGIN, (
+        f"parity input is ill-conditioned: two-stage topk scores are only {margin:.2e} apart "
+        f"(< {_MIN_TWO_STAGE_RANK_MARGIN}), so fp32 rounding can swap selected queries and the outputs cannot "
+        "match; lower _EXECUTORCH_E2E_NUM_QUERIES or change the parity input rather than loosening the bound"
     )
 
 
+#: Variants the e2e exports cover, each as ``(model class, output names, parity bound)``.
 _EXECUTORCH_E2E_VARIANTS = [
-    ("RFDETRNano", validate_detection_executorch_vs_pytorch),
-    ("RFDETRSegNano", validate_segmentation_executorch_vs_pytorch),
+    pytest.param(("RFDETRNano", ("boxes", "logits"), _EXECUTORCH_DETECTION_MAX_ABS_DIFF), id="detection"),
+    pytest.param(
+        ("RFDETRSegNano", ("boxes", "logits", "masks"), _EXECUTORCH_SEGMENTATION_MAX_ABS_DIFF), id="segmentation"
+    ),
+    # Keypoint coordinates are decoded like boxes: observed boxes 0.0, logits 6.7e-6, keypoints 0.0 (M3 Pro).
+    pytest.param(
+        ("RFDETRKeypointPreview", ("boxes", "logits", "keypoints"), _EXECUTORCH_DETECTION_MAX_ABS_DIFF), id="keypoint"
+    ),
 ]
 
+#: Queries the parity exports keep. The shipped 300 leave neighbouring two-stage scores of an untrained model about
+#: 1e-6 apart, below the ~1e-5 fp32 drift of the XNNPACK delegate, so one rank swap can flip and move the outputs.
+#: With 5 the margins are far above ``_MIN_TWO_STAGE_RANK_MARGIN``, as in the CoreML and Core AI suites; the shipped
+#: count still runs in ``test_default_query_count_runs_with_eager_shapes``.
+_EXECUTORCH_E2E_NUM_QUERIES = 5
 
-@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS, ids=["detection", "segmentation"])
+#: Seed the module-scoped export fixtures set themselves: they run before the autouse per-test seed reset. Seed 42
+#: leaves SegNano's 5-query margin on the photo below ``_MIN_TWO_STAGE_RANK_MARGIN``; seed 0 does not.
+_EXECUTORCH_EXPORT_SEED = 0
+
+
+@pytest.fixture(scope="module", params=_EXECUTORCH_E2E_VARIANTS)
 def exported(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> tuple[Any, torch.Tensor, Path, Any]:
-    """Export RFDETRNano/RFDETRSegNano to a ``.pte`` once per variant and reuse across the parity checks."""
+    """Export RFDETRNano/RFDETRSegNano/RFDETRKeypointPreview to a ``.pte`` once per variant for the parity checks.
+
+    Exports ``_EXECUTORCH_E2E_NUM_QUERIES`` queries so the two-stage ranking is well separated, and reseeds itself
+    because it runs before the autouse per-test seed reset.
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``.pte`` lowering, so it cannot run standalone.
+
+        >>> model, example, pte_path, validate_fn = exported  # doctest: +SKIP
+        >>> example.shape[0], pte_path.suffix  # doctest: +SKIP
+        (1, '.pte')
+    """
     import rfdetr
 
-    model_cls_name, validate_fn = request.param
+    model_cls_name, output_names, bound = request.param
     model_cls = getattr(rfdetr, model_cls_name)
-    torch.manual_seed(42)
+    seed_all(_EXECUTORCH_EXPORT_SEED)
     out_dir = tmp_path_factory.mktemp(f"executorch_{model_cls_name.lower()}")
-    detector = model_cls(pretrain_weights=None)
+    detector = model_cls(pretrain_weights=None, num_queries=_EXECUTORCH_E2E_NUM_QUERIES)
     pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="xnnpack", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
@@ -974,6 +1012,7 @@ def exported(
     # .contiguous() is a no-op for a fresh randn but states the runtime's requirement explicitly:
     # ExecuTorch ignores input strides and reads the buffer as contiguous NCHW (see issue #1233).
     example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution).contiguous()
+    validate_fn = functools.partial(validate_executorch_vs_pytorch, output_names=output_names, bound=bound)
     return model, example, Path(pte_path), validate_fn
 
 
@@ -983,11 +1022,18 @@ def executorch_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tupl
 
     Uses the public ``backbone_only=True`` route so the ExecuTorch runtime executes the same list-valued
     ``_BackboneExport`` graph that users receive, rather than a mocked converter dispatch.
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``.pte`` lowering, so it cannot run standalone.
+
+        >>> reference_model, example, pte_path = executorch_backbone_export  # doctest: +SKIP
+        >>> "-backbone" in pte_path.stem  # doctest: +SKIP
+        True
     """
     import rfdetr
 
     out_dir = tmp_path_factory.mktemp("executorch_backbone")
-    torch.manual_seed(42)
+    seed_all(_EXECUTORCH_EXPORT_SEED)
     detector = rfdetr.RFDETRNano(pretrain_weights=None)
     pte_path = detector.export(
         output_dir=str(out_dir), format="executorch", backend="xnnpack", backbone_only=True, verbose=False
@@ -997,6 +1043,33 @@ def executorch_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tupl
     resolution = int(detector.model.resolution)
     example = _structured_parity_input(1, 3, resolution, resolution)
     return reference_model, example, Path(pte_path)
+
+
+@pytest.fixture(scope="module")
+def executorch_default_queries_export(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[torch.nn.Module, torch.Tensor, Path]:
+    """Export RFDETRNano with its shipped query count, which ``exported`` trades for a separated ranking.
+
+    The shipped graph is what users receive, and it no longer gets value parity, so it is converted and run here.
+
+    Examples:
+        Skipped: a pytest fixture, and a real ``.pte`` lowering, so it cannot run standalone.
+
+        >>> model, example, pte_path = executorch_default_queries_export  # doctest: +SKIP
+        >>> pte_path.suffix  # doctest: +SKIP
+        '.pte'
+    """
+    import rfdetr
+
+    seed_all(_EXECUTORCH_EXPORT_SEED)
+    out_dir = tmp_path_factory.mktemp("executorch_default_queries")
+    detector = rfdetr.RFDETRNano(pretrain_weights=None)
+    pte_path = detector.export(output_dir=str(out_dir), format="executorch", backend="xnnpack", verbose=False)
+    model = detector.model.model.to("cpu").eval()
+    model.export()
+    example = torch.randn(1, 3, detector.model.resolution, detector.model.resolution).contiguous()
+    return model, example, Path(pte_path)
 
 
 def _portable_kernel_call_names(pte_path: Path) -> list[str]:
@@ -1081,7 +1154,8 @@ class TestExecutorchXnnpackRuntimeSmoke:
 @pytest.mark.integration
 @pytest.mark.e2e_executorch
 class TestExecutorchEndToEnd:
-    """End-to-end export of a real RF-DETR model (detection + segmentation), gated on the executorch package."""
+    """End-to-end export of a real RF-DETR model (detection, segmentation, keypoint), gated on the executorch
+    package."""
 
     def test_no_portable_addmm_kernel_calls(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """No ``aten::addmm`` may survive lowering as a portable kernel call.
@@ -1124,7 +1198,23 @@ class TestExecutorchEndToEnd:
     def test_runtime_output_matches_pytorch(self, exported: tuple[Any, torch.Tensor, Path, Any]) -> None:
         """ExecuTorch runtime output must match the eager PyTorch forward within XNNPACK fp32 tolerance."""
         model, example, pte_path, validate_fn = exported
+        _assert_well_conditioned(model, example)
         validate_fn(pte_path, model, example)
+
+    def test_default_query_count_runs_with_eager_shapes(
+        self, executorch_default_queries_export: tuple[torch.nn.Module, torch.Tensor, Path]
+    ) -> None:
+        """The shipped query count lowers and runs, with the eager shapes and finite values.
+
+        Values are not compared: at this count the two-stage selection scores of an untrained model sit about 1e-6
+        apart (see ``_EXECUTORCH_E2E_NUM_QUERIES``), so a rank swap would fail a value comparison for a reason that
+        has nothing to do with the lowering.
+        """
+        model, example, pte_path = executorch_default_queries_export
+        eager = eager_reference_tensors(model, example)
+        runtime = _executorch_runtime_tensors(pte_path, example)
+        assert [tuple(r.shape) for r in runtime] == [tuple(e.shape) for e in eager]
+        assert all(bool(torch.isfinite(r).all()) for r in runtime)
 
     def test_backbone_outputs_match_pytorch_structured(
         self, executorch_backbone_export: tuple[torch.nn.Module, torch.Tensor, Path]
@@ -1149,9 +1239,11 @@ class TestExecutorchEndToEnd:
         below threshold, while the existing ``torch.randn`` parity check stayed green because a
         freshly allocated random tensor is already contiguous.
 
-        Scores are compared instead of raw logits: ``post_process`` ranks the flattened
-        query x class grid, so it is invariant to the query-order swaps that near-tied two-stage
-        selection scores produce between the two backends.
+        Scores are compared instead of raw logits, and only for an input whose two-stage ranking is well separated.
+        ``post_process`` ranks the flattened query x class grid, which absorbs a permutation of whole output rows
+        but not a two-stage near-tie swap: each selected proposal is paired with a positional learned
+        ``query_feat``/``refpoint_embed``, so a swap changes the decoder output, not only its order. One forced swap
+        moved an untrained Nano's scores by 4.3e-4 to 1.14e-3 (macOS arm64), the order of this test's bound.
         """
         from PIL import Image
 
@@ -1162,6 +1254,7 @@ class TestExecutorchEndToEnd:
         image = Image.open(photo_asset).convert("RGB")
         tensor, _ = infer_transforms((resolution, resolution))(image, None)
         pixel_values = tensor[None].float()
+        _assert_well_conditioned(model, pixel_values)
 
         _check_executorch_available(require_runtime=True)
         from executorch.runtime import Runtime
