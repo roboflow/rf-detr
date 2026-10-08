@@ -2779,6 +2779,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p>Removed <code>rfdetr.datasets.yolo.REQUIRED_DATA_SUBDIRS</code>. <code>is_valid_yolo_dataset</code> resolves split directories through the YAML-aware resolver, which derives the labels directory from the resolved images path, so the constant no longer described how any code finds a split's subdirectories. Nothing inside the package read it; an external importer should inline <code>["images", "labels"]</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1570">#1570</a>)</p>
 </li>
+<li>
+<p><code>rfdetr[onnx]</code> no longer installs <code>polygraphy</code> or <code>onnx_graphsurgeon</code>, so a host that exports to TensorRT or TFLite with <code>rfdetr[onnx]</code> plus a separately installed <code>tensorrt</code> or <code>onnx2tf</code> must install the missing package itself; see the matching entry under Removed. (<a href="https://github.com/roboflow/rf-detr/issues/1588">#1588</a>)</p>
+</li>
 </ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2883,6 +2886,15 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
 <li>
 <p><code>format="openvino", dynamic_batch=True</code> is still refused, but the message now explains that the converted IR already has a dynamic input shape, so one export runs at any batch size. (<a href="https://github.com/roboflow/rf-detr/pull/1585">#1585</a>)</p>
+</li>
+</ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><code>rfdetr[onnx]</code> no longer installs <code>onnxsim</code>, <code>onnx_graphsurgeon</code> or <code>polygraphy</code>, and <code>rfdetr[tflite]</code> no longer installs <code>polygraphy</code>. ONNX export and ONNX Runtime inference have not used them since graph simplification was removed (<a href="https://github.com/roboflow/rf-detr/pull/861">#861</a>, <a href="https://github.com/roboflow/rf-detr/pull/1102">#1102</a>); the ONNX exporter imported them only for the graph optimizer left behind in <code>rfdetr.export._onnx</code>, which nothing called, and that optimizer is removed too. If you exported to TensorRT with <code>rfdetr[onnx]</code> or <code>rfdetr[tflite]</code> and a separately installed <code>tensorrt</code>, install <code>polygraphy</code> yourself (it has no dependencies) or use <code>rfdetr[tensorrt]</code>. If you exported to TFLite with <code>rfdetr[onnx]</code> and a separately installed <code>onnx2tf</code>, install <code>onnx_graphsurgeon</code> yourself, or use <code>rfdetr[tflite]</code> on Python 3.12, the only version it installs on: without <code>onnx_graphsurgeon</code> the export is now refused before the forward pass, with an <code>ImportError</code> naming <code>pip install onnx_graphsurgeon</code>, because it would skip the GridSample rewrite and write a <code>.tflite</code> that produces incorrect scores. The warning that <code>_rewrite_gridsample</code> still logs when the rewrite's import fails names the same install command rather than <code>rfdetr[tflite]</code> alone. <code>rfdetr[onnx]</code> also no longer installs <code>onnxsim&gt;=0.7.0</code>, so onnx2tf's own simplification pass now runs on the <code>onnxsim</code> that your onnx2tf release depends on (<code>onnxsim-prebuilt</code> for onnx2tf 2.4.x, <code>onnxsim</code> 0.6.5 for 2.6.9), and the <code>.tflite</code> it writes can differ from one built with <code>rfdetr[tflite]</code>. (<a href="https://github.com/roboflow/rf-detr/issues/1588">#1588</a>)</p>
+</li>
+<li>
+<p>The private, unused <code>rfdetr.export._onnx.OnnxOptimizer</code>, <code>rfdetr.export._onnx.exporter.onnx_simplify</code> and the <code>rfdetr.export._onnx.symbolic</code> module (<code>CustomOpSymbolicRegistry</code>, <code>register_optimizer</code>). Importing <code>rfdetr.export._onnx</code> no longer imports its submodules; import <code>rfdetr.export._onnx.exporter</code> directly. (<a href="https://github.com/roboflow/rf-detr/issues/1588">#1588</a>)</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
@@ -3286,7 +3298,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><code>RFDETR.from_checkpoint()</code> uses safe deserialization by default (<code>weights_only=True</code>) instead of always running full pickle deserialization. Checkpoints containing custom Python objects beyond <code>argparse.Namespace</code> or <code>types.SimpleNamespace</code> need the new keyword-only <code>trust_checkpoint: bool = False</code> parameter set to <code>True</code> to opt into the old, unsafe behavior; resume-from-checkpoint during training honors the same flag. (<a href="https://github.com/roboflow/rf-detr/pull/1179">#1179</a>)</li>
 <li>TensorRT export no longer shells out to the <code>trtexec</code> CLI — engines are built in-process through the <code>polygraphy</code> Python API, removing the subprocess/shell-injection surface entirely. (<a href="https://github.com/roboflow/rf-detr/pull/853">#853</a>)</li>
 </ul>
-<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<h3 id="removed_1">Removed<a class="headerlink" href="#removed_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>[kornia]</code> extra removed — GPU-side augmentation installs via <code>[augment]</code> (<code>pip install 'rfdetr[augment]'</code>) instead. There is no <code>[kornia]</code> alias extra; <code>pip install 'rfdetr[kornia]'</code> will fail.</li>
 <li><code>rfdetr.util.*</code> and <code>rfdetr.deploy</code> import paths, deprecated since v1.6.0 with <code>remove_in="1.9.0"</code>. Use <code>rfdetr.utilities.*</code>, <code>rfdetr.assets.coco_classes</code>, <code>rfdetr.training.drop_schedule</code>, <code>rfdetr.training.param_groups</code>, <code>rfdetr.visualize.data</code>, <code>rfdetr.models.heads.segmentation</code>, and <code>rfdetr.export</code> instead.</li>
@@ -3372,7 +3384,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>DDP strategy enables <code>find_unused_parameters=True</code> for all detection, keypoint, and segmentation models under <code>strategy='ddp'</code> or <code>strategy='auto'</code> with a distributed launcher, previously segmentation only. Opt out via <code>trainer_kwargs={"strategy": DDPStrategy(find_unused_parameters=False)}</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1094">#1094</a>)</li>
 <li><code>rfdetr.datasets.aug_config</code> module renamed to <code>rfdetr.datasets.aug_configs</code> (plural). Direct imports from <code>rfdetr.datasets.aug_config</code> must be updated; the augmentation preset constants (<code>AUG_AGGRESSIVE</code>, etc.) are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1103">#1103</a>)</li>
 </ul>
-<h3 id="removed_1">Removed<a class="headerlink" href="#removed_1" title="Permanent link">&para;</a></h3>
+<h3 id="removed_2">Removed<a class="headerlink" href="#removed_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>RFDETR.export(simplify=..., force=...)</code> — both kwargs removed from the signature. Deprecated since v1.6.0 with <code>remove_in="1.8.0"</code>; both were no-ops during the deprecation window. Callers passing these args must remove them before upgrading. (<a href="https://github.com/roboflow/rf-detr/pull/1102">#1102</a>)</li>
 </ul>
