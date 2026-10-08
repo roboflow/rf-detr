@@ -6,7 +6,6 @@
 """Lifecycle tests for the ``hotcoco_streaming`` backend of RF-DETR's one-pass COCO adapter."""
 
 import copy
-import importlib.util
 import logging
 import pickle
 from typing import Any
@@ -18,9 +17,10 @@ import torch
 
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend, _warn_streaming_fallback
+from rfdetr.utilities.imports import _IS_HOTCOCO_INSTALLED
 from tests.training.callbacks.test_coco_eval_callback import _make_pl_module, _make_trainer
 
-_requires_hotcoco = pytest.mark.skipif(importlib.util.find_spec("hotcoco") is None, reason="hotcoco is not installed")
+_requires_hotcoco = pytest.mark.skipif(not _IS_HOTCOCO_INSTALLED, reason="hotcoco is not installed")
 # The two ways a metric gets copied mid-epoch: Lightning's spawn/checkpoint plumbing pickles it, EMA set-up deep-copies.
 _ROUND_TRIPS = [
     pytest.param(lambda metric: pickle.loads(pickle.dumps(metric)), id="pickle"),

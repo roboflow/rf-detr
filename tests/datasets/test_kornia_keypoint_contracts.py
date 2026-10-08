@@ -8,12 +8,10 @@
 import pytest
 import torch
 
-from rfdetr.config import AugmentationBackend
 from rfdetr.datasets.kornia_transforms import build_kornia_pipeline, keypoint_horizontal_flip_mask
+from rfdetr.utilities.imports import _IS_KORNIA_INSTALLED
 
-kornia_only = pytest.mark.skipif(
-    not AugmentationBackend.KORNIA._is_available(), reason="kornia not installed, run: pip install rfdetr[augment]"
-)
+kornia_only = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
 
 
 @kornia_only

@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for the WebDataset shard pack and streaming-load package.
 
-Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind an
-``importorskip`` on the optional ``data`` extra — streaming, sizing and parity against the loose-file
+Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a ``skipif``
+decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
 :class:`~rfdetr.datasets.coco.CocoDetection` the shards were packed from.
 """
 
@@ -50,8 +50,17 @@ from rfdetr.datasets.webdataset.load import (
     plan_samples_per_worker,
 )
 from rfdetr.datasets.webdataset.pack import _pack_generation, pack_coco_to_shards, tar_member_bytes
+from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PYTORCH_LIGHTNING_INSTALLED, _IS_WEBDATASET_INSTALLED
 from rfdetr.utilities.tensors import make_collate_fn
 from tests.datasets._memory import peak_traced_bytes
+
+webdataset_only = pytest.mark.skipif(
+    not _IS_WEBDATASET_INSTALLED, reason="webdataset not installed; skip streaming tests (optional `data` extra)"
+)
+pytorch_lightning_only = pytest.mark.skipif(
+    not _IS_PYTORCH_LIGHTNING_INSTALLED, reason="pytorch_lightning not installed; skip DataModule tests"
+)
+matplotlib_only = pytest.mark.skipif(not _IS_MATPLOTLIB_INSTALLED, reason="matplotlib not installed; skip sample grid")
 
 _CATEGORIES = [{"id": 3, "name": "cat"}, {"id": 9, "name": "dog"}]
 
@@ -643,18 +652,9 @@ def _pack(tmp_path: Path, **kwargs: Any) -> Path:
     return shard_dir
 
 
+@webdataset_only
 class TestWebDatasetDetection:
     """Streaming a packed split reproduces the loose-file dataset it was packed from."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @pytest.mark.parametrize(
         ("path", "expected"),
@@ -675,9 +675,11 @@ class TestWebDatasetDetection:
         assert urlparse(_shard_url(path)).path == expected
 
     def test_webdataset_opens_every_shard_url_this_dataset_emits(self, tmp_path: Path) -> None:
+        from webdataset.cache import StreamingOpen
+
         shard_dir = _pack(tmp_path / "shard dir", count=4)
         dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
-        opener = pytest.importorskip("webdataset.cache").StreamingOpen()
+        opener = StreamingOpen()
         opened = [source["stream"].read() for source in opener(dataset._shard_urls())]
         assert opened == [(shard_dir / name).read_bytes() for name in dataset.index.shards]
 
@@ -903,6 +905,7 @@ def _rewrite_shard_without(shard: Path, extension: str) -> None:
             tar.addfile(member, BytesIO(payload))
 
 
+@webdataset_only
 class TestStreamingShuffle:
     """Shard-order shuffling has to stay a partition within an epoch and change between epochs."""
 
@@ -936,16 +939,6 @@ class TestStreamingShuffle:
             assert sorted(rank_ids[0] + rank_ids[1]) == list(range(1000, 1024))
             epochs.append(rank_ids)
         assert set(epochs[0][0]) != set(epochs[1][0])
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @pytest.mark.parametrize("num_workers", [pytest.param(0, id="main-process"), pytest.param(2, id="two-workers")])
     def test_sample_order_changes_between_epochs(self, tmp_path: Path, num_workers: int) -> None:
@@ -1064,18 +1057,9 @@ class TestPlanSamplesPerWorker:
             plan_samples_per_worker(79, batch_size=4, num_workers=2, grad_accum_steps=20)
 
 
+@webdataset_only
 class TestBuildWebdatasetLoader:
     """Training plans a fixed epoch; evaluation passes over every sample exactly once."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @pytest.mark.parametrize("num_workers", [pytest.param(0, id="main-process"), pytest.param(2, id="two-workers")])
     def test_training_length_matches_the_batches_produced(self, tmp_path: Path, num_workers: int) -> None:
@@ -1403,18 +1387,9 @@ def _id_collate(batch: list[tuple[Any, Any]]) -> list[int]:
     return [int(target["image_id"]) for _, target in batch]
 
 
+@webdataset_only
 class TestBuildWebdataset:
     """The dataset builder mirrors the loose-file builders' conventions."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data`` extra is not installed.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
 
     @staticmethod
     def _namespace(dataset_dir: Path, **overrides: Any) -> types.SimpleNamespace:
@@ -1548,19 +1523,10 @@ class TestBuildWebdataset:
         assert isinstance(dataset, WebDatasetDetection)
 
 
+@webdataset_only
+@pytorch_lightning_only
 class TestDataModuleStreaming:
     """The DataModule routes a streaming split away from the sampler-based loaders."""
-
-    @pytest.fixture(autouse=True)
-    def _require_webdataset(self) -> None:
-        """Skip every test in this class when the optional ``data``/``train`` extras are absent.
-
-        Examples:
-            >>> pass  # doctest: +SKIP
-            A pytest fixture, only runnable through pytest's fixture injection.
-        """
-        pytest.importorskip("webdataset")
-        pytest.importorskip("pytorch_lightning")
 
     @pytest.fixture
     def datamodule(self, tmp_path: Path) -> Any:
@@ -1692,7 +1658,7 @@ class TestDataModuleStreaming:
     def test_datamodule_reports_the_shard_index_class_names(self, datamodule: Any) -> None:
         assert datamodule.class_names == ["cat", "dog"]
 
+    @matplotlib_only
     def test_sample_grid_rejects_a_streaming_split(self, datamodule: Any) -> None:
-        pytest.importorskip("matplotlib")
         with pytest.raises(TypeError, match="map-style dataset"):
             datamodule._show_samples(2, split="train")

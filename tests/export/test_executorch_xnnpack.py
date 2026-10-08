@@ -315,9 +315,10 @@ class TestFoldConstants:
         # its weight at run time, so the results agree to float32 rounding, not bit for bit.
         torch.testing.assert_close(actual, expected)
 
+    @executorch_only
     def test_lowered_program_matches_eager(self) -> None:
         """The ``.pte`` holds each weight slice, not the start of the packed ``in_proj_weight``."""
-        runtime = pytest.importorskip("executorch.runtime")
+        from executorch import runtime
         from executorch.backends.xnnpack.partition.xnnpack_partitioner import XnnpackPartitioner
         from executorch.exir import to_edge_transform_and_lower
 
