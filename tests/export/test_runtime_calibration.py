@@ -150,9 +150,26 @@ class TestArraysFromSamples:
         samples = np.random.default_rng(0).uniform(0, 255, (2, 3, 4, 4)).astype(np.float32)
         with caplog.at_level(logging.WARNING, logger="rf-detr"):
             list(_arrays_from_samples(samples, height=4, width=4, channels=3))
-        assert [record.getMessage().split(" spans")[0] for record in caplog.records] == [
+        # pytest>=9.1 also attaches caplog to the non-propagating "rf-detr" logger, so with propagation forced on above
+        # each record is captured twice, as the same object; dropping repeated objects keeps a warning logged twice.
+        assert [record.getMessage().split(" spans")[0] for record in dict.fromkeys(caplog.records)] == [
             "Calibration sample 0",
             "Calibration sample 1",
+        ]
+
+    @pytest.mark.filterwarnings("ignore:overflow encountered in cast:RuntimeWarning")
+    def test_float64_sample_beyond_float32_range_is_warned_about_and_still_yielded(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A float64 value that overflows float32 becomes inf on conversion, which the range warning reports."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        samples = np.full((1, 3, 4, 4), 1e300, dtype=np.float64)
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            batches = list(_arrays_from_samples(samples, height=4, width=4, channels=3))
+        assert len(batches) == 1
+        # Repeated objects are one emission under pytest>=9.1; see test_each_unnormalized_sample_is_warned_about.
+        assert [record.getMessage().split(" spans")[0] for record in dict.fromkeys(caplog.records)] == [
+            "Calibration sample 0"
         ]
 
     def test_normalized_extremes_are_not_warned_about(
