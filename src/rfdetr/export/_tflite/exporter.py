@@ -123,6 +123,9 @@ def _replace_single_gridsample(node: Any, graph: Any, *, index: int) -> None:
     ``padding_mode="zeros"``, ``align_corners=0``.  Out-of-bounds sample positions are clamped to the zero-padded
     border, which has the same effect as PyTorch's zero padding.
 
+    ``format="litert"`` samples the same way in PyTorch, with
+    :func:`~rfdetr.export._litert.sampling.pixel_row_grid_sample`.
+
     Shape-dependent values are computed at runtime via ONNX Shape/Gather/ Concat/Cast ops so the subgraph works for any
     static or dynamic input shape.
 
