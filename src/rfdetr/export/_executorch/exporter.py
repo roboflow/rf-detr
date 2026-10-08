@@ -60,6 +60,7 @@ from typing import Any, Literal, cast
 import torch
 from torch import nn
 
+from rfdetr.export._executorch.xnnpack import decompose_attention, fold_constants
 from rfdetr.export._naming import append_backbone_marker, resolve_export_stem
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
@@ -470,7 +471,8 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
             An ExecuTorch program manager (``.buffer`` holds the ``.pte`` bytes).
 
         Raises:
-            ImportError: If the backend's ExecuTorch extension, or ``AddmmToLinearTransform``, is unavailable.
+            ImportError: If the backend's ExecuTorch extension, ``AddmmToLinearTransform`` or, for XNNPACK,
+                ``executorch.exir.passes.constant_prop_pass`` is unavailable.
         """
         from executorch.exir import to_edge_transform_and_lower
 
@@ -481,6 +483,10 @@ class ExecuTorchExporter(Exporter[ExecutorchConfig]):
         # lowering fails. Non-strict keeps those inline and lowers cleanly with verified parity. Revisit
         # strict=True when that upstream torch.export <-> ExecuTorch interaction is fixed.
         exported_program = torch.export.export(model, (input_tensors,), strict=False)
+        if backend == "xnnpack":
+            # Unmasked attention and constant weight slices keep the encoder and decoder inside the delegate (the
+            # CHANGELOG entry for PR #1601 has the measurements). Not applied to CoreML, which was not evaluated.
+            exported_program = fold_constants(decompose_attention(exported_program))
         # Imported in the non-QNN path only: the qnn backend never uses this transform, and
         # some ExecuTorch installs don't ship it -- a top-level import would raise ImportError
         # they never needed.
