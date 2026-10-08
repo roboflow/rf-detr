@@ -7,15 +7,9 @@
 # Copyright (c) 2024 Baidu. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Onnx optimizer and symbolic registry."""
+"""ONNX export and its ONNX Runtime helpers.
 
-from rfdetr.export._onnx import exporter, symbolic
-from rfdetr.export._onnx.exporter import OnnxOptimizer
-from rfdetr.export._onnx.symbolic import CustomOpSymbolicRegistry
-
-__all__ = [
-    "exporter",
-    "symbolic",
-    "OnnxOptimizer",
-    "CustomOpSymbolicRegistry",
-]
+Import the submodules directly — :mod:`rfdetr.export._onnx.exporter` writes the ``.onnx`` file, and
+:mod:`rfdetr.export._onnx.inference` runs one. This package intentionally re-exports nothing, so patching a symbol
+reaches the module that actually defines it.
+"""
