@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -187,6 +188,37 @@ class TestBuildTrainerCallbacks:
         coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
 
         assert len(coco_cb.map_metric._stream_categories) == model_config.num_classes + 1
+
+    def test_streaming_backend_receives_the_model_class_count_on_the_ema_metric(self, tmp_path: Path) -> None:
+        """The EMA metric streams too: dropping its ``num_classes`` would silently make it evaluate in one batch."""
+        pytest.importorskip("hotcoco")
+        model_config = _mc()
+        trainer = build_trainer(_tc(tmp_path, use_ema=True, eval_backend="hotcoco_streaming"), model_config)
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+        coco_cb.setup(trainer, SimpleNamespace(model_config=model_config), stage="fit")
+
+        coco_cb._prepare_ema_metric(trainer)
+
+        assert len(coco_cb.map_metric_ema._stream_categories) == model_config.num_classes + 1
+
+    @pytest.mark.parametrize(
+        ("num_classes", "expected"),
+        [
+            pytest.param(np.int64(3), 3),
+            pytest.param(True, None),
+            pytest.param("3", None),
+            pytest.param(None, None),
+        ],
+    )
+    def test_class_count_coercion(self, tmp_path: Path, num_classes: Any, expected: int | None) -> None:
+        """An integer-like class count reaches the metric as an ``int``; a ``bool`` or non-integer becomes ``None``."""
+        trainer = build_trainer(_tc(tmp_path, use_ema=False), _mc())
+        coco_cb = next(cb for cb in trainer.callbacks if isinstance(cb, COCOEvalCallback))
+
+        coco_cb.setup(trainer, SimpleNamespace(model_config=SimpleNamespace(num_classes=num_classes)), stage="fit")
+
+        assert coco_cb._num_classes == expected
+        assert type(coco_cb._num_classes) is type(expected)
 
     def test_coco_eval_uses_keypoint_oks_sigmas(self, tmp_path):
         """COCOEvalCallback receives custom keypoint OKS sigmas from TrainConfig."""

@@ -223,6 +223,32 @@ def test_empty_side_state_matches_batch_hotcoco(iou_type: Any, predicted: int, a
 
 
 @_requires_hotcoco
+@pytest.mark.parametrize("backend", ["hotcoco", "hotcoco_streaming"])
+def test_float_detection_labels_raise_the_batch_path_error(backend: str) -> None:
+    """Float labels are refused with the same ``ValueError`` on both hotcoco backends, streamed or not."""
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    predictions[0]["labels"] = predictions[0]["labels"].float()
+    metric = OnePassCocoMeanAveragePrecision(iou_type="bbox", backend=backend, class_metrics=True, num_classes=2)
+
+    with pytest.raises(ValueError, match="expected integer labels"):
+        metric.update(predictions, targets)
+        metric.compute()
+
+
+@_requires_hotcoco
+def test_float_ground_truth_labels_are_refused_while_streaming() -> None:
+    """A float target label fails at ``update()`` rather than as a raw ``IndexError`` in ``compute()``."""
+    predictions, targets = _disc_records(predicted=1, annotated=1)
+    targets[0]["labels"] = targets[0]["labels"].float()
+    metric = OnePassCocoMeanAveragePrecision(
+        iou_type="bbox", backend="hotcoco_streaming", class_metrics=False, num_classes=2
+    )
+
+    with pytest.raises(ValueError, match="expected integer labels"):
+        metric.update(predictions, targets)
+
+
+@_requires_hotcoco
 def test_callback_streams_validation_only_not_the_train_split() -> None:
     """``hotcoco_streaming`` streams validation only; the train-split metric evaluates in one batch on ``hotcoco``.
 

@@ -769,11 +769,16 @@ class OnePassCocoMeanAveragePrecision(MeanAveragePrecision):
             self._stop_streaming("StreamingEval cannot merge state across distributed ranks")
             return
         categories = cast(list[dict[str, Any]], self._stream_categories)
+        # The batch path makes this check in `_detection_results_array`; without it a float label reaches
+        # `StreamingEval` as a raw `IndexError` at `compute()`, or is accepted silently without `class_metrics`.
+        self._validate_detection_labels(self.detection_labels[-num_images:])
+        self._validate_detection_labels(self.groundtruth_labels[-num_images:])
         labels = torch.cat([*self.detection_labels[-num_images:], *self.groundtruth_labels[-num_images:]])
         if labels.numel() and (int(labels.min()) < 0 or int(labels.max()) >= len(categories)):
             # hotcoco 1.2 rejects an undeclared category with `KeyError`, but a negative id in the detection array
-            # with `ValueError`, the type it also raises for a NaN score. One range check ahead of `update()` keeps
-            # both ends of the label range on the same fallback without catching a genuine input error.
+            # with `ValueError`. One range check ahead of `update()` keeps both ends of the label range on the same
+            # fallback without catching a genuine input error. A NaN score is not caught here: `load_res()` raises
+            # `RuntimeError` for it.
             self._stop_streaming(f"a label falls outside the declared categories [0, {len(categories) - 1}]")
             return
         if self._streams is None:
