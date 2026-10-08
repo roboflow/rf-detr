@@ -6,6 +6,7 @@
 """Contract tests for RF-DETR's one-pass TorchMetrics COCO adapter."""
 
 import copy
+import logging
 import pickle
 import sys
 import warnings
@@ -32,18 +33,44 @@ from rfdetr.training.coco_map import (
     _vernier,
     _vernier_thread_budget,
     _VernierBackend,
+    _warn_streaming_fallback,
 )
+
+# pytest-doctestplus has no ``+REQUIRES`` directive, so a helper doctest that builds a hotcoco metric is gated on the
+# optional package here instead, and skips rather than fails where the ``train`` extra is not installed.
+__doctest_requires__ = {"_metric_fed_per_image": ["hotcoco"]}
 
 # Every backend the adapter accepts, with the package `pytest.importorskip` has to find for each.
 _BACKEND_PACKAGES = {
     "faster_coco_eval": "faster_coco_eval",
     "hotcoco": "hotcoco",
+    "hotcoco_streaming": "hotcoco",
     "ufcoco": "ultrafast_pycocotools",
     "vernier": "vernier",
 }
 _ALL_BACKENDS = list(_BACKEND_PACKAGES)
 # The backends that replace the evaluation of a `faster_coco_eval`-named TorchMetrics backend.
-_ALTERNATIVE_BACKENDS = ["hotcoco", "ufcoco", "vernier"]
+_ALTERNATIVE_BACKENDS = ["hotcoco", "hotcoco_streaming", "ufcoco", "vernier"]
+# Streaming is disabled under DDP, so the real two-rank spawn would only exercise the batch path it falls back to.
+_NON_STREAMING_BACKENDS = [backend for backend in _ALL_BACKENDS if backend != "hotcoco_streaming"]
+# `hotcoco_streaming` streams only when the model's class count is known; without it the metric silently evaluates in
+# one batch, and a shared test would pass without ever touching the streaming path.
+_BACKEND_KWARGS: dict[str, dict[str, Any]] = {"hotcoco_streaming": {"num_classes": 90}}
+
+
+def _assert_streams_when_backend_streams(metric: OnePassCocoMeanAveragePrecision) -> None:
+    """Assert a metric on a streaming backend really opened its stream, between ``update()`` and ``compute()``.
+
+    A streaming backend that fell back to the batch path returns the same numbers, so a parity test cannot tell the two
+    apart; this is what keeps such a test from passing vacuously. Call it before ``compute()``, which closes the stream.
+
+    Examples:
+        >>> metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval")
+        >>> _assert_streams_when_backend_streams(metric)
+    """
+    assert (metric._streams is not None) == metric._coco_backend.streams, (
+        "a streaming backend must have opened its stream (is num_classes passed?), and a batch backend must not"
+    )
 
 
 def _require_backend(backend: str) -> None:
@@ -473,11 +500,12 @@ def test_empty_predictions_and_targets_return_compact_empty_class_result(backend
     at all, and hotcoco builds its index there rather than in a later ``createIndex()`` call.
     """
     _require_backend(backend)
-    metric = OnePassCocoMeanAveragePrecision(backend=backend, class_metrics=True)
+    metric = OnePassCocoMeanAveragePrecision(backend=backend, class_metrics=True, **_BACKEND_KWARGS.get(backend, {}))
     metric.update(
         [{"boxes": torch.empty((0, 4)), "scores": torch.empty(0), "labels": torch.empty(0, dtype=torch.long)}],
         [{"boxes": torch.empty((0, 4)), "labels": torch.empty(0, dtype=torch.long)}],
     )
+    _assert_streams_when_backend_streams(metric)
 
     result = metric.compute()
 
@@ -495,6 +523,7 @@ def test_backend_registry_matches_the_typed_eval_backend_names() -> None:
     metric construction, or construct fine yet be rejected by the config.
     """
     assert set(_BACKENDS) == set(get_args(CocoEvalBackend))
+    assert set(_BACKENDS) == set(_BACKEND_PACKAGES), "register a new backend in the shared test lists too"
 
 
 def test_adapter_rejects_unsupported_result_and_backend_modes() -> None:
@@ -771,7 +800,7 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str, b
 # makeDeviceForHostname unsupported-device errors (see tests/training/test_trainer_smoke.py).
 @pytest.mark.ddp
 @pytest.mark.skipif(sys.platform == "win32", reason="gloo DDP spawn unsupported on Windows CI")
-@pytest.mark.parametrize("backend", _ALL_BACKENDS)
+@pytest.mark.parametrize("backend", _NON_STREAMING_BACKENDS)
 def test_distributed_merge_supports_uneven_shards_with_empty_rank(tmp_path, backend: str) -> None:
     """Two real Gloo ranks must finish without deadlock when only rank zero receives a metric update.
 
@@ -839,9 +868,10 @@ def test_alternative_backend_matches_faster_coco_eval(backend: str) -> None:
     predictions, targets = multiclass_detection_state()
     kwargs: dict[str, Any] = {"class_metrics": True, "sync_on_compute": False}
     expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
-    actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs)
+    actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs, **_BACKEND_KWARGS.get(backend, {}))
     expected_metric.update(predictions, targets)
     actual_metric.update(predictions, targets)
+    _assert_streams_when_backend_streams(actual_metric)
 
     expected = expected_metric.compute()
     actual = actual_metric.compute()
@@ -863,9 +893,9 @@ def test_alternative_backend_matches_faster_coco_eval_for_segmentation(backend: 
 
     Segmentation is where the backends diverge structurally. hotcoco returns a copy from its ``dataset`` getter, so the
     ``area_bbox``/``area_segm`` swap the multi-IoU-type path performs reaches its evaluator only through
-    ``COCO.update_anns`` (hotcoco 1.0.1 fixed the earlier bytes-RLE constructor mismatch). ufcoco's RLE encoder rejects
-    the boolean masks TorchMetrics hands over, so the adapter converts them; a mask AP that silently collapses to 0.0 is
-    what either mistake would look like.
+    ``COCO.update_anns`` (the supported hotcoco floor is past the earlier bytes-RLE constructor mismatch). ufcoco's RLE
+    encoder rejects the boolean masks TorchMetrics hands over, so the adapter converts them; a mask AP that silently
+    collapses to 0.0 is what either mistake would look like.
     """
     _require_backend(backend)
     mask = torch.zeros(2, 16, 16, dtype=torch.bool)
@@ -890,9 +920,10 @@ def test_alternative_backend_matches_faster_coco_eval_for_segmentation(backend: 
     ]
     kwargs: dict[str, Any] = {"iou_type": ("bbox", "segm"), "class_metrics": True, "sync_on_compute": False}
     expected_metric = OnePassCocoMeanAveragePrecision(backend="faster_coco_eval", **kwargs)
-    actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs)
+    actual_metric = OnePassCocoMeanAveragePrecision(backend=backend, **kwargs, **_BACKEND_KWARGS.get(backend, {}))
     expected_metric.update(predictions, targets)
     actual_metric.update(predictions, targets)
+    _assert_streams_when_backend_streams(actual_metric)
 
     expected = expected_metric.compute()
     actual = actual_metric.compute()
@@ -930,9 +961,13 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
 
     def recall_at(max_detections: int) -> float:
         metric = OnePassCocoMeanAveragePrecision(
-            backend=backend, max_detection_thresholds=[1, 10, max_detections], sync_on_compute=False
+            backend=backend,
+            max_detection_thresholds=[1, 10, max_detections],
+            sync_on_compute=False,
+            **_BACKEND_KWARGS.get(backend, {}),
         )
         metric.update(predictions, targets)
+        _assert_streams_when_backend_streams(metric)
         return float(metric.compute()[f"mar_{max_detections}"])
 
     assert recall_at(2) < recall_at(500)
@@ -942,7 +977,7 @@ def test_max_detection_thresholds_reach_the_evaluator(backend: str) -> None:
 def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str], backend: str) -> None:
     """Selecting hotcoco must not add backend chatter to a training run's console output.
 
-    hotcoco 1.0.1 routes its COCO summary table through ``sys.stdout`` and raises configuration diagnostics as
+    hotcoco routes its COCO summary table through ``sys.stdout`` and raises configuration diagnostics as
     ``UserWarning``s, so both are reachable with ordinary Python-level redirection. Without suppression, the table would
     land on the console on every validation epoch of every run. ``test_hotcoco_evaluation_raises_no_warnings`` covers
     the warning channel. ``hotcoco_streaming`` matches in ``update()``, so the window covers it too.
@@ -966,10 +1001,10 @@ def test_hotcoco_evaluation_prints_nothing(capfd: pytest.CaptureFixture[str], ba
 def test_hotcoco_evaluation_raises_no_warnings(backend: str) -> None:
     """Selecting hotcoco must not raise a warning per evaluation for configuration RF-DETR chose deliberately.
 
-    hotcoco 1.0.1 reports every evaluator parameter differing from the COCO defaults as a Python warning (and prints a
-    summary table on ``sys.stdout``). RF-DETR overrides ``maxDets``, and torchmetrics keeps its thresholds in float32,
-    so the IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three warnings per ``compute()``
-    on a real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
+    hotcoco reports every evaluator parameter differing from the COCO defaults as a Python warning (and prints a summary
+    table on ``sys.stdout``). RF-DETR overrides ``maxDets``, and torchmetrics keeps its thresholds in float32, so the
+    IoU and recall grids arrive off-reference by ~2.4e-8 and are reported too -- three warnings per ``compute()`` on a
+    real configuration. The stdout table is what ``test_hotcoco_evaluation_prints_nothing`` asserts on; the warning
     channel reaches a caller's ``catch_warnings``, a notebook cell, or a ``-W error`` run. ``hotcoco_streaming`` matches
     in ``update()``, so the window covers it too.
     """
@@ -1903,7 +1938,8 @@ def test_missing_hotcoco_dependency_names_the_extra(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize("backend", _ALL_BACKENDS)
-def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
+@pytest.mark.parametrize("iou_type", [("bbox", "segm"), ("segm", "bbox")])
+def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str, iou_type: tuple[str, ...]) -> None:
     """Each IoU type of a joint evaluation must bucket detections by that type's own area.
 
     TorchMetrics emits ``area_bbox`` and ``area_segm`` per annotation and the active ``area`` has to be switched between
@@ -1920,7 +1956,11 @@ def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
     predicted = masks.clone()
     predicted[0, 0:25, 0:25] = True
     metric = OnePassCocoMeanAveragePrecision(
-        backend=backend, iou_type=("bbox", "segm"), class_metrics=True, sync_on_compute=False
+        backend=backend,
+        iou_type=iou_type,
+        class_metrics=True,
+        sync_on_compute=False,
+        **_BACKEND_KWARGS.get(backend, {}),
     )
     metric.update(
         [
@@ -1933,6 +1973,7 @@ def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
         ],
         [{"boxes": torch.tensor([[0.0, 0.0, 20.0, 20.0]]), "masks": masks[:1], "labels": torch.tensor([1])}],
     )
+    _assert_streams_when_backend_streams(metric)
 
     result = metric.compute()
 
@@ -1943,6 +1984,80 @@ def test_multi_iou_type_areas_follow_their_own_iou_type(backend: str) -> None:
     # Mask pass: only the true positive is "small", and its 25x25 prediction over a 20x20 target is IoU 0.64 —
     # matched at 3 of the 10 COCO thresholds.
     assert float(result["segm_map_small"]) == pytest.approx(0.3)
+
+
+def _rectangle_records(*, with_predictions: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return two images of axis-aligned rectangle masks that fill their boxes exactly, so box and mask areas agree.
+
+    Args:
+        with_predictions: Whether each image carries detections; when false they are empty ``(0, 4)`` / ``(0, H, W)``.
+
+    Returns:
+        The prediction and target lists in TorchMetrics detection format.
+
+    Examples:
+        >>> predictions, targets = _rectangle_records(with_predictions=False)
+        >>> predictions[0]["boxes"].shape, targets[0]["masks"].shape
+        (torch.Size([0, 4]), torch.Size([1, 32, 32]))
+    """
+    predictions: list[dict[str, Any]] = []
+    targets: list[dict[str, Any]] = []
+    for left in (2, 10):
+        mask = torch.zeros(1, 32, 32, dtype=torch.bool)
+        mask[0, 4:20, left : left + 12] = True
+        box = torch.tensor([[float(left), 4.0, float(left + 12), 20.0]])
+        targets.append({"boxes": box, "masks": mask, "labels": torch.tensor([1])})
+        predictions.append(
+            {
+                "boxes": box if with_predictions else torch.zeros(0, 4),
+                "masks": mask if with_predictions else torch.zeros(0, 32, 32, dtype=torch.bool),
+                "scores": torch.tensor([0.9]) if with_predictions else torch.zeros(0),
+                "labels": torch.tensor([1]) if with_predictions else torch.zeros(0, dtype=torch.long),
+            }
+        )
+    return predictions, targets
+
+
+def _computed(
+    backend: str, iou_type: tuple[str, ...], records: tuple[list[dict[str, Any]], list[dict[str, Any]]]
+) -> dict[str, torch.Tensor]:
+    """Return ``compute()`` of a ``backend`` metric fed ``records`` in one ``update()``.
+
+    Examples:
+        >>> predictions, targets = _rectangle_records(with_predictions=True)
+        >>> float(_computed("faster_coco_eval", ("bbox",), (predictions, targets))["map"])
+        1.0
+    """
+    metric = OnePassCocoMeanAveragePrecision(
+        backend=backend, iou_type=iou_type, class_metrics=True, sync_on_compute=False
+    )
+    metric.update(*records)
+    return metric.compute()
+
+
+class TestHotcocoMultiIouTypeMatchesFasterCocoEval:
+    """A bbox+segm hotcoco run switches the active area with ``update_anns`` and must still equal the reference."""
+
+    @pytest.mark.parametrize("iou_type", [("bbox", "segm"), ("segm", "bbox")])
+    def test_identical_box_and_mask_area(self, iou_type: tuple[str, ...]) -> None:
+        """Rectangle masks that fill their boxes make the area switch a no-op; the result must not move."""
+        _require_backend("hotcoco")
+        records = _rectangle_records(with_predictions=True)
+
+        actual = _computed("hotcoco", iou_type, records)
+
+        _assert_same_metrics(actual, _computed("faster_coco_eval", iou_type, records))
+        assert float(actual["bbox_map"]) > 0, "fixture must produce a non-trivial score"
+
+    @pytest.mark.parametrize("iou_type", [("bbox", "segm"), ("segm", "bbox")])
+    def test_empty_predictions(self, iou_type: tuple[str, ...]) -> None:
+        """Ground truth with no detections on any image must evaluate, not fail inside the area switch."""
+        _require_backend("hotcoco")
+        records = _rectangle_records(with_predictions=False)
+
+        actual = _computed("hotcoco", iou_type, records)
+
+        _assert_same_metrics(actual, _computed("faster_coco_eval", iou_type, records))
 
 
 def test_hotcoco_multi_iou_type_switches_areas_without_rebuilding_predictions() -> None:
@@ -2137,6 +2252,49 @@ def _metric_fed_per_image(
     return metric
 
 
+def _metric_fed_in_batches(
+    backend: str,
+    predictions: list[dict[str, torch.Tensor]],
+    targets: list[dict[str, torch.Tensor]],
+    batch_sizes: tuple[int, ...],
+    **kwargs: Any,
+) -> OnePassCocoMeanAveragePrecision:
+    """Return a metric whose ``update()`` calls carried ``batch_sizes`` images each, in order.
+
+    Examples:
+        >>> predictions, targets = multiclass_detection_state()
+        >>> metric = _metric_fed_in_batches("faster_coco_eval", predictions, targets, (2, 1))
+        >>> len(metric.groundtruth_labels)
+        3
+    """
+    metric = OnePassCocoMeanAveragePrecision(backend=backend, sync_on_compute=False, **kwargs)
+    start = 0
+    for size in batch_sizes:
+        metric.update(predictions[start : start + size], targets[start : start + size])
+        start += size
+    return metric
+
+
+def _no_detections() -> dict[str, torch.Tensor]:
+    """Return the prediction of an image on which nothing was detected.
+
+    Examples:
+        >>> _no_detections()["boxes"].shape
+        torch.Size([0, 4])
+    """
+    return {"boxes": torch.zeros(0, 4), "scores": torch.zeros(0), "labels": torch.zeros(0, dtype=torch.long)}
+
+
+def _no_ground_truth() -> dict[str, torch.Tensor]:
+    """Return the target of an image that holds no annotated object.
+
+    Examples:
+        >>> _no_ground_truth()["labels"].shape
+        torch.Size([0])
+    """
+    return {"boxes": torch.zeros(0, 4), "labels": torch.zeros(0, dtype=torch.long)}
+
+
 def _assert_same_metrics(actual: dict[str, torch.Tensor], expected: dict[str, torch.Tensor]) -> None:
     """Assert two ``compute()`` results carry the same keys and bit-identical values.
 
@@ -2174,8 +2332,8 @@ class TestHotcocoStreaming:
     def test_falls_back_to_batch_when_categories_do_not_cover_labels(self, num_classes: int | None) -> None:
         """Without a category list covering every label (fixture labels reach 42), the batch path runs instead.
 
-        ``StreamingEval`` drops annotations of an undeclared category without an error, so streaming them would silently
-        lose class 42.
+        ``StreamingEval`` raises ``KeyError`` for an undeclared category, so the adapter stops the stream before handing
+        it one, instead of failing the validation epoch at ``update()``.
         """
         _require_backend("hotcoco")
         records = multiclass_detection_state()
@@ -2228,3 +2386,116 @@ class TestHotcocoStreaming:
 
         assert metric._streamed_images == 2
         _assert_same_metrics(metric.compute(), _metric_fed_per_image("hotcoco", predictions[:2], targets[:2]).compute())
+
+    @pytest.mark.parametrize("batch_sizes", [pytest.param((2, 1), id="2-then-1"), pytest.param((3,), id="one-batch")])
+    def test_multi_image_batches_of_boxes_equal_batch_hotcoco(self, batch_sizes: tuple[int, ...]) -> None:
+        """Several images per ``update()`` get the same image ids as the one-shot batch path."""
+        _require_backend("hotcoco")
+        records = multiclass_detection_state()
+        kwargs: dict[str, Any] = {"class_metrics": True, "num_classes": 90}
+        streamed = _metric_fed_in_batches("hotcoco_streaming", *records, batch_sizes, **kwargs)
+        _assert_streams_when_backend_streams(streamed)
+
+        _assert_same_metrics(
+            streamed.compute(), _metric_fed_in_batches("hotcoco", *records, (3,), class_metrics=True).compute()
+        )
+
+    def test_uneven_multi_image_batches_of_boxes_and_masks_equal_batch_hotcoco(self) -> None:
+        """Unequally sized batches of box+mask images keep the id offset of every later batch right."""
+        _require_backend("hotcoco")
+        records = _straddling_disc_records()
+        kwargs: dict[str, Any] = {"iou_type": ("bbox", "segm"), "class_metrics": True, "num_classes": 90}
+        streamed = _metric_fed_in_batches("hotcoco_streaming", *records, (7, 11, 12), **kwargs)
+        _assert_streams_when_backend_streams(streamed)
+
+        reference = _metric_fed_in_batches("hotcoco", *records, (30,), iou_type=("bbox", "segm"), class_metrics=True)
+        _assert_same_metrics(streamed.compute(), reference.compute())
+
+    def test_image_without_detections_inside_a_batch(self) -> None:
+        """An image the detector found nothing on, between two that it did, still streams the others unchanged."""
+        _require_backend("hotcoco")
+        predictions, targets = multiclass_detection_state()
+        predictions[1] = _no_detections()
+        streamed = _metric_fed_in_batches("hotcoco_streaming", predictions, targets, (3,), num_classes=90)
+        _assert_streams_when_backend_streams(streamed)
+
+        _assert_same_metrics(
+            streamed.compute(), _metric_fed_in_batches("hotcoco", predictions, targets, (3,)).compute()
+        )
+
+    def test_image_without_ground_truth_inside_a_batch(self) -> None:
+        """An image with detections but no annotated object counts its detections as false positives."""
+        _require_backend("hotcoco")
+        predictions, targets = multiclass_detection_state()
+        targets[1] = _no_ground_truth()
+        streamed = _metric_fed_in_batches("hotcoco_streaming", predictions, targets, (3,), num_classes=90)
+        _assert_streams_when_backend_streams(streamed)
+
+        _assert_same_metrics(
+            streamed.compute(), _metric_fed_in_batches("hotcoco", predictions, targets, (3,)).compute()
+        )
+
+    def test_repeated_compute_returns_the_same_metrics(self) -> None:
+        """``compute()`` twice on a streaming metric reports one result, as the batch backend does."""
+        _require_backend("hotcoco")
+        streamed = _metric_fed_per_image("hotcoco_streaming", *multiclass_detection_state(), num_classes=90)
+
+        first = streamed.compute()
+
+        _assert_same_metrics(streamed.compute(), first)
+
+    def test_label_outside_the_categories_in_a_later_batch_stops_streaming(self) -> None:
+        """A label beyond ``num_classes`` after a clean first batch stops the stream; the metrics stay exact."""
+        _require_backend("hotcoco")
+        predictions, targets = multiclass_detection_state()
+        # Image 1 carries class 42, so ``num_classes=20`` accepts the first batch (labels 3 and 17) and not the second.
+        streamed = _metric_fed_in_batches("hotcoco_streaming", predictions, targets, (1, 2), num_classes=20)
+
+        _assert_same_metrics(
+            streamed.compute(), _metric_fed_in_batches("hotcoco", predictions, targets, (3,)).compute()
+        )
+
+    def test_crowd_ground_truth_equals_batch_hotcoco(self) -> None:
+        """A crowd annotation is ignored for matching identically whether the images stream or arrive at once."""
+        _require_backend("hotcoco")
+        predictions, targets = multiclass_detection_state()
+        targets[0]["iscrowd"] = torch.tensor([0, 1])
+        kwargs: dict[str, Any] = {"class_metrics": True}
+        streamed = _metric_fed_per_image("hotcoco_streaming", predictions, targets, num_classes=90, **kwargs)
+        _assert_streams_when_backend_streams(streamed)
+
+        _assert_same_metrics(
+            streamed.compute(), _metric_fed_per_image("hotcoco", predictions, targets, **kwargs).compute()
+        )
+
+    def test_unknown_class_count_logs_why_it_evaluates_in_one_batch(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Selecting streaming without ``num_classes`` must say once that the batch path runs instead."""
+        _require_backend("hotcoco")
+        # The package logger does not propagate to caplog's root handler; the cached warning is process-wide.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        _warn_streaming_fallback.cache_clear()
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            OnePassCocoMeanAveragePrecision(backend="hotcoco_streaming", sync_on_compute=False)
+
+        assert [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING] == [
+            "eval_backend='hotcoco_streaming' evaluates in one batch at epoch end instead: "
+            "the model's num_classes is unknown."
+        ]
+
+    def test_label_outside_the_categories_logs_the_declared_range(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stopping the stream mid-epoch on an out-of-range label must name the range the model declared."""
+        _require_backend("hotcoco")
+        # The package logger does not propagate to caplog's root handler; the cached warning is process-wide.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        _warn_streaming_fallback.cache_clear()
+        predictions, targets = multiclass_detection_state()
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _metric_fed_in_batches("hotcoco_streaming", predictions, targets, (1, 2), num_classes=20)
+
+        assert "a label falls outside the declared categories [0, 20]" in caplog.text
