@@ -102,14 +102,75 @@ class TestCoreMLNeuralEngineLoad:
         assert all(np.isfinite(array).all() for array in runtime_arrays)
 
 
-#: Ops RF-DETR's graph is known to leave off the Neural Engine, all of them the two-stage query selection:
-#: ``topk`` itself plus the index expansion and gather that consume its result. They cost ~0.1% of the model's
-#: estimated work, so the budget below is about catching a *new* op joining them, not about their own cost.
-_ANE_UNSUPPORTED_OPS = frozenset({"ios16.topk", "ios16.gather_along_axis", "tile", "expand_dims"})
+#: Core ML specification version of an iOS15 ``mlprogram``. iOS16 is 7, and on the Neural Engine that program loses
+#: ~3 box AP at fp16 (45.06 against 48.04 for iOS15 on all 5000 COCO val2017 images, pretrained RFDETRNano, M3 Pro).
+_IOS15_SPEC_VERSION = 6
+
+
+@coreml_runtime_only
+@pytest.mark.integration
+@pytest.mark.e2e_coreml
+class TestCoreMLSpecificationVersion:
+    """The fp16 bundle must be the program generation whose Neural Engine results match eager."""
+
+    def test_fp16_export_is_an_ios15_program(
+        self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
+    ) -> None:
+        """A newer deployment target silently moves the ANE onto the program that costs accuracy.
+
+        ``tests/export/test_coreml_export.py::TestConvertDeploymentTarget`` pins the keyword; this pins what
+        coremltools makes of it, which is also what a bare ``None`` target would resolve to for this graph.
+        """
+        import coremltools as ct
+
+        mlpackage_path, _, _ = nano_fp16_export
+
+        assert ct.utils.load_spec(str(mlpackage_path)).specificationVersion == _IOS15_SPEC_VERSION
+
+    def test_fp16_export_returns_float32_outputs(
+        self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
+    ) -> None:
+        """An iOS 15 fp16 bundle returns float32 output arrays.
+
+        An iOS 16 program returned float16 arrays, which a consumer may have read as such; the changelog documents the
+        switch, and this pins the new dtype.
+        """
+        import coremltools as ct
+
+        mlpackage_path, _, _ = nano_fp16_export
+        outputs = ct.utils.load_spec(str(mlpackage_path)).description.output
+
+        assert {output.type.multiArrayType.dataType for output in outputs} == {
+            ct.proto.FeatureTypes_pb2.ArrayFeatureType.FLOAT32
+        }
+
+    def test_fp16_export_takes_float32_input(
+        self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
+    ) -> None:
+        """The image input stays float32, so callers keep feeding float32 arrays to an fp16 bundle.
+
+        Only the weights and arithmetic are fp16; a changed input dtype would break every existing caller that feeds
+        float32 images.
+        """
+        import coremltools as ct
+
+        mlpackage_path, _, _ = nano_fp16_export
+        inputs = ct.utils.load_spec(str(mlpackage_path)).description.input
+
+        assert {feature.type.multiArrayType.dataType for feature in inputs} == {
+            ct.proto.FeatureTypes_pb2.ArrayFeatureType.FLOAT32
+        }
+
+
+#: Ops RF-DETR's graph is known to leave off the Neural Engine at iOS15 (spec 6, op names carry no ``ios16.`` prefix):
+#: the two-stage query selection (``topk`` plus the index expansion and gather that consume its result) and, on this
+#: opset, the two ``resample`` ops with the ``cast`` ops beside them. The budget below is about catching a *new* op
+#: joining them, not about their own cost.
+_ANE_UNSUPPORTED_OPS = frozenset({"topk", "gather_along_axis", "tile", "expand_dims", "cast", "resample"})
 
 #: Minimum share of estimated work Core ML must still schedule onto the ANE under ``CPU_AND_NE``. Measured at
-#: 0.999 for fp16 RFDETRNano, RFDETRSmall and RFDETRSegNano (pretrained), and for an untrained RFDETRNano, on an
-#: Apple M3 Pro running macOS 27.0.
+#: 0.997 to 0.999 for fp16 RFDETRNano, RFDETRSmall, RFDETRMedium and RFDETRSegNano (pretrained, iOS15) on an Apple M3
+#: Pro running macOS 27.0.1; the untrained RFDETRNano below clears the floor on the same machine.
 _MIN_ANE_COST_SHARE = 0.99
 
 
@@ -159,10 +220,15 @@ def _compute_plan(mlpackage_path: Path) -> Any:
 class TestCoreMLNeuralEngineFallbackBoundary:
     """The ANE fallback boundary documented in ``docs/exports/coreml.md`` must stay where it is."""
 
-    def test_only_two_stage_selection_ops_leave_the_neural_engine(
+    def test_only_known_ops_leave_the_neural_engine(
         self, nano_fp16_export: tuple[Path, torch.Tensor, list[torch.Tensor]]
     ) -> None:
-        """No op outside the known two-stage selection island may lose Neural Engine support."""
+        """Only ``_ANE_UNSUPPORTED_OPS`` may leave the Neural Engine, and ``resample`` must be one of them.
+
+        The positive half pins the mechanism of the iOS 15 choice: the deformable-attention ``resample`` has to stay
+        off the Neural Engine, because at iOS 16 it runs there in fp16 and costs ~3 box AP. Like the whole class,
+        this runs only on hardware that exposes a Neural Engine; ``_compute_plan`` skips elsewhere.
+        """
         mlpackage_path, _, _ = nano_fp16_export
         plan = _compute_plan(mlpackage_path)
         operations = plan.model_structure.program.functions["main"].block.operations
@@ -177,6 +243,10 @@ class TestCoreMLNeuralEngineFallbackBoundary:
         assert unsupported <= _ANE_UNSUPPORTED_OPS, (
             f"ops newly unsupported on the Neural Engine: {sorted(unsupported - _ANE_UNSUPPORTED_OPS)}; "
             "update docs/exports/coreml.md's fallback boundary if this is intended"
+        )
+        assert "resample" in unsupported, (
+            "resample now runs on the Neural Engine, which is the iOS 16 behavior that loses ~3 box AP at fp16; "
+            f"ops off the Neural Engine: {sorted(unsupported)}"
         )
 
     def test_neural_engine_keeps_nearly_all_of_the_estimated_work(
@@ -206,4 +276,64 @@ class TestCoreMLNeuralEngineFallbackBoundary:
         assert total_cost > 0.0
         assert ane_cost / total_cost >= _MIN_ANE_COST_SHARE, (
             f"only {ane_cost / total_cost:.3f} of the estimated work stays on the Neural Engine"
+        )
+
+
+@pytest.fixture(scope="module")
+def nano_fp16_neural_engine_export(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Export an untrained RFDETRNano to fp16 CoreML with ``coreml_neural_engine=True``.
+
+    Examples:
+        Skipped: a pytest fixture that needs coremltools, so it cannot run standalone.
+
+        >>> nano_fp16_neural_engine_export.suffix  # doctest: +SKIP
+        '.mlpackage'
+    """
+    seed_all(_EXPORT_SEED)
+    detector = RFDETRNano(pretrain_weights=None)
+    out_dir = tmp_path_factory.mktemp("coreml_neural_engine")
+    return Path(
+        detector.export(
+            output_dir=str(out_dir),
+            format="coreml",
+            coreml_precision="float16",
+            coreml_neural_engine=True,
+            verbose=False,
+        )
+    )
+
+
+#: The two-stage query-selection ops among ``_ANE_UNSUPPORTED_OPS``: ``topk`` and the ops that consume its indices.
+#: ``coreml_neural_engine=True`` exists to take exactly these off the CPU.
+_QUERY_SELECTION_OPS = frozenset({"topk", "gather_along_axis", "tile", "expand_dims"})
+
+
+@coreml_runtime_only
+@pytest.mark.integration
+@pytest.mark.e2e_coreml
+class TestCoreMLNeuralEngineRewrites:
+    """With ``coreml_neural_engine=True``, only the iOS 15 ``resample`` boundary may stay off the Neural Engine."""
+
+    def test_only_the_resample_boundary_prefers_the_cpu(self, nano_fp16_neural_engine_export: Path) -> None:
+        """The query-selection ops leave the CPU; what stays there is within the known ``resample``/``cast`` set.
+
+        The iOS 15 program keeps ``resample`` and the ``cast`` ops beside it off the Neural Engine on purpose (see
+        ``TestCoreMLNeuralEngineFallbackBoundary``), so the rewrite cannot empty the CPU set: it must move the selection
+        island of the default export off the CPU and add nothing new.
+        """
+        plan = _compute_plan(nano_fp16_neural_engine_export)
+        operations = plan.model_structure.program.functions["main"].block.operations
+
+        off_neural_engine = {
+            operation.operator_name
+            for operation in operations
+            if (usage := plan.get_compute_device_usage_for_mlprogram_operation(operation)) is not None
+            and "NeuralEngine" not in type(usage.preferred_compute_device).__name__
+        }
+
+        assert not off_neural_engine & _QUERY_SELECTION_OPS, (
+            f"query selection still prefers the CPU: {sorted(off_neural_engine & _QUERY_SELECTION_OPS)}"
+        )
+        assert off_neural_engine <= _ANE_UNSUPPORTED_OPS - _QUERY_SELECTION_OPS, (
+            f"ops newly off the Neural Engine: {sorted(off_neural_engine - _ANE_UNSUPPORTED_OPS)}"
         )

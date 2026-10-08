@@ -30,7 +30,7 @@ PathLikeStr: TypeAlias = str | Path
 AmpDtype: TypeAlias = Literal["auto", "bf16", "fp16", "fp8"] | None
 #: COCO evaluation backend selectable via ``TrainConfig.eval_backend``. The runtime registry that resolves each
 #: name lives in ``rfdetr.training.coco_map``; this alias is the single typed source of the accepted names.
-CocoEvalBackend: TypeAlias = Literal["hotcoco", "faster_coco_eval", "ufcoco", "vernier"]
+CocoEvalBackend: TypeAlias = Literal["hotcoco", "hotcoco_streaming", "faster_coco_eval", "ufcoco", "vernier"]
 #: Default ``TrainConfig.amp_dtype``. Any other value counts as an explicit opt-in that outranks the
 #: deprecated ``ModelConfig.amp`` toggle (see ``_resolve_amp_dtype``).
 _AMP_DTYPE_DEFAULT: AmpDtype = "auto"
@@ -650,6 +650,7 @@ class ModelConfig(BaseConfig):
             subclass.
         dec_n_points: Deformable attention points per head per level in the decoder. Must be
             provided by concrete subclass.
+        dim_feedforward: Hidden width of the decoder feed-forward layers. Defaults to ``2048``.
         resolution: Square input resolution (pixels). Must be provided by concrete subclass.
         positional_encoding_size: Side length (in patches) of the sinusoidal positional grid.
             Must be provided by concrete subclass.
@@ -702,6 +703,7 @@ class ModelConfig(BaseConfig):
     sa_nheads: int
     ca_nheads: int
     dec_n_points: int
+    dim_feedforward: int = Field(default=2048, ge=1)
     num_queries: int = 300
     # ModelConfig is the sole owner of `num_select` for PTL/inference; it is read via `_namespace_from_configs`.
     num_select: int = 300
@@ -864,6 +866,7 @@ class ModelConfig(BaseConfig):
             "sa_nheads",
             "ca_nheads",
             "dec_n_points",
+            "dim_feedforward",
             "out_feature_indexes",
             "projector_scale",
             "bbox_reparam",
@@ -1369,9 +1372,15 @@ class TrainConfig(BaseConfig):
     eval_backend: CocoEvalBackend = Field(
         default="vernier",
         description=(
-            "COCO evaluation backend used for validation and test mAP. All four ship with 'rfdetr[train]' and "
+            "COCO evaluation backend used for validation and test mAP. All of them ship with 'rfdetr[train]' and "
             "produce identical metrics; 'vernier' is the default and computes fastest, both several times "
-            "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools."
+            "faster than 'faster_coco_eval', the previous evaluator. 'ufcoco' selects ultrafast-pycocotools. "
+            "'hotcoco_streaming' is the same evaluator as 'hotcoco' in a different execution mode, best-effort with a "
+            "fallback to 'hotcoco': it matches each validation batch as it arrives, which shortens the end-of-epoch "
+            "evaluation but costs more CPU time in total. It keeps the stored evaluation state for the fallback "
+            "and adds the stream's matching state during the epoch, but skips the full COCO dataset build at the "
+            "end; peak memory has not been measured. It applies to single-process runs and otherwise evaluates in "
+            "one batch like 'hotcoco'."
         ),
     )
     # Segmentation only. Skip upsampling predicted masks to full image resolution during

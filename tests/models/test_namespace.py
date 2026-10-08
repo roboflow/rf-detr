@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Regression tests for _namespace_from_configs() config forwarding."""
 
+import dataclasses
 import sys
 from typing import Any
 
@@ -12,6 +13,7 @@ import pytest
 
 from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import RFDETRNanoConfig, RFDETRSegNanoConfig, RFDETRSmallConfig, SegmentationTrainConfig, TrainConfig
+from rfdetr.models._defaults import MODEL_DEFAULTS
 from rfdetr.models._types import BuilderArgs
 
 
@@ -132,3 +134,43 @@ class TestNamespaceFieldOwnership:
         tc = TrainConfig(dataset_dir="/tmp")
         ns = _namespace_from_configs(mc, tc)
         assert ns.num_select == expected_num_select
+
+
+class TestDimFeedforward:
+    """``ModelConfig.dim_feedforward`` reaches the builder namespace and the decoder layers it sizes."""
+
+    def test_default_matches_the_legacy_hardcoded_width(self) -> None:
+        ns = _namespace_from_configs(RFDETRNanoConfig(), TrainConfig(dataset_dir="/tmp"))
+
+        assert ns.dim_feedforward == 2048
+
+    def test_override_is_forwarded(self) -> None:
+        ns = _namespace_from_configs(RFDETRNanoConfig(dim_feedforward=1024), TrainConfig(dataset_dir="/tmp"))
+
+        assert ns.dim_feedforward == 1024
+
+    def test_model_config_wins_over_defaults(self) -> None:
+        """A ``ModelConfig`` width overrides ``ModelDefaults.dim_feedforward``, which is only a fallback shadow."""
+        defaults = dataclasses.replace(MODEL_DEFAULTS, dim_feedforward=512)
+
+        ns = _namespace_from_configs(
+            RFDETRNanoConfig(dim_feedforward=1024), TrainConfig(dataset_dir="/tmp"), defaults=defaults
+        )
+
+        assert ns.dim_feedforward == 1024
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_non_positive_width_is_rejected(self, value: int) -> None:
+        with pytest.raises(ValueError, match="dim_feedforward"):
+            RFDETRNanoConfig(dim_feedforward=value)
+
+    def test_decoder_layers_use_the_configured_width(self) -> None:
+        from rfdetr.models import build_model
+
+        ns = _namespace_from_configs(
+            RFDETRNanoConfig(dim_feedforward=1024, pretrain_weights=None), TrainConfig(dataset_dir="/tmp")
+        )
+        model = build_model(ns)
+
+        widths = {layer.linear1.out_features for layer in model.transformer.decoder.layers}
+        assert widths == {1024}
