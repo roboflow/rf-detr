@@ -49,14 +49,16 @@ class PixelTranslatedAffine(RandomAffine):  # type: ignore[misc]
             batch_shape: Shape of the images selected for this transform.
 
         Returns:
-            Kornia affine parameters with independently sampled x/y offsets.
+            Kornia affine parameters with x/y offsets sampled per image, or drawn once and shared by the whole batch
+            when ``same_on_batch`` is set.
         """
         params = cast(dict[str, Tensor], super().generate_parameters(batch_shape))
         translations = params["translations"]
+        batch_size = translations.shape[0]
+        num_draws = 1 if self.same_on_batch else batch_size
         for axis, (lower, upper) in enumerate(self.translation_bounds):
-            translations[:, axis] = torch.randint(
-                lower, upper + 1, (translations.shape[0],), device=translations.device
-            ).to(translations.dtype)
+            offsets = torch.randint(lower, upper + 1, (num_draws,), device=translations.device)
+            translations[:, axis] = offsets.to(translations.dtype).expand(batch_size)
         return params
 
     def apply_transform(
@@ -98,3 +100,28 @@ class PixelTranslatedAffine(RandomAffine):  # type: ignore[misc]
         if valid_y is not None and valid_x is not None:
             translated *= (valid_y[:, :, None] & valid_x[:, None, :]).unsqueeze(-1)
         return translated.permute(0, 3, 1, 2).contiguous()
+
+    def inverse_transform(
+        self,
+        input: Tensor,
+        flags: dict[str, Any],
+        transform: Tensor | None = None,
+        size: tuple[int, int] | None = None,
+    ) -> Tensor:
+        """Shift images or masks back by the negated forward offsets.
+
+        Kornia's inverse path passes the inverted matrix to ``apply_transform``, which reads only the sampled
+        ``translations``; negating those keeps the inverse exact for any input dtype, whereas the matrix is cast to the
+        input dtype and would round large shifts in float16 or bfloat16.
+
+        Args:
+            input: Translated images or packed mask channels.
+            flags: Kornia border-mode flags.
+            transform: Unused inverse matrix passed by the Kornia pipeline.
+            size: Unused output size passed by the Kornia pipeline.
+
+        Returns:
+            Values shifted back to their original positions, with the same shape and dtype as the input.
+        """
+        params = {**self._params, "translations": -self._params["translations"]}
+        return self.apply_transform(input, params, flags, transform)

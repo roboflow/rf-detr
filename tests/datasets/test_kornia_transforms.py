@@ -1667,8 +1667,14 @@ class TestAffinePixelTranslation:
             pytest.param(4, {"border_mode": 4}, "border", id="reflected-box-duplication"),
             pytest.param(4, {"fill": 1}, "fill", id="unsupported-nonzero-fill"),
             pytest.param(4, {"fit_output": True}, "fit_output", id="output-shape-change"),
-            pytest.param(4, {"scale": {"x": (0.8, 1.2)}}, "per-axis scale", id="unsupported-axis-scale"),
+            pytest.param(4, {"scale": {"x": (0.8, 1.2)}}, "scale=1", id="unsupported-axis-scale"),
             pytest.param(4, {"scale": [0.8, 1.2]}, "scale=1", id="nonunit-list-scale"),
+            pytest.param(4, {"shear": {"x": 0}}, "shear=0", id="axis-shear-missing-y-defaults-to-one-degree"),
+            pytest.param(4, {"fill": np.array([0, 0, 1])}, "fill=0", id="nonzero-array-fill"),
+            pytest.param(2**63 - 1, {}, "64-bit", id="int64-overflow"),
+            pytest.param(4, {"cval": 1}, "cval=1; use fill instead", id="albumentations-1x-cval"),
+            pytest.param(4, {"cval_mask": 1}, "cval_mask=1; use fill_mask instead", id="albumentations-1x-cval-mask"),
+            pytest.param(4, {"mode": 2}, "mode=2; use border_mode instead", id="albumentations-1x-mode"),
         ],
     )
     def test_unsupported_pixel_affine_config_fails_at_build(
@@ -1679,6 +1685,65 @@ class TestAffinePixelTranslation:
 
         with pytest.raises(ValueError, match=diagnostic):
             build_kornia_pipeline({"Affine": {"translate_px": translation, **other}}, resolution=32)
+
+    @pytest.mark.parametrize(
+        "translation,expected",
+        [
+            pytest.param(4.0, ((4, 4), (4, 4)), id="integral-float"),
+            pytest.param(np.int64(3), ((3, 3), (3, 3)), id="numpy-integer"),
+            pytest.param({"x": 3.0}, ((3, 3), (0, 0)), id="integral-float-axis"),
+            pytest.param((-2.0, np.int32(4)), ((-2, 4), (-2, 4)), id="mixed-integral-range"),
+        ],
+    )
+    def test_integral_offsets_resolve_to_int_bounds(
+        self, translation: Any, expected: tuple[tuple[int, int], tuple[int, int]]
+    ) -> None:
+        """Integral offsets of any numeric type build and resolve to plain ``int`` bounds.
+
+        Albumentations accepts ``4.0`` and NumPy integers for ``translate_px``, so a config that trains on the CPU
+        backend must build here too. The bounds must come out as Python ``int`` because ``torch.randint`` rejects a
+        float bound at the first forward pass, long after the pipeline was built.
+        """
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Affine": {"translate_px": translation, "p": 1.0}}, resolution=32)
+
+        bounds = next(iter(pipeline.children())).translation_bounds
+        assert bounds == expected
+        assert all(type(bound) is int for axis in bounds for bound in axis)
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            pytest.param({"scale": {"x": 1.0, "y": 1.0}}, id="unit-axis-scale"),
+            pytest.param({"scale": {"x": (1.0, 1.0)}}, id="unit-axis-scale-missing-y"),
+            pytest.param({"shear": {"x": 0, "y": 0}}, id="zero-axis-shear"),
+            pytest.param({"interpolation": 2}, id="cubic-interpolation"),
+            pytest.param({"interpolation": 3}, id="area-interpolation"),
+            pytest.param({"interpolation": 4}, id="lanczos-interpolation"),
+            pytest.param({"mask_interpolation": 1}, id="linear-mask-interpolation"),
+            pytest.param({"keep_ratio": True}, id="keep-ratio"),
+            pytest.param({"balanced_scale": True}, id="balanced-scale"),
+            pytest.param({"rotate_method": "ellipse"}, id="ellipse-rotate-method"),
+            pytest.param({"fill": np.zeros(3)}, id="zero-array-fill"),
+            pytest.param({"border_mode": 1, "fill": 5}, id="replicate-ignores-fill"),
+            pytest.param({"border_mode": 1, "fill_mask": 1}, id="replicate-ignores-fill-mask"),
+        ],
+    )
+    def test_options_without_effect_on_a_pixel_shift_build(self, options: dict[str, Any]) -> None:
+        """Albumentations options that cannot change a whole-pixel shift build instead of raising.
+
+        Each option only matters for scaling, rotation, sub-pixel sampling or a constant border; Albumentations accepts
+        all of them and returns the same pure shift, so refusing them on Kornia would fail a CPU-valid config on GPU.
+        """
+        from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedAffine
+        from rfdetr.datasets.kornia_transforms import build_kornia_pipeline
+
+        pipeline = build_kornia_pipeline({"Affine": {"translate_px": 4, **options, "p": 1.0}}, resolution=32)
+
+        transform = next(iter(pipeline.children()))
+        assert isinstance(transform, PixelTranslatedAffine)
+        assert transform.translation_bounds == ((4, 4), (4, 4))
 
     @pytest.mark.parametrize(
         "scale",
